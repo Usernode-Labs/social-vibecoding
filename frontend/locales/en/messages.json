@@ -3927,6 +3927,14 @@
     "text": "Not now",
     "description": "Button at the foot of a request draft's preview, beside File it: puts the draft away without filing it, the same as Not now on the draft's card in the chat."
   },
+  "draft.pane.files": {
+    "text": "Files it carries",
+    "description": "Label over the list of files a request draft will carry onto the request, beside the draft's words in its preview. Each line is a file's name and size."
+  },
+  "draft.pane.filesNote": {
+    "text": "They go on the request: anyone who can see it sees their names, and its build can open them.",
+    "description": "One line under the list of files a request draft carries, saying what happens to them once the request is filed."
+  },
   "draft.pane.undecided": {
     "text": "Still undecided",
     "description": "Label over the list of open questions a request draft leaves undecided, beside the draft's words in its preview."

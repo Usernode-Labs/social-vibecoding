@@ -600,6 +600,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     '**Still undecided:**',
     '- Whether a week starts on Monday or on Sunday',
     '',
+    // #7136: the file the seeded draft carries.
+    '**Files it carries:** demo-site.zip (4 KB). Anyone who can see the request sees their names, and its build can open them.',
+    '',
     '**Done when:**',
     '- Insights show week by week, not only as a total',
     '- The same weeks are counted however the list is sorted',
@@ -617,9 +620,19 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     "SELECT filename, user_id FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'",
     [fileAsk.id]);
   assert.deepEqual(askPictures, [{ filename: 'insights.png', user_id: member }]);
+  // #7136: and the file they attached, which the draft carries as a list
+  // rather than a second copy (a 20 MB zip is not stored twice).
+  const { rows: askFiles } = await pool.query(
+    "SELECT filename FROM conversation_message_attachments WHERE message_id = $1 AND kind <> 'image'", [fileAsk.id]);
+  assert.deepEqual(askFiles.map((r) => r.filename), ['demo-site.zip']);
   assert.deepEqual(draftExtras, {
-    attachmentIds: (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1", [fileAsk.id]))
+    attachmentIds: (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [fileAsk.id]))
       .rows.map((r) => r.id),
+    // #7136: the zip the same seeded message carries, listed by name and size.
+    fileIds: (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1 AND kind <> 'image'", [fileAsk.id]))
+      .rows.map((r) => r.id),
+    files: (await pool.query("SELECT id, filename, size_bytes FROM conversation_message_attachments WHERE message_id = $1 AND kind <> 'image'", [fileAsk.id]))
+      .rows.map((r) => ({ id: r.id, name: r.filename, size: r.size_bytes })),
     related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
     context: { saw: 'the insights page' },
     undecided: ['Whether a week starts on Monday or on Sunday'],

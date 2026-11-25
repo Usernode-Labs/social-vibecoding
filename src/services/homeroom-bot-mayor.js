@@ -877,8 +877,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // #6251: the draft carries what makes it buildable, checked before File it.
     '- Before drafting a request, search the project\'s open requests (list_requests with a query). Put up to three',
     '  that overlap in related, each with how (part_of, depends_on, build_together), and treat a clearly identical',
-    '  one as comment_on_request instead. Pass in attachmentIds the ids of their pictures that belong with the',
-    '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
+    '  one as comment_on_request instead. Pass in attachmentIds the ids of their pictures or files that belong',
+    '  with the request, from the "id ..." in an attachment\'s history line: a file they attached and asked to',
+    '  be used goes there too, and its build can open it. Give context.request whenever they name a request',
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
     '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
@@ -1182,9 +1183,9 @@ const TOOLS = [
             description: 'Up to three things the request leaves undecided, each one short line that reads on its own. Leave it out when nothing is.',
           },
           attachmentIds: {
-            type: 'array', maxItems: 3,
+            type: 'array', maxItems: 6,
             items: { type: 'string' },
-            description: 'Ids of pictures THEY attached in this chat that go with the request, from its history line "id ...". At most three.',
+            description: 'Ids of pictures or files THEY attached in this chat that they asked to be used for the request, from its history line "id ...". At most three pictures and three other files.',
           },
           related: {
             type: 'array', maxItems: 3,
@@ -2993,11 +2994,21 @@ function picturesToSend(files, { theirs = [], always = [], imageInput = false, t
  * id is on the line, so offer_request can name the pictures that belong with
  * the request it drafts; a project's thread has no tool that takes one
  * (`withId: false`).
+ *
+ * #7136: a file that is not a picture is named with the same id, and the
+ * line says what can be done with it — a request this person files can carry
+ * it to its build (services/homeroom-bot-mayor.js copyRequestFiles,
+ * worker/usernode-file). It used to say only that the bot could not open it,
+ * which is why nothing ever reached a build.
  */
 function attachedLine(f, { picture = null, imageInput = false, withId = true } = {}) {
   const named = `${clip(f.filename, 120)}${withId ? ` (id ${f.id})` : ''}`;
   if (picture) return `[Homeroom: they attached the picture ${named}, shown below.]`;
-  if (f.kind !== 'image') return `[Homeroom: they attached the file ${named}, which you cannot open.]`;
+  if (f.kind !== 'image') {
+    return withId
+      ? `[Homeroom: they attached the file ${named}. You cannot open it, but a request they file can carry it to its build: put its id in offer_request's attachmentIds when they ask for it to be used.]`
+      : `[Homeroom: they attached the file ${named}. You cannot open it, but a request filed from this thread can carry it to its build.]`;
+  }
   return imageInput
     ? `[Homeroom: they attached the picture ${named}. Only the newest pictures are shown.]`
     : `[Homeroom: they attached the picture ${named}, which you cannot see: your model reads text only.]`;
@@ -3673,6 +3684,9 @@ const DRAFT_RELATION_WORDS = Object.freeze({
   same: 'the same thing', part_of: 'part of it', depends_on: 'depends on it', build_together: 'build together',
 });
 const MAX_DRAFT_ATTACHMENTS = 3;
+// #7136: the files that are not pictures that go with one request (a zip,
+// a spreadsheet, a document), each validated again by the chat's own rule.
+const MAX_DRAFT_FILES = 3;
 const MAX_RELATED = 3;
 const MAX_RELATED_WHY = 140;
 const MAX_DONE_WHEN = 140;
@@ -3709,28 +3723,74 @@ function draftUndecided(value) {
   return list;
 }
 
-/** The person's own pictures in this chat, by their ids: { ok, ids } or { ok: false, error }. */
-async function draftPictures(pool, { ids, conversationId, userId }) {
-  if (ids === undefined || ids === null) return { ok: true, ids: [] };
-  if (!Array.isArray(ids)) return { ok: false, error: 'attachmentIds must be a list of picture ids.' };
+/** Pure: a file's size as people read it ("4.2 MB", "812 KB"), the chat's own style. */
+function fileSizeLabel(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+/**
+ * #7136: a chat attachment checked again by the rule the chat's own upload
+ * route uses — `.zip` by attachments.validateUpload (which also walks the
+ * archive's central directory), anything else by validateChatUpload.
+ * Resolves { ok } or { ok: false, error }.
+ */
+function validateCarriedFile(row) {
+  const attachments = require('./attachments');
+  const check = /\.zip$/i.test(String(row.filename || ''))
+    ? attachments.validateUpload({ filename: row.filename, data: row.data })
+    : attachments.validateChatUpload({ filename: row.filename, data: row.data });
+  return check.ok ? { ok: true } : { ok: false, error: check.error };
+}
+
+/** The person's own pictures and files in this chat, by their ids: { ok, pictures, files } or { ok: false, error }. */
+async function draftAttachments(pool, { ids, conversationId, userId }) {
+  if (ids === undefined || ids === null) return { ok: true, pictures: [], files: [] };
+  if (!Array.isArray(ids)) return { ok: false, error: 'attachmentIds must be a list of picture and file ids.' };
   const wanted = [...new Set(ids.map((id) => String(id ?? '').trim()).filter(Boolean))];
-  if (wanted.length > MAX_DRAFT_ATTACHMENTS) {
-    return { ok: false, error: `At most ${MAX_DRAFT_ATTACHMENTS} pictures go with one request. Pick the ones that belong with it.` };
+  if (wanted.length > MAX_DRAFT_ATTACHMENTS + MAX_DRAFT_FILES) {
+    return {
+      ok: false,
+      error: `At most ${MAX_DRAFT_ATTACHMENTS} pictures and ${MAX_DRAFT_FILES} other files go with one request. Pick the ones that belong with it.`,
+    };
   }
-  if (!wanted.length) return { ok: true, ids: [] };
+  if (!wanted.length) return { ok: true, pictures: [], files: [] };
+  // #7136: a file is validated again here, by the same rule the chat's own
+  // upload route applies, so a row that somehow got past it is never carried.
   const { rows } = await pool.query(
-    `SELECT a.id FROM conversation_message_attachments a
+    `SELECT a.id, a.kind, a.filename, a.size_bytes, a.data FROM conversation_message_attachments a
        JOIN conversation_messages m ON m.id = a.message_id
-      WHERE a.id = ANY($1::text[]) AND a.kind = 'image' AND a.conversation_id = $2 AND a.user_id = $3
+      WHERE a.id = ANY($1::text[]) AND a.conversation_id = $2 AND a.user_id = $3
         AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL`,
     [wanted, conversationId, userId],
   );
-  const found = new Set(rows.map((r) => String(r.id)));
-  const missing = wanted.filter((id) => !found.has(id));
+  const by = new Map(rows.map((r) => [String(r.id), r]));
+  const missing = wanted.filter((id) => !by.has(id));
   if (missing.length) {
-    return { ok: false, error: `These pictures are not pictures they attached in this chat: ${missing.join(', ')}. Pass only ids from their own attachments here.` };
+    return { ok: false, error: `These are not pictures or files they attached in this chat: ${missing.join(', ')}. Pass only ids from their own attachments here.` };
   }
-  return { ok: true, ids: wanted };
+  const pictures = [];
+  const files = [];
+  for (const id of wanted) {
+    const row = by.get(id);
+    if (row.kind === 'image') pictures.push(id);
+    else files.push(row);
+  }
+  if (pictures.length > MAX_DRAFT_ATTACHMENTS) {
+    return { ok: false, error: `At most ${MAX_DRAFT_ATTACHMENTS} pictures go with one request. Pick the ones that belong with it.` };
+  }
+  if (files.length > MAX_DRAFT_FILES) {
+    return { ok: false, error: `At most ${MAX_DRAFT_FILES} files go with one request. Pick the ones that belong with it.` };
+  }
+  const kept = [];
+  for (const row of files) {
+    const check = validateCarriedFile(row);
+    if (!check.ok) return { ok: false, error: `"${row.filename}" cannot go with the request: ${check.error}` };
+    kept.push({ id: String(row.id), name: String(row.filename), size: Number(row.size_bytes) || 0 });
+  }
+  return { ok: true, pictures, files: kept };
 }
 
 /** The open requests on `app`'s board ({ number, title }), or [] when it cannot be read. */
@@ -3857,6 +3917,17 @@ function draftExtrasText(extras) {
   if (Array.isArray(extras.undecided) && extras.undecided.length) {
     lines.push('', '**Still undecided:**', ...extras.undecided.map((line) => `- ${line}`));
   }
+  // #7136: what the draft carries onto the request besides a picture. Said
+  // in its own text rather than as a second copy of each file under it, so a
+  // 20 MB zip is not stored twice.
+  if (Array.isArray(extras.files) && extras.files.length) {
+    const named = extras.files
+      .map((f) => `${String(f.name || '')} (${fileSizeLabel(f.size)})`)
+      .filter((line) => line.trim() !== '()');
+    if (named.length) {
+      lines.push('', `**Files it carries:** ${named.join(', ')}. Anyone who can see the request sees their names, and its build can open them.`);
+    }
+  }
   if (Array.isArray(extras.doneWhen) && extras.doneWhen.length) {
     lines.push('', '**Done when:**', ...extras.doneWhen.map((line) => `- ${line}`));
   }
@@ -3888,11 +3959,16 @@ async function checkRequestOffer(pool, ctx, args = {}) {
   if (!undecided) {
     return { ok: false, error: `Give at most ${MAX_UNDECIDED} short lines in undecided, each one thing the request leaves open.` };
   }
-  const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
-  if (!pictures.ok) return { ok: false, error: pictures.error };
+  const attached = await draftAttachments(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
+  if (!attached.ok) return { ok: false, error: attached.error };
   const place = await draftPlace(pool, { ctx });
   const baseExtras = {
-    attachmentIds: pictures.ids,
+    // #6251: the pictures, which File it copies into the request's own store.
+    attachmentIds: attached.pictures,
+    // #7136: the other files, which it carries the same way (copyRequestFiles)
+    // and lists on the request by name and size.
+    fileIds: attached.files.map((f) => f.id),
+    files: attached.files.map((f) => ({ id: f.id, name: f.name, size: f.size })),
     ...(undecided.length ? { undecided } : {}),
     doneWhen,
     chatHref: place.href,
@@ -3903,7 +3979,7 @@ async function checkRequestOffer(pool, ctx, args = {}) {
     const rows = await resolveRows(pool, { items: args.projects, user });
     if (rows.length < 2) {
       // Only one project came out of it: today's single-request card.
-      return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+      return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras }));
     }
     // Before drafting: read each app's code the way its first read
     // would, so a row for an app that already does it says so.
@@ -3931,7 +4007,7 @@ async function checkRequestOffer(pool, ctx, args = {}) {
     const shown = `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`;
     return { ok: true, note: shown, shown };
   }
-  return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+  return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras }));
 }
 
 /** The offer tool's answer, with the same words under `note` for a design turn. */
@@ -6640,6 +6716,11 @@ function draftExtrasView(extras) {
   const req = from.context?.request;
   const number = Number(req?.number);
   return {
+    // #7136: the files it carries, by name and size, as the pane lists them
+    // beside the words.
+    files: (Array.isArray(from.files) ? from.files : [])
+      .filter((f) => f && String(f.name || '').trim())
+      .map((f) => ({ name: String(f.name), size: Number(f.size) || 0 })),
     undecided: lines(from.undecided),
     doneWhen: lines(from.doneWhen),
     related: (Array.isArray(from.related) ? from.related : [])
@@ -6967,7 +7048,7 @@ function defaultFooter(user) {
  * `slug` is the project the request is on (the related requests are on its
  * board); `screenshotIds` are the ids copied into issue_screenshots.
  */
-function requestBody({ details, username, extras = null, screenshotIds = [], domain = '', footer = null, slug = null }) {
+function requestBody({ details, username, extras = null, screenshotIds = [], files = [], domain = '', footer = null, slug = null }) {
   const plain = [
     details || '',
     '',
@@ -6978,6 +7059,13 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
   const base = domain ? `https://${domain}` : '';
   const link = (toSlug, n) => `${base}/#app/${encodeURIComponent(toSlug)}/dev/issues/${Number(n)}`;
   const sections = [];
+  // #7136: the files the request carries, by name, size and id, right below
+  // its pictures. There is no download link: only the build opens them
+  // (GET /api/internal/sessions/:id/request-files/:id, worker/usernode-file).
+  // It is one of the extras, so it survives the clip below.
+  if (Array.isArray(files) && files.length) {
+    sections.push(['**Files**', ...files.map((f) => `- ${f.name} (${fileSizeLabel(f.size)}), file id ${f.id}`)].join('\n'));
+  }
   if (Array.isArray(extras.undecided) && extras.undecided.length) {
     sections.push(['**Still undecided**', ...extras.undecided.map((line) => `- ${line}`)].join('\n'));
   }
@@ -7042,6 +7130,48 @@ async function copyRequestPictures(pool, { ids, conversationId, userId }) {
 }
 
 /**
+ * #7136: copy the files the draft carries (anything but a picture) into the
+ * request's own store, so its build can save them even if the chat message is
+ * deleted. Ones gone from the chat are skipped, as pictures are; each is
+ * checked again by the chat's own rule first. Resolves [{ id, name, size }],
+ * in the order offered, `id` being the issue_files row the build fetches.
+ */
+async function copyRequestFiles(pool, { ids, conversationId, userId }) {
+  const wanted = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, MAX_DRAFT_FILES) : [];
+  if (!wanted.length || !conversationId) return [];
+  const { rows } = await pool.query(
+    `SELECT id, kind, filename, content_type, size_bytes, meta, data FROM conversation_message_attachments
+      WHERE id = ANY($1::text[]) AND conversation_id = $2`,
+    [wanted, conversationId],
+  );
+  const by = new Map(rows.map((row) => [String(row.id), row]));
+  const out = [];
+  for (const id of wanted) {
+    const row = by.get(id);
+    if (!row || row.kind === 'image') {
+      log.info('homeroom-bot-mayor', 'A file named for a request is gone from the chat; filing without it', { userId, file: id });
+      continue;
+    }
+    const check = validateCarriedFile(row);
+    if (!check.ok) {
+      log.warn('homeroom-bot-mayor', 'A file named for a request no longer meets the chat\'s limits; filing without it', {
+        userId, file: id, err: check.error,
+      });
+      continue;
+    }
+    const copy = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO issue_files (id, user_id, filename, kind, content_type, size_bytes, meta, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [copy, Number(userId), row.filename, row.kind, row.content_type,
+        Number(row.size_bytes) || row.data.length, row.meta, row.data],
+    );
+    out.push({ id: copy, name: String(row.filename), size: Number(row.size_bytes) || row.data.length });
+  }
+  return out;
+}
+
+/**
  * File a request on `app` as `user`, the way POST /api/apps/:slug/issues
  * files a general one: its GitHub issue, the platform's row, the people
  * who follow new requests told, and a line in its own thread. It is
@@ -7085,10 +7215,16 @@ async function fileRequest(pool, config, {
   const screenshotIds = !recovered && extras
     ? await copyRequestPictures(pool, { ids: extras.attachmentIds, conversationId, userId: user.id })
     : [];
+  // #7136: the files it carries get their own copy too, before the issue is
+  // made, so the body can name them by the id the build fetches; a retry
+  // files no second.
+  const copiedFiles = !recovered && extras
+    ? await copyRequestFiles(pool, { ids: extras.fileIds, conversationId, userId: user.id })
+    : [];
   // B9: where it was asked, when not in their chat with the bot.
   const body = requestBody({
     details, username: user.username, extras: extras && !footer ? extras : null,
-    screenshotIds, domain: domainOf(deps), footer, slug: app.slug,
+    screenshotIds, files: copiedFiles, domain: domainOf(deps), footer, slug: app.slug,
   });
   if (!recovered) {
     const m = repoRef.ownerRepo(app.repo_url);
@@ -7112,6 +7248,13 @@ async function fileRequest(pool, config, {
           WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
         [screenshotIds, m.owner, m.repo, issueNumber, user.id],
       ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not stamp a request\'s pictures', { app: app.slug, err: err.message }));
+    }
+    if (copiedFiles.length) {
+      await pool.query(
+        `UPDATE issue_files SET issue_owner = $2, issue_repo = $3, issue_number = $4
+          WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+        [copiedFiles.map((f) => f.id), m.owner, m.repo, issueNumber, user.id],
+      ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not stamp a request\'s files', { app: app.slug, err: err.message }));
     }
   }
   await pool.query(
@@ -8905,6 +9048,10 @@ module.exports = {
   askedFor,
   draftExtrasText,
   requestBody,
+  // #7136: the files a draft carries, as File it copies them onto the request.
+  draftAttachments,
+  copyRequestFiles,
+  fileSizeLabel,
   draftDoneWhen,
   draftUndecided,
   draftExtrasView,

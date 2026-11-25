@@ -434,6 +434,128 @@ function internalRoutes(_config) {
     }
   });
 
+  // #7136: the files a request carries (worker/usernode-file). A build reads
+  // a file only when its OWN request carries it, or when somebody posted it in
+  // that request's discussion: knowing a file's id is not enough.
+  //
+  //   GET /api/internal/sessions/:sessionId/request-files/:id
+  //        → a file the request carries, or one posted in its discussion
+  const requestFilesLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 12,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `request-files:${req.workerSession?.sessionId || 'anon'}`,
+  });
+  // The requests this session builds on its own app: what its work order
+  // linked, plus every request a bot run for this session recorded.
+  async function sessionRequestScope(sessionId) {
+    const { rows: [row] } = await pool.query(
+      `SELECT cs.app_id, a.repo_url,
+              COALESCE((
+                SELECT array_agg(DISTINCT n)
+                  FROM (
+                    SELECT unnest(COALESCE(cs.linked_issues, '{}'::integer[])) AS n
+                    UNION
+                    SELECT r.issue_number
+                      FROM homeroom_bot_runs r
+                     WHERE r.build_session_id = cs.id OR r.proposal_session_id = cs.id
+                  ) s
+                 WHERE n IS NOT NULL
+              ), '{}'::integer[]) AS numbers
+         FROM chat_sessions cs
+         JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1`,
+      [sessionId],
+    );
+    if (!row) return null;
+    return { appId: Number(row.app_id), repo: repoRef.ownerRepo(row.repo_url), numbers: (row.numbers || []).map(Number) };
+  }
+  // `from` is 'request' (a file carried onto the request) or 'discussion' (a
+  // file somebody posted in its thread). Null when the request carries none.
+  async function requestFilesFor(scope, number) {
+    const n = Number(number);
+    if (!scope || !Number.isInteger(n) || n <= 0 || !scope.numbers.includes(n)) return [];
+    const out = [];
+    if (scope.repo) {
+      const { rows } = await pool.query(
+        `SELECT id, filename, size_bytes, content_type FROM issue_files
+          WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number = $3
+          ORDER BY created_at, id`,
+        [scope.repo.owner, scope.repo.repo, n],
+      );
+      for (const row of rows) {
+        out.push({ id: String(row.id), name: String(row.filename), size: Number(row.size_bytes) || 0, contentType: String(row.content_type || ''), from: 'request' });
+      }
+    }
+    const { rows: posted } = await pool.query(
+      `SELECT a.id, a.filename, a.size_bytes, a.content_type
+         FROM chat_message_attachments a
+         JOIN chat_messages m ON m.id = a.message_id
+        WHERE a.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+        ORDER BY a.created_at, a.id`,
+      [scope.appId, n],
+    );
+    for (const row of posted) {
+      out.push({ id: String(row.id), name: String(row.filename), size: Number(row.size_bytes) || 0, contentType: String(row.content_type || ''), from: 'discussion' });
+    }
+    return out;
+  }
+  router.get('/api/internal/sessions/:sessionId/request-files/:id', visibleChangesAuth, requestFilesLimiter, async (req, res) => {
+    const sessionId = ownSession(req, res);
+    if (!sessionId) return undefined;
+    const id = String(req.params.id || '');
+    const notFound = () => res.status(404).json({ ok: false, code: 'not_found', message: 'This request carries no such file.' });
+    if (!/^[a-f0-9]{32}$/.test(id)) return notFound();
+    try {
+      const scope = await sessionRequestScope(sessionId);
+      if (!scope || !scope.numbers.length) return notFound();
+      let row = null;
+      if (scope.repo) {
+        // A file carried onto the request (services/homeroom-bot-mayor.js
+        // copyRequestFiles): stamped with its owner, repo and number.
+        const { rows } = await pool.query(
+          `SELECT filename, content_type, data FROM issue_files
+            WHERE id = $1 AND issue_owner = $2 AND issue_repo = $3 AND issue_number = ANY($4::int[])`,
+          [id, scope.repo.owner, scope.repo.repo, scope.numbers],
+        );
+        row = rows[0] || null;
+      }
+      if (!row) {
+        // A file somebody posted in the request's own discussion.
+        const { rows } = await pool.query(
+          `SELECT a.filename, a.content_type, a.data
+             FROM chat_message_attachments a
+             JOIN chat_messages m ON m.id = a.message_id
+            WHERE a.id = $1 AND a.app_id = $2 AND m.thread_type = 'issue'
+              AND m.thread_ref = ANY($3::int[])
+              AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL`,
+          [id, scope.appId, scope.numbers],
+        );
+        row = rows[0] || null;
+        if (row) {
+          // The chat's own rule, checked again at the moment it is served.
+          const attachments = require('../services/attachments');
+          const check = /\.zip$/i.test(String(row.filename || ''))
+            ? attachments.validateUpload({ filename: row.filename, data: row.data })
+            : attachments.validateChatUpload({ filename: row.filename, data: row.data });
+          if (!check.ok) {
+            return res.status(413).json({ ok: false, code: 'too_large', message: check.error });
+          }
+        }
+      }
+      if (!row || !row.data) return notFound();
+      res.set('Content-Type', row.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('X-File-Name', encodeURIComponent(String(row.filename || 'file')));
+      return res.send(row.data);
+    } catch (err) {
+      log.error('internal-api', 'A request\'s file read failed', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'internal_error', message: 'The file could not be read just now.' });
+    }
+  });
+
   // The app-host gate (services/edge-gate.js): Caddy's forward_auth and the
   // Kubernetes gate proxy (scripts/app-gate.js) both ask here.
   router.get('/__caddy/access', async (req, res) => {
@@ -630,10 +752,20 @@ function internalRoutes(_config) {
       const threadFields = thread.messages.length
         ? { usernodeThread: thread.messages, usernodeThreadTruncated: thread.truncated }
         : {};
+      // #7136: the files this request carries, and the ones posted in its
+      // own discussion, so the build knows what it can save and with which
+      // id (worker/usernode-file). Left out when there are none.
+      let fileFields = {};
+      try {
+        const files = await requestFilesFor(await sessionRequestScope(sessionId), req.params.number);
+        if (files.length) fileFields = { files };
+      } catch (err) {
+        log.warn('internal-api', 'A request\'s file list could not be read', { sessionId, err: err.message });
+      }
 
       const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
-        return res.json({ ok: true, issue: null, ...threadFields, note: 'no repo' });
+        return res.json({ ok: true, issue: null, ...threadFields, ...fileFields, note: 'no repo' });
       }
       const { owner, repo } = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
@@ -652,6 +784,7 @@ function internalRoutes(_config) {
         comments,
         commentsTruncated: truncated,
         ...threadFields,
+        ...fileFields,
         ...(note ? { note } : {}),
         ...(rawComments.note ? { commentsNote: rawComments.note } : {}),
       });

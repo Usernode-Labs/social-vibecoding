@@ -29,6 +29,14 @@
 #                              questions there as often as on GitHub);
 #                              also resolves recently-closed issues
 #
+# #7136: the issue's response also carries `files` — the files the request
+# carries and the ones posted in its own discussion, each
+# { id, name, size, contentType, from: "request" | "discussion" } — absent
+# when there are none. Save one into the working tree with
+#   usernode-file --from <id> --out <path>
+# and do with it whatever the build needs (unzip is in this image); adding
+# it to the app is the change's own decision, not the platform's.
+#
 # Endpoints: GET /api/internal/sessions/$SESSION_ID/issues
 #            GET /api/internal/sessions/$SESSION_ID/issues/<number>
 #   Authorization: Bearer $ISSUES_JWT

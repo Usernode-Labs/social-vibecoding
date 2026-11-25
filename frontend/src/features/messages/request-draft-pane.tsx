@@ -41,7 +41,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useDetailCard, useDetailLabel } from '../detail/detail-card';
 import * as api from './api';
 import { OfferRefused, refusalOf, type OfferRefusal } from './bot-question';
-import { MessageMarkdown } from './format';
+import { MessageMarkdown, fileSize } from './format';
 
 const ICON = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800';
 /** The label over a panel of the list beside the words: the shell's small caps, without a list's own gutter. */
@@ -65,16 +65,17 @@ export interface DraftCopy {
 
 /** Pure: whether a draft carries anything to list beside its words. */
 export function draftHasExtras(extras: api.RequestDraftExtras | null | undefined): boolean {
-  return !!extras && (extras.undecided.length > 0 || extras.doneWhen.length > 0 || extras.related.length > 0
+  return !!extras && (extras.files.length > 0 || extras.undecided.length > 0 || extras.doneWhen.length > 0 || extras.related.length > 0
     || !!extras.where.request || !!extras.where.saw);
 }
 
 /** One panel of the list beside the words: its label, then its lines in a quiet card. */
-function Panel({ kind, label, children }: { kind: string; label: string; children: ReactNode }): ReactNode {
+function Panel({ kind, label, children, note }: { kind: string; label: string; children: ReactNode; note?: ReactNode }): ReactNode {
   return (
     <div className="request-draft-panel" data-draft-panel={kind}>
       <SectionHeader className={PANEL_LABEL}>{label}</SectionHeader>
       <ul>{children}</ul>
+      {note ? <p className="request-draft-note">{note}</p> : null}
     </div>
   );
 }
@@ -156,6 +157,18 @@ export function RequestDraftPane({ actionId, copy, seq = 0, onClose, closeAs = '
           </div>
           {rail && extras ? (
             <div className="request-draft-rail" data-draft-extras="">
+              {/* #7136: what it carries onto the request, before anything else:
+                  the one thing a person checks before filing a zip. */}
+              {extras.files.length ? (
+                <Panel kind="files" label={t('messages:draft.pane.files')} note={t('messages:draft.pane.filesNote')}>
+                  {extras.files.map((file, index) => (
+                    <li key={index}>
+                      {file.name}
+                      <small>{fileSize(file.size)}</small>
+                    </li>
+                  ))}
+                </Panel>
+              ) : null}
               {extras.undecided.length ? (
                 <Panel kind="undecided" label={t('messages:draft.pane.undecided')}>
                   {extras.undecided.map((line, index) => <li key={index}>{line}</li>)}

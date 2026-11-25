@@ -298,6 +298,10 @@ COPY usernode-screen /usr/local/bin/usernode-screen
 # saves one a request links; written into the working tree. Build mode only
 # (WORKER_JWT); the platform makes, bills and checks it.
 COPY usernode-image /usr/local/bin/usernode-image
+# usernode-file (#7136): a build saves a file its request carries into the
+# working tree (usernode-issues <number> lists them with their ids). Build
+# mode only (WORKER_JWT); it writes nothing outside the working tree.
+COPY usernode-file /usr/local/bin/usernode-file
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -328,6 +332,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-progress \
               /usr/local/bin/usernode-screen \
               /usr/local/bin/usernode-image \
+              /usr/local/bin/usernode-file \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
