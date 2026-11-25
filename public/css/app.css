@@ -38878,6 +38878,80 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
      an ink pill on a light track; the tab bar's sun pill slides; rows 16/14 on
      a phone and 15/13 from 768px; the cream wash behind cards on every tab. ══ */
 /* ── ONE LOOK · SHARED PARTS ── */
+/* The values every area below draws with, declared once, in light and in dark. */
+html:not([data-skin]) {
+  --one-ink: #121a0e;              /* words */
+  --one-ink-2: #5b5e55;            /* a row's second line, a time */
+  --one-ink-3: #8d9087;            /* a placeholder, a chevron */
+  --one-sun: #ffee6f;              /* the main action, and where you are */
+  --one-sun-pale: #fff4b3;         /* a lit row inside a page (Settings' open section) */
+  --one-sky: #3c7bd8;              /* the bars */
+  --one-sky-ink: #1f5fbf;          /* a secondary action's words */
+  --one-sky-tint: #e8effa;         /* a secondary action's fill, a tag's fill */
+  --one-red: #b4321e;
+  --one-red-tint: #fbe7e3;
+  --one-surface: #ffffff;          /* a card */
+  --one-hair: rgb(18 26 14 / 0.08);   /* a card's one hairline */
+  --one-line: rgb(18 26 14 / 0.10);   /* a separator between rows */
+  --one-field-line: rgb(18 26 14 / 0.14); /* a search field's or a chip's hairline */
+  --one-quiet: rgb(18 26 14 / 0.06);  /* a quiet fill: a segmented track, a quiet tag */
+  --one-edge-line: var(--wip-btn-line, #121a0e);
+  --one-edge: inset 0 0 0 1px var(--one-edge-line), 2px 2px 0 0 var(--one-edge-line);       /* the sticker edge */
+  --one-edge-sm: inset 0 0 0 1px var(--one-edge-line), 1.5px 1.5px 0 0 var(--one-edge-line);
+  --one-press: translate(2px, 2px);  /* a sticker pressed onto its edge */
+  --one-tag-bg: var(--one-sky-tint);
+  --one-tag-ink: var(--one-sky-ink);
+  --one-tag-strong-bg: #121a0e;      /* a count that asks for you ("1 to vote") */
+  --one-tag-strong-ink: #ffffff;
+  --one-tag-grey-bg: #7d8077;        /* a count of what is new ("3 new") */
+  --one-tag-grey-ink: #ffffff;
+  --one-seg-track: var(--one-quiet);
+  --one-seg-thumb: #121a0e;
+  --one-seg-ink: var(--one-ink-2);
+  --one-seg-on-ink: #ffffff;
+  --one-bubble-in: #f6f2d8;          /* their words */
+  --one-bubble-out: #e3eefc;         /* yours */
+  --one-tile-y-bg: #fdf2c2; --one-tile-y-ink: #7a5c00;   /* Needs you */
+  --one-tile-b-bg: #e2ecfb; --one-tile-b-ink: #2f6fd1;   /* Workshop */
+  --one-tile-g-bg: #e1f1dd; --one-tile-g-ink: #2f7a3b;   /* a discussion, a step done */
+  --one-points: #9a3412;             /* a challenge's points */
+  --one-progress: #cfe0fa;           /* a challenge's progress fill */
+  --one-row-title: 600 16px/21px var(--wip-font, inherit);
+  --one-row-sub: 400 14px/19px var(--wip-font, inherit);
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) {
+    --one-row-title: 600 15px/20px var(--wip-font, inherit);
+    --one-row-sub: 400 13px/18px var(--wip-font, inherit);
+  }
+}
+html:not([data-skin]).dark {
+  --one-ink: #fffeea;
+  --one-ink-2: #c9c8b4;
+  --one-ink-3: #8f8f80;
+  --one-sun-pale: rgb(255 238 111 / 0.16);
+  --one-sky-ink: #a8c4ff;
+  --one-sky-tint: rgb(122 165 255 / 0.18);
+  --one-red: #ff9c8a;
+  --one-red-tint: rgb(255 156 138 / 0.16);
+  --one-surface: var(--wip-card-bg, #171715);
+  --one-hair: rgb(255 254 234 / 0.10);
+  --one-line: rgb(255 254 234 / 0.12);
+  --one-field-line: rgb(255 254 234 / 0.18);
+  --one-quiet: rgb(255 254 234 / 0.08);
+  --one-tag-strong-bg: #fffeea;
+  --one-tag-strong-ink: #121a0e;
+  --one-tag-grey-bg: #5c5f57;
+  --one-seg-thumb: #fffeea;
+  --one-seg-on-ink: #121a0e;
+  --one-bubble-in: var(--dc-raised, #2c2c2e);
+  --one-bubble-out: rgb(122 165 255 / 0.20);
+  --one-tile-y-bg: rgb(255 238 111 / 0.16); --one-tile-y-ink: #ffe680;
+  --one-tile-b-bg: rgb(122 165 255 / 0.18); --one-tile-b-ink: #a8c4ff;
+  --one-tile-g-bg: rgb(159 212 154 / 0.16); --one-tile-g-ink: #9fd49a;
+  --one-points: #ffb38a;
+  --one-progress: rgb(122 165 255 / 0.30);
+}
 /* ── END ONE LOOK · SHARED PARTS ── */
 
 /* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
