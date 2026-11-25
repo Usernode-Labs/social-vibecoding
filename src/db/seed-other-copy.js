@@ -76,8 +76,16 @@ async function applySeedsToOtherCopy(databaseUrl, config, { seeds = null } = {})
     query_timeout: 60_000,
     application_name: require('./connection-options').connectionName('shots-seeds-read'),
   });
-  await client.connect();
-  await reader.connect();
+  try {
+    await client.connect();
+    await reader.connect();
+  } catch (error) {
+    // Whichever of the two connections opened is closed here: a failure to
+    // reach the before copy must not leave one held open.
+    await client.end().catch(() => {});
+    await reader.end().catch(() => {});
+    throw error;
+  }
   stagingMedia.useOtherCopy(reader);
   const applied = [];
   const leftOut = [];
