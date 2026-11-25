@@ -17301,11 +17301,15 @@ async function seedStagingCountedCredit(pool, config) {
     // never had. Their merged/live times move with the credit's own
     // activity_at above: the season event's window is refreshed to "now" on
     // every boot, and a fixture left behind it would drop out of the list.
+    // Fixture rows only: a row the proposal or merge-followups machine holds
+    // is the machine's, and this seed leaves it alone.
     await pool.query(
       `UPDATE chat_sessions
           SET promoted_at = COALESCE(promoted_at, merged_at, created_at),
               merged_at = NOW(), live_at = NOW()
-        WHERE app_id = $1 AND branch_name LIKE 'staging-fixture/counted-credit%'`,
+        WHERE app_id = $1 AND branch_name LIKE 'staging-fixture/counted-credit%'
+          AND NOT wf_holds('proposal', 'session:' || id)
+          AND NOT wf_holds('merge-followups', 'session:' || id)`,
       [apps[0].id]
     );
     await pool.query(
