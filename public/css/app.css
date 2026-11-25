@@ -39320,6 +39320,8 @@ html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marke
     box-shadow: none;
     color: var(--one-back-ink);
   }
+  html:not([data-skin]):not(.un-android) #platform-header #back-btn > svg,
+  html:not([data-skin]) #platform-header .nav-drawer-back > svg { width: 20px; height: 20px; stroke-width: 2.2; }
   html:not([data-skin]):not(.un-android) #platform-header #back-btn:active,
   html:not([data-skin]) #platform-header .nav-drawer-back:active { filter: var(--one-flat-dim); }
   /* Beside the disc the bar steps in as the mock draws it: the disc 8px from the screen's edge (the bar's own 16px
@@ -39586,10 +39588,7 @@ html:not([data-skin]) #ai-screen .ai-drawer-thread:has(> .ai-drawer-pane [data-b
 html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] { background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header { display: none; }
 html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-starts { margin-block: 0 auto; padding: 26px 16px 12px; }
-/* The bar's back disc while New chat is up: the plain white disc, its chevron in the ink. */
-html:not([data-skin]) body:has(#ai-screen:not(.hidden) .ai-drawer [data-bot-new-thread-pane]) #platform-header .nav-drawer-back {
-  width: 36px; height: 36px; border: 0; background: #ffffff; color: #121a0e;
-}
+/* The bar's back disc while New chat is up is the shared one (SHARED PARTS, THE TOP BAR). */
 
 /* From 768px, docked beside the list: New chat is ONE card, its head inside it over a hairline. */
 html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
@@ -40043,18 +40042,8 @@ html:not([data-skin]) .messages-message.messages-message-bubble.messages-message
 
 /* ── The bar over Messages on a phone ── */
 /* Over a conversation the bar says Messages beside the way back (index.tsx barWords), alone on its line, and the way
-   back is the plain white disc with an ink chevron. */
+   back is the shared white disc (SHARED PARTS, THE TOP BAR). */
 html:not([data-skin]) body:has(#messages-screen:not(.hidden)) #platform-header .nav-drawer-title:has(> .nav-drawer-title-page:empty) { margin-top: -10px; }
-html:not([data-skin]) body:has(#messages-screen:not(.hidden)) #platform-header :is(.nav-drawer-back, #back-btn) {
-  width: 36px;
-  height: 36px;
-  margin-block: -4px;
-  margin-inline: -8px -10px;
-  border: 0;
-  background: #ffffff;
-  color: #121a0e;
-  box-shadow: none;
-}
 
 /* ── A request's replies: the same stream, inside the stream's own card ── */
 /* features/group-chat/transcript.tsx draws a request's (and a change's) replies as `.gc-msg` rows in `.dev-request-
@@ -40134,16 +40123,7 @@ html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="r
 /* ── THE BAR ON A PHONE, ON A PROJECT'S PAGES ── The community's colour stays on the bar (DrawerUntint lays the
    plain bar over it only while it slides). Back is the plain white disc with an ink chevron and no edge; the name is
    17/600, the place under it 12/500 at 82%. The bell and the Homeroom menu stay where they are. */
-html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-back {
-  width: 36px;
-  height: 36px;
-  margin: -4px;
-  border: 0;
-  background: #ffffff;
-  color: #121a0e;
-  box-shadow: none;
-}
-html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-back > svg { width: 20px; height: 20px; stroke-width: 2.2; }
+/* The back disc is the shared one (SHARED PARTS, THE TOP BAR). */
 html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-title-name { font-size: 17px; font-weight: 600; line-height: 1.15; letter-spacing: -0.006em; }
 html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-title-page { font-size: 12px; font-weight: 500; line-height: 1.2; color: rgb(255 255 255 / 0.82); }
 
