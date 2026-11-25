@@ -378,6 +378,15 @@ test('on a wide page the head is the thread column\'s, and the timeline stands l
   assert.match(CSS, /\.dev-request-rail-divider \{\s+display: block;\s+position: absolute;\s+z-index: 4;\s+top: var\(--pill-top\);/);
 });
 
+test('the project\'s tile centres its emoji or letter at the tile\'s own size (#7170)', () => {
+  for (const cls of ['dev-thread-bar-tile', 'dev-thread-kicker-tile']) {
+    assert.match(CSS, new RegExp(`\\.${cls} \\{[^}]*display: grid; place-items: center;`), `${cls} centres its content`);
+    assert.match(CSS, new RegExp(`\\.${cls} \\{[^}]*line-height: 1;`), `${cls} draws one line`);
+  }
+  assert.match(CSS, /\.app-icon-tile:is\(\.dev-thread-bar-tile, \.dev-thread-kicker-tile\) > span:not\(\.app-icon-wait\) \{ font-size: inherit; line-height: 1; \}/,
+    'the emoji follows the tile\'s size instead of its own 30px');
+});
+
 test('the head eases between its sizes and is measured only once it has settled (20 Nov 2026)', async () => {
   const at = CSS.indexOf('THE HEAD EASES (20 Nov 2026)');
   assert.ok(at > 0);

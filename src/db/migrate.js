@@ -548,6 +548,9 @@ const STAGING_SEEDS = Object.freeze([
   // the sidebar shows them and the eleventh joined but unpinned, so pinning
   // it is refused with the new number. Obviously fake, idempotent.
   stagingSeed('seedStagingPinnedCommunities', async (pool, config) => { await seedStagingPinnedCommunities(pool); }),
+  // #7170: one fake request in an emoji project, so a thread header's tile can
+  // be shot with an emoji in it. Obviously fake, idempotent.
+  stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2233,6 +2236,31 @@ async function seedStagingPinnedCommunities(pool) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging pinned communities seed failed', { message: err.message });
   } finally { tx.release(); }
+}
+
+// #7170's shots: a request's header draws the project's emoji in its tile. A
+// fresh staging copy has a request only in a project whose icon is a picture,
+// so one obviously fake request is seeded in the first of the emoji projects
+// above, for the shots' member fixture. Nothing here is a signal the code
+// reads to decide anything, and it is idempotent by app and number.
+async function seedStagingEmojiThreadRequest(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-pin-1'")).rows[0];
+    if (!app) return;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, 'Staging demo: a request in an emoji project',
+              'Staging demo: obviously fake. The project''s emoji sits in the thread header''s tile.',
+              u.id, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour'
+         FROM users u
+        WHERE u.username = 'usernode-capture'
+          AND NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [app.id, 9170],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging emoji thread request seed failed', { message: err.message });
+  }
 }
 
 // #7027's shots: an invitation to build is not a waiting invitation once its
@@ -18187,6 +18215,8 @@ module.exports = {
   seedStagingProfileProjects,
   // #7147: the eleven fake communities, ten pinned, the sidebar's shots need.
   seedStagingPinnedCommunities,
+  // #7170: the request in an emoji project the thread header's tile shot needs.
+  seedStagingEmojiThreadRequest,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   // #6284: the stopped-fix change the Testing card and Homeroom bot page
