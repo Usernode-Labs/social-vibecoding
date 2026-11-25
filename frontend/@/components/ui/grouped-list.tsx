@@ -189,7 +189,7 @@ export interface ListRowProps
   /**
    * Extra classes for the title line, merged over its defaults.
    *
-   * The default is a 650 weight at 15px, which is right for the rows this
+   * The default is a 600 weight at 16px (15px from 768px), which is right for the rows this
    * primitive was built for — a conversation, an app, a notification — where
    * the title is the row's subject and a subtitle sits under it. A settings MENU is the
    * other kind of grouped list: every row is one word, there are no subtitles,
@@ -200,6 +200,16 @@ export interface ListRowProps
   /** Optional layout hooks; defaults retain the standard single-line row. */
   contentClassName?: string;
   subtitleClassName?: string;
+}
+
+/**
+ * Whether a caller's classes for a line set a size of their own. Then the
+ * line is that size at every width: the desktop's step down (`md:`) is the
+ * default ramp's, and left in it would outrank the caller's size from 768px,
+ * because tailwind-merge keeps a breakpoint's class beside a plain one.
+ */
+function ownSize(extra?: string): boolean {
+  return !!extra && !cn('text-base', extra).split(' ').includes('text-base');
 }
 
 /**
@@ -237,13 +247,18 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     >
       {leading}
       <div className={cn('ui-lrow-tx min-w-0 flex-1', contentClassName)}>
-        {/* 15 OVER 13 (AGENTS.md, "Type and colour"). The title was 17px
+        {/* 16 OVER 14 ON A PHONE, 15 OVER 13 FROM 768px (AGENTS.md, "Type
+            and colour"; the design review of 25 Nov 2026). The title was 17px
             bold over a 15px subtitle: the size of a heading, on every row,
             so a list of five rows read as five headings and the one real
-            heading above them had nothing left to be louder with. 15px at
-            650 is the row's subject; 13px grey is the fact under it. */}
+            heading above them had nothing left to be louder with. Then it
+            was 15/650 over 13 everywhere, which on a phone read small beside
+            the system's own lists. Now the row's subject is 16px at 600 and
+            the fact under it 14px grey on a phone, a step down each at a
+            desktop's reading distance. */}
         <div className={cn(
-          'ui-lrow-t truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100',
+          'ui-lrow-t truncate text-base font-semibold leading-[1.3125rem] text-zinc-900 dark:text-zinc-100',
+          ownSize(titleClassName) ? null : 'md:text-[0.9375rem] md:leading-5',
           titleClassName,
         )}>{title}</div>
         {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
@@ -251,7 +266,11 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
             Discover rows' and the Me screen's meta lines. zinc-400 is 6.0 and
             5.2, and is still the quiet line under a bold title. */}
         {subtitle ? (
-          <div className={cn('ui-lrow-s mt-0.5 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
+          <div className={cn(
+            'ui-lrow-s mt-0.5 truncate text-sm leading-[1.1875rem] text-zinc-500 dark:text-zinc-400',
+            ownSize(subtitleClassName) ? null : 'md:text-[0.8125rem] md:leading-[1.125rem]',
+            subtitleClassName,
+          )}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (

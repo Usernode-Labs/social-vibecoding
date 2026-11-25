@@ -84,8 +84,6 @@ const MENU_HIDES = [
   // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
   // places stay, on their glyphs' corners (phone review #81, 23 Nov 2026).
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
-  // On a phone's bar the lit tab is its own sun pill, so the sliding marker is not drawn as well (phone review #106).
-  'html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker',
 ];
 
 function menuBlock() {
@@ -662,9 +660,17 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
     assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector.slice(0, 80)} writes a colour of its own; make it a --wip-btn-* token`);
     for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) assert.ok(declared.has(m[1]), `${m[1]} is declared in the block's token rules`);
   }
-  // The levels: the main action in the sun, the secondary in white, the destructive in red, a press onto the edge.
-  assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
+  // The levels (design review, 25 Nov 2026): the main action in the sun with the sticker edge, pressed onto it; the
+  // secondary and the destructive flat, in the shared sky and red tints, a press shrinking them a little.
+  assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: var\(--one-sky-tint\);[\s\S]*--wip-btn-2-ink: var\(--one-sky-ink\);[\s\S]*--wip-btn-bad-bg: var\(--one-red-tint\);[\s\S]*--wip-btn-bad-ink: var\(--one-red\);/);
   assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
+  assert.match(tokens[0].body, /--wip-btn-flat-press: scale\(0\.97\);/);
+  const level2 = all.find((r) => r.selector.includes('.border.border-zinc-300):is(.rounded') && /background: var\(--wip-btn-2-bg\);/.test(r.body));
+  assert.ok(level2, 'the level 2 rule is there');
+  assert.match(level2.body, /border-color: transparent;[\s\S]*box-shadow: none;/, 'level 2 is flat: no outline, no edge');
+  const bad = all.find((r) => r.selector.includes('.bg-red-500\\/10') && /background: var\(--wip-btn-bad-bg\);/.test(r.body));
+  assert.ok(bad, 'the destructive rule is there');
+  assert.match(bad.body, /border-color: transparent;[\s\S]*box-shadow: none;/, 'destructive is flat too');
   // Phone review S2 (23 Nov 2026): the label is the page's typeface, set once here.
   assert.match(tokens[0].body, /--wip-btn-font: var\(--wip-font\);/);
   assert.doesNotMatch(tokens[0].body, /Source Serif/);
