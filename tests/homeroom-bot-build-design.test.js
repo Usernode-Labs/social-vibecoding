@@ -318,8 +318,12 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     assert.match(declare.replace(/\n/g, ' '), /either seed it in this same change \(stored rows or a stored message, in the app's staging seed \(its IS_STAGING block; for Homeroom itself, the staging seeds in src\/db\/migrate\.js\)\) or declare impact "none" with a reason that names what the copies cannot do/);
     // And the order its spec ranked the work in.
     const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
-      'the record, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
+    // #7118: and its own logo and card picture, made with the first version.
+    const pictures = live.FIRST_VERSION_PICTURES_LINES.join('\n');
+    assert.ok(first.includes(pictures) && !other.includes('brand/card.png'));
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${pictures}\n`, '').replace(`${progress}\n`, '')
+      .replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
+      'the record, the pictures, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
