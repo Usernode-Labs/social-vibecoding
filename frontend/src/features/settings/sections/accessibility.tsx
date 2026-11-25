@@ -20,6 +20,8 @@
  *    Reading storage during render would mismatch the prerendered document.
  *  - Text size is a slider of five stops (#6510), a native range input in
  *    the accent, as the photo crop's zoom is. No new colours.
+ *  - The page opens with a Preview card (#6510): a sample drawn in the
+ *    choices below, with a line saying them in words. It sets nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -30,6 +32,7 @@ import { Switch } from '@/components/ui/switch';
 import { onPreviewsPref, previewsOn, setPreviewsOn } from '../../../lib/card-previews';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
+import { onReducedMotionChange, reducedMotion } from '../../../lib/reduced-motion';
 
 // The slider's five stops, smallest first, and what each stores: Normal
 // removes the key; the others store their name. `large` and `larger` are the
@@ -130,6 +133,86 @@ function TextSizeControl() {
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+/**
+ * The Preview card (#6510): a sample of the app (a heading with a dot, a
+ * sentence and a button) so a choice made below is seen where it is made.
+ *
+ * It sets nothing. Text size and contrast restyle it with the rest of the
+ * page, through the attributes the head module writes on <html>; the dot
+ * pulses under `motion-safe:`, so it stops for the Reduce motion switch and
+ * for the device's own prefers-reduced-motion alike. The card reads the
+ * settings only to say them in words on its last line, which a screen
+ * reader hears too.
+ *
+ * The first render has no last line: storage is client-only, as for the
+ * controls. The sample is a picture (aria-hidden), and its button is a span,
+ * so nobody tabs to it or takes it for a real vote.
+ */
+function PreviewCard() {
+  const t = useMessages('settings');
+  const [shown, setShown] = useState<{ percent: number; contrast: boolean; still: boolean } | null>(null);
+
+  const sync = useCallback(() => {
+    const current = window.Display?.getTextSize?.();
+    const size = TEXT_SIZES.includes(current as TextSize) ? (current as TextSize) : 'normal';
+    setShown({
+      percent: Math.round(SIZE_PERCENT[size]),
+      contrast: !!window.Display?.getContrast?.(),
+      still: reducedMotion(),
+    });
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    window.Display?.onChange?.(sync);
+    // The device's own setting changing, which Display.onChange does not see.
+    return onReducedMotionChange(sync);
+  }, [sync]);
+
+  useWindowEvent('usernode:settings-section', sync);
+
+  return (
+    <div
+      id="settings-accessibility-preview"
+      className="ui-card mb-6 rounded-[20px] bg-[color:var(--dc-sheet-solid)] p-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
+    >
+      <div aria-hidden="true">
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-600 motion-safe:animate-pulse" />
+          <span className="text-[0.9375rem] font-[650] text-zinc-900 dark:text-zinc-100">
+            {t('settings:accessibility.preview.sampleTitle')}
+          </span>
+        </div>
+        <p className="mt-1.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-500">
+          {t('settings:accessibility.preview.sampleText')}
+        </p>
+        <span className="mt-3 inline-flex items-center justify-center rounded-full bg-violet-600 px-4 py-1.5 text-[0.8125rem] font-semibold text-white">
+          {t('settings:accessibility.preview.sampleButton')}
+        </span>
+      </div>
+      <p
+        id="settings-accessibility-preview-summary"
+        aria-live="polite"
+        className="mt-3 text-xs text-zinc-500 dark:text-zinc-500"
+      >
+        {/* Three whole sentences as one text child: a bare {' '} between
+            them would not survive hydration. */}
+        {shown == null ? null : [
+          t('settings:accessibility.preview.summary.size', {
+            size: t('settings:accessibility.textSize.percent', { percent: shown.percent }),
+          }),
+          shown.contrast
+            ? t('settings:accessibility.preview.summary.contrastOn')
+            : t('settings:accessibility.preview.summary.contrastOff'),
+          shown.still
+            ? t('settings:accessibility.preview.summary.motionReduced')
+            : t('settings:accessibility.preview.summary.motionPlays'),
+        ].join(' ')}
+      </p>
     </div>
   );
 }
@@ -285,6 +368,10 @@ export function AccessibilitySection() {
   return (
     <div data-settings-section="accessibility" className="hidden">
       <div id="settings-accessibility-section">
+        <SectionHeading title={t('settings:accessibility.preview.title')}>
+          {t('settings:accessibility.preview.intro')}
+        </SectionHeading>
+        <PreviewCard />
         <SectionHeading title={t('settings:accessibility.textSize.title')}>
           {t('settings:accessibility.textSize.intro')}
         </SectionHeading>

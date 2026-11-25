@@ -1243,6 +1243,46 @@
     "text": "On, the sidebar stays beside an app you open, and the sidebar button at the top left hides it. Off, an app takes the whole window and has a close button instead.",
     "description": "Explanation under the \"Keep sidebar open in apps\" switch in Settings. \"Off\" and \"On\" are the two positions of that switch."
   },
+  "accessibility.preview.title": {
+    "text": "Preview",
+    "description": "Heading of the first part of Settings > Accessibility: a small sample card that shows how the choices on that page look."
+  },
+  "accessibility.preview.intro": {
+    "text": "A sample of how Homeroom looks with the choices below. They apply everywhere as soon as you pick them.",
+    "description": "Line under the Preview heading in Settings > Accessibility. The choices are the text size, High contrast and Reduce motion settings under it."
+  },
+  "accessibility.preview.sampleTitle": {
+    "text": "Weekend garden club",
+    "description": "Made-up name of a community, shown as sample heading text in the Preview card in Settings > Accessibility. Any short, neutral club name will do."
+  },
+  "accessibility.preview.sampleText": {
+    "text": "Three people voted on the new watering plan today.",
+    "description": "Made-up sentence shown as sample body text in the Preview card in Settings > Accessibility, under the sample heading."
+  },
+  "accessibility.preview.sampleButton": {
+    "text": "Vote",
+    "description": "Label of the sample button drawn in the Preview card in Settings > Accessibility. It is a picture of a button and does nothing."
+  },
+  "accessibility.preview.summary.size": {
+    "text": "Text size: {{size}}.",
+    "description": "First sentence of the last line of the Preview card in Settings > Accessibility. {{size}} is the chosen text size as a percentage, for example 125%."
+  },
+  "accessibility.preview.summary.contrastOn": {
+    "text": "High contrast is on.",
+    "description": "Sentence in the last line of the Preview card in Settings > Accessibility, when the High contrast switch is on."
+  },
+  "accessibility.preview.summary.contrastOff": {
+    "text": "High contrast is off.",
+    "description": "Sentence in the last line of the Preview card in Settings > Accessibility, when the High contrast switch is off."
+  },
+  "accessibility.preview.summary.motionPlays": {
+    "text": "Motion plays.",
+    "description": "Sentence in the last line of the Preview card in Settings > Accessibility, when animations are allowed, so the dot in the card pulses."
+  },
+  "accessibility.preview.summary.motionReduced": {
+    "text": "Motion is reduced, so moving things stay still.",
+    "description": "Sentence in the last line of the Preview card in Settings > Accessibility, when the Reduce motion switch is on or the device asks for less motion, so the dot in the card stays still."
+  },
   "accessibility.textSize.title": {
     "text": "Text size",
     "description": "Heading of the Text size part of Settings > Accessibility."

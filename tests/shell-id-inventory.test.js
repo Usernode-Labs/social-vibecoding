@@ -477,6 +477,8 @@ const ADDED_IDS = {
   'settings-high-contrast-note': 'The sentence under the High contrast switch (features/settings/sections/accessibility.tsx), named by the switch\'s aria-describedby so a screen reader reads it with the switch (#6510).',
   'settings-reduce-motion-note': 'The sentence under the Reduce motion switch, named by the switch\'s aria-describedby (#6510).',
   'settings-card-previews-note': 'The sentence under the Play previews switch, named by the switch\'s aria-describedby (#6510).',
+  'settings-accessibility-preview': 'The Preview card that opens Settings > Accessibility (features/settings/sections/accessibility.tsx, #6510): a sample heading, sentence and button drawn in the text size, contrast and motion picked below. It sets nothing.',
+  'settings-accessibility-preview-summary': 'The last line of that card, which says the text size, contrast and motion in words. Empty in the prerender: the settings are read in an effect.',
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────

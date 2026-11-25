@@ -358,6 +358,54 @@ test('each switch is read with the sentence under it', () => {
   }
 });
 
+// ── The Preview card (#6510) ─────────────────────────────────────────────
+
+test('the pane opens with a Preview card that shows the choices and sets nothing', () => {
+  const html = renderComponent(
+    'frontend/src/features/settings/sections/accessibility.tsx',
+    'AccessibilitySection',
+  );
+  const at = html.indexOf('id="settings-accessibility-preview"');
+  assert.ok(at >= 0, 'the Preview card renders');
+  assert.ok(at < html.indexOf('id="settings-text-size-track"'), 'above the text size slider');
+  assert.ok(html.indexOf(`>${message('settings:accessibility.preview.title')}</h3>`) < at,
+    'under its own heading');
+  const card = html.slice(at, html.indexOf('id="settings-text-size-track"'));
+  for (const key of ['sampleTitle', 'sampleText', 'sampleButton']) {
+    assert.ok(card.includes(message(`settings:accessibility.preview.${key}`)), `the sample shows ${key}`);
+  }
+  // The sample is a picture: hidden from a screen reader, nothing to press.
+  assert.match(card, /<div aria-hidden="true">/);
+  assert.doesNotMatch(card, /<button|<a |tabindex|<input/);
+  // The dot moves only while motion is allowed, by the same variant the rest
+  // of the shell uses (the Reduce motion switch and the device's setting).
+  assert.match(card, /motion-safe:animate-pulse/);
+  assert.doesNotMatch(card.replace(/motion-safe:animate-pulse/g, ''), /animate-/);
+  // Storage is read in an effect, so the prerendered last line is empty.
+  assert.match(card, /<p id="settings-accessibility-preview-summary" aria-live="polite"[^>]*><\/p>/);
+});
+
+test('the Preview card reads the settings, and hears each of them change', () => {
+  const src = sectionSrc();
+  const card = src.slice(src.indexOf('function PreviewCard()'), src.indexOf('function HighContrastRow()'));
+  assert.ok(card.length > 0);
+  assert.match(card, /window\.Display\?\.getTextSize\?\.\(\)/);
+  assert.match(card, /window\.Display\?\.getContrast\?\.\(\)/);
+  assert.match(card, /still: reducedMotion\(\)/, 'the switch or the device, as everywhere else');
+  assert.match(card, /window\.Display\?\.onChange\?\.\(sync\)/);
+  assert.match(card, /return onReducedMotionChange\(sync\)/, 'the device setting changing re-reads it');
+  assert.match(card, /useWindowEvent\('usernode:settings-section', sync\)/);
+  assert.doesNotMatch(card, /Display\?\.set[A-Z]/, 'it sets nothing');
+  assert.match(card, /useState<[^>]*> \| null>\(null\)|useState<\{[^}]*\} \| null>\(null\)/,
+    'nothing is said before the settings are read');
+  for (const key of ['title', 'intro', 'sampleTitle', 'sampleText', 'sampleButton',
+    'summary.size', 'summary.contrastOn', 'summary.contrastOff', 'summary.motionPlays', 'summary.motionReduced']) {
+    assert.ok(message(`settings:accessibility.preview.${key}`), `${key} resolves in the English catalog`);
+    assert.ok(src.includes(`'settings:accessibility.preview.${key}'`), `${key} is used`);
+  }
+  assert.equal(message('settings:accessibility.preview.summary.size'), 'Text size: {{size}}.');
+});
+
 test('the project page is the main landmark, like every other screen', () => {
   const html = renderComponent('frontend/src/features/app-frame/app-view-island.tsx', 'AppViewIsland');
   const root = html.match(/<div id="app-view"[^>]*>/);
