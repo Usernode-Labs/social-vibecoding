@@ -595,6 +595,11 @@
       "id": "issue-files",
       "sha256": "9fd570174ee5518d62a1574b737126dd4ecd665e42188f2848c920ed685af3d4",
       "schemaSha256": "4d1a4e89d533b1bee56d0ca42cbaa88ed32e9df8b0438138bc4bcc60ddc6fc91"
+    },
+    {
+      "id": "app-access-tokens",
+      "sha256": "39066d0ba13af58381875d7fedc7a2a2b83e69cd9b2fef88f02514815500928d",
+      "schemaSha256": "1768a54e6eff72f92402ba47edbb1219aa49162d6e3b59789dbbe62ad42c8e38"
     }
   ]
 }

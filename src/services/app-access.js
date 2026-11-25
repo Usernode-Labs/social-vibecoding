@@ -481,7 +481,8 @@ async function getHostVisibility(pool, slug) {
   }
   const { rows } = await pool.query(
     `SELECT id, view_visibility, moderation_suspended_at,
-            (manifest_snapshot -> 'cookieFreeFrame') = 'true'::jsonb AS cookie_free_frame
+            (manifest_snapshot -> 'cookieFreeFrame') = 'true'::jsonb AS cookie_free_frame,
+            manifest_snapshot -> 'agentPaths' AS agent_paths
        FROM apps WHERE slug = $1`,
     [slug]
   );
@@ -496,6 +497,8 @@ async function getHostVisibility(pool, slug) {
     viewPrivate: rows[0].view_visibility === 'private',
     suspended: !!rows[0].moderation_suspended_at,
     cookieFreeFrame: rows[0].cookie_free_frame === true,
+    // Read again, not trusted: the snapshot is what a build stored.
+    agentPaths: require('./app-access-tokens').cleanAgentPaths(rows[0].agent_paths),
   };
   hostVisBySlug.set(slug, entry);
   return entry;

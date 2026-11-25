@@ -7,6 +7,8 @@ const { getPool } = require('../db/pool');
 const governance = require('../services/governance');
 const userDirectory = require('../services/user-directory');
 const communities = require('../services/communities');
+const appAccess = require('../services/app-access');
+const accessTokens = require('../services/app-access-tokens');
 const { listPublicApps } = require('../services/public-app-directory');
 const log = require('../services/logger');
 const { countedVotePredicateSql } = require('../services/pr-vote-revision');
@@ -19,6 +21,7 @@ const { countedVotePredicateSql } = require('../services/pr-vote-revision');
 //   GET /api/app-platform/v1/governance/feed
 //   GET /api/app-platform/v1/users/{lookup,search}
 //   GET /api/app-platform/v1/members
+//   GET|POST /api/app-platform/v1/access-tokens, DELETE …/access-tokens/:id
 //
 // Returns the CALLING app's own recent proposal/vote/merge activity so
 // apps can render live "what's changing" strips and changelogs instead
@@ -273,6 +276,106 @@ function appPlatformApiRoutes(config) {
         log.error('app-platform-api', 'Member list failed', { appId, message: err.message });
         res.status(500).json({ ok: false, error: 'Internal server error' });
       }
+    });
+
+  // ── Personal access tokens: a member's own assistant ──────────────
+  //
+  //   GET    /api/app-platform/access-tokens        the caller's live tokens
+  //   POST   /api/app-platform/access-tokens        { name } -> { token, … }
+  //   DELETE /api/app-platform/access-tokens/:id    revoke one of them
+  //
+  // services/app-access-tokens.js has the whole rule; the door that checks
+  // a token is services/edge-gate.js. The app's server asks on behalf of
+  // the member who is using it, so these need BOTH credentials: the app's
+  // own (production only, so a preview's unmerged code can never make a
+  // token good for the live app) and that member's identity. A token only
+  // ever acts as its own member on its own app's declared paths, which is
+  // no more than the app already holds while that member has it open.
+  const tokenAuth = appPlatformAuth(pool, { requireUser: true });
+  const tokenLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `app:${req.appPlatform?.appId || 'anon'}` +
+      `:user:${req.appPlatform?.userId || 'anon'}`,
+    handler: (req, res) => res.status(429).json({ ok: false, code: 'rate_limited' }),
+  });
+  // Only a member of the project who may see the app holds tokens for it.
+  const tokenMember = async (req, res, next) => {
+    const { appId, userId } = req.appPlatform;
+    try {
+      if (!(await communities.isMember(pool, appId, userId))
+          || !(await appAccess.isViewMember(pool, appId, userId))) {
+        return res.status(403).json({
+          ok: false,
+          code: 'not_a_member',
+          message: 'Only members of this project can use access tokens.',
+        });
+      }
+      return next();
+    } catch (err) {
+      log.error('app-platform-api', 'Access token member check failed', { appId, message: err.message });
+      return res.status(500).json({ ok: false, error: 'Internal server error' });
+    }
+  };
+  const tokenFail = (res, appId, what, err) => {
+    log.error('app-platform-api', what, { appId, message: err.message });
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  };
+
+  router.get(v1Paths('/access-tokens'), tokenAuth, tokenLimiter, tokenMember,
+    async (req, res) => {
+      const { appId, userId, appSlug } = req.appPlatform;
+      try {
+        const vis = await appAccess.getHostVisibility(pool, appSlug);
+        res.json({
+          tokens: await accessTokens.list(pool, { appId, userId }),
+          paths: vis?.agentPaths || [],
+          max: accessTokens.MAX_PER_MEMBER,
+        });
+      } catch (err) { tokenFail(res, appId, 'Access token list failed', err); }
+    });
+
+  router.post(v1Paths('/access-tokens'), tokenAuth, tokenLimiter, tokenMember,
+    require('express').json({ limit: '2kb' }),
+    async (req, res) => {
+      const { appId, userId, appSlug } = req.appPlatform;
+      try {
+        const vis = await appAccess.getHostVisibility(pool, appSlug);
+        if (!vis?.agentPaths?.length) {
+          return res.status(409).json({
+            ok: false,
+            code: 'no_agent_paths',
+            message: 'This app declares no agentPaths in dapp.json, so a token would open nothing.',
+          });
+        }
+        const made = await accessTokens.create(pool, { appId, userId, name: req.body?.name });
+        if (made.error === 'name_required') {
+          return res.status(400).json({ ok: false, code: 'name_required', message: 'Give the token a name.' });
+        }
+        if (made.error) {
+          return res.status(409).json({
+            ok: false,
+            code: made.error,
+            message: `A member can hold ${accessTokens.MAX_PER_MEMBER} tokens for one app. Revoke one first.`,
+          });
+        }
+        res.set('Cache-Control', 'no-store');
+        return res.status(201).json({ token: made.token, ...made.row, paths: vis.agentPaths });
+      } catch (err) { return tokenFail(res, appId, 'Access token create failed', err); }
+    });
+
+  router.delete(v1Paths('/access-tokens/:id'), tokenAuth, tokenLimiter,
+    async (req, res) => {
+      // No member check: somebody who has left can still take their own
+      // tokens away.
+      const { appId, userId } = req.appPlatform;
+      try {
+        const done = await accessTokens.revoke(pool, { appId, userId, id: req.params.id });
+        if (!done) return res.status(404).json({ ok: false, code: 'not_found' });
+        return res.json({ ok: true });
+      } catch (err) { return tokenFail(res, appId, 'Access token revoke failed', err); }
     });
 
   router.get(v1Paths('/governance/feed'), auth, feedLimiter, async (req, res) => {

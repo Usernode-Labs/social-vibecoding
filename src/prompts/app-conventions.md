@@ -2596,6 +2596,53 @@ const { members, has_more } = await resp.json();
   list for a minute rather than asking on every request. `?limit=` defaults
   to 100, at most 200; `has_more` says there are more.
 
+## A member's own assistant: personal access tokens
+
+A member can let their own assistant (an MCP client, a script) call the app
+at the app's own address, with no browser. Homeroom makes the token and
+checks it at the app's door on every request, so the app never meets a
+caller Homeroom has not vouched for. Do not build your own tokens for this.
+
+1. **Declare the path** in `dapp.json`: `"agentPaths": ["/mcp"]` (at most 3,
+   plain paths; a token works on each path and under it, nowhere else). It
+   is part of the app the group votes on.
+2. **Make a token for the member who is using the app**, from the app's
+   server, with both credentials:
+
+   ```js
+   const headers = {
+     'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+     'x-usernode-user-token': userTokenFromThisRequest,
+     'content-type': 'application/json',
+   };
+   const made = await fetch(`${PLATFORM_API_BASE}/access-tokens`,
+     { method: 'POST', headers, body: JSON.stringify({ name: 'My laptop' }) });
+   // 201 { token: 'hrat_…', id, name, hint, created_at, last_used_at, paths }
+   ```
+
+   Show `token` once and never store it: Homeroom keeps only a hash.
+   `GET /access-tokens` lists that member's live tokens
+   (`{ tokens: [{ id, name, hint, created_at, last_used_at }], paths, max }`)
+   and `DELETE /access-tokens/:id` revokes one. Only a member of the project
+   gets an answer (`403 not_a_member` otherwise); a member holds at most 10.
+3. **Read the caller as you read anyone.** The assistant sends
+   `Authorization: Bearer hrat_…` to a declared path. A request that passes
+   reaches the app with that member's identity in `x-usernode-token`, so
+   `req.user` is set. That identity only names the member: the AI proxy,
+   file storage, `/users/*` and `/members` refuse it, so keep the names you
+   need from members' own visits. A call on a declared path is the member's
+   assistant; anything it writes should say so.
+
+- **The door refuses everything else with a bare 401**: no token, a wrong or
+  revoked one, another app's, a path that was not declared, and a token
+  whose owner has left the project or can no longer see the app (their
+  tokens are then revoked). The app never sees those requests.
+- **Production only.** A preview has no app credential, so it cannot make a
+  token, and a token never opens a preview. Show the token screen with a
+  plain "works on the live app" note there, and seed nothing for it.
+- A declared path still needs the app's own `req.user` check: add it to no
+  public list. The scaffold's deny-by-default middleware already covers it.
+
 ## Your people's data: account deletion and export
 
 When a person deletes their Homeroom account, the platform erases what it
