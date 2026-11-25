@@ -49,6 +49,73 @@ test('the seed runner walks the list in order, background seeds included, and sk
   assert.deepEqual(phases, ['coreSeedMs'], 'the phase boundary inside the list still fires');
 });
 
+// The exact list main ran inline, in its order, kept here so the extraction
+// cannot drop or reorder a seed: a missing one would leave a fresh copy without
+// the demo data its declared checks read, which no other test would catch.
+const BOOT_ORDER = [
+  'reservePreviewReviewerIds', 'seedAdmin', 'seedCaptureUser',
+  'seedCaptureAdminUser', 'seedStagingLongInbox', 'seedStagingDemoUser',
+  'seedStagingAdminDetailsUser', 'seedStagingSupportUser', 'seedStagingDuplicateUser',
+  'seedSelfApp', 'seedTermsVersions', 'seedStagingPrivateRequest',
+  'seedStagingCollabOnlyVote', 'seedStagingJoinedBuildOffer', 'seedStagingNamedInThread',
+  'seedStagingBotWaitingRows', 'seedStagingBotHandedBackFix', 'seedStagingChangePictures',
+  'seedStagingChangeClaim', 'seedStagingBotAlreadyWorks', 'seedStagingBotGoneCloseOffer',
+  'seedStagingBotWrongProject', 'seedStagingBotOutdatedReason', 'seedStagingClosedPrivateThread',
+  'seedStagingShortPrivateThread', 'seedStagingBotReportReply', 'seedStagingBotFailureNotes',
+  'seedStagingMainChatLastVisit', 'seedStagingFoldedLiveNotifications', 'seedStagingStorageNotices',
+  'seedStagingLiveDraftThread', 'seedStagingLimitRefusals', 'seedStagingDesignThread',
+  'seedStagingCapturedPageThread', 'seedStagingArtifactsThread', 'seedStagingBotPlanWaiting',
+  'seedStagingBotPlanSettled', 'seedStagingBotFollowUp', 'seedStagingBotOverlap',
+  'seedStagingBotOverlapBuilt', 'seedStagingBotTellMeWhen', 'seedStagingBotReplyWaiting',
+  'seedStagingBotStaleDescription', 'seedStagingClosedGoingLive', 'seedStagingBotFixesStopped',
+  'seedStagingBotFixesPlatform', 'seedStagingOwnChangeWaitingOnFix', 'seedStagingOwnChangeTakingScreenshots',
+  'seedStagingOwnChangeWaitingOnVote', 'seedStagingReadyDraftChange', 'seedStagingClosesListFixture',
+  'seedStagingMergedThreads', 'seedStagingBotUpdateComing', 'seedStagingNewerPlan',
+  'seedConfigs', 'upgradeSeedConfigs', 'fillLaterStages',
+  'seedStagingTranslations', 'seedStagingNotifications', 'seedStagingPushDeliveries',
+  'seedStagingAdminConsoleData', 'seedStagingHelperCalls', 'seedStagingEnvProposal',
+  'seedStagingMergedPrs', 'seedStagingReportSnapshots', 'seedStagingSmallChangeTags',
+  'seedStagingMyOpenPr', 'seedStagingAdminNoPr', 'seedStagingApproverNoPr',
+  'seedStagingImportedPrProposal', 'seedStagingChecksAdvisoryCard', 'seedStagingExternalAgentProposal',
+  'seedStagingRestartEligibleMerge', 'seedStagingGithubChecksHold', 'seedStagingPlatformLimit',
+  'seedStagingOtherUserProposal', 'seedStagingTopicScrollThreads', 'seedStagingGroupedFollowOns',
+  'seedStagingArchiveProposalFixtures', 'seedStagingActiveSessions', 'seedStagingSharedSession',
+  'seedStagingChangeBuiltForRequest', 'seedStagingChangeAlsoCloses', 'seedStagingDiscussionContext',
+  'seedStagingBotCloseOffer', 'seedStagingDemoAppCard', 'seedStagingLandingDirectory',
+  'seedStagingAppCategories', 'seedStagingInferredCategories', 'seedStagingFailedApp',
+  'seedStagingForkLineage', 'seedStagingDemoMode', 'seedStagingMembersPanel',
+  'seedStagingUserDirectory', 'seedStagingApproverPanel', 'seedStagingAppAdminsPanel',
+  'seedStagingReadonlyDevTab', 'seedStagingQuietDiscussion', 'seedStagingVoteCardChat',
+  'seedStagingBotProjectNotification', 'seedStagingWeeklyDigestRow', 'seedStagingBotAllowanceWarning',
+  'seedStagingYourApps', 'seedCatalog', 'seedStagingAppGroups',
+  'seedChangedStarters', 'seedStagingBrowseCardBranches', 'seedStagingAppSortSignals',
+  'seedStagingFeaturedApps', 'seedStagingFeaturedKinds', 'seedStagingAppQuotaUsers',
+  'seedStagingHomeLayout', 'seedStagingViewOnlyAdmin', 'seedStagingWalletUsers',
+  'seedStagingEmailCodeAccounts', 'seedStagingCustomDomains', 'seedStagingWaitingIllustration',
+  'seedStagingPublicApiContributors', 'seedStagingVisuals', 'seedStagingShotsNoticed',
+  'seedStagingShotsScreens', 'seedStagingCompetingChanges', 'seedStagingShotsFailed',
+  'seedStagingLeaderboardProfile', 'seedStagingGeneralChannel', 'seedStagingMergedVoteRow',
+  'seedStagingLiveChangePrivateThread', 'seedStagingOlderFirstVersionThread', 'seedStagingFirstVersionBuildingThread',
+  'seedStagingRecentThreads', 'seedStagingRenamedChange', 'seedStagingScrollTestThread',
+  'seedStagingGroupInviteNote', 'seedStagingGroupFacesRows', 'seedStagingFollowUpBubbles',
+  'seedStagingOwnReviewChange', 'seedStagingGroupChatAttachments', 'seedStagingAppFiles',
+  'seedStagingComplicatedPlanSpec', 'seedStagingSpecUserShareFixtures', 'seedStagingChatEditFixtures',
+  'seedStagingBotChatRequest', 'seedStagingNewProjectOfferThread', 'seedStagingLlmUsage',
+  'seedStagingWeeklyCaps', 'seedStagingSpendDistribution', 'seedStagingCapReached',
+  'seedStagingAppCapApps', 'seedStagingSystemTokenUsage', 'seedStagingDashboardAdminSplit',
+  'seedStagingModerationCase', 'seedStagingAnalyticsCharts', 'seedStagingTopicAttributes',
+  'seedStagingSubmittedFeatures', 'seedStagingUserContentTranslations', 'seedStagingDbExports',
+  'seedStagingBench', 'seedStagingTaste', 'seedStagingStudio',
+  'seedStagingBotConfigs', 'seedStagingUnreadableReply', 'seedStagingPlatformEnv',
+  'seedStagingTopochain', 'seedStagingInviteChallengeStatuses', 'seedStagingFirstChallenges',
+  'seedStagingCountedCredit', 'seedStagingProfileCustomization', 'seedStagingProfileProjects',
+  'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingFeedback',
+];
+
+test('the extracted list is exactly the boot order main ran, seed for seed', () => {
+  assert.deepEqual(STAGING_SEEDS.map((entry) => entry.name), BOOT_ORDER);
+});
+
 test('migrate() runs the seeds through the exported runner', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'migrate.js'), 'utf8');
   assert.match(source, /await runStagingSeeds\(pool, config, \{ onPhase: finishPhase \}\);/);
