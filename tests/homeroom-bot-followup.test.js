@@ -1332,3 +1332,24 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
   await refresh();
   assert.deepEqual(inserts.map((e) => [e.payload.issueNumber, e.payload.reason]), [[24, bot.RETRY_FAILED_REASON]]);
 });
+
+// Request #7146: a revision is told the same, and how to say the visible part
+// is really gone.
+test('#7146: a revision is told a declaration covers the whole change against main', () => {
+  const replies = [{ where: 'proposal', via: 'homeroom', author: 'sam', body: 'make it darker', createdAt: '2026-09-26T11:20:00Z' }];
+  const prompt = followup.followUpPrompt({ seed: 'SEED', prNumber: 25, replies, canRevise: true });
+  assert.match(prompt, /declared visible changes and diagram describe the whole change against main, never one turn's commit/);
+  assert.match(prompt, /call neither declare_visible_changes nor declare_diagram/);
+  assert.match(prompt, /When it really removes everything a person would see, call declare_visible_changes with impact "none" and start its rationale with "Visible part removed:"\./);
+  // A turn that may not revise changes nothing, so it is told nothing about declaring.
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'SEED', prNumber: 25, replies, canRevise: false }), /Visible part removed:/);
+});
+
+test('#7146: a working line never stands alone: how a turn ended is said', () => {
+  assert.equal(followup.workingEndedText('platform'),
+    'Homeroom bot hit a problem on Homeroom\'s side before it could answer. It will try again on its own.');
+  assert.equal(followup.workingEndedText(null), 'Homeroom bot stopped without an answer this time.');
+  for (const text of [followup.workingEndedText('platform'), followup.workingEndedText()]) {
+    assert.ok(!/—|proposal|PR #/.test(text), text);
+  }
+});

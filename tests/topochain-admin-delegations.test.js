@@ -13,6 +13,7 @@
 'use strict';
 
 const test = require('node:test');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 const assert = require('node:assert/strict');
 const express = require('express');
 
@@ -355,14 +356,15 @@ test('index resolves ONE current claimant per period: no fan-out over duplicate 
   } finally { server.close(); }
 });
 
-test('a delegator without an avatar row gets avatar_url null, not a broken path', async () => {
+test('a delegator without an avatar row gets their generated picture, not a broken path', async () => {
   avatarRows = [];
   const { server, base } = await listen(buildApp('admin'));
   try {
     const body = await (await fetch(`${base}/api/v4/admin/delegations`)).json();
     const owned = body.data.find((r) => r.id === 1);
     assert.equal(owned.delegator.username, 'current-claimant');
-    assert.equal(owned.delegator.avatar_url, null);
+    // #7135: a known account always has a picture.
+    assert.equal(owned.delegator.avatar_url, generatedAvatarUrl(7));
   } finally { server.close(); }
 });
 

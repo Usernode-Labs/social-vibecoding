@@ -28,6 +28,8 @@
 // know about it. Requiring bounties.js here would be a cycle — it requires
 // THIS file for weekStartUtc — so the number is duplicated deliberately and
 // must be kept in step with it.
+const { generatedAvatarUrl } = require('./avatar-url');
+
 const DEFAULT_WEEKLY_KUDOS_LIMIT = 20;
 
 // Compute the Monday-00:00-UTC date that contains the given Date.
@@ -250,6 +252,14 @@ async function rankedUsers(pool, opts = {}) {
            ${limitClause}`,
     params
   );
+  // #7135: a member with no uploaded photo (or whose profile moderation
+  // disabled it) gets the picture generated from their account, in the same
+  // `avatar_url` shape as a photo. Slim mode has no column to fill.
+  if (!slim) {
+    for (const row of rows) {
+      if (row.avatar_url == null) row.avatar_url = generatedAvatarUrl(row.user_id);
+    }
+  }
   return rows;
 }
 

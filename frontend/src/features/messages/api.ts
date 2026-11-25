@@ -1589,7 +1589,15 @@ export interface DraftRelated {
  * requests it overlaps and where it happened. Every list is there, empty
  * when the draft has none.
  */
+/** #7136: a file a draft carries onto the request, as its pane lists it. */
+export interface RequestDraftFile {
+  name: string;
+  size: number;
+}
+
 export interface RequestDraftExtras {
+  /** One entry per file it carries, with its size in bytes. */
+  files: RequestDraftFile[];
   undecided: string[];
   doneWhen: string[];
   related: DraftRelated[];
@@ -1629,6 +1637,10 @@ export function draftExtras(value: unknown): RequestDraftExtras {
     });
   }
   return {
+    files: array(pick(data, 'files'))
+      .map((item) => record(item))
+      .map((item) => ({ name: text(pick(item, 'name')).trim(), size: Number(pick(item, 'size')) || 0 }))
+      .filter((item) => item.name !== ''),
     undecided: lines(pick(data, 'undecided')),
     doneWhen: lines(pick(data, 'doneWhen')),
     related,

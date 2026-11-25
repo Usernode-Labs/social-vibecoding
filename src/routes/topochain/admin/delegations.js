@@ -13,6 +13,7 @@
 const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
+const { avatarUrlFor } = require('../../../services/avatar-url');
 const { toIntId } = require('./util');
 const {
   ok, fail, iso, paginate, meta, ValidationError,
@@ -78,7 +79,7 @@ function formatDelegation(r) {
       user_id: Number(r.user_id),
       username: r.username ?? null,
       display_name: r.display_name ?? null,
-      avatar_url: r.avatar_id ? `/avatars/${r.avatar_id}` : null,
+      avatar_url: avatarUrlFor(r.avatar_id, r.user_id),
     } : null,
   };
 }

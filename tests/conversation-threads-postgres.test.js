@@ -52,6 +52,7 @@ const poolMod = require('../src/db/pool');
 poolMod.getPool = () => routePool;
 
 const conversations = require('../src/services/conversations');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 const notifications = require('../src/services/notifications');
 const { conversationRoutes } = require('../src/routes/conversations');
 
@@ -621,9 +622,9 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.deepEqual(thread.discussion, {
       appSlug: 'demo-app-5219', issueNumber: 18, more: false,
       messages: [
-        { id: visible[0].id, source: 'discussion', sender: { id: fan.id, username: fan.username, avatarUrl: null },
+        { id: visible[0].id, source: 'discussion', sender: { id: fan.id, username: fan.username, avatarUrl: generatedAvatarUrl(fan.id) },
           content: 'first word', createdAt: visible[0].created_at, editedAt: null },
-        { id: visible[1].id, source: 'discussion', sender: { id: viewer.id, username: viewer.username, avatarUrl: null },
+        { id: visible[1].id, source: 'discussion', sender: { id: viewer.id, username: viewer.username, avatarUrl: generatedAvatarUrl(viewer.id) },
           content: 'my own line', createdAt: visible[1].created_at, editedAt: null },
       ],
     }, 'people only, oldest first, with the mirror copy and the keyed note dropped');

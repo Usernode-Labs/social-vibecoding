@@ -917,6 +917,14 @@ function readVisibility(parsed) {
 // The browser-cache opt-out offlineCache.optedOut reads. Only a literal
 // false means anything; an absent key or any other value stays null, so a
 // manifest that says nothing keeps today's behaviour. Never throws.
+// dapp.json's `agentPaths`: the paths a member's personal access token may
+// be used on at the app's own address (services/app-access-tokens.js, whose
+// header has the whole rule). Null unless every entry is well formed.
+function readAgentPaths(parsed) {
+  const paths = require('./app-access-tokens').cleanAgentPaths(parsed?.agentPaths);
+  return paths.length ? paths : null;
+}
+
 function readOffline(parsed) {
   return parsed?.offline === false ? false : null;
 }
@@ -1537,6 +1545,7 @@ function read(cloneDir) {
     // A private app can opt in if its frame document bundles its startup
     // resources and its later requests authenticate with an app token.
     ...(parsed?.cookieFreeFrame === true ? { cookieFreeFrame: true } : {}),
+    ...(readAgentPaths(parsed) ? { agentPaths: readAgentPaths(parsed) } : {}),
   };
 }
 

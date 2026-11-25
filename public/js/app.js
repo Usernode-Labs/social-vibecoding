@@ -7781,6 +7781,17 @@ const App = {
   // page keeps no state of its own to leave, so nothing has to exit it: the
   // next screen's reveal hides it.
   navigateToAi() {
+    // #7140: the side panel's framed document never draws the bot's page.
+    // Its list belongs to the top window, and drawing it in the frame put a
+    // second, narrower copy beside the real one. Hand the address up in
+    // place: the top replaces its own entry with it and this frame is
+    // dropped with the panel.
+    if (App.embeddedPanel) {
+      const hash = String(location.hash || '').replace(/^#/, '');
+      const route = /^homeroom-bot(?:\/|$)/.test(hash) ? hash.split('?')[0] : 'homeroom-bot';
+      window.UsernodeReact?.sidePanelEmbed?.handTop?.(route);
+      return;
+    }
     if (App._revealedScreen === 'ai-screen' && !App.currentApp) return;
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     const leavingApp = !!App.currentApp;

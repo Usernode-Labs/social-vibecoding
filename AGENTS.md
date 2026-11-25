@@ -216,12 +216,13 @@ is no replay plan to write and nothing to verify locally.
   `focusTarget` locates the element to point at. Hints guide; they are never
   executed.
 - If a fresh staging copy lacks the state a change shows, seed it in the same
-  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches the
-  after copy, the side a new state needs. Seed rows for the shots' fixture
+  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches both
+  copies when main's schema can hold it. A seed that needs a table or column
+  main lacks reaches the after copy only. Seed rows for the shots' fixture
   accounts (`usernode-capture` is the member) and fake people, never a signal
   the code reads to decide something, and a bot's reply as the stored message,
-  never asked for. A change to a state that already existed needs it on both
-  sides: its seed merges first, in its own proposal.
+  never asked for. A change to a state that already existed can be seeded in
+  its own proposal too.
 - `impact: none` applies only when no user-visible state changes. Changed
   text, counts, loading, error, and status states need a `ui` change even if
   the code reuses existing markup and styles. If a required state can be
@@ -367,7 +368,7 @@ is no replay plan to write and nothing to verify locally.
   row's pin, before its count, keeps it at the top, and the header's name
   is only a name. **A sidebar pin is the account's**
   (`community_pins`, `services/community-pins.js`,
-  `/api/me/community-pins`), apart from Home's: a member's only, four at
+  `/api/me/community-pins`), apart from Home's: a member's only, ten at
   most, gone when they leave, made from a community's row (its pin, or
   right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
   (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour

@@ -40,7 +40,7 @@ test('Homeroom\'s answer lists the ready-made states; a child app\'s says it has
   assert.deepEqual(Object.keys(own.availableStates[0]), ['name', 'personas']);
   assert.match(own.dataNote, /src\/db\/migrate\.js/);
   assert.match(own.dataNote, /hints\.setup/);
-  assert.match(own.dataNote, /reaches only the after copy/);
+  assert.match(own.dataNote, /reaches the after copy, which is the side a state new in this proposal needs/);
   // A file to choose, and a loading or error state behind one request, the
   // shots agent reaches itself (upload_file, control_request).
   assert.match(own.dataNote, /chooses one of Homeroom's sample files \(landscape\.png, portrait\.png, table\.csv, document\.pdf\)/);
@@ -51,7 +51,7 @@ test('Homeroom\'s answer lists the ready-made states; a child app\'s says it has
   // What a seed may hold keeps the platform's seed rule.
   assert.match(own.dataNote, /A seed is idempotent and obviously fake: rows for the shots' fixture accounts \(usernode-capture is the member\) and fake people, never a signal the code reads to decide something\./);
   assert.match(own.dataNote, /which is the side a state new in this proposal needs: seed such a state in this proposal\./);
-  assert.match(own.dataNote, /A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\./);
+  assert.match(own.dataNote, /For Homeroom itself it also reaches the before copy when main's schema can hold it, so a change to a state that already existed can be seeded in its own proposal too/);
   assert.doesNotMatch(own.dataNote, /merged before this one/);
 
   const child = readyStates.declarationAdvice(declare(story('a', 'The list shows its items.')), { selfApp: false });
@@ -77,11 +77,11 @@ test('the states that cost changes their shots are ready-made on Homeroom\'s cop
   const child = warned(held, false);
   assert.equal(child.length, 3);
   assert.match(child[0], /^approval-chip seems to need a change waiting for approval, and this app's copies have no ready-made states\./);
-  assert.match(child[0], /or seed it in the app's own staging seed \(its IS_STAGING seed\)\. A seed this proposal adds reaches only the after copy/);
-  assert.match(child[0], /seed such a state in this proposal\. A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\./);
+  assert.match(child[0], /or seed it in the app's own staging seed \(its IS_STAGING seed\)\. A seed this proposal adds reaches the after copy/);
+  assert.match(child[0], /for another app such a change needs it on both copies, so its seed merges first, in its own proposal\./);
   // 18 Nov 2026 (#6822): said outright, since PR #6819's author declared a
   // state the copies lacked though this answer said where data comes from.
-  assert.match(child[0], /A claim about a screen that already exists \(a story whose baseState is "present"\) therefore needs a ready-made state these copies already hold, from availableStates: declare it against one, and a seed in this proposal cannot stand in for it\.$/);
+  assert.match(child[0], /A claim about a screen that already exists \(a story whose baseState is "present"\) therefore needs a ready-made state these copies already hold, from availableStates, or \(for Homeroom itself\) a seed in this proposal that both copies can hold: declare it against one\.$/);
   assert.match(readyStates.declarationAdvice(held, { selfApp: false }).dataNote, /A seed is idempotent and obviously fake/);
   assert.match(child[1], /^activity-times seems to need standings rows with recorded activities/);
   assert.match(child[2], /^bot-thanks seems to need an answered first-version plan/);
@@ -160,7 +160,7 @@ test('a change needing a state no ready-made state holds is warned about, once p
   ]);
   assert.match(warnings[0], /a member in their first session \(its tour\), and no ready-made state on these copies holds it \(see availableStates\)/);
   assert.match(warnings[0], /seed it in the staging seeds in src\/db\/migrate\.js/);
-  assert.match(warnings[0], /A seed this proposal adds reaches only the after copy, which is the side a state new in this proposal needs/);
+  assert.match(warnings[0], /A seed this proposal adds reaches the after copy, which is the side a state new in this proposal needs/);
   assert.match(warnings[0], /its seed merges first, in its own proposal\./);
   assert.match(warnings[0], /A claim about a screen that already exists \(a story whose baseState is "present"\) therefore needs a ready-made state/);
   assert.doesNotMatch(warnings.join(' '), /merged before this one/, 'a new state is seeded in the proposal that makes it');
@@ -281,6 +281,20 @@ test('a signed-out visitor\'s project page whose app opens for a guest is ready-
   assert.match(child, /this app's copies have no ready-made states/);
 });
 
+// 25 Nov 2026 (#7145): the bot tab's column with a live draft in it. The
+// copies start with no draft (only asking the bot opens one, and no copy has
+// a model), so a change to that screen is declared against a ready-made state.
+test('a live draft in the bot tab\'s column is ready-made for the member', () => {
+  const id = 'shots-demo-member-bot-live-draft-v1';
+  const state = readyStates.READY_STATES.find((each) => each.id === id);
+  assert.ok(state, id);
+  assert.deepEqual([...state.personas], ['member']);
+  const names = readyStates.declarationAdvice(
+    declare(story('draft-column', 'A live draft opens in the column beside its thread.')), { selfApp: true },
+  ).availableStates.map((each) => each.name);
+  assert.ok(names.includes(state.name), id);
+});
+
 test('a change whose steps wait for a model\'s reply is warned about whatever setup or state it names', () => {
   // PR 4536's own words: its shots ended on "I can't reach my model".
   const asked = story('close-offer', 'When you ask the Homeroom bot in chat to close a request, or say one is done '
@@ -328,9 +342,9 @@ test('AGENTS.md and the declare tool say to seed a new state in the same proposa
   const agents = read('AGENTS.md');
   const start = agents.indexOf('## Declare visible changes');
   const section = agents.slice(start, agents.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
-  assert.match(section, /If a fresh staging copy lacks the state a change shows, seed it in the same proposal \(`src\/db\/migrate\.js`, idempotent, obviously fake\): it reaches the after copy, the side a new state needs\./);
+  assert.match(section, /If a fresh staging copy lacks the state a change shows, seed it in the same proposal \(`src\/db\/migrate\.js`, idempotent, obviously fake\): it reaches both copies when main's schema can hold it\./);
   assert.match(section, /Seed rows for the shots' fixture accounts \(`usernode-capture` is the member\) and fake people, never a signal the code reads to decide something, and a bot's reply as the stored message, never asked for\./);
-  assert.match(section, /A change to a state that already existed needs it on both sides: its seed merges first, in its own proposal\./);
+  assert.match(section, /A change to a state that already existed can be seeded in its own proposal too\./);
   assert.match(section, /If a required state can be neither reached nor seeded, report that blocker instead of declaring `none`\./);
   assert.doesNotMatch(section, /If a required fixture or state is missing/);
 

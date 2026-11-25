@@ -314,3 +314,22 @@ test('the replay plan contract is gone from the declaration module', () => {
     assert.equal(Object.hasOwn(shots, name), false, name);
   }
 });
+
+// Request #7146: a declaration covers the whole change against main, never
+// one build turn's commit. Every surface that asks a turn to declare says
+// so, so a fix that changes nothing a person sees leaves the declaration
+// and its diagram alone.
+test('a build turn is told a declaration covers the whole change, and how to remove the visible part', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.join(__dirname, '..', 'worker/visible-changes-mcp.js'), 'utf8')
+    .replace(/\\'/g, "'").replace(/\s+/g, ' ');
+  const whole = (text.match(/whole change against main/g) || []).length;
+  assert.ok(whole >= 3, `the server instructions and both tool descriptions say it (found ${whole})`);
+  assert.match(text, /leaves the standing declaration and its diagram alone and calls neither/);
+  assert.match(text, /leaves it alone and calls neither tool/);
+  assert.ok(text.includes('Visible part removed:'), 'the marker a turn that removes the visible part uses');
+  assert.ok(!text.includes('Calling again replaces the diagram.'), 'a later turn no longer replaces a standing diagram');
+  assert.ok(!text.includes('Call once after implementation and before finishing the build turn.'),
+    'a declaration is not one turn\'s report');
+});

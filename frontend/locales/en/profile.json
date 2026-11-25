@@ -1105,27 +1105,27 @@
   },
   "sections.label": {
     "text": "Profile sections",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Accessible name of the row of tabs on the viewer's own profile in the standard look, which switches the column below it. Each tab keeps the person on the profile."
   },
   "sections.projects": {
     "text": "Projects",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Tab of the viewer's own profile in the standard look: the overview, with the projects they have helped build, their recent activity, their work and rewards."
   },
   "sections.changes": {
     "text": "Changes",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Tab of the viewer's own profile in the standard look: their finished changes listed below the row. A noun, plural."
   },
   "sections.requests": {
     "text": "Requests",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Tab of the viewer's own profile in the standard look: the requests they filed, listed below the row. A noun, plural."
   },
   "sections.votes": {
     "text": "Votes",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Tab of the viewer's own profile in the standard look: the changes and decisions they voted on, listed below the row. A noun, plural."
   },
   "sections.activity": {
     "text": "Activity",
-    "description": "Label in the standard profile’s preferences card or section navigation."
+    "description": "Tab of the viewer's own profile in the standard look: their recent activity, listed below the row."
   },
   "recent.title": {
     "text": "Recent activity",

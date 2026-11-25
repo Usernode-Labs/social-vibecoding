@@ -87,6 +87,13 @@
       "preview": "migration.sql"
     },
     {
+      "source": "src/db/seed-other-copy.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 2,
+      "preview": "sql"
+    },
+    {
       "source": "src/db/session-locks.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -386,6 +393,13 @@
       "fingerprint": "a740c5c5517cf3fe1b4b",
       "count": 1,
       "preview": "`SELECT r.id, r.app_id, a.slug AS app_slug, a.name AS app_name, r.session_id, r.pr_number, cs.pr_title, r.kind, r.trigger, r.status, r.summary, r.started_at, r."
+    },
+    {
+      "source": "src/routes/feedback.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "aca74cdfc7794b9a7f9d",
+      "count": 1,
+      "preview": "MY_FEEDBACK_SELF_APP_SQL"
     },
     {
       "source": "src/routes/feedback.js",
@@ -2110,6 +2124,27 @@
       "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
     },
     {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e98fa2ae3bbef1de386",
+      "count": 1,
+      "preview": "SELF_APP_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a77e64e7f2e320971df9",
+      "count": 1,
+      "preview": "VIEWER_FEEDBACK_SQL"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",
@@ -2595,7 +2630,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "f0bfda8303e734d58580",
+      "fingerprint": "73efd30c0043ffb33c93",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },

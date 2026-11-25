@@ -46,6 +46,9 @@ export interface Candidate {
   // mechanical file is settled without a resolution.
   conflictFiles: string[];
   integrationMain: string | null;
+  // #7158: the main the free conflict resolution ran against (null: none
+  // recorded).
+  resolvedMain: string | null;
   // A settled verdict stands on the pinned head; a run for it is under way.
   settled: boolean;
   runInFlight: boolean;
@@ -98,7 +101,7 @@ function forkOf(r: any): boolean {
 // What bounds it is the promoted caps.
 const LINE_SQL = `
   SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.branch_name, cs.imported_pr_head_repo,
-         cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integration_resolved_epoch,
+         cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integration_resolved_epoch, cs.integration_resolved_main_sha,
          cs.integration_merges_clean, cs.integration_conflict_paths, cs.integration_main_sha, cs.integration_block_reasons,
          cs.check_state, cs.check_phase, cs.checks_commit_sha,
          CASE WHEN cs.source = 'imported' THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END AS head,
@@ -162,6 +165,7 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
       conflictPaths: Array.isArray(r.integration_conflict_paths) ? r.integration_conflict_paths.length : 0,
       conflictFiles: Array.isArray(r.integration_conflict_paths) ? r.integration_conflict_paths.map(String) : [],
       integrationMain,
+      resolvedMain: sha(r.integration_resolved_main_sha),
       settled,
       runInFlight: r.check_state === 'pending' && r.check_phase !== 'deferred' && onHead && !!checksSha,
       unmergeable,

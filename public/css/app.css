@@ -9107,6 +9107,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     top: var(--ws-pin-top, 0px);
   }
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
+  /* THE ALL ITEMS BOARD STARTS SOONER (asked #7154). The strip above the All
+     items head was too wide: the page's top padding plus the tab body's
+     shared 0.75rem put the head's card about 40px under the top bar. Here,
+     where the place bar is already folded, All items keeps only a few pixels
+     of air: 4px of page padding under the column gap's 10px. The board is
+     the page, and its head is the first thing on it. The Hub, Needs you and
+     the Workshop keep the shared 0.75rem, and so does every other look.
+     The head's pinning offset is untouched: padding above a sticky element
+     moves where it rests, not where it pins. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-tabbody { padding-block-start: 0; }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-body:has(> #dev-workshop > .dev-ws[data-ws-tab="all"]) { padding-top: 4px; }
   html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
 }
 @media (min-width: 900px) {
@@ -11131,7 +11142,7 @@ html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) 
   html:not([data-skin]) #profile-root #profile-identity-card { grid-column: 1 / -1; grid-row: 1; }
   html:not([data-skin]) #profile-root #profile-stats { grid-column: 1 / -1; grid-row: 2; }
   html:not([data-skin]) #profile-root #profile-activity { grid-column: 2; grid-row: 4; }
-  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3; }
+  html:not([data-skin]) #profile-root > div > #profile-main { grid-column: 2; grid-row: 3; }
   html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 3 / span 2; }
 }
 /* The reference's identity sits ON the landscape, rather than below an
@@ -11280,7 +11291,8 @@ html:not([data-skin]) #profile-live-projects .profile-project-card {
 }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n+2) { background: linear-gradient(var(--ed-lit-bg), var(--ed-paper)); }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n) { background: linear-gradient(var(--ed-stat-bg), var(--ed-paper)); }
-html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); overflow: hidden; }
+html:not([data-skin]) #profile-live-projects .profile-project-icon img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
 html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.45; }
 html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1.5rem; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
@@ -11411,7 +11423,7 @@ html:not([data-skin]) #profile-live-projects .profile-project-card {
 }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n+2) { background: var(--ed-green-card); }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n) { background: var(--ed-yellow-card); }
-html:not([data-skin]) #profile-live-projects .profile-project-icon { width: 2.75rem; height: 2.75rem; border-radius: 0.625rem; background: var(--ed-well); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { width: 2.75rem; height: 2.75rem; border-radius: 0.625rem; background: var(--ed-well); overflow: hidden; }
 html:not([data-skin]) #profile-live-projects h3 { font-weight: 460; font-size: 1.5rem; letter-spacing: -0.035em; }
 html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.4; }
 /* Settings' profile is the reference's portrait beside editable fields. */
@@ -11480,18 +11492,26 @@ html:not([data-skin]) #settings-section-content :is(#settings-username-section, 
 }
 html:not([data-skin]) #profile-root #profile-recent-activity { margin: 1.5rem 0; padding-top: 1.25rem; border-top: 1px solid var(--ed-rule); }
 html:not([data-skin]) #profile-recent-activity .profile-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
-html:not([data-skin]) #profile-recent-activity h2 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.035em; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) h2 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.035em; }
 html:not([data-skin]) #profile-recent-activity .profile-recent-heading > a { color: var(--accent); font-size: 0.8125rem; }
-html:not([data-skin]) #profile-recent-activity ul { list-style: none; padding: 0 1rem; margin: 0; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
-html:not([data-skin]) #profile-recent-activity li > a { display: flex; align-items: center; gap: 0.75rem; min-height: 3rem; padding: 0.5rem 0; }
-html:not([data-skin]) #profile-recent-activity li + li { border-top: 1px solid var(--ed-rule); }
-html:not([data-skin]) #profile-recent-activity .profile-recent-icon { display: flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: none; border-radius: 0.5rem; background: var(--ed-lit-bg); }
-html:not([data-skin]) #profile-recent-activity .profile-recent-icon svg { width: 1.25rem; height: 1.25rem; }
-html:not([data-skin]) #profile-recent-activity .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
-html:not([data-skin]) #profile-recent-activity .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) ul { list-style: none; padding: 0 1rem; margin: 0; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) li > :is(a, span) { display: flex; align-items: center; gap: 0.75rem; min-height: 3rem; padding: 0.5rem 0; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) li + li { border-top: 1px solid var(--ed-rule); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-icon { display: flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: none; border-radius: 0.5rem; background: var(--ed-lit-bg); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-icon svg { width: 1.25rem; height: 1.25rem; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
 html:not([data-skin]) #profile-recent-activity time { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-empty { min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.875rem; }
+html:not([data-skin]) #profile-history { margin: 0 0 1.5rem; }
+html:not([data-skin]) #profile-history h2 { margin: 0 0 0.75rem; }
+html:not([data-skin]) #profile-history .profile-history-end { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+html:not([data-skin]) #profile-history .profile-history-state { display: flex; align-items: center; gap: 0.5rem; min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.9375rem; }
+html:not([data-skin]) #profile-history .profile-history-more { color: var(--ed-muted); font-size: 0.9375rem; margin: 0.75rem 0 0; }
+html:not([data-skin]) #profile-history .profile-history-more button,
+html:not([data-skin]) #profile-history .profile-history-again { color: var(--accent); font-size: 0.8125rem; background: none; border: 0; padding: 0; cursor: pointer; }
 @media (max-width: 639.98px) {
-  html:not([data-skin]) #profile-recent-activity .profile-recent-copy > span { display: block; }
+  html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy > span { display: block; }
 }
 /* Align the desktop pages to the original 1536px references. The sky is
    the full content pane's backdrop, with the paper cards flowing over it. */
@@ -23634,6 +23654,9 @@ body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden))
 .request-draft-panel[data-draft-panel="doneWhen"] li::before { inset-inline-start: 2px; top: 4px; width: 13px; height: 13px; background: none; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
 .request-draft-panel li .messages-markdown.gc-msg-content { font-size: 14px; line-height: 20px; }
 .request-draft-panel li small { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* #7136: one line under a panel saying what happens to its list (the files a
+   draft carries), at the chat's small muted size. */
+.request-draft-panel .request-draft-note { margin: 6px 2px 0; font-size: 12px; line-height: 17px; color: var(--text-muted); }
 .request-draft-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-block: 12px; padding-inline: 20px 14px; border-top: 1px solid var(--app-sheet-line); }
 .request-draft-goes { flex: 1 1 220px; min-width: 0; margin: 0; font-size: 13px; line-height: 19px; color: var(--text-muted); }
 .request-draft-goes b { font-weight: 650; color: var(--text-primary); }

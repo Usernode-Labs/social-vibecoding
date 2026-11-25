@@ -115,6 +115,7 @@ async function recordIntent(pool, sessionId, rawIntent, options = {}) {
   const id = Number(sessionId);
   const outcome = await workflow().shotsDeclared({
     sessionId: id, appId: await sessionApp(pool, id), head: options.headSha || null, intent: prepared.intent,
+    guard: options.guard === true,
     pin: options.pin || null, from: options.from || null,
   });
   if (outcome.status === 'rejected' && outcome.reason === 'stale_head') {
@@ -124,8 +125,14 @@ async function recordIntent(pool, sessionId, rawIntent, options = {}) {
     throw new ShotsStateError(outcome.reason || 'shots_declaration_refused', 'The declaration of visible changes was not recorded.');
   }
   const reply = outcome.reply || {};
+  // A guarded "none" over a declaration from an earlier turn is held, not
+  // recorded (request #7146): the change keeps the changes, diagram and
+  // description it already has, and `reason` says why.
+  const kept = reply.kept === true;
   return {
-    accepted: true,
+    accepted: !kept,
+    kept,
+    ...(kept ? { reason: String(reply.reason || 'The standing declaration was kept.') } : {}),
     unchanged: reply.unchanged === true,
     required: prepared.detail.required,
     state: reply.state || prepared.state,

@@ -3927,6 +3927,14 @@
     "text": "Not now",
     "description": "Button at the foot of a request draft's preview, beside File it: puts the draft away without filing it, the same as Not now on the draft's card in the chat."
   },
+  "draft.pane.files": {
+    "text": "Files it carries",
+    "description": "Label over the list of files a request draft will carry onto the request, beside the draft's words in its preview. Each line is a file's name and size."
+  },
+  "draft.pane.filesNote": {
+    "text": "They go on the request: anyone who can see it sees their names, and its build can open them.",
+    "description": "One line under the list of files a request draft carries, saying what happens to them once the request is filed."
+  },
   "draft.pane.undecided": {
     "text": "Still undecided",
     "description": "Label over the list of open questions a request draft leaves undecided, beside the draft's words in its preview."
@@ -5405,7 +5413,7 @@
   },
   "ai.filter.showAll": {
     "text": "Show all projects",
-    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project so the lists show all of them again."
+    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project and closes the panel so the lists show all of them again. It is greyed out and cannot be pressed while nothing is picked."
   },
   "ai.filter.done": {
     "text": "Done",
@@ -5636,16 +5644,16 @@
     "description": "The Homeroom bot tab, Needs you, when the project chips are narrowed to one project and nothing of the person's is under way or waiting there. {{project}} is the project's name."
   },
   "ai.head.counts": {
-    "text": "<0>Needs you: {{needs}}</0> · In progress: {{next}}",
-    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list, beside the Homeroom mark and New chat. {{needs}} is how many threads are in the Needs you band, {{next}} how many are in the In progress band. <0></0> is drawn in the stronger weight; keep it round the first half."
+    "text": "<0>Needs you: {{needs}}</0> · <1>In progress: {{next}}</1>",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list, beside the Homeroom mark and New chat. {{needs}} is how many threads are in the Needs you band, {{next}} how many are in the In progress band. <0></0> is drawn in the stronger weight; keep it round the first half. <1></1> is the In progress count, a link that opens the list of threads in progress; keep it round the second half."
   },
   "ai.head.needs": {
     "text": "<0>Needs you: {{needs}}</0>",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when nothing is in progress. {{needs}} is how many threads are in the Needs you band. <0></0> is drawn in the stronger weight."
   },
   "ai.head.clear": {
-    "text": "<0>Nothing needs you</0> · In progress: {{next}}",
-    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty: the person has nothing to do. {{next}} is how many threads are in the In progress band. <0></0> is drawn in the stronger weight."
+    "text": "<0>Nothing needs you</0> · <1>In progress: {{next}}</1>",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty: the person has nothing to do. {{next}} is how many threads are in the In progress band. <0></0> is drawn in the stronger weight. <1></1> is the In progress count, a link that opens the list of threads in progress; keep it round the second half."
   },
   "ai.head.clearAlone": {
     "text": "<0>Nothing needs you</0>",
@@ -5670,6 +5678,18 @@
   "ai.waiting.open_other": {
     "text": "Show the {{count}} things waiting on you",
     "description": "The Homeroom bot tab's Needs you count, which is now a button: its name for a screen reader. Pressing it opens Waiting on you, the list of everything that needs the person. {{count}} is how many things need them."
+  },
+  "ai.progress.open_one": {
+    "text": "Show the {{count}} thread in progress",
+    "description": "The Homeroom bot tab's In progress count, which is a button: its name for a screen reader. Pressing it opens the list of everything in progress. {{count}} is how many threads are in progress, here 1."
+  },
+  "ai.progress.open_other": {
+    "text": "Show the {{count}} threads in progress",
+    "description": "The Homeroom bot tab's In progress count, which is a button: its name for a screen reader. Pressing it opens the list of everything in progress. {{count}} is how many threads are in progress."
+  },
+  "ai.progress.loading": {
+    "text": "Loading what is in progress",
+    "description": "Accessible name, read by a screen reader, of the placeholder bars in the Homeroom bot tab's In progress list while its rows load."
   },
   "ai.waiting.all": {
     "text": "All threads",

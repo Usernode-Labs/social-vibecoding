@@ -2026,10 +2026,10 @@ type HeadFence = { pin?: 'imported' | 'reviewed' | 'handoff' | null; from?: stri
 // transaction (`db`, PR import) it is only appended; it applies once that
 // transaction commits.
 export async function shotsDeclared(d: { sessionId: number; appId?: number | null; head?: string | null; intent: unknown;
-  db?: Queryable; actor?: string | null } & HeadFence): Promise<EventOutcome | null> {
+  guard?: boolean; db?: Queryable; actor?: string | null } & HeadFence): Promise<EventOutcome | null> {
   const m = shotsMachine();
   const event = { type: 'Declared', payload: { sessionId: d.sessionId, head: d.head ?? null, intent: d.intent,
-    pin: d.pin ?? null, from: d.from ?? null } };
+    guard: d.guard === true, pin: d.pin ?? null, from: d.from ?? null } };
   const o = { requestKey: `declare:${randomUUID()}`, source: { kind: 'route' as const, name: 'declare' },
     appId: d.appId ?? undefined, actor: d.actor ?? undefined };
   if (d.db) { await runtime!.append(m, shotsKey(d.sessionId), event, { ...o, db: d.db }); return null; }

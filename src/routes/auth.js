@@ -47,6 +47,7 @@ const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
+const { generatedAvatarUrl } = require('../services/avatar-url');
 const socialIdentity = require('../services/social-identity');
 const {
   accountRecovery,
@@ -877,7 +878,20 @@ function authRoutes(config) {
     // middleware/auth.js's per-request session hydration — this endpoint
     // already does one users lookup, and every request paying for a join
     // it never renders would be the wrong trade.
-    let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
+    //
+    // #7135: when the profile read below fails, the answer still names this
+    // account's generated picture. A signed-in account is a known account,
+    // so the header must not drop to a letter in a circle just because one
+    // read failed; `hasPhoto` stays false, which is what the editor reads.
+    const fallbackAvatarUrl = generatedAvatarUrl(req.user.id);
+    let profile = {
+      displayName: null,
+      bio: null,
+      avatarUrl: fallbackAvatarUrl,
+      hasPhoto: false,
+      generatedAvatarUrl: fallbackAvatarUrl,
+      links: { github: null, x: null },
+    };
     // App-creation quota: the same live (non-errored) app count enforced by
     // POST /api/apps and /fork. Keep the numbers as well as the derived
     // boolean so the create dialog can say "N of M used" instead of reducing
@@ -998,7 +1012,7 @@ function authRoutes(config) {
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       if (storyFirstSession) waitlistIdea = await firstSession.waitlistIdea(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
-      profile = shapeProfile(rows[0], verifiedLinks);
+      profile = shapeProfile(rows[0], verifiedLinks, req.user.id);
     } catch {}
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
@@ -1126,11 +1140,16 @@ function authRoutes(config) {
         // Profile customization (#982). `username` stays the permanent
         // sign-in handle and is NOT editable anywhere on the platform;
         // `displayName` is the settable name other people see (it already
-        // feeds the standings' resolveDisplayName chain). `avatarUrl` is
-        // the content-addressed /avatars/<id> path, or null.
+        // feeds the standings' resolveDisplayName chain). `avatarUrl` is the
+        // uploaded photo's /avatars/<id> path, or (since #7135) the picture
+        // generated from the account when there is no photo. `hasPhoto` is
+        // what the editor's "Remove photo" reads; `generatedAvatarUrl` is
+        // what a staged removal previews.
         displayName: profile.displayName,
         bio: profile.bio,
         avatarUrl: profile.avatarUrl,
+        hasPhoto: profile.hasPhoto,
+        generatedAvatarUrl: profile.generatedAvatarUrl,
         links: profile.links,
         // Whether the CLI-credentials surface exists in this deployment.
         // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a

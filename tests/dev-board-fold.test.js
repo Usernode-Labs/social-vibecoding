@@ -1823,7 +1823,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // gone still offers Propose to close in its thread, which opens the close
   // dialog with the bot's reason filled in; no existing check opens that
   // seeded request's page or that state. 707 leaves 173 slots.
-  checkCap.assertPinned(DAPP.tests.length, 707);
+  // 707 → 709: +2 (request 7134) the profile's section row is real tabs: one
+  // check opens `#profile?tab=changes` and reads the history column in the
+  // profile, the other opens `#profile?tab=activity` and reads the activity
+  // column there. Two routes no existing check opens. 709 leaves 171 slots.
+  checkCap.assertPinned(DAPP.tests.length, 709);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

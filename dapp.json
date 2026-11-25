@@ -868,6 +868,20 @@
       "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects):has(#profile-preferences):has(.profile-section-links):has(#profile-edit-btn svg) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
+      "id": "profile.section-tabs.changes",
+      "name": "Me: the section row is real tabs, and #profile?tab=changes keeps the profile open with its own changes in the column (#7134)",
+      "path": "/?demo=1#profile?tab=changes",
+      "expectText": "Your changes",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-history:has(h2):has(ul)"
+    },
+    {
+      "id": "profile.section-tabs.activity",
+      "name": "Me: the Activity tab of the section row stays on the profile and shows the recent activity column (#7134)",
+      "path": "/?demo=1#profile?tab=activity",
+      "expectText": "Recent activity",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-recent-activity:has(h2):has(ul)"
+    },
+    {
       "id": "profile.week-share",
       "name": "Me: This week shows the week's live changes and Share opens the card that chooses which figures to send (#6464)",
       "path": "/?demo=1#profile",
@@ -2974,7 +2988,7 @@
     {
       "name": "A direct conversation puts your own message on the right in its tinted bubble, with no avatar, and the other person's on the left in a plain bubble with their avatar (#5680)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>span[aria-hidden]+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
+      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>img+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
     },
     {
       "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", field, Speak and send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735, #4389)",

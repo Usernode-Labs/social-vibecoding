@@ -68,7 +68,7 @@ function fakeGithub({ base, head, newer, changed = [] }) {
   };
 }
 
-function fakePool({ linkedIssues = [], authorId = 5, newestHead = null, headSha = HEAD_SHA, baseSha = BASE_SHA } = {}) {
+function fakePool({ linkedIssues = [], authorId = 5, newestHead = null, headSha = HEAD_SHA, baseSha = BASE_SHA, intent = { version: 1 } } = {}) {
   const client = { query: async () => ({ rows: [] }), release() {} };
   return {
     client,
@@ -84,7 +84,7 @@ function fakePool({ linkedIssues = [], authorId = 5, newestHead = null, headSha 
       }
       if (text.includes('FROM change_pictures')) return { rows: [] };
       if (text.includes('SELECT * FROM chat_sessions')) {
-        return { rows: [{ id: 77, app_id: 9, user_id: authorId, status: 'promoted', shots_detail: { intent: { version: 1 } } }] };
+        return { rows: [{ id: 77, app_id: 9, user_id: authorId, status: 'promoted', shots_detail: { intent } }] };
       }
       if (text.includes('ANY(cs.linked_issues)')) return { rows: [{ id: 77, user_id: authorId, pr_number: 6508, linked_issues: linkedIssues }] };
       if (text.includes('INSERT INTO change_pictures')) return { rows: [] };
@@ -292,4 +292,68 @@ test('#6548: the opened email is drawn at its full height in a scrolling box, at
   assert.match(src, /messages:botCards\.compare\.desktop/);
   assert.match(src, /aria-pressed=\{size === s\}/);
   assert.match(src, /data-bot-email-size=\{s\}/);
+});
+
+// Request #7146: in a request's thread the bot offers to take a change's
+// missing shots only with the card that takes them, and says plainly when
+// there are none to take.
+test('#7146: in a request\'s thread a change with no shots offers the run under the reply', async () => {
+  const deps = { ...setup(), shotsView: { async getForSession() { return { state: 'planned', claims: [], artifacts: [] }; } } };
+  const pool = fakePool({ linkedIssues: [6490] });
+  const ctx = {
+    app: APP, user: { id: 5 }, change: { ...CHANGE, linked_issues: [6490] }, place: { type: 'issue', ref: 6490 },
+    deps, config: {},
+  };
+  const out = await showChange(pool, {}, ctx, { what: 'screens' });
+  assert.equal(out.ok, true);
+  assert.equal(out.request, 6490);
+  assert.equal(ctx.offer.kind, 'run_shots');
+  assert.equal(ctx.offer.args.issueNumber, 6490, 'a shot run on the change, offered from its request\'s thread');
+  assert.match(out.said, /The button under your reply takes them/);
+  assert.match(out.screensNote, /the offer under your reply takes them/);
+});
+
+test('#7146: a change that says nothing a person sees offers no run, and says why', async () => {
+  const none = { version: 1, impact: 'none', rationale: 'Server only.' };
+  const deps = { ...setup(), shotsView: { async getForSession() { return { state: 'not_required', claims: [], artifacts: [] }; } } };
+  const pool = fakePool({ linkedIssues: [6490], intent: none });
+  const ctx = {
+    app: APP, user: { id: 5 }, change: { ...CHANGE, linked_issues: [6490] }, place: { type: 'issue', ref: 6490 },
+    deps, config: {},
+  };
+  const out = await showChange(pool, {}, ctx, { what: 'screens' });
+  assert.equal(out.said, 'This change says nothing a person sees changes, so there are no before and after shots to take.');
+  assert.equal(ctx.offer, undefined, 'no run that would take nothing');
+  assert.equal(out.screens.canRun, false);
+  assert.equal(out.screens.impactNone, true);
+});
+
+test('#7146: a viewer who may not take the shots is told so, and gets no offer', async () => {
+  const deps = {
+    ...setup(),
+    shotsView: { async getForSession() { return { state: 'planned', claims: [], artifacts: [] }; } },
+    appAdmins: { async canManageApp() { return false; } },
+  };
+  const pool = fakePool({ linkedIssues: [6490] });
+  const ctx = {
+    app: APP, user: { id: 8 }, change: { ...CHANGE, linked_issues: [6490] }, place: { type: 'issue', ref: 6490 },
+    deps, config: {},
+  };
+  const out = await showChange(pool, {}, ctx, { what: 'screens' });
+  assert.equal(ctx.offer, undefined);
+  assert.match(out.said, /you may not take them/);
+});
+
+test('#7146: a request reply that already carries the plan offer does not promise the shots in words', async () => {
+  const deps = { ...setup(), shotsView: { async getForSession() { return { state: 'planned', claims: [], artifacts: [] }; } } };
+  const pool = fakePool({ linkedIssues: [6490] });
+  const ctx = {
+    app: APP, user: { id: 5 }, change: { ...CHANGE, linked_issues: [6490] }, place: { type: 'session', ref: 77 },
+    deps, config: {},
+  };
+  const out = await showChange(pool, {}, ctx, { what: 'all' });
+  assert.equal(ctx.offer.kind, 'post_pictures_plan', 'one offer, and it is the plan');
+  assert.doesNotMatch(out.screensNote, /the offer under your reply takes them/);
+  assert.match(out.screensNote, /Do not offer to take them in words/);
+  assert.match(out.screensNote, /what "screens"/);
 });

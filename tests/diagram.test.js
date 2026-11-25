@@ -160,7 +160,9 @@ test('declare_diagram is expected, not optional, for a change declared impact no
   // #6832: it says what a change nobody sees needs, and names the three
   // pictures in the order the bot chooses them.
   assert.match(block, /Required for every change you declared with declare_visible_changes impact "none"/);
-  assert.match(block, /Call declare_visible_changes first\. Calling again replaces the diagram\./,
+  // #7146: a diagram covers the whole change against main, so a later turn
+  // keeps an earlier turn's, and only the same turn replaces it.
+  assert.match(block, /Call declare_visible_changes first\. A diagram describes the whole change against main, never one turn\\?'s commit: calling again in the same turn replaces it, a diagram from an earlier turn is kept unless this turn replaced the standing declaration/,
     'the kind rules and limits are kept');
   assert.ok(block.indexOf('kind seen') < block.indexOf('kind moment') && block.indexOf('kind moment') < block.indexOf('kind steps'),
     'the three pictures are named in the order the bot picks them');

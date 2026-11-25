@@ -942,13 +942,15 @@ test('#6251: offer_request carries pictures, related requests, where it happened
   assert.ok(tool.parameters.required.includes('doneWhen'), 'a draft always says what done looks like');
   assert.deepEqual(tool.parameters.properties.related.items.properties.relation.enum,
     ['same', 'part_of', 'depends_on', 'build_together']);
-  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 3);
+  // #7136: three pictures and three other files go with one request.
+  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 6);
   assert.equal(tool.parameters.properties.related.maxItems, 3);
   assert.equal(tool.parameters.properties.doneWhen.minItems, 1);
   assert.equal(tool.parameters.properties.doneWhen.maxItems, 3);
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /Put up to three\n  that overlap in related, each with how \(part_of, depends_on, build_together\)/);
-  assert.match(prompt, /Pass in attachmentIds the ids of their pictures that belong with the\n  request, from the "id \.\.\." in a picture's history line/);
+  // #7136: their files go in there too, so a request can carry one to its build.
+  assert.match(prompt, /Pass in attachmentIds the ids of their pictures or files that belong\n  with the request, from the "id \.\.\." in an attachment's history line/);
   assert.match(prompt, /ask which project when a bare number is ambiguous/);
   assert.match(prompt, /Propose one\n  to three doneWhen checks in their words/);
   // Its doneWhen is trimmed and de-dashed, and nothing else is accepted.
@@ -1067,13 +1069,14 @@ test('a draft\'s open questions are their own list: asked for, said on the draft
   assert.match(body, /^A button in the draft bar\.\n\n\*\*Still undecided\*\*\n- Whether it opens in the same window\n- What it is called\n\n\*\*Done when\*\*\n/);
   // For the pane: every list there, the pictures and the chat's address left out.
   assert.deepEqual(mayor.draftExtrasView(extras), {
+    files: [],
     undecided: ['Whether it opens in the same window', 'What it is called'],
     doneWhen: ['The draft bar has a button that opens the change'],
     related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
     where: { request: { number: 15, name: 'Homeroom', slug: 'homeroom' }, saw: 'the draft bar' },
   });
   // A draft made before any of it, or whose message is gone: empty lists, never a throw.
-  const none = { undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } };
+  const none = { files: [], undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } };
   assert.deepEqual(mayor.draftExtrasView(null), none);
   assert.deepEqual(mayor.draftExtrasView({ related: [{ number: 'x' }], doneWhen: 'no' }), none);
   assert.equal(mayor.draftExtrasView({ related: [{ number: 4, title: 'T', relation: 'made_up' }] }).related[0].relation, null, 'a relation this build does not know');

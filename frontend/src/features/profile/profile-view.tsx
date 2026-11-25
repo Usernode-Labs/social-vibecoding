@@ -39,6 +39,7 @@ import {
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
+import { ProfileHistoryList } from './profile-history-list';
 import { ProfileRecentActivity } from './profile-recent-activity';
 import { ProfileLiveProjects } from './profile-live-projects';
 import { ProfileDetailsCard } from './profile-details-card';
@@ -59,9 +60,10 @@ import type { YouTab } from './frame/you-tabs';
 import { walletSheetStore } from '../header/wallet-sheet-store';
 import { useFramePage } from '../frame/frame-page-store';
 
-/** The round picture, or the brand pair — two of Homeroom's own characters
- *  side by side — when no photo has been added (#7109). The pair is clipped
- *  to the same square (or circle, in the other looks) as a real photo. */
+/** The round picture. A person with no uploaded photo has a generated one,
+ *  so `url` is present for every known account; it is absent only where no
+ *  account is known, and then an empty neutral circle holds the frame
+ *  (#7135 — the two-character drawing is no longer a stand-in). */
 function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   if (url) {
     return (
@@ -74,12 +76,9 @@ function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   }
   return (
     <div
-      className="profile-id-avatar profile-id-pair w-14 h-14 rounded-full shrink-0 flex overflow-hidden bg-violet-100 dark:bg-violet-900/40"
+      className="profile-id-avatar w-14 h-14 rounded-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-800"
       aria-hidden="true"
-    >
-      <img src="/brand/groups/avatar-m3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
-      <img src="/brand/groups/avatar-f3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
-    </div>
+    />
   );
 }
 
@@ -487,6 +486,12 @@ export function ProfileRoot(): ReactNode {
   const frame = isFrameSkin(skin);
   const editorial = skin === 'standard';
   const view = buildProfileView(state);
+  // #7134: the standard page's section row is real tabs, and the tab that is
+  // up decides the right column. It is the same store field the frame's You
+  // page reads (./profile.js _readTab / showTab).
+  const tab = state.tab || 'overview';
+  const contributions = state.data?.summary?.contributions || [];
+  const onHistoryTab = tab === 'changes' || tab === 'requests' || tab === 'votes';
 
   if (view.kind === 'empty') return null;
   // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
@@ -591,12 +596,18 @@ export function ProfileRoot(): ReactNode {
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
-        <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
-          {editorial ? <ProfileSectionLinks /> : null}
-          {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
-          {editorial ? <ProfileRecentActivity changes={state.data?.summary?.contributions || []} /> : null}
-          <WorkPanel rows={view.rows} />
-          <RewardsPanel rows={view.rows} />
+        <div id="profile-main" className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {editorial ? <ProfileSectionLinks tab={tab} /> : null}
+          {editorial && onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
+          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
+          {!editorial || (!onHistoryTab && tab !== 'activity') ? (
+            <>
+              {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
+              {editorial ? <ProfileRecentActivity changes={contributions} /> : null}
+              <WorkPanel rows={view.rows} />
+              <RewardsPanel rows={view.rows} />
+            </>
+          ) : null}
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
           {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
