@@ -137,7 +137,7 @@
   },
   "rail.pin.full": {
     "text": "Unpin one first",
-    "description": "The same slot when four communities are already pinned, the most there is room for: the drop is refused until one is taken off."
+    "description": "The same slot when ten communities are already pinned, the most there is room for: the drop is refused until one is taken off."
   },
   "rail.pin.add": {
     "text": "Pin to sidebar",
@@ -148,8 +148,8 @@
     "description": "Item in the same right-click menu: opens the community's page in a new browser tab, as the browser's own menu for a link would."
   },
   "rail.pin.fullToast": {
-    "text": "Four communities are pinned already. Unpin one first.",
-    "description": "Short message shown when the person tries to pin a fifth community to the desktop sidebar: four is the most there is room for."
+    "text": "Ten communities are pinned already. Unpin one first.",
+    "description": "Short message shown when the person tries to pin an eleventh community to the desktop sidebar: ten is the most there is room for."
   },
   "rail.pin.unpin": {
     "text": "Unpin",
