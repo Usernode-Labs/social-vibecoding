@@ -24,7 +24,12 @@
 //     so a merged change is a page no browser has kept yet, and asks the
 //     bridge to refresh the app's files when the app's build changed.
 //   * The bridge (usernode-bridge/v1/bridge.js) moves that token into the
-//     query before the app's code reads it, and does the refresh.
+//     query before the app's code reads it, and does the refresh. Online,
+//     once the app has loaded, it also checks the files the app ran on
+//     against the app and reloads once onto any that changed: the refresh
+//     fetches only the files it remembered, so a file it missed (or got
+//     from the old build mid-rollout) would otherwise stay in front of the
+//     new page for the whole 30 days.
 //   * A page that never says it opened (no bridge) is reported by the
 //     shell; two people on one build switch the cacheable address off for
 //     the app until its next deploy (offline-cache-refusals.js,
@@ -39,8 +44,10 @@
 // run the platform's image with none of its configuration and require this.
 
 // An app's page and files: fresh for 30 days. The shell's build check is
-// what brings a merged change in (see the bridge's refresh), so a long
-// lifetime never pins an old version in front of a person who is online.
+// what brings a merged change in (see the bridge's refresh), and the
+// bridge's check of the files each load ran on catches any the refresh
+// missed, so a long lifetime never pins an old version in front of a
+// person who is online. The refresh alone did, until 25 Nov 2026.
 const APP_CACHE_CONTROL = 'max-age=2592000';
 
 // The shared /usernode-* files: always revalidated behind, never waited on.
@@ -97,8 +104,12 @@ function directives(value) {
 // The gate's rule, for one proxied response. Returns the Cache-Control to
 // send, or null to leave the app's own header as it is.
 //
-//   * Only a GET or HEAD answered 200, never /api/ (data) or /__ (the
-//     gate's and the platform's own paths).
+//   * Only a GET or HEAD answered 200 or 304, never /api/ (data) or /__
+//     (the gate's and the platform's own paths). A 304 answers the bridge's
+//     check of a kept copy (usernode-bridge/v1/bridge.js, checkFiles): the
+//     browser takes its Cache-Control onto that copy, so without this the
+//     app's own `max-age=0` would end the copy's lifetime and the next
+//     open with no connection would fail.
 //   * Never an address that carries the token in its query: that is the
 //     45-minute refresh's address (and an app's own links), not the one the
 //     shell opens and caches.
@@ -109,7 +120,7 @@ function directives(value) {
 function appCacheControl({ method, url, status, cacheControl, setCookie } = {}) {
   const m = String(method || '').toUpperCase();
   if (m !== 'GET' && m !== 'HEAD') return null;
-  if (Number(status) !== 200) return null;
+  if (Number(status) !== 200 && Number(status) !== 304) return null;
   const raw = String(url || '/');
   const q = raw.indexOf('?');
   const pathname = q === -1 ? raw : raw.slice(0, q);
