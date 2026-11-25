@@ -3186,7 +3186,8 @@ async function seedStagingFoldedLiveNotifications(pool) {
     const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
     const rows = [
       { number: 9201, minutesAgo: 3, title: 'Staging demo: a swap calendar for the group' },
-      { number: 9202, minutesAgo: 5, title: 'Staging demo: sort the seed box by season' },
+      // #7132's shots: one title long enough for the chip's two-line clamp.
+      { number: 9202, minutesAgo: 5, title: 'Staging demo: label every seed packet by season and note where it was sown, so the next swap is quicker to pack' },
       { number: 9203, minutesAgo: 8, title: 'Staging demo: a reminder before the next swap' },
     ];
     for (const row of rows) {
