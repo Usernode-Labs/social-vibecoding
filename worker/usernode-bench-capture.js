@@ -872,10 +872,20 @@ function redact(text, secrets) {
   return s;
 }
 
+// A `node_modules` DIRECTORY is not an install: a checkout can carry an empty
+// or half-written one (an interrupted `npm ci`), and the app then boots with
+// none of its dependencies — `Cannot find module 'express'` from `npm start`
+// while the assets still build from `frontend/node_modules` (#7109). npm writes
+// `node_modules/.package-lock.json` once the tree is in place, so that file is
+// what says the dependencies are really there.
+function dependenciesInstalled(dir) {
+  return fs.existsSync(path.join(dir, 'node_modules', '.package-lock.json'));
+}
+
 function installDependencies(dir) {
   const started = Date.now();
   if (!fs.existsSync(path.join(dir, 'package.json'))) return { ran: false, ok: true, ms: 0 };
-  if (fs.existsSync(path.join(dir, 'node_modules'))) return { ran: false, ok: true, ms: 0 };
+  if (dependenciesInstalled(dir)) return { ran: false, ok: true, ms: 0 };
   const args = fs.existsSync(path.join(dir, 'package-lock.json'))
     ? ['ci', '--include=dev', '--no-audit', '--no-fund']
     : ['install', '--include=dev', '--no-audit', '--no-fund'];
@@ -1459,6 +1469,8 @@ module.exports = {
   RESULT_BUDGET_MS,
   PROMINENCE_MARGIN,
   capturePlan,
+  dependenciesInstalled,
+  installDependencies,
   shotUrl,
   interceptsApi,
   sameOrigin,
