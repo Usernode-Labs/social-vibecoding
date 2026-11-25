@@ -1845,7 +1845,7 @@ test('a page\'s status pill is reported only for the route it was published on (
   }
 });
 
-test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', () => {
+test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', async () => {
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   // Copy link, Open in workshop, a divider, then the page's rows — read when
   // the menu opens, and run in the panel's document.
@@ -1881,6 +1881,11 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.equal(api.SidePanel.panelMenuRows()[2].disabled, true, 'a row with no action is unavailable here too');
   assert.equal(api.SidePanel.panelMenuRows()[1].title, 'Follow this thread', 'its tooltip comes with it');
   api.SidePanel.runPanelMenuRow(1, 'Notify me');
+  // #6988: the row runs on the next frame, after the column's menu has
+  // closed, so a row that opens a dialog in the page is not swallowed by the
+  // menu's own click dispatch.
+  assert.equal(following, false, 'not inside the menu row\'s click');
+  await new Promise((r) => setTimeout(r, 0));
   assert.equal(following, true, 'the row ran in the page');
   assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
   // #7000: the page's ⋯ now opens with a Copy link row. The column keeps its
@@ -1901,6 +1906,31 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.deepEqual(api.SidePanel.panelMenuRows(), []);
   api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
   assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
+  api.sidePanelRefs.frame = null;
+  api._resetForTests();
+});
+
+test('#6988: the column\'s ⋯ runs Propose to close from the frame, opening its dialog', async () => {
+  const opened = [];
+  const list = () => [
+    { label: 'Reply to Homeroom bot', act: () => opened.push('reply') },
+    { label: 'Propose to close', act: () => opened.push('close') },
+  ];
+  const av = {
+    _cardMenuItems: () => list(),
+    _cardMenuRowItem: (all, idx, label) => all.find((x) => x.label === label) || all[idx],
+    promptCloseIssue: (n) => opened.push(`close:${n}`),
+  };
+  besideBot('app/x/dev/issues/37', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:37' });
+  api.sidePanelRefs.frame = { contentWindow: { AppView: av } };
+  // The menu's index is stale (a filtered row shifted), but the label names
+  // the row that was pressed.
+  api.SidePanel.runPanelMenuRow(1, 'Reply to Homeroom bot');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(opened, ['reply'], 'the row the label named, not its neighbour');
+  api.SidePanel.runPanelMenuRow(1, 'Propose to close');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(opened, ['reply', 'close'], 'Propose to close ran in the page');
   api.sidePanelRefs.frame = null;
   api._resetForTests();
 });

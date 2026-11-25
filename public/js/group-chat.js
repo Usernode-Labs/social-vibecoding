@@ -1570,6 +1570,15 @@ const GroupChat = {
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
     const anyMember = bot.offer.forUserId == null && bot.offer.kind === 'close_request';
+    // #6988: a gone or expired close offer still lets its reader propose the
+    // close. The message says which request and why; an offer made before
+    // this change has neither, so the request's own thread supplies the
+    // number (and the reason box opens empty).
+    const thread = GroupChat.activeThread;
+    const offerNumber = Number(bot.offer.issueNumber);
+    const issueNumber = Number.isSafeInteger(offerNumber) && offerNumber > 0
+      ? offerNumber
+      : (thread && thread.type === 'issue' && Number(thread.ref) > 0 ? Number(thread.ref) : null);
     return {
       status,
       forMe: !!me && (anyMember ? !GroupChat._readOnly() : Number(bot.offer.forUserId) === me),
@@ -1579,6 +1588,8 @@ const GroupChat = {
       ...(status === 'retired' && typeof bot.offer.retired === 'string' ? { retired: bot.offer.retired.slice(0, 40) } : {}),
       ...(refused ? { refused } : {}),
       ...(rows ? { rows } : {}),
+      ...(issueNumber ? { issueNumber } : {}),
+      ...(typeof bot.offer.why === 'string' && bot.offer.why.trim() ? { why: bot.offer.why.slice(0, 500) } : {}),
     };
   },
 

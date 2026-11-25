@@ -130,6 +130,14 @@ function withThreadCard(metadata, card) {
         // #6305: a many-project offer's rows travel with it, so a thread
         // draws the same card a private chat does.
         ...(Array.isArray(args.rows) ? { rows: args.rows } : {}),
+        // #6988: a close offer's request and the bot's own reason for
+        // closing it, so a gone offer can still open the reason box filled.
+        ...(card.kind === 'close_request'
+          ? {
+            ...(positive(args.issueNumber) ? { issueNumber: positive(args.issueNumber) } : {}),
+            ...(typeof args.why === 'string' && args.why.trim() ? { why: args.why.slice(0, 500) } : {}),
+          }
+          : {}),
       },
       actions: offerActions(card.kind, card.id, args),
     },

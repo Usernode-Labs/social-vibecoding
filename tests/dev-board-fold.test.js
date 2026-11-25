@@ -1815,7 +1815,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // loads, so nothing could take it in a :has(); the landing's own door to
   // it rides the existing "one filled button in its bar" check. 705 leaves
   // 175 slots.
-  checkCap.assertPinned(DAPP.tests.length, 705);
+  // 705 → 706: +1 (request 6988) a request whose Homeroom bot close offer has
+  // gone still offers Propose to close in its thread, which opens the close
+  // dialog with the bot's reason filled in; no existing check opens that
+  // seeded request's page or that state. 706 leaves 174 slots.
+  checkCap.assertPinned(DAPP.tests.length, 706);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -512,12 +512,15 @@ test('fork: takes its source from the open payload, POSTs to /fork', () => {
 
 test('close-issue: takes the issue number as payload and POSTs a close', () => {
   const src = dialog('close-issue.tsx');
-  assert.match(src, /useDialog<number \| string>\('closeIssue'/);
+  assert.match(src, /useDialog<CloseIssuePayload>\('closeIssue'/);
   assert.match(src, /\/issues`/);
-  assert.match(src, /reasonRef\.current\.value = ''/, 'the reason field is cleared on both open and close');
+  // #6988: an object payload prefills the reason box (the bot's own reason
+  // for a close offer that has gone); close still clears it.
+  assert.match(src, /reasonRef\.current\.value = next\.reason/, 'the open payload prefills the reason box');
+  assert.match(src, /onClose: \(\) => \{[\s\S]*?reasonRef\.current\.value = ''/, 'close clears the reason field');
   // #6595: the view it was proposed from re-reads at once, not only after the
   // broadcast or a reload.
-  assert.match(src, /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
+  assert.match(src, /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: slug, issueNumber: target \}\)/);
   assert.match(dialog('reopen-issue.tsx'), /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
 });
 
