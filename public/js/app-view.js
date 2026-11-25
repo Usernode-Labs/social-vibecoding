@@ -8375,6 +8375,9 @@ const AppView = {
       // (src/services/work-state.js). The foot words its headline and line
       // from it, so this page and the Homeroom bot tab cannot disagree.
       work: item && item.work && typeof item.work === 'object' ? item.work : null,
+      // #7117 discussion: an update after the first is an event on the
+      // timeline, as the Discussion line it wrote is (src/routes/votes.js).
+      updates: item && Array.isArray(item.updates) ? item.updates : [],
       // The last run's counts and its failures by name, for the layer See
       // what failed opens over the card (change-head.tsx ChecksSummary).
       checks: AppView._checksSummary(item),
