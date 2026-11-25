@@ -331,7 +331,7 @@ test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, openin
   assert.ok(row, 'a button: it opens the Workshop on this page, not an address');
   assert.match(row, /class="[^"]*dev-ws-foryou-row[^"]*"/);
   assert.match(html, /<div class="[^"]*">Workshop<\/div>/);
-  assert.match(html, /<div class="[^"]*">What happened, and every item<\/div>/);
+  assert.match(html, /<div class="[^"]*">Make and vote on changes<\/div>/);
   // It is the Workshop's row, wired to onWork, not the Homeroom bot tab's.
   assert.match(read(HUB), /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
   assert.doesNotMatch(html, /data-ws-mine-card|#homeroom-bot\?project=/, 'no Your work row on the Hub, at any width');

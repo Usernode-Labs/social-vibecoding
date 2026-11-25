@@ -63,7 +63,7 @@ test('For you: the vote owed in blue, the Workshop\'s door, and Discussion #gene
   const you = html.slice(at, html.indexOf('<h2 class="fr-cap">Topics<'));
   assert.ok(at > 0);
   assert.match(you, /<button type="button" class="fr-row"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Needs you<\/span><span class="fr-s">Email templates: keep translations<\/span><\/span><span class="fr-pill fr-act" data-kind="act">1 to vote<\/span><svg[^>]*fr-go[^>]*>.*?<\/svg><\/button>/s);
-  assert.match(you, /<span class="fr-t">Workshop<\/span><span class="fr-s">What happened, and every item<\/span>/);
+  assert.match(you, /<span class="fr-t">Workshop<\/span><span class="fr-s">Make and vote on changes<\/span>/);
   assert.doesNotMatch(you, /Your work/, 'your work is the Workshop tab\'s card, not the Hub\'s');
   assert.match(you, /<span class="fr-t">Discussion <span class="fr-mut">#general<\/span><\/span><span class="fr-s"><span class="fr-cut">@evan: Thank you @kempis!<\/span><span class="fr-aft"> · 18h ago<\/span><\/span>/, 'the product\'s own words; the message is cut short, never the time');
   assert.equal((you.match(/data-kind="act"/g) || []).length, 1);
