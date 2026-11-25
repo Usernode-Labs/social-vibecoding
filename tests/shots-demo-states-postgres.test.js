@@ -11,6 +11,7 @@ const { dmStream } = require('./lib/bot-dm-stream');
 // TEST_DATABASE_URL is set, the same contract as tests/communities-postgres.test.js.
 
 const test = require('node:test');
+const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -79,8 +80,10 @@ function loadAppView(user) {
 
 // The public standings routes (routes/topochain/public.js), served from one
 // copy: they read their pool from db/pool when they load, so they are loaded
-// afresh with this one. Resolves the address to fetch from.
-async function serveStandings(t, pool) {
+// afresh with this one. Resolves the address to fetch from. With the pair, its
+// one closer is recorded on the pair so the server is shut before the copies
+// are dropped; t.after stays as a fallback.
+async function serveStandings(t, pool, pair) {
   const poolModule = require('../src/db/pool');
   const original = poolModule.getPool;
   poolModule.getPool = () => pool;
@@ -101,7 +104,15 @@ async function serveStandings(t, pool) {
   const server = await new Promise((resolve) => {
     const started = app.listen(0, '127.0.0.1', () => resolve(started));
   });
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  let closed = false;
+  const close = () => new Promise((resolve) => {
+    if (closed) return resolve();
+    closed = true;
+    server.closeAllConnections();
+    server.close(() => resolve());
+  });
+  if (pair) pair.closers.push(close);
+  t.after(close);
   return `http://127.0.0.1:${server.address().port}`;
 }
 
@@ -171,37 +182,110 @@ async function seedCopy(pool) {
   }
 }
 
+// The generated schema is big, so it is loaded once per run into a template
+// database, and each test's two copies are made from it. Only the schema goes
+// in: seedCopy and ensureFullAdminIdentity stay per copy, because the full
+// admin identity depends on the copy's run and side.
+const TIMEOUTS = { statement_timeout: 30_000, query_timeout: 30_000 };
+let template = null;
+let templateReady = null;
+
+function ensureTemplate() {
+  if (!templateReady) {
+    templateReady = (async () => {
+      template = `sdst_${crypto.randomBytes(8).toString('hex')}_tpl`;
+      const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, max: 1, ...TIMEOUTS });
+      try {
+        await admin.query(`CREATE DATABASE ${template}`);
+      } finally {
+        await admin.end();
+      }
+      const url = new URL(DSN); url.pathname = `/${template}`;
+      // Ended before any copy is made: PostgreSQL will not use a template
+      // that still has a connection open.
+      const pool = new Pool({ connectionString: String(url), max: 1, ...TIMEOUTS });
+      try {
+        await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+      } finally {
+        await pool.end();
+      }
+    })();
+  }
+  return templateReady;
+}
+
+// Close anything still connected, then drop. Both are bounded, so teardown
+// cannot hold the file open.
+async function dropCopy(admin, name, t) {
+  try {
+    await admin.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+      [name]
+    );
+    await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+  } catch (err) {
+    t.diagnostic(`could not drop ${name}: ${err.message}`);
+  }
+}
+
 async function pairOfCopies(t) {
-  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, ...TIMEOUTS });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
     return null;
   }
+  try {
+    await ensureTemplate();
+  } catch (err) {
+    await admin.end();
+    throw err;
+  }
   const runId = crypto.randomBytes(16).toString('hex');
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   const sides = {};
+  const closers = [];
+  Object.defineProperty(sides, 'closers', { value: closers, enumerable: false });
   for (const side of ['base', 'head']) {
     const name = dbManager.shotsDbName(SLUG, runId, side);
-    await admin.query(`CREATE DATABASE ${name}`);
+    await admin.query(`CREATE DATABASE ${name} TEMPLATE ${template}`);
     const url = new URL(DSN); url.pathname = `/${name}`;
-    const pool = new Pool({ connectionString: String(url), max: 4 });
-    await pool.query(schema);
+    const pool = new Pool({ connectionString: String(url), max: 4, ...TIMEOUTS });
     await seedCopy(pool);
     const input = { databaseUrl: String(url), slug: SLUG, runId, side, selfAppSlug: SLUG };
     await shotsFixtures.ensureFullAdminIdentity(input);
     sides[side] = { name, pool, input };
   }
   t.after(async () => {
+    for (const close of closers) {
+      try { await close(); } catch (err) { t.diagnostic(`could not close a server: ${err.message}`); }
+    }
     for (const { pool, name } of Object.values(sides)) {
       await pool.end();
-      await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+      await dropCopy(admin, name, t);
     }
     await admin.end();
   });
   return sides;
 }
+
+// The template goes once, at the end of the file, even when a test failed.
+after(async () => {
+  if (!templateReady) return;
+  await templateReady.catch(() => {});
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, max: 1, ...TIMEOUTS });
+  try {
+    await admin.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+      [template]
+    );
+    await admin.query(`DROP DATABASE IF EXISTS ${template}`);
+  } catch (err) {
+    console.error(`shots-demo-states: could not drop ${template}: ${err.message}`);
+  } finally {
+    await admin.end();
+  }
+});
 
 test('demo states go into both shots copies or neither, once', { timeout: 180000 }, async (t) => {
   const copies = await pairOfCopies(t);
@@ -703,7 +787,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // handle, and the drill-down the pane asks for with that handle lists
   // their two activities each, with when each happened. Players the state
   // does not name keep no handle.
-  const origin = await serveStandings(t, pool);
+  const origin = await serveStandings(t, pool, copies);
   const board = await (await fetch(`${origin}/api/v4/leaderboard`)).json();
   assert.equal(board.data.event.id, 900501);
   const named = board.data.leaderboard.filter((row) => row.discord);
