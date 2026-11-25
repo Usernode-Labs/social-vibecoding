@@ -368,7 +368,7 @@ is no replay plan to write and nothing to verify locally.
   row's pin, before its count, keeps it at the top, and the header's name
   is only a name. **A sidebar pin is the account's**
   (`community_pins`, `services/community-pins.js`,
-  `/api/me/community-pins`), apart from Home's: a member's only, four at
+  `/api/me/community-pins`), apart from Home's: a member's only, ten at
   most, gone when they leave, made from a community's row (its pin, or
   right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
   (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour

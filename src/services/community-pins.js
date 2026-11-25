@@ -8,14 +8,14 @@
 // A pin is a member's: the table's key is the membership row's, so leaving
 // a community drops its pin, and pinning one you are not in is answered
 // `join_required`, which the client's fetch wrapper turns into a Join prompt
-// and a retry (frontend/src/lib/join-required.ts). Four at most, in the order
+// and a retry (frontend/src/lib/join-required.ts). Ten at most, in the order
 // they were pinned. Each change runs under a lock on the person's own row,
 // so two tabs pinning at once cannot pass the cap between them.
 
 const appAccess = require('./app-access');
 
 /** The most pins the sidebar keeps. The client's pin store says the same. */
-const PINS_MAX = 4;
+const PINS_MAX = 10;
 
 const fail = (status, body) => { throw Object.assign(new Error(body.error), { status, body }); };
 
@@ -70,7 +70,7 @@ async function addPin(db, user, slug) {
   }
   const { rows } = await db.query('SELECT community_id, position FROM community_pins WHERE user_id = $1', [user.id]);
   if (rows.some((r) => r.community_id === app.community_id)) return;
-  if (rows.length >= PINS_MAX) fail(409, { error: 'Unpin one first: four is the most.', code: 'pins_full' });
+  if (rows.length >= PINS_MAX) fail(409, { error: 'Unpin one first: ten is the most.', code: 'pins_full' });
   const next = rows.reduce((n, r) => Math.max(n, r.position + 1), 0);
   await db.query(
     `INSERT INTO community_pins (community_id, user_id, position) VALUES ($1, $2, $3)

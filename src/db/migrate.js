@@ -540,6 +540,12 @@ const STAGING_SEEDS = Object.freeze([
   stagingSeed('seedStagingProfileProjects', async (pool, config) => { await seedStagingProfileProjects(pool); }),
   stagingSeed('seedStagingPhoneFailures', async (pool, config) => { await seedStagingPhoneFailures(pool); }),
   stagingSeed('seedStagingPlatformMail', async (pool, config) => { await seedStagingPlatformMail(pool); }),
+  // #7147's shots: the desktop sidebar keeps ten pinned communities now, not
+  // four. A fresh staging copy has none for the shots' member fixture, so
+  // eleven obviously fake private ones are seeded, ten pinned in the order
+  // the sidebar shows them and the eleventh joined but unpinned, so pinning
+  // it is refused with the new number. Obviously fake, idempotent.
+  stagingSeed('seedStagingPinnedCommunities', async (pool, config) => { await seedStagingPinnedCommunities(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2133,6 +2139,58 @@ async function seedStagingCollabOnlyVote(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging collaborator-only vote seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// #7147's shots: the desktop sidebar keeps ten pinned communities now, not
+// four. A fresh staging copy has no communities at all for the shots' member
+// fixture, so eleven obviously fake private ones are seeded; ten are pinned
+// for that account in the order the sidebar shows them, and the eleventh is
+// joined but unpinned, so its row's pin is refused with the new number. Rows
+// are for the fixture account and an obviously fake host; nothing here is a
+// signal the code reads to decide anything, and it is idempotent by slug.
+async function seedStagingPinnedCommunities(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    const host = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-pin-host', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    const names = ['Chess Club', 'Running Group', 'Plant Pal', 'Choir', 'Book Swap',
+      'Recipe Box', 'Trail Maps', 'Sketch Night', 'Puzzle Room', 'Bike Repair', 'Kite Club'];
+    for (let i = 0; i < names.length; i++) {
+      const slug = `staging-demo-pin-${i + 1}`;
+      await tx.query(
+        `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, icon_emoji)
+         SELECT $1::text, $2::text, 'running', $3, 'private', 'private', '🎲'
+          WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = $2::text)`,
+        [`Staging demo: ${names[i]}`, slug, host.id]);
+      const app = (await tx.query('SELECT id, community_id FROM apps WHERE slug = $1', [slug])).rows[0];
+      if (!app || !app.community_id) continue;
+      await tx.query(
+        `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+         ON CONFLICT DO NOTHING`, [app.community_id, member.id]);
+      // A member of a private community may see its project, so the row's
+      // pin works from the sidebar.
+      await tx.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')
+         ON CONFLICT DO NOTHING`, [app.id, member.id]);
+      // Ten pinned, in pin order; the eleventh waits to be pinned.
+      if (i < 10) {
+        await tx.query(
+          `INSERT INTO community_pins (community_id, user_id, position) VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`, [app.community_id, member.id, i]);
+      }
+    }
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging pinned communities seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
@@ -17935,6 +17993,8 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
   seedStagingProfileProjects,
+  // #7147: the eleven fake communities, ten pinned, the sidebar's shots need.
+  seedStagingPinnedCommunities,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   // #6284: the stopped-fix change the Testing card and Homeroom bot page

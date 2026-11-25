@@ -8,7 +8,7 @@
 //
 // Separate from two neighbours on purpose:
 //   - app_favorites is Home's "Pinned apps": an app pin opens the app.
-//   - community_pins is the desktop sidebar's four (services/community-pins.js),
+//   - community_pins is the desktop sidebar's ten (services/community-pins.js),
 //     a member's only.
 // A community pin here needs no membership: a person can follow a community
 // before joining it, signed in or (on the device) signed out.
