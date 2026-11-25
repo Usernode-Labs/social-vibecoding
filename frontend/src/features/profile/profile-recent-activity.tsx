@@ -5,15 +5,16 @@ import { useMessages } from '../../lib/i18n/react';
 import { relativeDate } from './profile-store.js';
 
 type RecentChange = { sessionId: number; prNumber?: number | null; title: string; appSlug: string; appName: string; mergedAt?: string | null };
-export function ProfileRecentActivity({ changes, limit = 3 }: { changes: RecentChange[]; limit?: number }) {
+export function ProfileRecentActivity({ changes, limit = 3, empty = false }: { changes: RecentChange[]; limit?: number; empty?: boolean }) {
   const t = useMessages('profile');
-  if (!changes.length) return null;
+  const tm = useMessages('messages');
+  if (!changes.length && !empty) return null;
   return <section id="profile-recent-activity">
     <div className="profile-recent-heading">
       <h2>{t('profile:recent.title')}</h2>
-      <a href="#homeroom-bot/history?kind=change">{t('profile:recent.all')}</a>
+      {changes.length ? <a href="#homeroom-bot/history?kind=change">{t('profile:recent.all')}</a> : null}
     </div>
-    <ul>
+    {changes.length ? <ul>
       {changes.slice(0, limit).map((change) => {
         const when = relativeDate(change.mergedAt);
         return <li key={change.sessionId}>
@@ -24,6 +25,6 @@ export function ProfileRecentActivity({ changes, limit = 3 }: { changes: RecentC
           </a>
         </li>;
       })}
-    </ul>
+    </ul> : <ul><li className="profile-recent-empty">{tm('messages:ai.history.empty')}</li></ul>}
   </section>;
 }

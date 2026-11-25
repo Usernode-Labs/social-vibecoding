@@ -70,7 +70,7 @@ test('the standard profile switches its right column on the tab and keeps Projec
   assert.match(src, /const tab = state\.tab \|\| 'overview';/);
   assert.match(src, /<ProfileSectionLinks tab=\{tab\} \/>/);
   assert.match(src, /<ProfileHistoryList kind=\{HISTORY_KIND\[tab as keyof typeof HISTORY_KIND\]\} \/>/);
-  assert.match(src, /<ProfileRecentActivity changes=\{contributions\} limit=\{5\} \/>/);
+  assert.match(src, /<ProfileRecentActivity changes=\{contributions\} limit=\{5\} empty \/>/);
   assert.match(src, /<ProfileLiveProjects changes=\{contributions\} \/>/);
   assert.match(src, /!onHistoryTab && tab !== 'activity'/, 'the overview keeps its four blocks');
 });
@@ -90,7 +90,7 @@ test('the history tab reads after mount and shows the loading line first', () =>
   const html = historyList({ ready: false, loading: false, failed: false, rows: [], next: null, more: () => {}, retry: () => {} }, []);
   assert.equal((html.match(/id="profile-history"/g) || []).length, 1);
   assert.match(html, /messages:ai\.history\.loading/);
-  assert.doesNotMatch(html, /<ul/, 'no list before the read answers');
+  assert.match(html, /<ul><li class="profile-history-state">messages:ai\.history\.loading<\/li><\/ul>/, 'the loading line sits in the paper card');
 });
 
 test('a history tab draws its rows in the profile card, with the project, title and end', () => {

@@ -232,4 +232,10 @@ test('recent activity links real changes and leaves out unknown times', () => {
   }));
   assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many })).match(/<li>/g) || []).length, 3);
   assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many, limit: 5 })).match(/<li>/g) || []).length, 5);
+  // #7134 review: the Activity tab keeps its heading and says so in the card
+  // when there is nothing to list; the overview still renders nothing.
+  const none = renderToHtml(createElement(ProfileRecentActivity, { changes: [], empty: true }));
+  assert.match(none, /id="profile-recent-activity"/);
+  assert.match(none, /profile:recent\.title/);
+  assert.match(none, /<ul><li class="profile-recent-empty">messages:ai\.history\.empty<\/li><\/ul>/);
 });

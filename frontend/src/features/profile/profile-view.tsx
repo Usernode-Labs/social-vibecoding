@@ -601,7 +601,7 @@ export function ProfileRoot(): ReactNode {
         <div id="profile-main" className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           {editorial ? <ProfileSectionLinks tab={tab} /> : null}
           {editorial && onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
-          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} /> : null}
+          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
           {!editorial || (!onHistoryTab && tab !== 'activity') ? (
             <>
               {editorial ? <ProfileLiveProjects changes={contributions} /> : null}

@@ -11482,10 +11482,12 @@ html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-r
 html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
 html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
 html:not([data-skin]) #profile-recent-activity time { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-empty { min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.875rem; }
 html:not([data-skin]) #profile-history { margin: 0 0 1.5rem; }
 html:not([data-skin]) #profile-history h2 { margin: 0 0 0.75rem; }
 html:not([data-skin]) #profile-history .profile-history-end { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
-html:not([data-skin]) :is(#profile-history .profile-history-state, #profile-history .profile-history-more) { color: var(--ed-muted); font-size: 0.9375rem; margin: 0 0 0.75rem; }
+html:not([data-skin]) #profile-history .profile-history-state { display: flex; align-items: center; gap: 0.5rem; min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.9375rem; }
+html:not([data-skin]) #profile-history .profile-history-more { color: var(--ed-muted); font-size: 0.9375rem; margin: 0.75rem 0 0; }
 html:not([data-skin]) #profile-history .profile-history-more button,
 html:not([data-skin]) #profile-history .profile-history-again { color: var(--accent); font-size: 0.8125rem; background: none; border: 0; padding: 0; cursor: pointer; }
 @media (max-width: 639.98px) {

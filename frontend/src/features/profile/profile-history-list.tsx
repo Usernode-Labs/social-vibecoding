@@ -57,12 +57,14 @@ export function ProfileHistoryList({ kind }: { kind: HistoryKind }): ReactNode {
   const more = history.ready && history.next
     ? <p className="profile-history-more"><button type="button" onClick={history.more}>{t('messages:ai.history.earlier')}</button></p>
     : null;
+  // Loading, empty and failed are the History card's words, drawn inside the
+  // same paper card the rows are (#7134 review): a state is never a bare line.
+  const state = !history.ready ? t('messages:ai.history.loading')
+    : history.failed && !historyLines.length ? (
+      <>{t('messages:ai.history.failed')} <button type="button" className="profile-history-again" onClick={history.retry}>{tc('core:common.tryAgain')}</button></>
+    ) : !historyLines.length && !history.next ? t('messages:ai.history.empty') : null;
   return <section id="profile-history" data-profile-history={kind}>
     <h2>{tp(HEADING[kind])}</h2>
-    {!history.ready ? <p className="profile-history-state">{t('messages:ai.history.loading')}</p>
-      : history.failed && !historyLines.length ? (
-        <p className="profile-history-state">{t('messages:ai.history.failed')} <button type="button" className="profile-history-again" onClick={history.retry}>{tc('core:common.tryAgain')}</button></p>
-      ) : !historyLines.length && !history.next ? <p className="profile-history-state">{t('messages:ai.history.empty')}</p> : null}
     {historyLines.length ? <ul>
       {historyLines.map((line) => {
         const href = hrefs.get(line.key) || null;
@@ -73,7 +75,7 @@ export function ProfileHistoryList({ kind }: { kind: HistoryKind }): ReactNode {
         </>;
         return <li key={line.key}>{href ? <a href={href}>{body}</a> : <span>{body}</span>}</li>;
       })}
-    </ul> : null}
+    </ul> : state ? <ul><li className="profile-history-state">{state}</li></ul> : null}
     {more}
   </section>;
 }
