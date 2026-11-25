@@ -37,11 +37,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
+import { fileSize } from '../../lib/file-size';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useDetailCard, useDetailLabel } from '../detail/detail-card';
 import * as api from './api';
 import { OfferRefused, refusalOf, type OfferRefusal } from './bot-question';
-import { MessageMarkdown, fileSize } from './format';
+import { MessageMarkdown } from './format';
 
 const ICON = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800';
 /** The label over a panel of the list beside the words: the shell's small caps, without a list's own gutter. */
