@@ -585,23 +585,76 @@ function fitBrief(brief, budget = BRIEF_BUDGET) {
   };
 }
 
-// What the change's own staging seeds could not put on the before copy, for
-// the shots agent: a claim whose before side needs one of those rows is
-// skipped with a plain reason rather than reported as a vague capture
-// failure.
-function changeSeedsBrief(beforeSeeds) {
-  const leftOut = (beforeSeeds.leftOut || []).map(({ name, why }) => ({ seed: name, why }));
-  const beforeCopy = beforeSeeds.ran === true ? 'applied'
-    : beforeSeeds.ran === 'partial' ? 'partial' : 'not_run';
+// What the change's own staging seeds could not put on the before copy, and
+// what either copy's seeds wrote nothing for (#7172), for the shots agent: a
+// claim whose side needs one of those rows is skipped with a plain reason
+// rather than reported as a vague capture failure.
+const SEED_OUTCOME_RANK = { failed: 0, skipped: 1, nothing: 2 };
+function didNothingOf(beforeSeeds, afterSeeds) {
+  const before = [];
+  const after = [];
+  if (beforeSeeds) {
+    for (const entry of beforeSeeds.leftOut || []) {
+      before.push({
+        seed: entry.name,
+        outcome: 'failed',
+        reason: entry.why === 'media'
+          ? 'its media file is not on the before copy'
+          : 'the before copy\'s database cannot hold it',
+      });
+    }
+    for (const entry of beforeSeeds.outcomes || []) {
+      if (entry.outcome && entry.outcome !== 'wrote') {
+        before.push({ seed: entry.name, outcome: entry.outcome, reason: entry.reason || null });
+      }
+    }
+  }
+  for (const entry of afterSeeds?.outcomes || []) {
+    if (entry.outcome && entry.outcome !== 'wrote') {
+      after.push({ seed: entry.name, outcome: entry.outcome, reason: entry.reason || null });
+    }
+  }
+  const ordered = (list) => [...list].sort((a, b) => (SEED_OUTCOME_RANK[a.outcome] ?? 3) - (SEED_OUTCOME_RANK[b.outcome] ?? 3));
+  return {
+    before: ordered(before).slice(0, 20),
+    after: ordered(after).slice(0, 20),
+  };
+}
+
+function changeSeedsBrief(beforeSeeds, afterSeeds) {
+  const leftOut = (beforeSeeds?.leftOut || []).map(({ name, why }) => ({ seed: name, why }));
+  const beforeCopy = beforeSeeds?.ran === true ? 'applied'
+    : beforeSeeds?.ran === 'partial' ? 'partial' : 'not_run';
+  const didNothing = didNothingOf(beforeSeeds, afterSeeds);
+  // Nothing to say: every seed wrote, and the before-copy step ran in full.
+  const beforeStepIncomplete = !!beforeSeeds && beforeSeeds.ran !== true;
+  if (!didNothing.before.length && !didNothing.after.length && !beforeStepIncomplete) return null;
   return {
     beforeCopy,
     leftOut,
-    note: 'Every seed named here is on the after copy only. If a declared change\'s before side lacks data one of'
-      + ' them writes, call skip_change for it at once with the reason "the before copy can\'t hold the demo data'
-      + ' this change adds (seed name)", and do not try other browsers.'
-      + (beforeSeeds.ran === 'partial' ? ' The seed step did not finish in time, so other seeds may be missing too.' : '')
-      + (beforeSeeds.ran === false ? ' The seed step did not run, so none of the change\'s own seeds are on the before copy.' : ''),
+    didNothing,
+    note: 'Each seed under didNothing wrote nothing on the copy it names (skipped, failed, or changed no rows), with'
+      + ' the reason. If a declared change\'s steps need a row one of them writes, call skip_change for it at once'
+      + ' with the reason "seed <name> did nothing on the <before|after> copy: <reason>", and do not try other'
+      + ' browsers.' + (leftOut.length ? ' A seed under leftOut is on the after copy only: the before copy could not hold it.' : '')
+      + (beforeSeeds?.ran === 'partial' ? ' The before-copy seed step did not finish in time, so other seeds may be missing too.' : '')
+      + (beforeSeeds?.ran === false ? ' The before-copy seed step did not run, so none of the change\'s own seeds are on the before copy.' : ''),
   };
+}
+
+// The words a run adds for the demo data its copies never got, capped at five
+// names and said per copy, skipped and failed first.
+function seedSentence(seeds) {
+  if (!seeds) return '';
+  const parts = [];
+  for (const copy of ['before', 'after']) {
+    const list = Array.isArray(seeds[copy]) ? seeds[copy] : [];
+    if (!list.length) continue;
+    const shown = list.slice(0, 5).map((entry) => `${entry.seed} (${entry.outcome}${entry.reason ? `: ${entry.reason}` : ''})`);
+    const more = list.length > 5 ? ` and ${list.length - 5} more` : '';
+    parts.push(`Demo data that did not load on the ${copy} copy: ${shown.join(', ')}${more}.`);
+  }
+  return parts.join(' ');
 }
 
 function shotsBrief({
@@ -625,6 +678,7 @@ function shotsBrief({
   const moment = previewClock.forSession(session);
   // The screens' own files first: they say most about where a change shows.
   const files = [...revision.files.filter(isFrontendFile), ...revision.files.filter((file) => !isFrontendFile(file))];
+  const changeSeeds = changeSeedsBrief(deployment.beforeSeeds, deployment.afterSeeds);
   return fitBrief({
     version: 2,
     runId: run.id,
@@ -676,12 +730,9 @@ function shotsBrief({
     },
     declaredChecks: declaredChecks || declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
-    // Only Homeroom's own pair runs the change's seeds against the before
-    // copy (shots-environment.applyChangeSeedsToBefore). When any were left
-    // out, or the step did not fully run, say so and name them.
-    ...(selfApp && deployment.beforeSeeds
-      && (deployment.beforeSeeds.ran !== true || (deployment.beforeSeeds.leftOut || []).length)
-      ? { changeSeeds: changeSeedsBrief(deployment.beforeSeeds) } : {}),
+    // Seeds that wrote nothing on either copy (#7172), for any app: the
+    // agent names one when a claim needs a row it should have written.
+    ...(changeSeeds ? { changeSeeds } : {}),
     // The only files upload_file can choose where a page asks for one, the
     // same on both copies (worker/shots-samples.js).
     sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
@@ -1257,6 +1308,7 @@ async function buildCopies(config, pool, {
     // Ranked once: the brief shows as many as its budget has room for, and
     // the run's diagnostics rank a visit against all of them.
     const declaredChecks = declaredCheckSummary(pair.sides.head.checkout, intent, testingPathsForSession(session));
+    const seedBrief = changeSeedsBrief(exploration.beforeSeeds, exploration.afterSeeds);
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
@@ -1293,6 +1345,9 @@ async function buildCopies(config, pool, {
       // (3x phone, 2x desktop) instead of 1x. Read once, so the whole run
       // takes one density (services/shots-density.js).
       deviceDensity: await deps.shotsDensity.enabledOrOff(pool),
+      // #7172: the seeds that wrote nothing on each copy, so the verdict
+      // carries them and a failed run names them.
+      seeds: seedBrief?.didNothing || null,
     };
     if (await ended()) return { stale: true };
     await shotsControl.create(pool, {
@@ -1351,23 +1406,39 @@ function followedErrorOf(result) {
 
 // What a run adds up to once its agent's turn has ended: the summary of its
 // workspace, without the bytes.
+// A reason that ends with the demo-data sentence, which is never the part cut
+// off when the agent's own words are long.
+function withSeedNote(text, seedNote, max = 1800) {
+  if (!seedNote) return text.slice(0, max);
+  const room = Math.max(0, max - seedNote.length - 1);
+  return `${text.slice(0, room).trimEnd()} ${seedNote}`.slice(0, max);
+}
+
 function verdictOf(summary) {
   const s = summary.summary;
   const reasons = [...new Set(s.stories.map((story) => story.reason).filter(Boolean))];
+  const seeds = summary.seeds || null;
+  const seedNote = seedSentence(seeds);
+  // `shot_runs.hard_verdict.seeds` reads the same list, so a card and the
+  // connector know why a demo row was never there.
+  const verdict = seeds ? { ...s.verdict, seeds } : s.verdict;
+  const failedReason = s.failedCount ? shotsFiles.failedReason(summary.intent, s.stories) : null;
+  const incompleteReason = reasons.join(' ') || 'The shots agent did not save a before and after shot.';
   return {
     passed: s.verdict.passed === true,
     readyCount: s.readyCount,
     failedCount: s.failedCount,
-    verdict: s.verdict,
+    verdict,
     manifestHash: s.manifestHash,
     slots: s.files.map((file) => shotsControl.dbSlot(file)),
     reasons,
     skippedAny: summary.skippedAny,
     counts: summary.counts,
     // A run that publishes nothing says why: each failed change's claim, or
-    // what each skipped change lacked.
-    failedReason: s.failedCount ? shotsFiles.failedReason(summary.intent, s.stories) : null,
-    incompleteReason: reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.',
+    // what each skipped change lacked, then the demo data that never loaded.
+    failedReason: failedReason == null ? null : withSeedNote(failedReason, seedNote),
+    incompleteReason: withSeedNote(incompleteReason, seedNote),
+    seeds,
     lastToolFailure: summary.lastToolFailure,
   };
 }
@@ -1527,7 +1598,7 @@ async function dispatchAgent(config, pool, {
     agent: error ? { outcome: error.busy ? 'busy' : error.died ? 'died' : error.timedOut ? 'timed_out' : 'failed', ...error }
       : { outcome: 'completed' },
     followed: !!turn.followed,
-    ...verdictOf({ ...summary, intent: control.intent }),
+    ...verdictOf({ ...summary, intent: control.intent, seeds: a.seeds || null }),
     trace: { ...traceSummary(metrics), ...(finalResponse ? { agentFinalResponse: finalResponse } : {}) },
   };
 }
@@ -1716,6 +1787,8 @@ module.exports = {
   MAKE_PROJECT,
   AFTER_ONLY,
   shotsBrief,
+  // #7172: the verdict's seed sentence, as its test seam.
+  verdictOf,
   BRIEF_BUDGET,
   sameProvenance,
   agentBusyRetryable,

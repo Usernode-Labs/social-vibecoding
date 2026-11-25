@@ -12,6 +12,7 @@ const { applySchemaWithLockRetry } = require('./schema-migrations');
 const { seedReferenceData } = require('./reference-data');
 const { withStagingMedia } = require('../services/staging-media');
 const media = require('../services/media-store');
+const { runSeedWithOutcome, seedSkipped } = require('./staging-seed-outcome');
 // Read by seedStagingPlatformMail's at-the-ceiling fixture, so the number
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
@@ -40,17 +41,59 @@ function stagingSeed(name, run, options = {}) {
  * seeds too) and skips `ownCopyOnly` ones; `onPhase` hears a phase boundary
  * that falls inside the list.
  */
-async function runStagingSeeds(pool, config, { each = null, onPhase = null, seeds = STAGING_SEEDS } = {}) {
+async function runStagingSeeds(pool, config, {
+  each = null, onPhase = null, seeds = STAGING_SEEDS, onOutcome = null,
+} = {}) {
+  const outcomes = [];
+  const boot = typeof each !== 'function';
+  const settle = (outcome) => {
+    outcomes.push(outcome);
+    onOutcome?.(outcome);
+    return outcome;
+  };
   for (const entry of seeds) {
     if (typeof each === 'function') {
       if (entry.ownCopyOnly) continue;
       await each(entry);
     } else if (entry.background) {
-      void entry.run(pool, config);
+      void runSeedWithOutcome(entry, pool, config)
+        .then(async (outcome) => {
+          settle(outcome);
+          if (boot) await writeStagingSeedReport(pool, outcomes);
+        })
+        .catch((error) => {
+          log.warn('db', 'A background staging seed failed', { seed: entry.name, message: error?.message || String(error) });
+        });
     } else {
-      await entry.run(pool, config);
+      settle(await runSeedWithOutcome(entry, pool, config));
     }
     if (entry.phaseEnd) onPhase?.(entry.phaseEnd);
+  }
+  // After the seeds a boot waits for; a background one that settles later
+  // writes the report again with its own outcome.
+  if (boot) await writeStagingSeedReport(pool, outcomes);
+  return outcomes;
+}
+
+// The non-`wrote` outcomes of a boot's staging seeds, in `platform_settings`
+// so a screenshot run can name the demo data its after copy never got (#7172).
+// A fresh copy's seeds rerun on every boot; this row is rewritten, never
+// duplicated.
+const SEED_REPORT_KEY = 'staging_seed_report';
+async function writeStagingSeedReport(pool, outcomes) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const wroteNothing = outcomes
+    .filter((outcome) => outcome && outcome.outcome && outcome.outcome !== 'wrote')
+    .slice(0, 300)
+    .map(({ name, outcome, reason }) => ({ name, outcome, reason: reason || null }));
+  try {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [SEED_REPORT_KEY, JSON.stringify({ version: 1, outcomes: wroteNothing })]);
+  } catch (error) {
+    log.warn('db', 'Could not record what the staging seeds did', { message: error?.message || String(error) });
   }
 }
 
@@ -594,7 +637,7 @@ async function seedStagingAppGroups(pool) {
   try {
     const app = (await pool.query(
       "SELECT id FROM apps WHERE lower(name) = 'gym tracker' AND NOT self_hosted ORDER BY id LIMIT 1")).rows[0];
-    if (!app) return;
+    if (!app) return seedSkipped('no project Gym Tracker');
     await pool.query(
       `INSERT INTO app_groups (app_id, key, name, reported_at)
        SELECT $1, '15-minute finishers', '15-minute finishers', NOW()
@@ -647,7 +690,7 @@ async function seedStagingProfileProjects(pool) {
   try {
     const member = (await pool.query(
       "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     const projects = [
       { id: 900809, slug: 'staging-demo-profile-garden', name: 'Staging demo garden',
         title: 'Staging demo: a reminder when the soil is dry', hoursAgo: 1,
@@ -696,7 +739,7 @@ async function seedStagingClosedGoingLive(pool) {
   try {
     await tx.query('BEGIN');
     const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0];
-    if (!member) { await tx.query('ROLLBACK'); return; }
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
     await tx.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
        SELECT 'Staging demo release', 'staging-demo-closed-going-live', 'running', $1, 'public', 'members'
@@ -1835,7 +1878,7 @@ async function seedTermsVersions(pool) {
 async function seedStagingLongInbox(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0];
-  if (!member) return;
+  if (!member) return seedSkipped('no user usernode-capture');
   for (let i = 1; i <= 18; i += 1) {
     const title = `Staging demo inbox ${String(i).padStart(2, '0')}`;
     await pool.query(
@@ -2148,7 +2191,7 @@ async function seedStagingCollabOnlyVote(pool) {
   try {
     await tx.query('BEGIN');
     const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
-    if (!member) { await tx.query('ROLLBACK'); return; }
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
     const author = (await tx.query(
       `INSERT INTO users (username, password, has_platform_access)
        VALUES ('staging-demo-collab-author', 'staging-demo-not-a-login', TRUE)
@@ -2199,7 +2242,7 @@ async function seedStagingPinnedCommunities(pool) {
   try {
     await tx.query('BEGIN');
     const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
-    if (!member) { await tx.query('ROLLBACK'); return; }
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
     const host = (await tx.query(
       `INSERT INTO users (username, password, has_platform_access)
        VALUES ('staging-demo-pin-host', 'staging-demo-not-a-login', TRUE)
@@ -2247,16 +2290,16 @@ async function seedStagingEmojiThreadRequest(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-pin-1'")).rows[0];
-    if (!app) return;
+    if (!app) return seedSkipped('no project staging-demo-pin-1');
+    const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) return seedSkipped('no user usernode-capture');
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
        SELECT $1, $2, 'Staging demo: a request in an emoji project',
               'Staging demo: obviously fake. The project''s emoji sits in the thread header''s tile.',
-              u.id, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour'
-         FROM users u
-        WHERE u.username = 'usernode-capture'
-          AND NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
-      [app.id, 9170],
+              $3, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [app.id, 9170, member.id],
     );
   } catch (err) {
     log.warn('db', 'Staging emoji thread request seed failed', { message: err.message });
@@ -2282,7 +2325,7 @@ async function seedStagingJoinedBuildOffer(pool) {
   try {
     await tx.query('BEGIN');
     const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
-    if (!member) { await tx.query('ROLLBACK'); return; }
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
     const inviter = (await tx.query(
       `INSERT INTO users (username, password, has_platform_access)
        VALUES ('staging-demo-offer-inviter', 'staging-demo-not-a-login', TRUE)
@@ -2346,9 +2389,8 @@ async function seedStagingJoinedBuildOffer(pool) {
 // you on the Homeroom bot tab until you answer or dismiss it
 // (services/thread-mentions.js). A fresh staging copy names the capture
 // member nowhere, so an obviously fake person names her in the thread of an
-// obviously fake request on the self-hosted Homeroom project (where a
-// request's page opens on a copy, as the bot tab's other seeds use): the
-// message, and the 'mention' notification the socket writes for it. Rows for
+// obviously fake request on the self-hosted Homeroom project: the message,
+// and the 'mention' notification the socket writes for it. Rows for
 // the fixture account and a fake person; nothing here is a signal the code
 // reads to decide anything. Only an @ from the last week starts a row, so a
 // copy kept longer has the @ moved back to two hours ago on its next boot,
@@ -2419,7 +2461,7 @@ async function seedStagingBotWaitingRows(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const demo = [
@@ -2805,7 +2847,7 @@ async function seedStagingChangeClaim(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const builder = await pool.query("SELECT id FROM users WHERE username = 'staging-demo-user' LIMIT 1");
-    if (!apps.rows.length || !builder.rows.length) return;
+    if (!apps.rows.length || !builder.rows.length) return seedSkipped('no self-hosted project or no builder');
     const appId = apps.rows[0].id;
     // The pages the shots open: #9141 is the request the change names (asked
     // by usernode-capture, so the requester sees the answer), #9140 the
@@ -2845,7 +2887,7 @@ async function seedStagingChangeClaim(pool) {
       [Number(change.id), appId],
     );
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!bot.rows.length) return;
+    if (!bot.rows.length) return seedSkipped('no Homeroom bot user');
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, 'Change PR 9901 says it closes your request #9141.', 'message', 'issue', 9141,
@@ -3056,7 +3098,7 @@ async function seedStagingBotAlreadyWorks(pool) {
     const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
+    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return seedSkipped('no self-hosted project, no user usernode-capture or no Homeroom bot');
     const appId = apps.rows[0].id;
     const appSlug = apps.rows[0].slug;
     const userId = people.rows[0].id;
@@ -3180,7 +3222,7 @@ async function seedStagingBotGoneCloseOffer(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !bot.rows.length) return;
+    if (!apps.rows.length || !bot.rows.length) return seedSkipped('no self-hosted project or no Homeroom bot');
     const appId = apps.rows[0].id;
     const botId = bot.rows[0].id;
     const number = 9110;
@@ -3226,7 +3268,7 @@ async function seedStagingBotWrongProject(pool) {
     const apps = await pool.query('SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
+    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return seedSkipped('no self-hosted project, no user usernode-capture or no Homeroom bot');
     const { id: appId, slug: appSlug, name: appName } = apps.rows[0];
     const userId = people.rows[0].id;
     const botId = bot.rows[0].id;
@@ -3343,7 +3385,7 @@ async function seedStagingBotOutdatedReason(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const number = 9112;
@@ -3612,7 +3654,7 @@ async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!people.rows.length) return;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const memberId = people.rows[0].id;
     const projects = [
       {
@@ -4249,7 +4291,7 @@ async function seedStagingRecentThreads(pool) {
   try {
     const fixture = STAGING_RECENT_THREADS;
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!people.rows.length) return;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const memberId = people.rows[0].id;
     // The fake project, theirs: a project's INSERT mints its community, and
     // their own collaborator row is what lets them open it (and puts them in
@@ -4546,7 +4588,7 @@ async function seedStagingBotReplyWaiting(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const number = 900002;
@@ -4603,7 +4645,7 @@ async function seedStagingBotPlanWaiting(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const number = 9106;
@@ -4654,7 +4696,7 @@ async function seedStagingBotPlanSettled(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     await pool.query(
@@ -4663,7 +4705,7 @@ async function seedStagingBotPlanSettled(pool) {
        ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
     );
     const botRow = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!botRow.rows.length) return;
+    if (!botRow.rows.length) return seedSkipped('no Homeroom bot user');
     const plan = {
       complicated: true,
       questions: [],
@@ -4728,18 +4770,17 @@ async function seedStagingBotPlanSettled(pool) {
 }
 
 // #6263 (4 Nov 2026): a bot-built change whose description no longer matches
-// it, on a request page a fresh staging copy can open (mock issue 900004,
-// stagingMockIssues). The note under the summary is the state the before &
-// after shots need; without the row there is no change for it to sit under.
-// Filed by the shots' member fixture (usernode-capture), the change owned by
-// homeroom_bot as a real one is; obviously fake, idempotent, and strictly a
-// no-op outside staging.
+// it, on a request page a fresh staging copy can open. The note under the
+// summary is the state the before & after shots need; without the row there
+// is no change for it to sit under. Filed by the shots' member fixture
+// (usernode-capture), the change owned by homeroom_bot as a real one is;
+// obviously fake, idempotent, and strictly a no-op outside staging.
 async function seedStagingBotStaleDescription(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const number = 900004;
@@ -4752,7 +4793,7 @@ async function seedStagingBotStaleDescription(pool) {
     const botRow = await pool.query(
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
     );
-    if (!botRow.rows.length) return;
+    if (!botRow.rows.length) return seedSkipped('no Homeroom bot user');
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
        SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
@@ -4786,13 +4827,13 @@ async function seedStagingMergedThreads(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
-    if (!apps.rows.length) return;
+    if (!apps.rows.length) return seedSkipped('no self-hosted project');
     const appId = apps.rows[0].id;
     const people = await pool.query(
       "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin')",
     );
     const member = people.rows.find((r) => r.username === 'usernode-capture');
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     const sam = (await pool.query(
       `INSERT INTO users (username, password, is_synthetic)
        VALUES ('staging-demo-sam', 'staging-demo-not-a-login', TRUE)
@@ -4892,7 +4933,7 @@ async function seedStagingOwnChangeWaitingOnVote(pool) {
     const people = await pool.query(
       "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'homeroom_bot')",
     );
-    if (!people.rows.length) return;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const member = people.rows.find((row) => row.username === 'usernode-capture');
     const approver = people.rows.find((row) => row.username === 'usernode-capture-admin');
     const voter = people.rows.find((row) => row.username === 'homeroom_bot');
@@ -4983,7 +5024,7 @@ async function seedStagingOwnChangeWaitingOnFix(pool) {
     const people = await pool.query(
       "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'homeroom_bot')",
     );
-    if (!people.rows.length) return;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const member = people.rows.find((row) => row.username === 'usernode-capture');
     const other = people.rows.find((row) => row.username === 'usernode-capture-admin');
     const bot = people.rows.find((row) => row.username === 'homeroom_bot');
@@ -5169,7 +5210,7 @@ async function seedStagingReadyDraftChange(pool) {
       "SELECT id FROM users WHERE username = 'usernode-capture'",
     );
     const member = people.rows[0];
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     await pool.query(
       `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
        VALUES (900099, 'Staging demo: a built draft', 'staging-demo-ready-draft',
@@ -5375,7 +5416,7 @@ async function seedStagingNewerPlan(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const number = 900098;
@@ -5461,7 +5502,7 @@ async function seedStagingBotFixesPlatform(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const memberId = people.rows[0].id;
     const number = 900096;
@@ -5479,7 +5520,7 @@ async function seedStagingBotFixesPlatform(pool) {
     const botRow = await pool.query(
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
     );
-    if (!botRow.rows.length) return;
+    if (!botRow.rows.length) return seedSkipped('no Homeroom bot user');
     const botId = botRow.rows[0].id;
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
@@ -5584,7 +5625,7 @@ async function seedStagingBotFixesStopped(pool) {
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return;
+    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
     const appId = apps.rows[0].id;
     const memberId = people.rows[0].id;
     const number = 900095;
@@ -5603,7 +5644,7 @@ async function seedStagingBotFixesStopped(pool) {
     const botRow = await pool.query(
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
     );
-    if (!botRow.rows.length) return;
+    if (!botRow.rows.length) return seedSkipped('no Homeroom bot user');
     const botId = botRow.rows[0].id;
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
@@ -5729,7 +5770,7 @@ async function seedStagingBotFollowUp(pool) {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return;
+    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return seedSkipped('no self-hosted project, no user usernode-capture or no Homeroom bot');
     const appId = apps.rows[0].id;
     const userId = people.rows[0].id;
     const botId = bots.rows[0].id;
@@ -5775,7 +5816,7 @@ async function seedStagingBotOverlap(pool) {
     const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return;
+    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return seedSkipped('no self-hosted project, no user usernode-capture or no Homeroom bot');
     const app = apps.rows[0];
     const appId = Number(app.id);
     const member = Number(people.rows[0].id);
@@ -5876,7 +5917,7 @@ async function seedStagingBotOverlapBuilt(pool) {
   try {
     const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!apps.rows.length || !bots.rows.length) return;
+    if (!apps.rows.length || !bots.rows.length) return seedSkipped('no self-hosted project or no Homeroom bot');
     const app = apps.rows[0];
     const appId = Number(app.id);
     const bot = Number(bots.rows[0].id);
@@ -5937,7 +5978,7 @@ async function seedStagingBotTellMeWhen(pool) {
   try {
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
-    if (!people.rows.length || !bots.rows.length) return;
+    if (!people.rows.length || !bots.rows.length) return seedSkipped('no user usernode-capture or no Homeroom bot');
     const member = Number(people.rows[0].id);
     const bot = Number(bots.rows[0].id);
     if (member === bot) return;
@@ -8579,7 +8620,7 @@ async function seedStagingRenamedChange(pool, config) {
     const member = people[0];
     if (!member) {
       log.warn('db', 'Staging renamed-change fixture skipped: fixture user missing');
-      return;
+      return seedSkipped('no user usernode-capture');
     }
     const { rows: appRows } = await pool.query(
       'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
@@ -9672,7 +9713,7 @@ async function seedStagingWaitingIllustration(pool) {
        ON CONFLICT DO NOTHING`, [capture.id]
     );
     const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-waiting-picture'")).rows[0];
-    if (!app) return;
+    if (!app) return seedSkipped('no project');
     const proposed = {
       url: `/app-illustrations/${lightId}`, darkUrl: `/app-illustrations/${darkId}`,
       zoom: 1.2, x: 5, y: -3, tint: 'teal',
@@ -10146,7 +10187,7 @@ async function seedStagingBotProjectNotification(pool) {
     const member = viewer.rows[0];
     if (!member) {
       log.warn('db', 'Staging bot-project notification skipped: fixture member missing');
-      return;
+      return seedSkipped('no user usernode-capture');
     }
 
     await pool.query(
@@ -10256,7 +10297,7 @@ async function seedStagingWeeklyDigestRow(pool) {
     const member = viewer.rows[0];
     if (!member) {
       log.warn('db', 'Staging weekly digest row skipped: fixture member missing');
-      return;
+      return seedSkipped('no user usernode-capture');
     }
     await pool.query(
       `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
@@ -10298,7 +10339,7 @@ async function seedStagingBotAllowanceWarning(pool) {
     )).rows[0];
     if (!member) {
       log.warn('db', 'Staging bot allowance-warning fixture skipped: the capture member is missing');
-      return;
+      return seedSkipped('no user usernode-capture');
     }
     // The bot's account, in the posture botAccount() reads: the username with
     // is_synthetic on top, sentinel password, never a login.
@@ -10310,7 +10351,7 @@ async function seedStagingBotAllowanceWarning(pool) {
     const bot = (await pool.query(
       `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1`
     )).rows[0];
-    if (!bot || Number(bot.id) === Number(member.id)) return;
+    if (!bot || Number(bot.id) === Number(member.id)) return seedSkipped('no separate Homeroom bot user');
 
     // Their chat with the bot: the pair's conversation when it exists, else
     // one made the way the platform makes it, both sides already in.
@@ -10426,7 +10467,7 @@ async function seedStagingDesignThread(pool) {
     const member = (await pool.query(
       `SELECT id FROM users WHERE username = 'usernode-capture' AND is_synthetic = FALSE LIMIT 1`
     )).rows[0];
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     // One design thread is enough; if theirs already holds one, leave it.
     const had = await pool.query(
       `SELECT 1 FROM private_threads p JOIN design_threads d ON d.private_thread_id = p.id
@@ -10437,7 +10478,7 @@ async function seedStagingDesignThread(pool) {
     const app = (await pool.query(
       'SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
     )).rows[0];
-    if (!app) return;
+    if (!app) return seedSkipped('no project');
     // The bot's account, in the posture botAccount() reads.
     await pool.query(
       `INSERT INTO users (username, password, is_synthetic, display_name)
@@ -10447,7 +10488,7 @@ async function seedStagingDesignThread(pool) {
     const bot = (await pool.query(
       `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1`
     )).rows[0];
-    if (!bot || Number(bot.id) === Number(member.id)) return;
+    if (!bot || Number(bot.id) === Number(member.id)) return seedSkipped('no separate Homeroom bot user');
 
     const named = 'Staging demo: a screen with an unread badge';
     const dm = require('../services/homeroom-bot-dm');
@@ -10590,15 +10631,15 @@ async function seedStagingCapturedPageThread(pool) {
     const member = (await pool.query(
       'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
     )).rows[0];
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     const app = (await pool.query(
       'SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
     )).rows[0];
-    if (!app) return;
+    if (!app) return seedSkipped('no project');
     const bot = (await pool.query(
       'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
     )).rows[0];
-    if (!bot) return;
+    if (!bot) return seedSkipped('no Homeroom bot user');
     const dm = require('../services/homeroom-bot-dm');
     const opened = await dm.sendDm(pool, {
       bot,
@@ -10711,7 +10752,7 @@ async function seedStagingArtifactsThread(pool) {
     const member = (await pool.query(
       'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
     )).rows[0];
-    if (!member) return;
+    if (!member) return seedSkipped('no user usernode-capture');
     // The bot's account, in the posture botAccount() reads.
     await pool.query(
       `INSERT INTO users (username, password, is_synthetic, display_name)
@@ -10721,7 +10762,7 @@ async function seedStagingArtifactsThread(pool) {
     const bot = (await pool.query(
       'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
     )).rows[0];
-    if (!bot || Number(bot.id) === Number(member.id)) return;
+    if (!bot || Number(bot.id) === Number(member.id)) return seedSkipped('no separate Homeroom bot user');
     const dm = require('../services/homeroom-bot-dm');
     const store = require('../services/artifacts');
     const user = { id: Number(member.id) };
@@ -13114,7 +13155,7 @@ async function seedStagingBotCloseOffer(pool, config) {
     const app = appRows[0] || null;
     if (!botId || !memberId || !app) {
       log.warn('db', 'Staging bot close-offer fixture skipped', { botId, memberId, app: !!app });
-      return;
+      return seedSkipped('no Homeroom bot, no user usernode-capture or no project');
     }
     if (app.community_id) {
       await pool.query(
@@ -14902,7 +14943,7 @@ async function seedStagingGithubChecksHold(pool) {
     if (!app) {
       await tx.query('ROLLBACK');
       log.warn('db', 'Staging GitHub-checks-hold fixture skipped: self-app row missing');
-      return;
+      return seedSkipped('no self-hosted project');
     }
     const appId = app.id;
     await tx.query(
@@ -14915,7 +14956,7 @@ async function seedStagingGithubChecksHold(pool) {
     )).rows[0]?.id;
     if (!botId) {
       await tx.query('ROLLBACK');
-      return;
+      return seedSkipped('no Homeroom bot user');
     }
     // Read before the session insert, so an id another fixture owns is left
     // alone rather than read as this one.
@@ -18204,6 +18245,8 @@ async function seedStagingPlatformMail(pool) {
 module.exports = {
   STAGING_SEEDS,
   runStagingSeeds,
+  // #7172: the boot's record of seeds that wrote nothing, as its test seam.
+  writeStagingSeedReport,
   backfillFenceWrappedSpecs,
   // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
   seedStagingLiveDraftThread,

@@ -143,3 +143,37 @@ test('a change\'s seeds are written to the before copy seed by seed', async (t) 
     await admin.end().catch(() => {});
   }
 });
+
+test('#7172: a seed that skipped is recorded as an outcome, not as applied', async (t) => {
+  if (!await serverIsUp()) {
+    if (process.env.TEST_DATABASE_URL) assert.fail('TEST_DATABASE_URL is set but PostgreSQL did not answer');
+    t.skip('no PostgreSQL server reachable');
+    return;
+  }
+  const { seedSkipped } = require('../src/db/staging-seed-outcome');
+  const previousEnv = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  const schema = `seed_outcome_${crypto.randomBytes(6).toString('hex')}`;
+  const admin = await adminClient();
+  try {
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(`SET search_path TO ${schema}`);
+    await admin.query('CREATE TABLE demo_rows (id SERIAL PRIMARY KEY)');
+    const databaseUrl = urlFor(schema);
+    const result = await applySeedsToOtherCopy(databaseUrl, {}, {
+      seeds: [
+        { name: 'skipsItself', run: () => seedSkipped('no project staging-demo-pin-1') },
+        { name: 'writesOne', run: (pool) => pool.query('INSERT INTO demo_rows DEFAULT VALUES') },
+      ],
+    });
+    assert.deepEqual(result.outcomes, [
+      { name: 'skipsItself', outcome: 'skipped', reason: 'no project staging-demo-pin-1' },
+    ]);
+    assert.deepEqual(result.applied, ['skipsItself', 'writesOne']);
+  } finally {
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await admin.end().catch(() => {});
+    if (previousEnv === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previousEnv;
+  }
+});

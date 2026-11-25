@@ -161,6 +161,9 @@ export function runSummary(row: Obj | null, artifactSummary: unknown[] = [],
     // What the shots agent noticed broken on the after build besides the
     // declared changes. Advisory only.
     shotNotices: verdict && Array.isArray(verdict.notices) ? verdict.notices : [],
+    // #7172: the demo-data seeds that wrote nothing on each copy, recorded on
+    // the verdict, so a failed card and the connector can name them.
+    seeds: verdict && verdict.seeds && typeof verdict.seeds === 'object' ? verdict.seeds : null,
     // A project's first version: only the after side was taken.
     afterOnly: !!verdict && verdict.afterOnly === true,
     progress: progress && typeof progress.phase === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)

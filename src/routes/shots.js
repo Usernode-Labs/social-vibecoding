@@ -195,6 +195,9 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
         // What the shots agent noticed broken on the after build, as stored.
         shotNotices: shots.isShotsVerdict(run.hard_verdict) && Array.isArray(run.hard_verdict.notices)
           ? run.hard_verdict.notices : [],
+        // #7172: the demo-data seeds that wrote nothing on each copy.
+        seedNotes: shots.isShotsVerdict(run.hard_verdict)
+          ? view.cleanSeedNotes(run.hard_verdict.seeds) : [],
         artifacts: artifacts.rows.map((artifact) => ({
           storyId: artifact.story_id,
           viewport: artifact.viewport,

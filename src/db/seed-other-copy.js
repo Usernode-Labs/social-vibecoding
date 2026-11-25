@@ -21,6 +21,7 @@ const { Client } = require('pg');
 const log = require('../services/logger');
 const stagingMedia = require('../services/staging-media-store');
 const { runStagingSeeds } = require('./migrate');
+const { runSeedWithOutcome } = require('./staging-seed-outcome');
 
 const SAVEPOINT = 'seed_other_copy';
 
@@ -89,6 +90,9 @@ async function applySeedsToOtherCopy(databaseUrl, config, { seeds = null } = {})
   stagingMedia.useOtherCopy(reader);
   const applied = [];
   const leftOut = [];
+  // #7172: seeds that wrote nothing and did not fail, with the reason. A
+  // failed seed still goes in `leftOut`, since its transaction rolled back.
+  const outcomes = [];
   try {
     await runStagingSeeds(null, config, {
       ...(seeds ? { seeds } : {}),
@@ -97,13 +101,17 @@ async function applySeedsToOtherCopy(databaseUrl, config, { seeds = null } = {})
         const note = (error) => { failure = failure || error; };
         await client.query('BEGIN');
         try {
-          await entry.run(seedPool(client, note), config);
+          const outcome = await runSeedWithOutcome(entry, seedPool(client, note), config, { onError: note });
           if (failure) throw failure;
+          if (outcome.outcome === 'failed') throw new Error(outcome.reason);
           const committed = await client.query('COMMIT');
           if (committed?.command === 'ROLLBACK') {
             throw new Error(`Seed ${entry.name} left its transaction aborted.`);
           }
           applied.push(entry.name);
+          if (outcome.outcome === 'skipped' || outcome.outcome === 'nothing') {
+            outcomes.push({ name: entry.name, outcome: outcome.outcome, reason: outcome.reason });
+          }
         } catch (error) {
           await client.query('ROLLBACK').catch(() => {});
           const why = whyOf(failure || error);
@@ -119,7 +127,7 @@ async function applySeedsToOtherCopy(databaseUrl, config, { seeds = null } = {})
     await client.end().catch(() => {});
     await reader.end().catch(() => {});
   }
-  return { version: 1, applied, leftOut };
+  return { version: 1, applied, leftOut, ...(outcomes.length ? { outcomes } : {}) };
 }
 
 module.exports = { applySeedsToOtherCopy };

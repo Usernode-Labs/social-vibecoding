@@ -545,3 +545,16 @@ test('a child app\'s reset never runs the before-copy seed runner', async () => 
     dbManager.connectionUrl = original.connectionUrl;
   }
 });
+
+test('#7172: a seed result may carry outcomes, and an unreadable one is refused', () => {
+  const base = { version: 1, applied: ['seedA'], leftOut: [] };
+  assert.deepEqual(environment.validSeedsResult(base), { ran: true, applied: ['seedA'], leftOut: [] },
+    'an older head image without outcomes still validates');
+  const outcomes = [{ name: 'seedA', outcome: 'skipped', reason: 'no project staging-demo-pin-1' }];
+  assert.deepEqual(environment.validSeedsResult({ ...base, outcomes }).outcomes, outcomes);
+  assert.equal(environment.validSeedsResult({ ...base, outcomes: [{ name: 'seedA', outcome: 'exploded', reason: 'x' }] }), null);
+  assert.equal(environment.validSeedsResult({ ...base, outcomes: [{ name: 'x', outcome: 'skipped', reason: 'x' }] }), null,
+    'a seed name must be a real one');
+  assert.equal(environment.validSeedOutcomes([{ name: 'seedA', outcome: 'wrote' }]), null,
+    'a seed that wrote is not a note');
+});

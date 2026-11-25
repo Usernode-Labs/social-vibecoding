@@ -32,7 +32,11 @@
 // seeds to the OTHER copy once both have booted (seed-other-copy.js), so
 // that data is on both copies when main's schema can hold it; a seed it
 // cannot hold is rolled back there and stays after-only, with a stated
-// reason. A child app has no shared seed step, so its copies keep their own.
+// reason. A seeded request shows in its project's list and at its own
+// address whenever the project has no repository; in a project that has one,
+// a copy without GitHub opens the request's page but keeps the fixture list.
+// A seed that writes nothing is named on the run with its reason. A child
+// app has no shared seed step, so its copies keep their own.
 
 const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');

@@ -2979,6 +2979,16 @@ function registerTools(server, ctx) {
       alsoBefore: z.union([z.boolean(), z.literal('unknown')]),
     })).optional().describe('Problems the shots agent noticed on the after build besides the declared changes, '
       + 'where each shows, and whether the before build has it too (alsoBefore). Advisory: they change no result.'),
+    // #7172: demo-data seeds that wrote nothing on a copy, with the reason.
+    // A claim that named a seeded row the copies never got is skipped with
+    // one of these named, rather than reported only as "does not exist".
+    seedNotes: z.array(z.object({
+      copy: z.enum(['before', 'after']),
+      seed: z.string(),
+      outcome: z.enum(['skipped', 'failed', 'nothing']),
+      reason: z.string().nullable(),
+    })).optional().describe('Demo-data seeds that wrote nothing on the before or after copy, each with its outcome '
+      + '(skipped, failed, or nothing) and reason. When a declared change needed a row one of them writes, this is why.'),
     afterOnly: z.boolean().optional().describe('True when the before build was still the starter template\'s '
       + 'placeholder (the app\'s first real screens), so only after shots were taken.'),
     overriddenBy: z.number().nullable(),
