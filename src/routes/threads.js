@@ -121,16 +121,25 @@ function threadsRoutes() {
   // and this says which request (services/threads.js requestHome). `request`
   // is null for a change that keeps its own page, and for one this viewer
   // may not read, whose own page answers for itself.
+  //
+  // 24 Nov 2026: a live app draft is not a change until it is proposed. Its
+  // working session answers `draft: { threadRootId }` to its author, and the
+  // router sends that address to the thread, where its draft bar is.
   router.get('/api/apps/:slug/threads/change/:sessionId', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
-      if (!/^[1-9][0-9]{0,15}$/.test(req.params.sessionId)) return res.json({ request: null });
+      if (!/^[1-9][0-9]{0,15}$/.test(req.params.sessionId)) return res.json({ request: null, draft: null });
       const found = await visibleApp('slug', req.params.slug, req.user);
       if (!found) return res.status(404).json({ error: 'App not found' });
+      const sessionId = Number(req.params.sessionId);
+      const viewerId = req.user ? req.user.id : null;
       const home = await threads.requestHome(pool, {
-        appId: found.app.id, sessionId: Number(req.params.sessionId), viewerId: req.user ? req.user.id : null,
+        appId: found.app.id, sessionId, viewerId,
       });
-      return res.json({ request: home ? home.number : null });
+      const draft = await require('../services/live-drafts').draftHomeOf(pool, {
+        appId: found.app.id, sessionId, viewerId,
+      });
+      return res.json({ request: home ? home.number : null, draft });
     } catch (err) {
       log.error('threads', 'change home read failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });

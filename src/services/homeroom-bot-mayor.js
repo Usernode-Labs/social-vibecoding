@@ -882,7 +882,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
     '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
-    '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
+    '  asked, why it matters and how it fits what the project already does. What is still undecided goes in',
+    '  undecided, up to three short questions, and stays out of details: the draft lists them on their own. When they',
     '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
     '  it replaces or revises an earlier draft: nobody else ever saw it.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, the invite email',
@@ -1174,7 +1175,12 @@ const TOOLS = [
           },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
-          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, and how it fits what the project already does. Past one paragraph, put a short heading over each part (### What is asked, ### How it fits) and never open a paragraph with a label. What is still undecided goes in undecided, not here. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
+          undecided: {
+            type: 'array', maxItems: 3,
+            items: { type: 'string' },
+            description: 'Up to three things the request leaves undecided, each one short line that reads on its own. Leave it out when nothing is.',
+          },
           attachmentIds: {
             type: 'array', maxItems: 3,
             items: { type: 'string' },
@@ -1318,7 +1324,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'open_app_preview',
-      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change an app live"). Only in a private thread, for a project they can change, Homeroom itself only for its admins. It gives you the draft\'s tools for the rest of this turn: when they asked for a change, make it then, and reply. A draft starts from main, or from a proposal up for a vote on the project (`proposal`), when they want to try or change that one: on their own proposal, the draft is on it, and Update proposal moves it to the draft and clears its votes; on someone else\'s, the draft builds on it, that proposal is never changed, and their Propose is a new proposal of their own built on it.',
+      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to make changes to a live preview of" and the project\'s name). Only in a private thread, for a project they can change, Homeroom itself only for its admins. It gives you the draft\'s tools for the rest of this turn: when they asked for a change, make it then, and reply. A draft starts from main, or from a proposal up for a vote on the project (`proposal`), when they want to try or change that one: on their own proposal, the draft is on it, and Update proposal moves it to the draft and clears its votes; on someone else\'s, the draft builds on it, that proposal is never changed, and their Propose is a new proposal of their own built on it.',
       parameters: {
         type: 'object',
         properties: {
@@ -3080,6 +3086,36 @@ async function historyMessages(pool, {
       log.warn('homeroom-bot-mayor', 'Could not read the activity cards for the history', { conversationId, err: err.message });
     }
   }
+  // #7125: what each of the bot's past offers was, by message. An offer's
+  // message is the whole draft, and its card is a bot_cards row its
+  // metadata's `actionId` names (homeroom-bot-dm.js sendDm). Read back as
+  // its own words at full length, the model learned to write the draft with
+  // no card after an offer or two; each is rebuilt below as its lead, its
+  // heading and what became of the card. One query for the whole history,
+  // and never a reason the history is not read.
+  const offerCards = new Map();
+  const offers = rows
+    .filter((m) => Number(m.sender_id) === Number(botId) && m.metadata?.homeroomBot?.kind === 'confirm')
+    .map((m) => ({ id: Number(m.metadata.homeroomBot.actionId), messageId: Number(m.id) }))
+    .filter((o) => Number.isInteger(o.id) && o.id > 0);
+  if (offers.length) {
+    try {
+      const { rows: cards } = await pool.query(
+        `SELECT c.id, c.message_id, c.kind, c.status, c.title, c.issue_number,
+                c.source_issue_number, c.expires_at, c.retired_reason,
+                a.name AS app_name, a.slug AS app_slug
+           FROM bot_cards c LEFT JOIN apps a ON a.id = c.app_id
+          WHERE c.id = ANY($1::int[])`,
+        [offers.map((o) => o.id)],
+      );
+      const byId = new Map(offers.map((o) => [o.id, o.messageId]));
+      for (const card of cards) {
+        if (byId.get(Number(card.id)) === Number(card.message_id)) offerCards.set(Number(card.message_id), card);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not read the offer cards for the history', { conversationId, err: err.message });
+    }
+  }
   // What they attached as cards, read through their own access.
   const sharedLines = await sharedItemLines(pool, { viewer, botId, messageIds: theirs });
   const shown = new Map();
@@ -3121,17 +3157,41 @@ async function historyMessages(pool, {
     // and what they picked or answered.
     const richCard = fromBot ? require('./homeroom-bot-cards').historyLine(meta?.card) : null;
     if (richCard) lines.push(richCard);
+    // #7125: an offer reads back as its lead, its heading and Homeroom's
+    // note on the card it drew, never as the whole draft in the bot's own
+    // words. A message whose card is missing, or cannot be worded, is read
+    // as it is stored.
+    const offerCard = offerCards.get(Number(m.id)) || null;
+    let offerText = null;
+    if (offerCard) {
+      const offerLine = require('./homeroom-bot-cards').offerHistoryLine({
+        kind: offerCard.kind,
+        status: offerCard.status,
+        title: offerCard.title,
+        issueNumber: offerCard.issue_number,
+        expired: offerCard.status === 'open' && !!offerCard.expires_at
+          && new Date(offerCard.expires_at).getTime() <= Date.now(),
+        name: offerCard.app_name || offerCard.app_slug || meta?.appName || '',
+        words: Array.isArray(meta?.answers) && meta.answers.length === 2 && meta.answers.every((a) => typeof a === 'string')
+          ? meta.answers : answersFor(offerCard),
+      });
+      const text = offerLine ? require('./homeroom-bot-cards').offerHistoryText(m.content) : null;
+      if (text) {
+        offerText = text;
+        lines.push(offerLine);
+      }
+    }
     if (!fromBot && !m.moderation_hidden_at) lines.push(...(sharedLines.get(Number(m.id)) || []));
     // Step 6: a comment pinned on a design's preview is read with its pin
     // (the version, the point and the element under it: design-bot.js
     // personLine), as the designer once read it.
     // 20 Nov 2026 (live-draft review, J): and one pinned on a live draft's
     // preview, with its place in the app (live-drafts.js pinLine).
-    const said = !fromBot && m.metadata?.designPin
+    const said = offerText || (!fromBot && m.metadata?.designPin
       ? require('./design-bot').personLine({ content: clip(m.content, 2000), metadata: m.metadata })
       : !fromBot && m.metadata?.previewPin
         ? require('./live-drafts').pinLine({ content: clip(m.content, 2000), pin: m.metadata.previewPin })
-        : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000);
+        : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000));
     // P1: its own long answers are read back whole.
     const text = [`${about}${said}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
@@ -3603,7 +3663,8 @@ async function openAppPreview(pool, ctx, args = {}) {
 //
 // offer_request's extras: the person's pictures that belong with the
 // request, up to three open requests it overlaps (and how), where it
-// happened, and one to three Done when checks. They are checked against
+// happened, what it leaves undecided, and one to three Done when checks.
+// They are checked against
 // what this person can actually see (their own pictures in this chat, the
 // project's open board, its requests), drawn on the draft, and kept for
 // File it.
@@ -3615,6 +3676,8 @@ const MAX_DRAFT_ATTACHMENTS = 3;
 const MAX_RELATED = 3;
 const MAX_RELATED_WHY = 140;
 const MAX_DONE_WHEN = 140;
+const MAX_UNDECIDED = 3;
+const MAX_UNDECIDED_LINE = 140;
 const MAX_SAW = 200;
 const MAX_QUOTED = 160;
 
@@ -3626,6 +3689,22 @@ function draftDoneWhen(value) {
     const line = clip(withoutEmDashes(String(item ?? '').replace(/\s+/g, ' ')).trim(), MAX_DONE_WHEN);
     if (!line) return null;
     list.push(line);
+  }
+  return list;
+}
+
+/**
+ * Pure: what a draft leaves undecided, as kept: none to three plain lines,
+ * each one question a reader can answer on its own. Null when it is not a
+ * list of at most three; an empty line is dropped, since none is allowed.
+ */
+function draftUndecided(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_UNDECIDED) return null;
+  const list = [];
+  for (const item of value) {
+    const line = clip(withoutEmDashes(String(item ?? '').replace(/\s+/g, ' ')).trim(), MAX_UNDECIDED_LINE);
+    if (line) list.push(line);
   }
   return list;
 }
@@ -3758,8 +3837,8 @@ async function draftPlace(pool, { ctx }) {
 }
 
 /**
- * Pure (#6251, #6307): the draft's Where, Related and Done when lines, in
- * the draft's own words. Where names a place in the app: the request it is
+ * Pure (#6251, #6307): the draft's Where, Related, Still undecided and Done
+ * when lines, in the draft's own words. Where names a place in the app: the request it is
  * about, its project, and what they saw. It never quotes the chat back
  * ("your message in Main Chat"), and is left out when no place is known.
  */
@@ -3774,6 +3853,9 @@ function draftExtrasText(extras) {
   if (where.length) lines.push(`**Where:** ${where.join(' · ')}`);
   if (Array.isArray(extras.related) && extras.related.length) {
     lines.push('', '**Related:**', ...extras.related.map((r) => `- #${Number(r.number)} ${r.title}: ${DRAFT_RELATION_WORDS[r.relation] || r.relation}${r.why ? `, ${r.why}` : ''}`));
+  }
+  if (Array.isArray(extras.undecided) && extras.undecided.length) {
+    lines.push('', '**Still undecided:**', ...extras.undecided.map((line) => `- ${line}`));
   }
   if (Array.isArray(extras.doneWhen) && extras.doneWhen.length) {
     lines.push('', '**Done when:**', ...extras.doneWhen.map((line) => `- ${line}`));
@@ -3800,11 +3882,18 @@ async function checkRequestOffer(pool, ctx, args = {}) {
   if (!doneWhen) {
     return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
   }
+  // What it leaves undecided, as its own short list: the draft's pane and
+  // the filed request list them apart from the words (readDraft, requestBody).
+  const undecided = draftUndecided(args.undecided);
+  if (!undecided) {
+    return { ok: false, error: `Give at most ${MAX_UNDECIDED} short lines in undecided, each one thing the request leaves open.` };
+  }
   const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
   if (!pictures.ok) return { ok: false, error: pictures.error };
   const place = await draftPlace(pool, { ctx });
   const baseExtras = {
     attachmentIds: pictures.ids,
+    ...(undecided.length ? { undecided } : {}),
     doneWhen,
     chatHref: place.href,
   };
@@ -6539,16 +6628,50 @@ async function actOnTap(pool, config, { userId, actionId, choice, answers = [], 
 }
 
 /**
+ * Pure: what a draft carries besides its words, as its pane lists it beside
+ * them (features/messages/request-draft-pane.tsx): what it leaves undecided,
+ * its Done when checks, the open requests it overlaps and where it happened.
+ * The same extras File it files (requestBody), without the pictures and the
+ * chat's own address. Every list is there, empty when the draft has none.
+ */
+function draftExtrasView(extras) {
+  const lines = (list) => (Array.isArray(list) ? list.map((line) => String(line ?? '').trim()).filter(Boolean) : []);
+  const from = extras && typeof extras === 'object' && !Array.isArray(extras) ? extras : {};
+  const req = from.context?.request;
+  const number = Number(req?.number);
+  return {
+    undecided: lines(from.undecided),
+    doneWhen: lines(from.doneWhen),
+    related: (Array.isArray(from.related) ? from.related : [])
+      .filter((r) => Number.isInteger(Number(r?.number)) && Number(r.number) > 0)
+      .map((r) => ({
+        number: Number(r.number),
+        title: String(r.title || ''),
+        relation: Object.hasOwn(DRAFT_RELATION_WORDS, r.relation) ? r.relation : null,
+        why: r.why ? String(r.why) : null,
+      })),
+    where: {
+      request: req && Number.isInteger(number) && number > 0
+        ? { number, name: String(req.name || req.slug || ''), slug: req.slug ? String(req.slug) : null }
+        : null,
+      saw: from.context?.saw ? String(from.context.saw) : null,
+    },
+  };
+}
+
+/**
  * #6248: the saved request draft an offer waits on, for the preview beside
  * the chat. Checked as `decideOfferTap` is: this person's own action, of the
  * `file_request` kind, still open. Resolves { ok, title, details, status,
- * app: { slug, name }, footer }, or { ok: false } (the route answers 404).
+ * app: { slug, name }, footer, extras }, or { ok: false } (the route answers
+ * 404). `extras` is what the draft carries besides its words
+ * (draftExtrasView), read from the draft's own message as File it reads it.
  */
 async function readDraft(pool, { user, actionId }) {
   const id = Number(actionId);
   if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false };
   const { rows: [row] } = await pool.query(
-    `SELECT a.title, a.details, a.status, ap.slug, ap.name
+    `SELECT a.title, a.details, a.status, a.message_id, ap.slug, ap.name
        FROM bot_cards a
        JOIN apps ap ON ap.id = a.app_id
       WHERE a.id = $1 AND a.place = 'dm' AND a.user_id = $2 AND a.kind = 'file_request'`,
@@ -6561,6 +6684,7 @@ async function readDraft(pool, { user, actionId }) {
     status: row.status,
     app: { slug: row.slug, name: row.name },
     footer: defaultFooter(user),
+    extras: draftExtrasView(await draftExtrasOf(pool, row.message_id)),
   };
 }
 
@@ -6837,8 +6961,9 @@ function defaultFooter(user) {
 /**
  * Pure (#6251): the body a request is filed with. Without extras, or with an
  * explicit `footer` (the B9 callers), it is exactly what it always was. With
- * them: the person's words, their pictures, Done when, Related (each a link
- * to its request) and Where it happened, then the footer linking the chat.
+ * them: the person's words, their pictures, Still undecided, Done when,
+ * Related (each a link to its request) and Where it happened, then the
+ * footer linking the chat.
  * `slug` is the project the request is on (the related requests are on its
  * board); `screenshotIds` are the ids copied into issue_screenshots.
  */
@@ -6853,6 +6978,9 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
   const base = domain ? `https://${domain}` : '';
   const link = (toSlug, n) => `${base}/#app/${encodeURIComponent(toSlug)}/dev/issues/${Number(n)}`;
   const sections = [];
+  if (Array.isArray(extras.undecided) && extras.undecided.length) {
+    sections.push(['**Still undecided**', ...extras.undecided.map((line) => `- ${line}`)].join('\n'));
+  }
   if (Array.isArray(extras.doneWhen) && extras.doneWhen.length) {
     sections.push(['**Done when**', ...extras.doneWhen.map((line) => `- ${line}`)].join('\n'));
   }
@@ -8778,6 +8906,8 @@ module.exports = {
   draftExtrasText,
   requestBody,
   draftDoneWhen,
+  draftUndecided,
+  draftExtrasView,
   DRAFT_RELATION_WORDS,
   systemPrompt,
   RETRY_OUTPUT_TOKENS,

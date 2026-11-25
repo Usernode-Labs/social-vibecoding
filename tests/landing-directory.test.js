@@ -750,7 +750,7 @@ test('public apps API exposes the home-card fields the landing consumes', () => 
 
 // ─── staging seed ─────────────────────────────────────────────────
 
-test('staging seeds one open + one gated landing tile', () => {
+test('staging seeds one open, one gated and one guest-ready landing tile', () => {
   const src = read('src/db/migrate.js');
   assert.match(src, /async function seedStagingLandingDirectory\(pool\)/);
   assert.match(src, /await seedStagingLandingDirectory\(pool\);/);
@@ -758,9 +758,13 @@ test('staging seeds one open + one gated landing tile', () => {
   const fn = src.match(/async function seedStagingLandingDirectory\(pool\) \{[\s\S]*?\n\}/);
   assert.ok(fn, 'seed body found');
   assert.match(fn[0], /process\.env\.USERNODE_ENV !== 'staging'/);
-  // Both branches of requires_login are represented.
+  // Every branch of requires_login + guest_ready is represented.
   assert.match(fn[0], /'staging-landing-open'/);
   assert.match(fn[0], /'staging-landing-gated'/);
+  // #7128: the app answers a guest but still asks for an account, so a
+  // visitor's Open from its project page is the case the bar must stay for.
+  assert.match(fn[0], /'staging-landing-guest-ready'/);
+  assert.match(fn[0], /'gated', 'public'/);
   // The shell probe re-checks running public apps whose stamp is stale, and
   // these fixtures have no container — a NOW() stamp would flip the open
   // tile to 'unknown' (→ gated) inside one 5-minute sweep.

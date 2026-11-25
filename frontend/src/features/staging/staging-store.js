@@ -169,7 +169,7 @@ export const stagingRefs = { iframe: null };
 /**
  * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
  *
- * @type {Record<'onBack' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle' | 'onVote' | 'onComment' | 'onSize' | 'onView' | 'onNoteSeen',
+ * @type {Record<'onBack' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle' | 'onVote' | 'onComment' | 'onSize' | 'onLayout' | 'onView' | 'onNoteSeen',
  *   ((arg?: any) => void) | null>}
  */
 export const stagingHandlers = {
@@ -184,6 +184,11 @@ export const stagingHandlers = {
   onComment: null,
   /** Full window, and back to the column or the panel. */
   onSize: null,
+  /**
+   * The layout the preview is now in, named as the address carries it
+   * (placement.ts `layoutOf`): app-view.js writes it beside `?preview=`.
+   */
+  onLayout: null,
   /** The Preview | Before & after switch, with the side picked. */
   onView: null,
   /** "Got it" on the first-visit line. */

@@ -16,6 +16,7 @@ const proposalDescriptionEdit = require('../services/proposal-description-edit')
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const { planRecordSql } = require('../services/request-specs');
+const { draftSessionSql } = require('../services/live-drafts');
 const codeMissing = require('../services/code-missing');
 const visuals = require('../services/visuals');
 const sessionCost = require('../services/session-cost');
@@ -1420,6 +1421,8 @@ function sessionRoutes(config) {
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
            AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
            AND NOT ${planRecordSql('cs')}
+           -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+           AND NOT ${draftSessionSql('cs')}
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported, includeSettings, includeMerged]
       );

@@ -3909,11 +3909,59 @@
   },
   "draft.pane.sub": {
     "text": "Request draft · {{project}}",
-    "description": "The small grey line under a draft request's title in its preview: what is being read and the project it will be filed on. {{project}} is the project's name."
+    "description": "The small grey line over a draft request's title at the head of its preview: what is being read and the project it will be filed on. {{project}} is the project's name."
   },
-  "draft.pane.nothingFiled": {
-    "text": "Nothing is filed until you press File it under the bot's reply.",
-    "description": "The quiet note at the foot of a request draft's preview, saying that reading it files nothing: the File it button stays on the card in the chat."
+  "draft.pane.goesOn": {
+    "text": "Goes on <0>{{project}}</0> as a new request. Nothing is filed until you press File it.",
+    "description": "The quiet line at the foot of a request draft's preview, beside its File it and Not now buttons: where the request will be filed, and that reading it files nothing. {{project}} is the project's name, in bold (tag 0)."
+  },
+  "draft.pane.question": {
+    "text": "File this as a request on {{project}}?",
+    "description": "Accessible name of the pair of buttons, File it and Not now, at the foot of a request draft's preview. {{project}} is the project's name."
+  },
+  "draft.pane.file": {
+    "text": "File it",
+    "description": "Button at the foot of a request draft's preview: files the drafted request on its project, the same as File it on the draft's card in the chat."
+  },
+  "draft.pane.notNow": {
+    "text": "Not now",
+    "description": "Button at the foot of a request draft's preview, beside File it: puts the draft away without filing it, the same as Not now on the draft's card in the chat."
+  },
+  "draft.pane.undecided": {
+    "text": "Still undecided",
+    "description": "Label over the list of open questions a request draft leaves undecided, beside the draft's words in its preview."
+  },
+  "draft.pane.doneWhen": {
+    "text": "Done when",
+    "description": "Label over a request draft's checks of what is true when the request is done, beside the draft's words in its preview."
+  },
+  "draft.pane.related": {
+    "text": "Related",
+    "description": "Label over the list of open requests a request draft overlaps, beside the draft's words in its preview."
+  },
+  "draft.pane.where": {
+    "text": "Where",
+    "description": "Label over where the thing a request draft is about happened (a request, something the person saw), beside the draft's words in its preview."
+  },
+  "draft.pane.whereRequest": {
+    "text": "Request #{{number}} on {{project}}",
+    "description": "A line under Where in a request draft's preview: the request the draft is about. {{number}} is that request's number and {{project}} its project's name."
+  },
+  "draft.pane.relation.same": {
+    "text": "The same thing",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: that request asks for the same thing as the draft."
+  },
+  "draft.pane.relation.partOf": {
+    "text": "Part of it",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft is part of that request."
+  },
+  "draft.pane.relation.dependsOn": {
+    "text": "Depends on it",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft depends on that request."
+  },
+  "draft.pane.relation.buildTogether": {
+    "text": "Build together",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft and that request are best built together."
   },
   "draft.pane.close": {
     "text": "Close the preview",
@@ -6524,12 +6572,12 @@
     "description": "Under \"The preview couldn't start\" on a private thread's opening card."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change an app live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to make changes to a live preview of {{app}}<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. {{app}} is the picked project's name. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change an app live",
-    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
+    "text": "I want to make changes to a live preview of {{app}}",
+    "description": "Written into the message box when the \"I want to make changes to a live preview of…\" pill is tapped, for the person to finish the sentence (for example, \"I want to make changes to a live preview of Supply Line: make the start button bigger\"). {{app}} is the picked project's name. Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   },
   "artifacts.button": {
     "text": "Artifacts",

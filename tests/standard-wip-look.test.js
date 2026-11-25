@@ -673,25 +673,23 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
-  // #7131: the level 4 link rule and its hover leave a disabled button out,
-  // and one rule draws the unavailable one: the muted ink, no underline and
-  // the default cursor. In light mode the level 4 rule outranked the button's
-  // own disabled grey, so a control that did nothing still looked live.
-  const level4 = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
-    && /text-decoration: underline/.test(r.body));
-  assert.ok(level4, 'the level 4 text-link rule');
-  assert.match(level4.selector, /:where\(:not\([^)]*:disabled, \[aria-disabled="true"\]\)\)$/, 'it does not match a disabled link');
-  const level4Hover = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
-    && /:hover$/.test(r.selector));
-  assert.ok(level4Hover, 'its hover rule');
-  assert.match(level4Hover.selector, /:where\(:not\([^)]*:disabled, \[aria-disabled="true"\]\)\):hover$/, 'nor a disabled link under the pointer');
-  const linkOff = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
-    && /:is\(:disabled, \[aria-disabled="true"\]\):where\(/.test(r.selector));
-  assert.ok(linkOff, 'one rule draws the unavailable text link');
+  // Level 4, an action written as text, leaves a control that cannot be pressed out,
+  // and one rule gives it the muted look instead (request 7131).
+  const link = all.find((r) => r.selector.includes(':is(.text-violet-600, .text-violet-700') && /color: var\(--wip-btn-link-ink\);/.test(r.body));
+  assert.ok(link, 'the level 4 rule is there');
+  assert.match(link.selector, /:not\(:disabled, \[aria-disabled="true"\]\)$/,
+    'a disabled text action is not drawn as an active link');
+  const linkHover = all.find((r) => r.selector.includes(':is(.text-violet-600, .text-violet-700') && /:hover\s*$/.test(r.selector));
+  assert.ok(linkHover, 'its hover rule is there');
+  assert.match(linkHover.selector, /:not\(:disabled, \[aria-disabled="true"\]\):hover$/,
+    'a pointer brings no underline back to a disabled text action');
+  const linkOff = all.find((r) => /:is\(:disabled, \[aria-disabled="true"\]\)$/.test(r.selector) && r.selector.includes(':is(.text-violet-600, .text-violet-700'));
+  assert.ok(linkOff, 'the disabled text action has its own rule');
   assert.match(linkOff.body, /color: var\(--wip-btn-link-off\);/);
   assert.match(linkOff.body, /text-decoration: none;/);
   assert.match(linkOff.body, /cursor: default;/);
-  assert.match(tokens[0].body, /--wip-btn-link-off: var\(--text-muted\);/, 'the muted ink is a token');
+  assert.match(tokens[0].body, /--wip-btn-link-off: #a1a1aa;/, 'the light grey is a token');
+  assert.match(tokens[1].body, /--wip-btn-link-off: #71717a;/, 'the dark grey is a token');
 });
 
 test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {

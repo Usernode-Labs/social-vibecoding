@@ -2,7 +2,8 @@
  * A live app draft, as its private thread with Homeroom bot shows it
  * (services/live-drafts.js). There is no standing button: a draft is opened
  * by asking Homeroom bot (homeroom-bot-mayor.js open_app_preview), or with
- * New chat's "I want to change an app live…" start (./new-thread.tsx).
+ * New chat's "I want to make changes to a live preview of…" start
+ * (./new-thread.tsx).
  *
  * 20 Nov 2026 (live-draft review, G): there is no bar any more. The "Live
  * preview · Tell Homeroom bot what to change. [Show preview] [Propose] [Close

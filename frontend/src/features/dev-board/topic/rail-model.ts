@@ -271,6 +271,14 @@ export function leadRow<T extends WorkState>(request: T | null, change: T | null
   return request.stage === 'up_for_vote' && change ? change : request;
 }
 
+/** An update after the first, as its Discussion line records it (src/routes/votes.js). */
+export interface ChangeUpdate {
+  at?: string | null;
+  by?: string | null;
+  bot?: boolean;
+  votesKept?: boolean;
+}
+
 export interface ChangeRailInput {
   id: number | null;
   author: string | null;
@@ -297,6 +305,8 @@ export interface ChangeRailInput {
   work?: Standing | null;
   /** The viewer is the row's requester: its words are theirs (a request's row only; a change's row reads the same to everyone). */
   yours?: boolean;
+  /** Each update after the first: when, by whom, and whether the earlier votes stand. */
+  updates?: ChangeUpdate[] | null;
 }
 
 /** The pills that only count votes: the step says "Up for a vote", and the foot has the count. */
@@ -335,6 +345,21 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
     at: input.at,
     desc: input.author ? { id: 'project:topic.rail.by', values: { name: input.author } } : null,
   }));
+  // #7117 discussion: an update after the first is an event of its own, so a
+  // proposal updated from a draft shows what happened to it, not only its
+  // first build. When it is known, who made it; either way, what became of
+  // the votes it moved the code under.
+  for (const [i, u] of (input.updates || []).entries()) {
+    steps.push(step({
+      key: `updated:${i}`,
+      icon: 'built',
+      title: { id: 'project:topic.rail.updated' },
+      at: u.at || null,
+      desc: u.by ? { id: 'project:topic.rail.by', values: { name: u.by } }
+        : u.bot ? { id: 'project:topic.rail.byBot' } : null,
+      note: u.votesKept ? { id: 'project:topic.rail.votesStand' } : { id: 'project:topic.rail.votesCleared' },
+    }));
+  }
   const { id, testing, votes, status } = input;
   const checks: RailOpen | null = id != null ? { kind: 'checks', changeId: id } : null;
   const ballot: RailOpen | null = id != null ? { kind: 'votes', changeId: id } : null;

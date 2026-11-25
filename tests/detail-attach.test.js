@@ -78,7 +78,9 @@ test('a thread remembers each thing it opened once, at its newest version, for t
 test('a running preview keeps what it was opened with, so its thread can ask for it again', () => {
   const placement = read('frontend/src/features/staging/placement.ts');
   assert.match(placement, /payload: \{ staging: \{ slug: input\.slug \|\| null, readOnly: input\.readOnly !== false \} \},/);
-  assert.match(read('public/js/app-view.js'), /staging\.place\(\{ sessionId, wide: false, settle: !!\(opts && opts\.settle\), slug: slug \|\| null, readOnly \}\);/);
+  // The layout the address remembered rides with it too (a refresh comes back
+  // in the same place: tests/staging-preview-redesign.test.js).
+  assert.match(read('public/js/app-view.js'), /staging\.place\(\{\s*sessionId,\s*wide: false,\s*settle: !!\(opts && opts\.settle\),\s*slug: slug \|\| null,\s*readOnly,\s*layout: \(opts && opts\.layout\) \|\| null,\s*\}\);/);
   const detail = read('frontend/src/features/ai/detail.ts');
   assert.match(detail, /if \(entry\.kind === 'preview'\) \{[\s\S]*?void view\.ensureStaging\(sessionId, null, null, \{/, 'reopened through the staging overlay, which owns its frame');
 });

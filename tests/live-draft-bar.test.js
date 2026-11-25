@@ -255,7 +255,7 @@ test('app.js hands the draft\'s socket frame on as the bar\'s window event', () 
   assert.match(app, new RegExp(`case 'live_draft_changed':\\s*(//[^\\n]*\\n\\s*)*window\\.dispatchEvent\\(new CustomEvent\\('${LIVE_DRAFT_EVENT}', \\{ detail: data \\}\\)\\);`));
 });
 
-test('New chat offers "I want to change an app live…" once a project of its own is picked', () => {
+test('New chat offers "I want to make changes to a live preview of…" once a project of its own is picked', () => {
   const NEW = 'frontend/src/features/messages/new-thread.tsx';
   const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf } = loadTsx(NEW);
   assert.equal(offersLive('', {}), false, 'not for Any project');
@@ -269,18 +269,23 @@ test('New chat offers "I want to change an app live…" once a project of its ow
   assert.equal(offersLive('other-self', { 'other-self': { selfHosted: true } }, { platformSlug: 'homeroom', isAdmin: true }), false,
     'another self-hosted app is never offered, admins included');
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }, { platformSlug: 'homeroom', isAdmin: true }), true);
-  const words = message(LIVE_START.text);
-  assert.equal(words, 'I want to change an app live');
-  assert.equal(message(LIVE_START.label).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
+  const words = message(LIVE_START.text, { app: 'Gym' });
+  assert.equal(words, 'I want to make changes to a live preview of Gym');
+  assert.equal(message(LIVE_START.label, { app: 'Gym' }).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
   assert.equal(LIVE_START.kind, 'any');
   assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
-  const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text) }));
-  assert.equal(startOf('I want to change an app live: make the button bigger', starts).key, 'live');
+  const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text, { app: 'Gym' }) }));
+  assert.equal(startOf('I want to make changes to a live preview of Gym: make the button bigger', starts).key, 'live');
+  assert.equal(startOf('I want to change an app live: make the button bigger', starts), null, 'the old words are no longer a start');
   assert.match(read(NEW), /offersLive\(project, scope\.info[\s\S]*?platformSlug: platformSlug\(\),[\s\S]*?isAdmin: typeof window !== 'undefined' && !!\(window as any\)\.App\?\.user\?\.isAdmin,/);
+  // The pill and the box say the picked project's name, falling back to its slug.
+  assert.match(read(NEW), /const appName = \(project && scope\.info\[project\]\?\.name\) \|\| project \|\| '';/);
+  assert.match(read(NEW), /text: t\(start\.text, \{ app: appName \}\)/);
+  assert.match(read(NEW), /<RichMessage id=\{start\.label\} values=\{\{ app: appName \}\}/);
   // Homeroom bot is what opens it: the chat's tool, named for that start.
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
-  assert.match(tool.description, /I want to change an app live/);
+  assert.match(tool.description, /I want to make changes to a live preview of/);
   // Step 6 (#6864): opening it loads the draft's tools into the same turn,
   // so the change they asked for is made then, and replied to.
   assert.match(tool.description, /It gives you the draft's tools for the rest of this turn: when they asked for a change, make it then, and reply\./);

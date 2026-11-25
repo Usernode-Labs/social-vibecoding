@@ -357,17 +357,19 @@ function RowsWithLine({ lines, before, since }: { lines: Line[]; before: string 
 /**
  * A band's rows: its first few, then the rest folded under its own Show
  * more, which opens them in place (Show less shuts them). The row you are on
- * is never folded away; nor, in Needs you and In progress, is one with
- * something new (#6262) or one that moved while the page was up (PR 6792):
- * past the first few they join them, in their order (./model.ts groupRows).
+ * is never folded away; nor, in Needs you, is one with something new (#6262)
+ * or one that moved while the page was up (PR 6792): past the first few they
+ * join them, in their order (./model.ts groupRows). In progress passes
+ * `lift` `'moved'` (#7138): a row that is only new since the last visit stays
+ * behind Show more, so the band keeps its default length.
  * Opened, the rows that were in sight stay where they were (openRows).
  */
-function BandRows({ lines, first, since = '' }: { lines: Line[]; first: number; since?: string }): ReactNode {
+function BandRows({ lines, first, since = '', lift = true }: { lines: Line[]; first: number; since?: string; lift?: boolean | 'moved' }): ReactNode {
   const t = useMessages('messages');
   // The rows in sight when Show more was pressed, by key: open while kept.
   const [kept, setKept] = useState<string[] | null>(null);
   const open = !!kept;
-  const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false);
+  const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false, lift);
   const visible = hidden ? items.slice(0, shown) : items;
   const folded = hidden ? items.slice(shown) : [];
   // Mobile polish 05: the line goes before the first seen row after the last
@@ -874,7 +876,7 @@ export function AiLists({
               {ready && !progressLines.length ? (
                 <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.band.progressEmpty')}</p>
               ) : (
-                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} />
+                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} lift="moved" />
               )}
             </div>
           </section>

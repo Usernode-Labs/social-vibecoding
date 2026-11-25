@@ -835,6 +835,18 @@ async function applyPrMetadata({
   preferredTitle = null,
 }) {
   if (!repoOwner || !repoName) return null;
+  // 24 Nov 2026: a live app draft is not a change until it is proposed, so
+  // nothing here opens a pull request for its working session (the proposal
+  // Propose makes is a change of its own and is not in live_drafts). A
+  // session that already has a PR — a draft numbered before this — is not
+  // affected and keeps updating it below.
+  if (!session?.pr_number && pool) {
+    const liveDrafts = require('./live-drafts'); // lazy: no require cycle
+    if (await liveDrafts.isDraftSession(pool, session?.id)) {
+      log.info('pr-metadata', 'No pull request for a live draft before it is proposed', { sessionId: session?.id });
+      return null;
+    }
+  }
 
   // Build cumulative context across all of this PR's turns. Falls back to
   // the single current turn when no history is available.

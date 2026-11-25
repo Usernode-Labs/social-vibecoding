@@ -1032,8 +1032,8 @@
     "description": "A small pill on the Claude Code or ChatGPT row of the \"Make your first change here\" card while Homeroom's connector is not connected in that product yet: opening the row shows the steps to add it."
   },
   "hub.workshop.sub": {
-    "text": "What happened, and every item",
-    "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
+    "text": "Make and vote on changes",
+    "description": "The line under \"Workshop\", the Workshop row of a project's Hub (For you): what the Workshop is for, making changes and voting on them. It opens the project's Workshop. Not the person's own work, which has its own card on the Workshop tab (Your work)."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
@@ -7366,5 +7366,21 @@
   "topic.details.touches": {
     "text": "What it touches",
     "description": "Sub-heading in the Details sheet of a change, over the picture of which parts of the project the change edits: screens, server, database and tests, with a count of files."
+  },
+  "topic.rail.updated": {
+    "text": "Updated",
+    "description": "Name of a step in the \"How it got here\" timeline on a change's or a request's page (the list of the thread's big events, beside its card): the change was updated after it was first built."
+  },
+  "topic.rail.votesCleared": {
+    "text": "Earlier votes were cleared.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update moved the code, so the votes cast on the earlier version no longer count."
+  },
+  "topic.rail.votesStand": {
+    "text": "Earlier votes still stand.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update only brought the change up to date with main, so the votes cast on it still count."
+  },
+  "topic.rail.byBot": {
+    "text": "By Homeroom bot.",
+    "description": "Line under a step in the \"How it got here\" timeline: Homeroom bot made the update. Used when the update names no person."
   }
 }

@@ -189,11 +189,17 @@ test('the bands as drawn: the dot, the new rows first, the line, the pill; none 
   assert.match(done, /data-ai-band-new="">1 new</);
   assert.ok(done.indexOf('T30') < done.indexOf('data-ai-new-line') && done.indexOf('data-ai-new-line') < done.indexOf('T31'), 'what went live sits above the line');
 
-  // Never folded away in Needs you and In progress (./model.ts groupRows).
+  // Never folded away in Needs you (./model.ts groupRows).
   const { groupRows } = loadTsx(MODEL);
   const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i}`, isNew: i === 7 }));
   assert.deepEqual(groupRows(many, 5, false).items.slice(0, 6).map((r) => r.key), ['r0', 'r1', 'r2', 'r3', 'r4', 'r7']);
   assert.equal(groupRows(many, 5, false, false).shown, 5, 'Done folds them with the rest: its count says how many');
+  // #7138: In progress folds a new row past its first five (mode 'moved'),
+  // and the rendered band still marks it with the dot and counts it as new.
+  const progressMode = groupRows(many, 5, false, 'moved');
+  assert.equal(progressMode.shown, 5, 'In progress keeps its default length whatever arrives');
+  assert.ok(!progressMode.items.slice(0, 5).includes(many[7]), 'r7 waits behind Show more');
+  assert.match(busy, /data-ai-dot=""/, 'a new row still carries its dot');
 });
 
 test('the page\'s visit: read in an effect, a leave said before the next one opens, a reload the same visit', () => {

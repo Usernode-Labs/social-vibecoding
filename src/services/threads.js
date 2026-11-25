@@ -20,6 +20,7 @@
 
 const log = require('./logger');
 const { planRecordSql } = require('./request-specs');
+const { draftSessionSql } = require('./live-drafts');
 const issueRefs = require('./issue-proposal-ref');
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
 const { workedOnSql } = require('../workflow/session-work.ts');
@@ -570,6 +571,9 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
    -- 1 Nov 2026 (C2): a plan a person posted lives on a planning record with
    -- no branch (request-specs.js): it is the request's plan, never a change.
    AND NOT ${planRecordSql('cs')}
+   -- 24 Nov 2026: a live app draft is not a change until it is proposed
+   -- (live-drafts.js draftSessionSql).
+   AND NOT ${draftSessionSql('cs')}
 UNION ALL
 SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::bigint, NULL::int,
        i.title, i.status, i.created_by, NULL::timestamptz, NULL::timestamptz, i.created_at,
