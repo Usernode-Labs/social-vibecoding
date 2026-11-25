@@ -207,6 +207,16 @@
           && Date.now() - last.at < CHECK_EVERY_MS;
       } catch (_) { return false; }
     }
+    // Reload onto copies the check or refresh just put in the cache, past
+    // every cache the browser keeps besides it: Firefox reuses a stylesheet
+    // it already parsed, without asking its disk cache, on a plain reload or
+    // a navigation to the same page, so only reload(true) (Firefox's
+    // forceGet; other browsers ignore the argument and reload as usual)
+    // draws the new one. The address is set first, so the reload is of it.
+    function reloadOnto(target) {
+      try { if (target) history.replaceState(history.state, "", target); } catch (_) { /* stays where it is */ }
+      location.reload(true);
+    }
     function checkFiles() {
       try { if (navigator.onLine === false) return; } catch (_) { /* no navigator: try */ }
       if (checkedRecently()) return;
@@ -226,12 +236,12 @@
         if (!cacheable) {
           // The same address again; the record above keeps the reload from
           // checking a second time.
-          location.reload();
+          reloadOnto(null);
           return;
         }
         own.delete("un-refresh");
         own.set("un-checked", "1");
-        location.replace(page + "#" + own.toString());
+        reloadOnto(page + "#" + own.toString());
       });
     }
     function checkAfterLoad() {
@@ -258,7 +268,7 @@
         return;
       }
       own.delete("un-refresh");
-      location.replace(page + "#" + own.toString());
+      reloadOnto(page + "#" + own.toString());
     });
   })();
   /* __USERNODE_OFFLINE_CACHE_END__ */
