@@ -70,6 +70,28 @@ test('#11: an image icon shows the app\'s initial until the picture has drawn', 
   assert.match(list, /eager=\{i < 4\}/, 'the first cards ask at once');
 });
 
+test('#11: the picture paints above the initial, and the initial goes once it can be seen', () => {
+  const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');
+  // #7129: the img is `relative` and comes AFTER the absolutely positioned
+  // placeholder, so the picture is always painted over the letter.
+  const html = renderToHtml(createElement(AppIconContent, { app: { name: 'maps', icon_url: '/app-icons/7' } }));
+  const img = html.match(/<img[^>]*>/)[0];
+  assert.match(img, /class="relative [^"]*"|class="[^"]* relative[^"]*"/, 'the picture is positioned, so it paints above the letter');
+  assert.ok(html.indexOf('app-icon-wait') < html.indexOf('<img'), 'the placeholder is under the picture, never after it');
+  // The placeholder is also dropped as soon as the browser can paint the
+  // picture: decode() covers a load event that never reaches React.
+  const source = read('frontend/src/features/apps/app-card-view.tsx');
+  assert.match(source, /img\.decode\(\)\.then\(\(\) => setDrawn\(true\)/, 'decode() clears the letter');
+  assert.match(source, /onLoad=\{\(\) => setDrawn\(true\)\}/, 'and so does the load event');
+  // Nothing lifts the placeholder above the picture again.
+  const wait = read('public/css/app.css').match(/\.app-icon-wait \{[^}]*\}/)[0];
+  assert.doesNotMatch(wait, /z-index/, 'the letter has no layer of its own');
+  // A tile with no icon picture keeps its first letter.
+  const letter = renderToHtml(createElement(AppIconContent, { app: { name: 'notes' } }));
+  assert.equal(letter, 'N');
+  assert.doesNotMatch(letter, /app-icon-wait/);
+});
+
 // ── #12: the request page ───────────────────────────────────────────────
 
 test('#12: the track card\'s pictures hold their frames while they are read', () => {
