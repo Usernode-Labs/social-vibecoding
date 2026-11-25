@@ -673,6 +673,25 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+  // #7131: the level 4 link rule and its hover leave a disabled button out,
+  // and one rule draws the unavailable one: the muted ink, no underline and
+  // the default cursor. In light mode the level 4 rule outranked the button's
+  // own disabled grey, so a control that did nothing still looked live.
+  const level4 = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
+    && /text-decoration: underline/.test(r.body));
+  assert.ok(level4, 'the level 4 text-link rule');
+  assert.match(level4.selector, /:where\(:not\([^)]*:disabled, \[aria-disabled="true"\]\)\)$/, 'it does not match a disabled link');
+  const level4Hover = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
+    && /:hover$/.test(r.selector));
+  assert.ok(level4Hover, 'its hover rule');
+  assert.match(level4Hover.selector, /:where\(:not\([^)]*:disabled, \[aria-disabled="true"\]\)\):hover$/, 'nor a disabled link under the pointer');
+  const linkOff = all.find((r) => /^html:not\(\[data-skin\]\) :is\(button, a\):is\(\.text-violet-600/.test(r.selector)
+    && /:is\(:disabled, \[aria-disabled="true"\]\):where\(/.test(r.selector));
+  assert.ok(linkOff, 'one rule draws the unavailable text link');
+  assert.match(linkOff.body, /color: var\(--wip-btn-link-off\);/);
+  assert.match(linkOff.body, /text-decoration: none;/);
+  assert.match(linkOff.body, /cursor: default;/);
+  assert.match(tokens[0].body, /--wip-btn-link-off: var\(--text-muted\);/, 'the muted ink is a token');
 });
 
 test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {
