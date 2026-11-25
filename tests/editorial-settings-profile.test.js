@@ -228,4 +228,16 @@ test('recent activity links real changes and leaves out unknown times', () => {
   assert.match(html, /A &lt;change&gt;/);
   assert.doesNotMatch(html, /<time/);
   assert.equal(renderToHtml(createElement(ProfileRecentActivity, { changes: [] })), '');
+  // #7134: the Activity tab asks for up to five; the overview keeps three.
+  const many = Array.from({ length: 6 }, (_, i) => ({
+    sessionId: i + 1, title: `Change ${i + 1}`, appSlug: 'garden', appName: 'Garden', mergedAt: null,
+  }));
+  assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many })).match(/<li>/g) || []).length, 3);
+  assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many, limit: 5 })).match(/<li>/g) || []).length, 5);
+  // #7134 review: the Activity tab keeps its heading and says so in the card
+  // when there is nothing to list; the overview still renders nothing.
+  const none = renderToHtml(createElement(ProfileRecentActivity, { changes: [], empty: true }));
+  assert.match(none, /id="profile-recent-activity"/);
+  assert.match(none, /profile:recent\.title/);
+  assert.match(none, /<ul><li class="profile-recent-empty">messages:ai\.history\.empty<\/li><\/ul>/);
 });

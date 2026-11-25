@@ -6,7 +6,7 @@
  * Feedback is not here: its tab opens the product's own "Your feedback" card
  * (../feedback-sheet.tsx) over whichever tab is up.
  */
-export const YOU_TABS = ['overview', 'changes', 'requests', 'votes', 'friends'] as const;
+export const YOU_TABS = ['overview', 'changes', 'requests', 'votes', 'activity', 'friends'] as const;
 export type YouTab = typeof YOU_TABS[number];
 
 /** `#profile` for the Overview, `#profile?tab=<name>` for the others. */

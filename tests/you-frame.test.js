@@ -161,7 +161,7 @@ test('Friends is a tab: the search, who asked and your friends in one group, sen
 
 test('the tab is the store\'s, the address says it, and under a look Friends opens the tab, not the card', () => {
   const tabs = read(`${DIR}/you-tabs.ts`);
-  assert.match(tabs, /export const YOU_TABS = \['overview', 'changes', 'requests', 'votes', 'friends'\] as const;/);
+  assert.match(tabs, /export const YOU_TABS = \['overview', 'changes', 'requests', 'votes', 'activity', 'friends'\] as const;/);
   assert.match(tabs, /return tab === 'overview' \? '#profile' : `#profile\?tab=\$\{tab\}`;/);
   const js = read('frontend/src/features/profile/profile.js');
   assert.match(js, /showFriends\(\) \{\n\s+\/\/ Under a look Friends is a tab of You[^\n]*\n\s+if \(isFrameSkin\(currentSkin\(\)\)\) \{ Profile\.showTab\('friends'\); return; \}/);
