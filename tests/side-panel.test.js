@@ -761,6 +761,20 @@ test('the panel never runs an app: it asks the top window, which opens it and le
   cleanup();
 });
 
+test('a page handed up from the panel replaces the top window\'s own entry, never pushes one (#7140)', () => {
+  const { win, pushed, routed, flush } = topWindow();
+  api.embeddedApi.swap('homeroom-bot/thread/9');
+  assert.deepEqual(pushed, [], 'nothing is scheduled as a new entry');
+  assert.equal(routed.length, 0, 'routed on the top window\'s own turn');
+  flush();
+  assert.deepEqual(pushed, [], 'still no history entry of its own');
+  assert.equal(win.location.href, 'https://homeroom.test/?demo=1#homeroom-bot/thread/9',
+    'the entry on screen is traded for the thread, in place');
+  assert.deepEqual(routed, ['https://homeroom.test/?demo=1#homeroom-bot/thread/9'],
+    'and the router runs it once');
+  cleanup();
+});
+
 // ── 5. The panel's own document ──────────────────────────────────────────
 
 function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false, nested = false, captureHead = false } = {}) {
@@ -807,6 +821,7 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
             openApp: (slug) => reports.push(['openApp', slug]),
             leave: (route) => reports.push(['leave', route]),
             back: () => reports.push(['back']),
+            swap: (route) => reports.push(['swap', route]),
             // #6608: only when a test reads the head reports, so the existing
             // assertions on `reports.at(-1)` are unchanged.
             ...(captureHead ? { head: (route, head) => reports.push(['head', route, head]) } : {}),
@@ -982,6 +997,30 @@ test('what the panel does not show goes to the top window, and the address stays
   delete globalThis.document;
 });
 
+test('a page the panel must not draw is handed to the top window in place, before and after boot (#7140)', async () => {
+  const p = panelWindow({ href: 'https://homeroom.test/?panel=1#app/notes-ab12/dev/changes/142' });
+  // A frame whose FIRST page is the address to hand up: it moves nothing
+  // here, and the hand-off still reaches the top (it is not gated on boot).
+  assert.equal(p.runtime.handTop('homeroom-bot/thread/9'), true);
+  assert.deepEqual(p.reports.at(-1), ['swap', 'homeroom-bot/thread/9']);
+  assert.equal(p.url(), 'https://homeroom.test/?panel=1#app/notes-ab12/dev/changes/142',
+    'a document still booting has no settled page to put back');
+  p.boot();
+  await tick();
+  // After boot the document is put back on the page it was showing, then the
+  // top is told — never left on an address it is not drawing.
+  p.win.history.replaceState(null, '', '/?panel=1#homeroom-bot/thread/9');
+  assert.equal(p.runtime.handTop('homeroom-bot/thread/9'), true);
+  assert.deepEqual(p.reports.at(-1), ['swap', 'homeroom-bot/thread/9']);
+  assert.equal(p.url(), 'https://homeroom.test/?panel=1#app/notes-ab12/dev/changes/142',
+    'put back on the page this document was showing');
+  // No top panel API at all (the frame opened on its own): nothing moves, and
+  // the caller hears that nothing did.
+  p.win.parent.UsernodeReact = {};
+  assert.equal(p.runtime.handTop('homeroom-bot/thread/9'), false);
+  delete globalThis.document;
+});
+
 test('a link inside the panel is followed in place, keeping panel=1', async () => {
   const p = panelWindow({ href: 'https://homeroom.test/?panel=1&demo=1#messages' });
   p.boot();
@@ -1096,6 +1135,7 @@ function router({ embedded = false, takes = true } = {}) {
     sidePanelEmbed: {
       forward: (route) => { calls.push(['forward', route]); return true; },
       openApp: (slug) => calls.push(['openApp', slug]),
+      handTop: (route) => { calls.push(['handTop', route]); return true; },
     },
   };
   const appView = {
@@ -1109,7 +1149,7 @@ function router({ embedded = false, takes = true } = {}) {
   };
   context.AppView = new Proxy(appView, { get: (t, k) => (k in t ? t[k] : noop) });
   context.Home = new Proxy({}, { get: () => noop });
-  return { App: context.App, calls, stored };
+  return { App: context.App, calls, stored, context };
 }
 
 test('the router asks the panel first for a Workshop page, and only for a Workshop page', async () => {
@@ -1181,6 +1221,21 @@ test('in the panel\'s document the router never runs, parks or polls, and forwar
   // Home, and any address not the panel's, are the top window's.
   App.navigateHome();
   assert.deepEqual(calls.at(-1), ['forward', '']);
+});
+
+test('in the panel\'s document the bot page is handed to the top window, never drawn there (#7140)', () => {
+  const { App, calls, context } = router({ embedded: true });
+  calls.length = 0;
+  App.navigateToAi();
+  assert.deepEqual(calls, [['handTop', 'homeroom-bot']],
+    'the page itself when no thread is named, and nothing else happens here');
+  assert.ok(!App._inAi, 'the frame reveals no AI screen: its own list is never drawn');
+  calls.length = 0;
+  context.location.hash = '#homeroom-bot/thread/9';
+  App.navigateToAi();
+  assert.deepEqual(calls, [['handTop', 'homeroom-bot/thread/9']],
+    'a thread address is handed up as it is, so the top opens that thread');
+  assert.ok(!App._inAi, 'and the frame still draws nothing');
 });
 
 test('the Workshop tab\'s memory (#2776) is the top window\'s: the panel\'s pages never write it', async () => {
