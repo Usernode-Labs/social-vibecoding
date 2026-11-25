@@ -59,9 +59,10 @@
  * the init() the panes call once they exist.
  */
 
-import type { ComponentType } from 'react';
+import { useRef, type ComponentType } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useStoreState } from '../../lib/use-store-state';
@@ -77,8 +78,13 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
+import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPagePin, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
+
+/** Whether this screen is its own scroller: not paged through the document by a phone browser (lib/browser-scroll.ts). */
+function scrollsItself(): boolean {
+  return typeof document === 'undefined' || !document.documentElement.dataset.browserScroller;
+}
 
 interface SettingsChunkState {
   Sections: ComponentType | null;
@@ -127,8 +133,19 @@ export function SettingsScreen() {
     if (mounted) ensureSettings();
   }, [mounted]);
 
+  // WITH THE KEYS UP, THE FORM STAYS ON SCREEN (phone review #14, 23 Nov
+  // 2026). A tap on a field here is focused without iOS's pan, which carried
+  // the platform's header off under the clock, and once the keys settle the
+  // field is revealed with its form's buttons: app.css ends the screen on
+  // the keys ("THE SHELL HOLDS STILL"), so they can be. Only where this
+  // screen is its own scroller: a phone browser pages Settings through the
+  // document (#1518), and there the browser's own reveal moves the page.
+  const screenRef = useRef<HTMLElement | null>(null);
+  useKeyboardSurface(screenRef, { when: scrollsItself });
+
   return (
     <main
+      ref={screenRef}
       id="settings-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip"
       style={{ position: "relative" }}
@@ -202,6 +219,7 @@ export function SettingsScreen() {
             */}
             <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
               <SettingsPageTitle />
+              <SettingsPagePin />
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">

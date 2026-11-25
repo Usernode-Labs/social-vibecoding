@@ -491,7 +491,7 @@ test('the make screen is a surface whose fields are the keyboard surface\'s, eve
   // From Create, under the platform header (#4195), still a surface.
   assert.match(MAKE, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
   assert.match(MAKE, /className=\{underHeader \? MAKE_ROOT_UNDER_HEADER : MAKE_ROOT\}/);
-  assert.match(MAKE, /useKeyboardSurface\(scrollerRef\);/);
+  assert.match(MAKE, /useKeyboardSurface\(scrollerRef, \{ head \}\);/);
   assert.doesNotMatch(MAKE, /\.focus\(\)/, 'no focus that lets iOS reveal on its own');
   // Make it is the form's submit button, so the reveal finds it.
   assert.match(MAKE, /<Button\s+type="submit"/);
@@ -594,4 +594,27 @@ test('the password step walks on Return, and each field says what its Return doe
   assert.match(read('frontend/src/features/auth/code-boxes.tsx'), /enterKeyHint="go"/);
   assert.doesNotMatch(SHEET, /id="sign-in-sheet-username"[^>]*onKeyDown=/);
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
+});
+
+test('a field the keys leave under a sticky row is revealed in that same event (phone review #18)', () => {
+  // The sheet shrinks first, and for a beat its sticky Cancel / Post row sat
+  // over the very field being typed in, until the settled reveal came.
+  const r = rig();
+  r.field.form = null;
+  const row = fakeEl();
+  row.getBoundingClientRect = () => ({ top: 360, bottom: 377, width: 300, height: 17 });
+  r.rows.push(row);
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { foot: '.feedback-actions' });
+  r.tap();
+  r.vv.fire('resize');
+  assert.deepEqual(r.scrolls, [460 - (360 - 12)], 'at once, not after SETTLE_MS');
+  r.advance(surface.SETTLE_MS);
+  assert.equal(r.scrolls.length, 2, 'the settled reveal still follows');
+
+  // Nothing named, nothing early: today's timing.
+  const plain = rig();
+  surface.attachKeyboardSurface(plain.scroller, plain.win, plain.doc);
+  plain.tap();
+  plain.vv.fire('resize');
+  assert.deepEqual(plain.scrolls, []);
 });

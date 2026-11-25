@@ -35,12 +35,18 @@
 //                       waiting for a free builder or held back (as the bot
 //                       says in Main), or a request nobody has picked up;
 //              live     a change of it went live in the last week.
-//            One they only voted or wrote in is listed only once it is live
-//            or while nobody has picked it up: once they have voted there is
-//            nothing left for them to do. A change up for a vote that still
-//            owes their vote is the Needs you feed's (GET /api/workshop/
-//            needs-feed?in=threads, the same threads), which the view puts
-//            first, so it is not listed here twice.
+//            One they only voted in is listed only once it is live: once
+//            they have voted there is nothing left for them to do (24 Nov
+//            2026, mobile 04: no longer while nobody has picked it up either,
+//            where it sat as "Not moving"). One they wrote in,
+//            or were named in with @, is listed at every stage, placed as
+//            their own would be and below their own (`tookPart`). A change
+//            up for a vote that still owes their vote is the Needs you feed's
+//            (GET /api/workshop/needs-feed?in=threads, the same threads),
+//            which the view puts first, so it is not listed here twice.
+//   named    an @ of them in a thread's chat or a request's own text in
+//            the last week that they have not answered or dismissed, one row
+//            a thread (NAMED_SQL): Needs you's Reply and Dismiss.
 //
 // ONE STORY WITH MAIN (29 Oct 2026). Where Homeroom bot works on a request
 // for them, the list it is in is the bot's own word on it: the stage its
@@ -59,8 +65,17 @@ const repoRef = require('./repo-ref');
 const workState = require('./work-state');
 const { updateComingSql, updateAskSql, updateFailedSql } = require('./homeroom-bot-progress');
 const { planRecordSql } = require('./request-specs');
+const { draftSessionSql } = require('./live-drafts');
 
-const THREADS_MAX = 80;
+// The most thread rows one read lists of each kind: going live or live this
+// week, and apart, the rest (THREADS_SQL). 24 Nov 2026 (mobile 04): 80 cut
+// off a week of Live this week for somebody who votes on everything (the
+// platform's own project merged 327 changes from 17 to 24 Nov 2026), and
+// those threads reached History only a week after going live. In progress
+// and Done draw their first few and Show more for the rest
+// (frontend/src/features/ai/lines.ts BAND_FIRST), so every row of the week
+// is reachable.
+const THREADS_MAX = 500;
 const PRIVATE_MAX = 30;
 const LIVE_DAYS = 7;
 // How long a claim holds, as the bot reads one (homeroom-bot.js CLAIM_TTL_DAYS).
@@ -76,27 +91,55 @@ const VISIBLE_APP_WHERE = `a.moderation_suspended_at IS NULL
 // they only voted or wrote in. Muting is the reader's to apply. The Homeroom
 // bot tab's Needs you (routes/workshop-overview.js, ?in=threads) reads the
 // same threads, so its two lists agree on what is yours.
-function threadsInSql(viewer) {
-  return `SELECT thread_id, bool_or(own) AS own FROM (
-    SELECT thread_id, TRUE AS own FROM requests WHERE created_by = ${viewer} AND thread_id IS NOT NULL
-    UNION ALL SELECT thread_id, TRUE FROM issues WHERE created_by = ${viewer} AND thread_id IS NOT NULL
-    UNION ALL SELECT t.id, TRUE FROM homeroom_bot_requesters b
+//
+// 24 Nov 2026 (mobile 04, Evan: "the tab includes every thread you are in,
+// and writing in a thread counts as being in it; voting alone does not"):
+//
+//   `wrote`  they wrote in it, or (with `named`) were named in it with @:
+//            what tells a thread they took part in from one they only voted
+//            in, which standing() keeps off the moving lists. A thread they
+//            voted and wrote in counts as written in (bool_or). FALSE on the
+//            vote branches and on the branches that make a thread `own`.
+//   `named`  adds the two @ branches Recent threads reads
+//            (recent-threads.js participatedSql): a 'mention' in a thread's
+//            chat and an 'issue_mention' in a request's own text, with `own`
+//            FALSE. A self-mention ("remind me") is not being named. The
+//            board's Yours filter (YOURS_SQL) leaves it off: being named in a
+//            thread does not make it yours on the board.
+//
+// The request branch casts `n.detail` only inside a CASE that has matched
+// digits, as participatedSql does, so `npm run lint:sql` reads it whole.
+function threadsInSql(viewer, { named = false } = {}) {
+  const mentions = named ? `
+    UNION ALL SELECT m.thread_id, FALSE, TRUE FROM notifications n
+                JOIN chat_messages m ON m.id = n.chat_message_id
+               WHERE n.user_id = ${viewer} AND n.kind = 'mention' AND m.thread_id IS NOT NULL
+                 AND n.source_user_id IS DISTINCT FROM ${viewer}
+    UNION ALL SELECT t.id, FALSE, TRUE FROM notifications n
+                JOIN threads t ON t.app_id = n.app_id
+                 AND t.number = (CASE WHEN n.detail ~ '^[0-9]{1,9}$' THEN n.detail::int END)
+               WHERE n.user_id = ${viewer} AND n.kind = 'issue_mention'
+                 AND n.source_user_id IS DISTINCT FROM ${viewer}` : '';
+  return `SELECT thread_id, bool_or(own) AS own, bool_or(wrote) AS wrote FROM (
+    SELECT thread_id, TRUE AS own, FALSE AS wrote FROM requests WHERE created_by = ${viewer} AND thread_id IS NOT NULL
+    UNION ALL SELECT thread_id, TRUE, FALSE FROM issues WHERE created_by = ${viewer} AND thread_id IS NOT NULL
+    UNION ALL SELECT t.id, TRUE, FALSE FROM homeroom_bot_requesters b
                 JOIN threads t ON t.app_id = b.app_id AND t.number = b.issue_number
                WHERE b.user_id = ${viewer}
-    UNION ALL SELECT thread_id, TRUE FROM chat_sessions
+    UNION ALL SELECT thread_id, TRUE, FALSE FROM chat_sessions
                WHERE user_id = ${viewer} AND thread_id IS NOT NULL AND is_headless = FALSE
     -- A request they pressed Claim on this week is theirs to build, as the
     -- Workshop counted it (AppView._issueIsMine), even with no change yet.
-    UNION ALL SELECT t.id, TRUE FROM issue_claims ic
+    UNION ALL SELECT t.id, TRUE, FALSE FROM issue_claims ic
                 JOIN threads t ON t.app_id = ic.app_id AND t.number = ic.github_issue_number
                WHERE ic.user_id = ${viewer} AND ic.claimed_at > NOW() - make_interval(days => ${CLAIM_DAYS})
-    UNION ALL SELECT s.thread_id, FALSE FROM pr_votes v JOIN chat_sessions s ON s.id = v.session_id
+    UNION ALL SELECT s.thread_id, FALSE, FALSE FROM pr_votes v JOIN chat_sessions s ON s.id = v.session_id
                WHERE v.user_id = ${viewer} AND s.thread_id IS NOT NULL
-    UNION ALL SELECT i.thread_id, FALSE FROM issue_votes v JOIN issues i ON i.id = v.issue_id
+    UNION ALL SELECT i.thread_id, FALSE, FALSE FROM issue_votes v JOIN issues i ON i.id = v.issue_id
                WHERE v.user_id = ${viewer} AND i.thread_id IS NOT NULL
-    UNION ALL SELECT thread_id, FALSE FROM chat_messages
+    UNION ALL SELECT thread_id, FALSE, TRUE FROM chat_messages
                WHERE user_id = ${viewer} AND thread_id IS NOT NULL AND msg_type = 'message' AND deleted_at IS NULL
-    UNION ALL SELECT thread_id, TRUE FROM thread_followers WHERE user_id = ${viewer} AND muted_at IS NULL
+    UNION ALL SELECT thread_id, TRUE, FALSE FROM thread_followers WHERE user_id = ${viewer} AND muted_at IS NULL${mentions}
   ) why GROUP BY thread_id`;
 }
 
@@ -113,9 +156,9 @@ function threadsInSql(viewer) {
 // nothing merged, live more than $5 days ago, or merged and not live yet in
 // a thread that is not theirs.
 const THREADS_SQL = `
-WITH mine AS (${threadsInSql('$1')})
+WITH mine AS (${threadsInSql('$1', { named: true })})
 SELECT * FROM (
-SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
+SELECT t.id, t.app_id, mine.own, mine.wrote, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
        -- #6421: a merged thread holds several requests; its row says how many.
        (SELECT COUNT(*) FROM requests r WHERE r.thread_id = t.id)::int AS request_count,
        a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
@@ -184,6 +227,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
        AND NOT ${planRecordSql('cs')}
+       -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+       AND NOT ${draftSessionSql('cs')}
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        AND (cs.status NOT IN ('active', 'paused') OR cs.shared_at IS NOT NULL OR cs.user_id = $1)
      ORDER BY CASE cs.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,
@@ -220,14 +265,16 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
    AND (t.state = 'open' OR (t.closed_at > NOW() - make_interval(days => $5) AND ch.status = 'merged'))
    AND (ch.status IS DISTINCT FROM 'merged'
         OR ch.live_at > NOW() - make_interval(days => $5)
-        OR (ch.live_at IS NULL AND (mine.own OR ch.user_id = $1)))
+        OR (ch.live_at IS NULL AND (mine.own OR mine.wrote OR ch.user_id = $1)))
    AND NOT EXISTS (SELECT 1 FROM thread_followers f
                     WHERE f.thread_id = t.id AND f.user_id = $1 AND f.muted_at IS NOT NULL)
-   -- A change in flight in a thread they only voted or wrote in is never
-   -- listed (standing), so it is not read either: somebody who votes on
-   -- everything filled the most rows with those, and their own requests
-   -- further down were cut off before they could be listed.
-   AND (mine.own OR ch.status IS NULL OR ch.status = 'merged' OR ch.user_id = $1)
+   -- An open thread they only voted in is never listed (standing), so it is
+   -- not read either: somebody who votes on everything filled the most rows
+   -- with those, and their own requests further down were cut off before
+   -- they could be listed. 24 Nov 2026 (mobile 04): one they wrote or were
+   -- named in is listed at every stage, so it is read; one they only voted
+   -- in is read once a change of it has merged (Live this week).
+   AND (mine.own OR mine.wrote OR ch.status = 'merged' OR ch.user_id = $1)
    AND ${VISIBLE_APP_WHERE}
 ) listed
  WHERE place <= $4
@@ -394,8 +441,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Pure: where one thread stands for the viewer, or null when it is not
  * theirs to see in these lists (a vote they owe is Needs you's, and so is
- * the bot's question; a change live more than a week ago is history; one in
- * flight that they only voted or wrote in asks nothing more of them). `work`
+ * the bot's question; a change live more than a week ago is history; an
+ * open one they only voted in asks nothing more of them). `work`
  * is the stored work state of its request (or of its change, when it has no
  * request); `viewer` is whether they decide on it (they asked for it, or
  * they run its project). `botId` is Homeroom bot's account, so a change it
@@ -409,10 +456,16 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
   // In progress is their own work: asked for, built, or followed.
   const own = row.own === true || theirs;
+  // 24 Nov 2026 (mobile 04): or a thread they wrote in or were named in
+  // (threadsInSql `wrote`), placed as their own would be at that stage,
+  // below their own (shapeThread marks it `tookPart`). One they only voted
+  // in stays off the moving lists: once they have voted there is nothing
+  // left for them to do.
+  const inIt = own || row.wrote === true;
   // A decision up for the group's vote (a rename, a card picture, ...) has
   // nothing to build: it is up for a vote, as a change up for one is.
   if (!work && row.kind === 'decision' && row.decision_status != null) {
-    if (row.decision_status !== 'open' || !own) return null;
+    if (row.decision_status !== 'open' || !inIt) return null;
     const myVote = row.decision_vote === 'yes' || row.decision_vote === 'no' ? row.decision_vote : null;
     // Their vote still owed: the Needs you feed's, as a change's is.
     if (!myVote && row.decision_mine !== true) return null;
@@ -491,16 +544,20 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // #6402: a change still being checked asks nobody for a vote yet. Someone
   // who would have been asked, but is not its author or a follower, sees it
   // under Waiting while it checks rather than losing it from every list.
-  if (state.stage === 'checking' && status === 'promoted' && wouldVote && !own && !updating) {
+  if (state.stage === 'checking' && status === 'promoted' && wouldVote && !inIt && !updating) {
     return { group: 'waiting', work: stored, at };
   }
-  // One they only voted or wrote in is listed while no change of it is in
-  // flight, as Waiting: it asks nothing of them, and nobody is building it.
+  // One they wrote or were named in is placed as their own (inIt). 24 Nov
+  // 2026 (mobile 04, Evan): one they only voted in is not listed while it is
+  // open, moving or not: it used to be Waiting while nothing of it was in
+  // flight ("Not moving" for weeks after its changes were set aside). It
+  // shows once it lands (Live this week, above) and then under Votes in
+  // History.
   const place = updating
-    ? ((own || wouldVote)
+    ? ((inIt || wouldVote)
       ? ((row.update_coming === 'running' || code === 'revising' || code === 'fixing' || code === 'fixing_check') ? 'next' : 'waiting')
       : null)
-    : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
+    : workState.placeFor(state, { requester: decides, own: inIt, voteOwed });
   if (!place) return null;
   const out = { group: place, work: stored, at };
   if (state.stage === 'building' && !state.line) {
@@ -521,13 +578,6 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     if (quiet >= 7) out.quietDays = quiet;
   }
   return out;
-}
-
-// A change of it is being made, checked, voted on or put live.
-const READY_LINES = new Set(['queued', 'held_builds', 'held_waiting']);
-function inFlight(state) {
-  if (state.stage === 'building') return !READY_LINES.has(state.line?.code);
-  return state.stage === 'checking' || state.stage === 'up_for_vote' || state.stage === 'going_live';
 }
 
 // In progress is soonest first: going live, then a change being fixed or
@@ -589,6 +639,11 @@ function shapeThread(row, viewerId, now, botId, states, viewers) {
     change: row.change_id ? { id: Number(row.change_id), number: row.pr_number == null ? null : Number(row.pr_number) } : null,
     href: hrefOf(row),
     ...stand,
+    // 24 Nov 2026 (mobile 04): a thread they only wrote in or were named
+    // in, not one they asked for, built or follow: In progress draws it
+    // below their own. A thread they only voted in is as it was.
+    ...(row.own !== true && row.wrote === true
+      && !(row.change_user != null && Number(row.change_user) === Number(viewerId)) ? { tookPart: true } : {}),
   };
 }
 
@@ -602,9 +657,12 @@ function arrange(rows, viewerId, now = new Date(), botId = null, states = null, 
   const shaped = rows.map((row) => shapeThread(row, viewerId, now, botId, states, viewers)).filter(Boolean);
   const byAt = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
   const oldest = (a, b) => String(a.at || '').localeCompare(String(b.at || ''));
-  const next = shaped.filter((s) => s.group === 'next').sort((a, b) => (nextRank(a) - nextRank(b)) || oldest(a, b));
+  // 24 Nov 2026 (mobile 04): their own threads first, then the ones they
+  // only wrote or were named in (`tookPart`), each in its own order.
+  const ownFirst = (a, b) => Number(!!a.tookPart) - Number(!!b.tookPart);
+  const next = shaped.filter((s) => s.group === 'next').sort((a, b) => ownFirst(a, b) || (nextRank(a) - nextRank(b)) || oldest(a, b));
   const waiting = shaped.filter((s) => s.group === 'waiting')
-    .sort((a, b) => (waitingRank(a) - waitingRank(b)) || (stillOf(a) ? byAt(a, b) : oldest(a, b)));
+    .sort((a, b) => ownFirst(a, b) || (waitingRank(a) - waitingRank(b)) || (stillOf(a) ? byAt(a, b) : oldest(a, b)));
   return {
     needs: shaped.filter((s) => s.group === 'needs').sort(byAt),
     next,
@@ -752,7 +810,9 @@ function unfiledPrivate(privates, listed) {
 // the same rule the lists above read them (threadsInSql), less the ones they
 // muted: what All items' Yours filter keeps (public/js/app-view.js
 // _devCardIsYours). Each with its request's number, its changes' ids and its
-// decisions' ids, which is how the board's cards are named.
+// decisions' ids, which is how the board's cards are named. 24 Nov 2026
+// (mobile 04): without the @ branches (threadsInSql `named`), on purpose:
+// being named in a thread does not make it yours on the board.
 const YOURS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
 SELECT t.number, t.kind,
@@ -917,26 +977,34 @@ async function markBotHandedOff(pool, rows, viewerId, bot, states, deps = {}) {
 
 /**
  * Everything the AI tab's main view lists for `user` beside the Needs you
- * feed: { private, needs, next, waiting, live }.
+ * feed: { private, needs, next, waiting, live, named }. `named` (24 Nov 2026,
+ * mobile 04) is the threads somebody named them in with @ and they have not
+ * answered or dismissed (services/thread-mentions.js). Such a thread is in
+ * `next` or `waiting` as well, where it would be without the @: the tab
+ * draws it in Needs you while the @ stands, and back there once it is
+ * dismissed, at once.
  */
 async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const bot = deps.bot || await dm.botAccount(pool);
-  const [{ rows: threadRows }, privates] = await Promise.all([
+  const mentions = deps.threadMentions || require('./thread-mentions');
+  const [{ rows: threadRows }, privates, named] = await Promise.all([
     pool.query(THREADS_SQL, [user.id, !!showSelfHosted, !!user.isAdmin, THREADS_MAX, LIVE_DAYS]),
     privateFor(pool, { user, deps: { ...deps, bot: bot || null } }),
+    mentions.namedFor(pool, { user, showSelfHosted, bot: bot || null }),
   ]);
   const [states, viewers] = await Promise.all([statesFor(pool, threadRows), viewerFacts(pool, threadRows, user.id)]);
   await markBotHandedOff(pool, threadRows, user.id, bot, states, deps);
   const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, states, viewers);
   // #6262: how many messages in each listed thread are new to the viewer.
-  const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live];
+  const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live, ...named];
   const unread = await (deps.threadReads || require('./thread-reads'))
     .unreadFor(pool, user.id, listed.map((t) => t.threadId));
   for (const t of listed) t.unread = unread.get(t.threadId) || 0;
   return {
     private: privates,
     ...lists,
+    named,
   };
 }
 
@@ -951,6 +1019,9 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
 // upNext). The bot's answer before read its own record of each request's
 // stage, which named closed requests the page left out and missed the
 // votes, decisions and requests nobody had picked up that the page shows.
+
+// The most Live this week rows Homeroom bot's answer names (listsOf).
+const BOT_LIVE_MAX = 80;
 
 /** What a Needs you feed card waits for, in the words my_work hands the bot. */
 const NEED_SAYS = Object.freeze({
@@ -998,6 +1069,15 @@ function privateSays(p) {
   if (p?.state === 'posted' && n > 0) return `their private thread with Homeroom bot, posted on #${n}`;
   if (p?.state === 'dropped') return 'their private thread with Homeroom bot, put away';
   return 'their private thread with Homeroom bot, not posted yet';
+}
+
+/**
+ * Pure (24 Nov 2026, mobile 04): what Homeroom bot's answer says of a thread
+ * somebody named them in with @: who, and that it waits for their reply.
+ */
+function namedSays(n) {
+  const who = n?.byBot ? 'Homeroom bot' : n?.by || 'somebody';
+  return `${who} named them with @ there; it waits for their reply or for them to dismiss it`;
 }
 
 /**
@@ -1054,6 +1134,14 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     if (t.app && request) listed.add(requestKey(t.app.slug, request));
   }
   const privates = unfiledPrivate(work?.private, listed);
+  // 24 Nov 2026 (mobile 04): the threads somebody named them in with @, one
+  // row each, unless the thread already has a Needs you row (a vote it owes
+  // them wins); while it stands the thread is in no other list.
+  const needThreads = new Set(items.map((item) => Number(item.threadId)).filter((n) => n > 0));
+  for (const t of work?.needs || []) if (!isOwed(t)) needThreads.add(Number(t.threadId));
+  const named = (work?.named || []).filter((n) => !needThreads.has(Number(n.threadId)) && !isOwed(n));
+  const namedThreads = new Set(named.map((n) => Number(n.threadId)));
+  const moving = (t) => !isOwed(t) && !namedThreads.has(Number(t.threadId));
   // #6271: a private thread marked done this week is Live this week's, under
   // its project (Only you when it has none), unless its filed request
   // already has a row of its own: that row stays the one row.
@@ -1064,15 +1152,22 @@ function listsOf(needs, work, { botUsername = null } = {}) {
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
         NEED_SAYS[item.kind] || 'waits for them')),
       ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
+      ...named.map((n) => row(n.app, n.number, n.title, namedSays(n))),
       ...privates.map((p) => row(p.app, null, p.title, privateSays(p))),
     ],
-    inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
-    waiting: (work?.waiting || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),
+    inProgress: (work?.next || []).filter(moving).map((t) => row(t.app, t.number, t.title, threadSays(t))),
+    waiting: (work?.waiting || []).filter(moving).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),
     liveThisWeek: [
       ...(work?.live || []).map((t) => row(t.app, t.number, t.title, 'Live')),
       ...closed.map((p) => row(p.app, null, p.title, 'closed: their private thread, marked done')),
     ],
   };
+  // 24 Nov 2026 (mobile 04): the tab reads a whole week of Live this week
+  // now (THREADS_MAX), which can be hundreds of rows; the answer names the
+  // newest BOT_LIVE_MAX of them, as many as the tab read before, and counts
+  // them all.
+  const liveCount = lists.liveThisWeek.length;
+  lists.liveThisWeek = lists.liveThisWeek.slice(0, BOT_LIVE_MAX);
   // The tab's headings count Needs you's rows that ask something (a private
   // thread asks nothing), and every row of the others.
   return {
@@ -1081,7 +1176,7 @@ function listsOf(needs, work, { botUsername = null } = {}) {
       needsYou: lists.needsYou.length - privates.length,
       inProgress: lists.inProgress.length,
       waiting: lists.waiting.length,
-      liveThisWeek: lists.liveThisWeek.length,
+      liveThisWeek: liveCount,
     },
   };
 }
@@ -1108,7 +1203,8 @@ module.exports = {
   appOf,
   hrefOf,
   firstLine,
-  VISIBLE_APP_WHERE,
+  // Spelled out, not shorthand: scripts/check-sql.js follows it into thread-mentions.js.
+  VISIBLE_APP_WHERE: VISIBLE_APP_WHERE,
   CLAIM_DAYS,
   THREADS_SQL,
   YOURS_SQL,
@@ -1133,6 +1229,7 @@ module.exports = {
   privateFor,
   workFor,
   threadSays,
+  namedSays,
   listsOf,
   pageLists,
 };

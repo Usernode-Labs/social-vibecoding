@@ -75,7 +75,7 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems, trailIndex,
+  composeSheet, glyphBars, groundInMode, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems, trailIndex,
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -636,7 +636,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // AppView._workshopVisuals, which picks each picture for the mode the page
   // is in, so `dark` changes what the run's stills are (#6820).
   const dark = usePageDark();
-  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items, dark]);
+  // #65: in dark a screenshot's quiet cream ground is the card's dark one.
+  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)).map((it) => groundInMode(it, dark)) : null), [items, dark]);
   // #6344: the items the run cannot draw (a group decision, competing
   // changes, the bot's question). Each is decided on its own page, so when
   // nothing else waits they are listed with a way there.
@@ -1083,12 +1084,25 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
         <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={beside ? undefined : { top: barTop }} aria-hidden={!desc && !beside} inert={(!desc && !beside) || undefined}>
-          <div className="rf-desc-dim" onClick={() => setDesc(false)} />
+          {/* Over the change it dims the page behind the card and a tap folds the card. Beside the change it is laid over
+              the card while a sheet is up (app.css `[data-rf-beside] .rf-desc-dim`), and a tap puts the sheet away, as
+              one on the scrim does. */}
+          <div className="rf-desc-dim" onClick={() => (beside ? setSheet(votes[item.key] ? 'voted' : 'ask') : setDesc(false))} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             {appName ? <p className="rf-desc-app">{appName}</p> : null}
             <p className="rf-desc-text">{item.summary || item.line}</p>
             {item.author ? <p className="rf-desc-by">{t('communities:review.desc.by', { name: item.author })}</p> : null}
-            <div className="rf-desc-foot">
+            <div
+              className="rf-desc-foot"
+              // #7045: a change opened from Needs you (every community's, `#needs`) goes back here: its page's chip reads the origin noted as the link is followed.
+              onClickCapture={(event) => {
+                try {
+                  if ((event.target as HTMLElement).closest('.rf-desc-go') && window.location.hash === '#needs') {
+                    (window as unknown as { Improve?: { enterTopicFrom?: (href: string) => void } }).Improve?.enterTopicFrom?.('#needs');
+                  }
+                } catch { /* the page opens all the same */ }
+              }}
+            >
               {item.app ? (
                 <a className="rf-desc-go" href={changeHref(item.app.slug, item.id, item.number)}>{t('communities:review.more.open')}</a>
               ) : null}

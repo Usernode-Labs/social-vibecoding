@@ -269,3 +269,47 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   assert.ok(rail > 0 && at > rail && at < noted.indexOf('tc-se-feedback-mine'), 'the note sits under the rail, before the link');
   assert.doesNotMatch(renderToHtml(createElement(DetailPage, { view })), /A report counts when/);
 });
+
+// #6986: the accepted-proposal challenge says what counts under its rail,
+// because a change the Homeroom bot built from the viewer's own request now
+// counts for them. Only that challenge's page carries the line.
+test('the accepted-proposal challenge\'s page says what counts, and no other page does', () => {
+  const src = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
+  const sandbox = {
+    document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+    window: {}, console, setTimeout, clearTimeout, URL,
+    location: { hash: '#leaderboard/challenges', search: '', origin: 'https://app.onhomeroom.com', hostname: 'app.onhomeroom.com' },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
+  vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
+  const pane = sandbox.window.TopochainChallenges;
+  const pageOf = (measure) => {
+    pane._detailChallenge = {
+      id: 5, completed: false, counted_by: measure ? { measure, target: 2 } : null,
+      card_preview: { goal: 'Get a proposal accepted', illustration: 'proposal-accepted' },
+    };
+    return pane.detailView();
+  };
+  const note = message('leaderboard:challenges.proposals.note');
+  assert.equal(pageOf('PROPOSAL_ACCEPTED').proposalsNote, note);
+  assert.match(note, /a change you made, or a change built for a request you filed, whoever built it/);
+  assert.match(note, /A change an admin forced live does not count/);
+  assert.equal(pageOf('INVITES_JOINED').proposalsNote, null);
+  assert.equal(pageOf(null).proposalsNote, null);
+  pane._detailChallenge = null;
+
+  const { DetailPage } = loadTsx('frontend/src/features/leaderboard/challenges-pane.tsx');
+  const view = {
+    key: '5', eyebrow: null, goal: 'Get a proposal accepted', task: null, illustration: null, illustrationTone: null,
+    deadline: null, amount: null, state: 'progress', stateLabel: '0/2 accepted proposals', fill: 0, counted: true,
+    cta: null, description: null, requirements: null, scoring: null, participants: 'Participants',
+    pointsTotal: null, moreLabel: 'Show more', entries: { kind: 'empty' },
+  };
+  const html = renderToHtml(createElement(DetailPage, { view: { ...view, proposalsNote: 'A proposal counts when it is accepted.' } }));
+  assert.ok(html.indexOf('A proposal counts when it is accepted.') > html.indexOf('role="progressbar"'),
+    'the note sits under the rail');
+  assert.doesNotMatch(renderToHtml(createElement(DetailPage, { view })), /A proposal counts when/);
+});

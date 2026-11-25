@@ -205,7 +205,7 @@ test('Back or Forward shows the entry\'s tab as a traversal, remembered for the 
   const win = fakeWindow('/app/garden/workshop');
   withWindow(win, () => {
     AppView._showHistoryWorkshopTab('garden', 'discussion');
-    assert.equal(win.localStorage.getItem(AppView.WORKSHOP_TAB_KEY), 'discussion');
+    assert.equal(win.localStorage.getItem(`${AppView.WORKSHOP_TAB_KEY}:garden`), 'discussion', 'remembered for that project (#43)');
     const ev = win.events.at(-1);
     assert.equal(ev.type, 'usernode:workshop-tab');
     assert.deepEqual(ev.detail, { slug: 'garden', tab: 'discussion', traversal: true });
@@ -217,10 +217,10 @@ test('an entry a door\'s navigation made is given the tab it opens on, so Forwar
   const win = fakeWindow('/app/garden/workshop');
   const App = { currentApp: 'garden' };
   withWindow(win, () => {
-    win.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, 'status');
+    win.localStorage.setItem(`${AppView.WORKSHOP_TAB_KEY}:garden`, 'status');
     assert.equal(AppView._stampArrivedWorkshopTab(), true);
     assert.deepEqual(win.entries[0].state[KEY], { slug: 'garden', tab: 'status', from: null });
-    win.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, 'needs');
+    win.localStorage.setItem(`${AppView.WORKSHOP_TAB_KEY}:garden`, 'needs');
     assert.equal(AppView._stampArrivedWorkshopTab(), false, 'an entry that already names its tab keeps it');
     assert.equal(win.entries[0].state[KEY].tab, 'status');
   }, App);

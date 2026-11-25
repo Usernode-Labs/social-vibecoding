@@ -9,14 +9,15 @@
 // where it has got to), the card shows that, and the asker's words are one
 // press away, on the timeline's first step.
 //
-// It is written when the page is read, never on a timer: `forRequest`
-// gathers what the summary is written from, names it with a hash, and
-// compares that with the stored row (request_summaries). A match is
-// returned as it is. Anything else starts one write in the background and
-// returns what the row already held, so no reader waits on a model and the
-// next read shows the new words. One writer holds the row at a time, on any
-// process (`generating_until`); a write that failed is not tried again for
-// RETRY_MS.
+// It is written when the page is read, and again the moment a change
+// attached to the request is put up for a vote (`onBoardChange`, registered
+// in server.js), never on a timer: `forRequest` gathers what the summary is
+// written from, names it with a hash, and compares that with the stored row
+// (request_summaries). A match is returned as it is. Anything else starts
+// one write in the background and returns what the row already held, so no
+// reader waits on a model and the next read shows the new words. One writer
+// holds the row at a time, on any process (`generating_until`); a write that
+// failed is not tried again for RETRY_MS.
 //
 // What it is written from is only what every member of the project can
 // already read: the request's title and words, the newest plan SHARED with
@@ -25,8 +26,9 @@
 // somebody's workspace never reaches the model.
 //
 // Cost: one helper-model call (llm.js generateRequestSummary) each time a
-// request that is being read gains a plan or a change, or one of them
-// changes. A request nobody opens costs nothing.
+// request that is being read gains a plan or a change, one of them changes,
+// or a change attached to it goes up for a vote. A request nobody opens, and
+// that gains no change, costs nothing.
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -55,7 +57,7 @@ function basisOf({ plan, changes }) {
 /** Pure: the name of what a summary was written from. Any change to it means the summary is written again. */
 function inputKey({ title, body, asker, plan, changes }) {
   const parts = [
-    'v1',
+    'v2',
     String(title || ''),
     String(body || ''),
     String(asker || ''),
@@ -102,13 +104,25 @@ async function sharedPlan(pool, appId, number) {
   return content || null;
 }
 
-/** The changes built for this request that the group can see: up for a vote, merging or merged; oldest first. */
+/**
+ * The changes built for this request that the group can see: up for a vote,
+ * merging or merged; oldest first. A change is attached by naming the request
+ * (`linked_issues`), by being started from it (`created_from_issue_number`),
+ * or by sitting on its thread (or the thread that one merged into), which is
+ * how a change the bot built from the request's plan reaches its page.
+ */
 async function visibleChanges(pool, appId, number) {
   const { rows } = await pool.query(
     `SELECT cs.id, cs.pr_title, cs.pr_summary_md, cs.status, u.username
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
-      WHERE cs.app_id = $1 AND $2::int = ANY(cs.linked_issues)
+      WHERE cs.app_id = $1
+        AND ($2::int = ANY(cs.linked_issues)
+             OR cs.created_from_issue_number = $2
+             OR cs.thread_id IN (SELECT t.id FROM requests r JOIN threads t ON t.id = r.thread_id
+                                  WHERE r.app_id = $1 AND r.number = $2
+                                 UNION SELECT t.merged_into FROM requests r JOIN threads t ON t.id = r.thread_id
+                                  WHERE r.app_id = $1 AND r.number = $2 AND t.merged_into IS NOT NULL))
         AND cs.is_headless = FALSE
         AND cs.status IN ('promoted', 'merging', 'merged')
       ORDER BY COALESCE(cs.promoted_at, cs.created_at) ASC, cs.id ASC
@@ -227,7 +241,95 @@ async function forRequest(pool, { appId, number, issue, asker = null }, deps = {
   }
 }
 
+/**
+ * Write this request's summary again from what stands now, without a page
+ * read: `deps` is `forRequest`'s. Never throws, and does nothing for a
+ * request that is missing or closed. Its asker is read the same way the
+ * page reads one: the issue's creator, else the request's, else the GitHub
+ * author shown on it.
+ */
+async function refresh(pool, { appId, number }, deps = {}) {
+  try {
+    if (!pool || !appId || !(Number(number) > 0)) return null;
+    const { rows } = await pool.query(
+      `SELECT r.title, r.body, r.state, r.author_login,
+              ua.username AS created_by_username,
+              (SELECT ub.username FROM issues i JOIN users ub ON ub.id = i.created_by
+                WHERE i.app_id = r.app_id AND i.github_issue_number = r.number
+                ORDER BY i.id DESC LIMIT 1) AS issue_username
+         FROM requests r
+         LEFT JOIN users ua ON ua.id = r.created_by
+        WHERE r.app_id = $1 AND r.number = $2`,
+      [appId, number]
+    );
+    const row = rows[0];
+    if (!row || row.state !== 'open') return null;
+    const asker = row.issue_username || row.created_by_username || row.author_login || null;
+    return await forRequest(pool, {
+      appId,
+      number: Number(number),
+      issue: { title: row.title || '', body: row.body || '' },
+      asker,
+    }, deps);
+  } catch (err) {
+    log.warn('request-summary', 'Request summary refresh failed', { appId, number, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Write again the summary of every open request a change is attached to
+ * (the same three ways `visibleChanges` reads one), at most MAX_CHANGES of
+ * them, one after another. Never throws.
+ */
+async function refreshForChange(pool, { appId, sessionId }, deps = {}) {
+  try {
+    if (!pool || !appId || !(Number(sessionId) > 0)) return [];
+    const { rows } = await pool.query(
+      `SELECT DISTINCT r.number
+         FROM requests r
+         JOIN chat_sessions cs ON cs.id = $2 AND cs.app_id = $1
+        WHERE r.app_id = $1 AND r.state = 'open'
+          AND (r.number = ANY(cs.linked_issues)
+               OR r.number = cs.created_from_issue_number
+               OR cs.thread_id = r.thread_id
+               OR cs.thread_id IN (SELECT t.merged_into FROM threads t
+                                    WHERE t.id = r.thread_id AND t.merged_into IS NOT NULL))
+        ORDER BY r.number
+        LIMIT $3`,
+      [appId, sessionId, MAX_CHANGES]
+    );
+    const done = [];
+    for (const row of rows) {
+      const number = Number(row.number);
+      if (!(number > 0)) continue;
+      await refresh(pool, { appId, number }, deps);
+      done.push(number);
+    }
+    return done;
+  } catch (err) {
+    log.warn('request-summary', 'Request summary refresh for a change failed', { appId, sessionId, err: err.message });
+    return [];
+  }
+}
+
+/**
+ * The board-change listener server.js registers: a change put up for a vote
+ * rewrites the summaries of the open requests it is attached to, so nobody
+ * has to open the page for the words to catch up. Any other action is left
+ * to the next page read. Returns its promise; the caller need not await it.
+ */
+function onBoardChange(pool, deps = {}) {
+  return (info) => {
+    if (!info || info.action !== 'promoted' || !(Number(info.sessionId) > 0)) return Promise.resolve([]);
+    const work = refreshForChange(pool, { appId: info.appId, sessionId: info.sessionId }, deps);
+    work.catch((err) => log.warn('request-summary', 'Request summary listener failed', { err: err.message }));
+    return work;
+  };
+}
+
 module.exports = {
-  forRequest, basisOf, inputKey, promptInput, sharedPlan, visibleChanges,
+  forRequest, refresh, refreshForChange, onBoardChange,
+  basisOf, inputKey, promptInput, sharedPlan, visibleChanges,
   CLAIM_LEASE_MS, RETRY_MS, MAX_CHANGES,
 };

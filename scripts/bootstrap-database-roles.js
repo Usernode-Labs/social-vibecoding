@@ -6,7 +6,12 @@ const { Client } = require('pg');
 const access = require('../src/services/database-role-access');
 const { PLATFORM_SCHEMAS, ensureRuntimeGrants } = require('../src/services/database-role-grants');
 
-const EXTENSION_SCAN_CONCURRENCY = 4;
+// The scan opens one connection per app database (219 on 24 Nov 2026) and
+// waits for each, so it is bound by round trips, not by CPU: at four at a time
+// it was 17 of the 21 seconds this Job adds to every release, with the Job and
+// the server both near idle. The server allows 400 connections and has peaked
+// at 106.
+const EXTENSION_SCAN_CONCURRENCY = 16;
 const ident = value => `"${String(value).replace(/"/g, '""')}"`;
 const lit = access.literal;
 

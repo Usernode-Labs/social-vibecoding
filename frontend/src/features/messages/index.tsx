@@ -11,6 +11,7 @@ import {
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, ListBulletIcon,
   LockIcon, PlusIcon, SearchIcon, UserGroupIcon, XIcon,
+  ChevronRightIcon, HashIcon,
 } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -48,10 +49,11 @@ import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } f
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { InboxToEnd } from './inbox-to-end';
+import { ListDivider } from './list-divider';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
-import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
+import { chatBarStore, messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
@@ -232,6 +234,37 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   return <UserAvatar user={null} title={conversation.title} size="lg" shape="square" />;
 }
 
+/**
+ * The line a row draws under its name, as text: the one place it is put
+ * together, because the search reads it too (phone review, 23 Nov 2026, #44:
+ * a word standing in a row's preview answered "No messages match", since the
+ * search knew only the names).
+ *
+ * #5393: in a group the preview names its last sender, the way #general's
+ * row already does: "@name: …", or "You: …" when the viewer wrote it. A
+ * message with no person behind it (a platform line) keeps the bare
+ * summary. A direct message keeps its preview as it is, an invitation says
+ * it is one to review, and the bot's own line (`botLine`) still wins where
+ * it is given.
+ */
+function rowPreview(
+  conversation: ConversationSummary,
+  t: ReturnType<typeof useMessages>,
+  botLine: string | null = null,
+): string {
+  if (conversation.membershipStatus === 'invited') {
+    return conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview');
+  }
+  const groupSender = conversation.kind === 'group' ? conversation.latestMessage?.sender || null : null;
+  if (groupSender?.id && conversation.latestSummary) {
+    const viewer = typeof window === 'undefined' ? null : window.App?.user?.id;
+    return Number(groupSender.id) === Number(viewer)
+      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) });
+  }
+  return ownDirection(botLine || conversation.latestSummary || '') || t('messages:inbox.noMessages');
+}
+
 const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null, rowKey }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -251,19 +284,6 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
   const activity = agoStamp(conversation.lastActivityAt);
-  // #5393: in a group the preview names its last sender, the way #general's
-  // row already does — "@name: …", or "You: …" when the viewer wrote it. A
-  // message with no person behind it (a platform line) keeps the bare
-  // summary. A direct message and an invitation keep their previews as they
-  // are, and the bot's own line (`preview`) still wins where it is given.
-  const groupSender = conversation.kind === 'group' && !invited
-    ? conversation.latestMessage?.sender || null
-    : null;
-  const groupPreview = groupSender?.id && conversation.latestSummary
-    ? (Number(groupSender.id) === Number(window.App?.user?.id)
-      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
-      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) }))
-    : null;
   return (
     <a
       href={`#messages/${conversation.id}`}
@@ -292,7 +312,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (ownDirection(preview || conversation.latestSummary || '') || t('messages:inbox.noMessages'))}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{rowPreview(conversation, t, preview)}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
@@ -418,9 +438,55 @@ const NEW_CHOICES = [
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
+/** The kit's own answer to "is this a touch screen", as its sheets use it. */
+function isTouchScreen(): boolean {
+  const pu = typeof window !== 'undefined' ? (window as any).PlatformUI : null;
+  return !!(pu && typeof pu.isTouch === 'function' && pu.isTouch());
+}
+
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab.
   openDialog('messagesCreate', choice);
+}
+
+/**
+ * THE GUIDE (23 Nov 2026, #7040): what the pane beside the list says while
+ * no conversation is open, for a look that draws the list and the pane side
+ * by side from 768px (app.css; hidden everywhere else, where the pane's
+ * heading and line stand alone). What Messages is for, the two ways to start
+ * a conversation (the "+" menu's own choices, in its own words), and where
+ * a project's channel is, which is not here.
+ */
+function MessagesGuide() {
+  const t = useMessages('messages');
+  return (
+    <div className="messages-guide" data-messages-guide="">
+      <span className="messages-guide-mark" aria-hidden="true"><ChatIcon /></span>
+      <h2 className="messages-guide-title">{t('messages:guide.title')}</h2>
+      <p className="messages-guide-body">{t('messages:guide.body')}</p>
+      <div className="messages-guide-rows">
+        {NEW_CHOICES.map((item) => (
+          <button key={item.key} type="button" className="messages-guide-row" data-guide-new={item.key} onClick={() => startNew(item.key)}>
+            <span className="messages-guide-glyph" aria-hidden="true">{item.key === 'direct' ? <PlusIcon /> : <UserGroupIcon />}</span>
+            <span className="messages-guide-text">
+              <b>{t(item.label)}</b>
+              <span>{t(item.hint)}</span>
+            </span>
+            <ChevronRightIcon className="messages-guide-go" aria-hidden="true" />
+          </button>
+        ))}
+        <a className="messages-guide-row" data-guide-channels="" href="#communities">
+          <span className="messages-guide-glyph" aria-hidden="true"><HashIcon /></span>
+          <span className="messages-guide-text">
+            <b>{t('messages:guide.channels.label')}</b>
+            <span>{t('messages:guide.channels.hint')}</span>
+          </span>
+          <ChevronRightIcon className="messages-guide-go" aria-hidden="true" />
+        </a>
+      </div>
+      <p className="messages-guide-note">{t('messages:guide.bot')}</p>
+    </div>
+  );
 }
 
 /**
@@ -430,8 +496,15 @@ function startNew(choice: NewChoice) {
  * The popover is placed and dismissed exactly as the vote picker's desktop
  * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
  * shared — and portalled to
- * the body so the list's own scroller cannot clip it. On touch it is the
- * kit's action sheet instead, which is what a short menu is on a phone.
+ * the body so the list's own scroller cannot clip it.
+ *
+ * ON TOUCH IT OPENS THE DIALOG ITSELF (phone review #124, 23 Nov 2026). It
+ * raised the kit's action sheet, Direct message or Group chat, and the
+ * dialog that followed opened on a Direct | Group switch for the same
+ * choice: one question asked twice, the first time in a sheet unlike any
+ * other in the app. A tap opens the dialog on Direct, and its switch is the
+ * one place the choice is made. A pointer keeps the menu (#2778), whose rows
+ * also say what each is for.
  *
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
@@ -451,15 +524,16 @@ function NewMessageButton() {
   const shut = () => setRect(null);
   useAnchoredDismiss(open, [btnRef, popRef], shut);
   const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
+  // What the press opens, for a screen reader: read after hydration, so the
+  // prerender and the first render agree on the menu.
+  const [touch, setTouch] = useState(false);
+  useEffect(() => { setTouch(isTouchScreen()); }, []);
 
   const toggle = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (open) { shut(); return; }
-    const pu = (window as any).PlatformUI;
-    if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
-      pu.actionSheet({
-        actions: NEW_CHOICES.map((item) => ({ label: t(item.label), handler: () => startNew(item.key) })),
-      });
+    if (isTouchScreen()) {
+      startNew('direct');
       return;
     }
     setRect(anchorRectOf(event.currentTarget));
@@ -479,7 +553,7 @@ function NewMessageButton() {
         type="button"
         id="messages-new"
         className="messages-new-btn"
-        aria-haspopup="menu"
+        aria-haspopup={touch ? 'dialog' : 'menu'}
         aria-expanded={open ? 'true' : 'false'}
         aria-label={t('messages:inbox.new.button')}
         title={t('messages:inbox.new.button')}
@@ -523,10 +597,11 @@ function NewMessageButton() {
 }
 
 /**
- * The list's heading (16 Oct 2026): People in small caps, and how many
- * messages from people are unread ("3 unread"). It was the second of two
- * headings until Agents left the list (16 Nov 2026), and it stays: it says
- * what the rows are, and carries the count. It does not fold.
+ * The list's heading (16 Oct 2026): DMs & groups in small caps (People until
+ * 24 Nov 2026, though it held group chats too), and how many messages from
+ * people are unread ("3 unread"). It was the second of two headings until
+ * Agents left the list (16 Nov 2026), and it stays: it says what the rows
+ * are, and carries the count. It does not fold.
  */
 function PeopleHead({ aside }: { aside: string | null }) {
   const t = useMessages('messages');
@@ -543,9 +618,12 @@ function PeopleHead({ aside }: { aside: string | null }) {
  *
  * A CLIENT-SIDE MATCH over the three lists already in memory, so it answers
  * on every keystroke and adds no endpoint. What it matches is the text each
- * row draws — a person's name or a group's title, an app's name, a chat's
- * title — because a search that found rows by a field the reader cannot see
- * would return results they cannot explain.
+ * row draws — a person's name or a group's title, and (#44, 23 Nov 2026) the
+ * preview line under it, `rowPreview` — because a search that found rows by a
+ * field the reader cannot see would return results they cannot explain, and
+ * one that missed a word standing on the row cannot be explained either.
+ * Nothing earlier in a conversation is read: the field says what it searches
+ * ("Search people and chats"), and its empty state says so again.
  *
  * It composes with the filter rather than replacing it: the strip says which
  * kinds, this says which of them, and an empty query is every row.
@@ -667,26 +745,6 @@ function ConversationList({ drawer = false }: {
   }), [snap.conversations]);
   const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
 
-  const q = deferredQuery.trim().toLowerCase();
-  const matches = (entry: { kind: string; key: string }) => {
-    if (!q) return true;
-    if (entry.kind === 'person') {
-      const c = byConversation.get(entry.key.slice('person:'.length));
-      if (!c) return false;
-      const peer = directPerson(c) || conversationPeer(c);
-      return inboxMatches(c.title, q)
-        || inboxMatches(peer?.username, q)
-        || inboxMatches(peer?.displayName, q);
-    }
-    return false;
-  };
-  const searching = !!q;
-  const found = inbox.filter(matches);
-  // The conversation that is open.
-  const isOpen = (entry: { kind: string; key: string }) => (
-    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
-  );
-
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
   // what it is doing ("1 needs you · 2 in progress", ./bot-strip.tsx
   // summaryParts), counted from your requests' tracks once this list is up;
@@ -703,6 +761,27 @@ function ConversationList({ drawer = false }: {
     const parts = summaryParts(stripGroups(botWork.work));
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
+
+  const q = deferredQuery.trim().toLowerCase();
+  const matches = (entry: { kind: string; key: string }) => {
+    if (!q) return true;
+    if (entry.kind === 'person') {
+      const c = byConversation.get(entry.key.slice('person:'.length));
+      if (!c) return false;
+      const peer = directPerson(c) || conversationPeer(c);
+      return inboxMatches(c.title, q)
+        || inboxMatches(peer?.username, q)
+        || inboxMatches(peer?.displayName, q)
+        || inboxMatches(rowPreview(c, t, c.homeroomBot ? botLine : null), q);
+    }
+    return false;
+  };
+  const searching = !!q;
+  const found = inbox.filter(matches);
+  // The conversation that is open.
+  const isOpen = (entry: { kind: string; key: string }) => (
+    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
+  );
 
   // What the heading says: the messages from people you have not read. A
   // zero says nothing. Unread is new to read, grey like every unread count
@@ -883,6 +962,9 @@ function ConversationList({ drawer = false }: {
             aria-label={t('messages:inbox.searchLabel')}
             value={query}
             onChange={(e) => changeQuery(e.currentTarget.value)}
+            // #44: a phone capitalised the first letter typed, which is
+            // not what a name or a word from a message is searched by.
+            autoCapitalize="none"
           />
         </div>
         <NewMessageButton />
@@ -919,7 +1001,15 @@ function ConversationList({ drawer = false }: {
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
-          ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
+          ? (
+            // #44: it says what was searched, and offers the way back to the
+            // whole list, so the page is not one grey line over nothing.
+            <div id="messages-search-empty" className="messages-state">
+              <p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p>
+              <p>{t('messages:inbox.searchEmptyHint')}</p>
+              <button type="button" onClick={() => changeQuery('')}>{t('messages:inbox.searchClear')}</button>
+            </div>
+          )
           : null}
         {/* PEOPLE, HEADED (16 Oct 2026): the rows sit in a card under their
             heading, the grouped list's label-over-card shape; on a desktop
@@ -937,6 +1027,10 @@ function ConversationList({ drawer = false }: {
         ) : null}
       </div>
       <InboxToEnd scroller={scrollRef} />
+      {/* Desktop polish 09: the line between the list and the pane beside
+          it is a handle (./list-divider.tsx). After the foot, which has to
+          stay the scroller's next sibling (app.css, the inbox's fade). */}
+      <ListDivider />
     </section>
   );
 
@@ -1098,6 +1192,13 @@ function ThreadHeader() {
   // itself here, as the tour's open-item pane does at any width (s17).
   const frame = isFrameSkin(useLiveSkin());
   const inDrawer = drawerOn && !frame;
+  // PHONE REVIEW #131 (23 Nov 2026): on the drawer the bar names the
+  // conversation, and its discs go up beside the bell (the host the bar
+  // draws, ../nav-drawer/header-drawer.tsx ChatBarSlot). Left in the page
+  // they floated under the bar over the first message's time, and the bar's
+  // name and its line were cut by four controls that were not the chat's.
+  const { host: barHost } = useStoreState(chatBarStore);
+  const discsInBar = inDrawer && !!barHost;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -1113,7 +1214,19 @@ function ThreadHeader() {
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
-  useDismiss(menu, [menuWrapRef], closeMenu);
+  // The menu itself counts as inside: in the bar it is portalled to the page.
+  useDismiss(menu, [menuWrapRef, menuRef], closeMenu);
+  // #131: where the menu drops from the ⋯ in the bar. The bar clips what it
+  // holds to its rounded foot, so there the menu is laid over the page,
+  // fixed under the disc, rather than inside it.
+  const [menuAt, setMenuAt] = useState<{ top: number; end: number } | null>(null);
+  const toggleMenu = () => {
+    if (!menu && discsInBar && menuBtnRef.current) {
+      const box = menuBtnRef.current.getBoundingClientRect();
+      setMenuAt({ top: box.bottom + 6, end: dirSign() === -1 ? box.left : window.innerWidth - box.right });
+    }
+    setMenu((open) => !open);
+  };
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
   // Another conversation is another header: a menu left open does not follow.
   useEffect(() => { setMenu(false); }, [active?.id]);
@@ -1197,6 +1310,43 @@ function ThreadHeader() {
   // the list draws (GroupFaces), not one of them, so the group is one
   // picture in both places.
   const groupFaces = active.kind === 'group' && !invited;
+  const inBarMenu = (node: ReactNode) => (discsInBar && typeof document !== 'undefined' ? createPortal(node, document.body) : node);
+  const discs = (
+    <>
+      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
+      <FullWidthToggle />
+      <div className="relative" ref={menuWrapRef}>
+        <button ref={menuBtnRef} type="button" onClick={toggleMenu} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        {menu ? inBarMenu(
+          <div
+            ref={menuRef}
+            className={discsInBar ? 'messages-thread-menu messages-thread-menu-bar' : 'messages-thread-menu'}
+            style={discsInBar && menuAt ? { top: `${menuAt.top}px`, insetInlineEnd: `${menuAt.end}px` } : undefined}
+            role="menu"
+            aria-label={t('messages:header.actions')}
+            onKeyDown={menuKeys.onKeyDown}
+          >
+            {active.kind === 'group' && active.canManage
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>
+              : null}
+            {active.kind === 'group'
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
+              : withBot
+                ? <button type="button" role="menuitem" data-bot-feedback="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.(); }}>{t('messages:header.menu.botFeedback')}</button>
+                : active.kind === 'direct'
+                  ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
+                    : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
+                      : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
+                  : null}
+            {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
+          </div>,
+        ) : null}
+      </div>
+    </>
+  );
+  // The page then draws no title row at all: the bar has the name and the discs.
+  if (discsInBar && barHost) return createPortal(discs, barHost);
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1220,29 +1370,7 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
       </button>
       )}
-      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
-      <FullWidthToggle />
-      <div className="relative" ref={menuWrapRef}>
-        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
-        {menu ? (
-          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={t('messages:header.actions')} onKeyDown={menuKeys.onKeyDown}>
-            {active.kind === 'group' && active.canManage
-              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>
-              : null}
-            {active.kind === 'group'
-              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
-              : withBot
-                ? <button type="button" role="menuitem" data-bot-feedback="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.(); }}>{t('messages:header.menu.botFeedback')}</button>
-                : active.kind === 'direct'
-                  ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
-                    : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
-                      : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
-                  : null}
-            {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
-            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
-          </div>
-        ) : null}
-      </div>
+      {discs}
     </header>
   );
 }
@@ -1646,7 +1774,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2></section>;
   }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p></section>;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p><MessagesGuide /></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
   // safe-area test pins. It decides the rows' shape: a DM and a group draw
@@ -2269,6 +2397,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         ...inFlight);
     }
   }
+  // Phone review S6 (23 Nov 2026): A THREAD THE PERSON OPENED STARTS WITH
+  // THEIR OWN WORDS, NOT A REPLY. A new chat's thread hangs off the bot's
+  // "New thread." line, which is not drawn, so its first message is the
+  // person's, and it names the thread. Counted, a thread just sent said
+  // "1 reply" under its own title. It is not counted, and with nothing else
+  // in the thread yet (the bot has not answered) there is no count line.
   let previous: MergedRow | null = null;
   let newLineDrawn = false;
   // Which try each entry belongs to: one divider where a try begins.
@@ -2296,14 +2430,18 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   // line out too, #6250). The root still names the thread; it is only
   // not drawn.
   const rootRow = root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null;
+  // (S6, above: the root not drawn is that "New thread." line.)
+  const opensWithOwnWords = sheet && !!root && !rootRow
+    && merged[0]?.kind === 'reply' && merged[0].message.sender.id === meId;
+  const counted = merged.length - (opensWithOwnWords ? 1 : 0);
   const repliesPart = (
     <>
           {/* An error stands in place of the thread (#5219 review): with one,
               the count line would say "No replies yet", which is a different
               answer to the same question, so it waits. */}
-          {thread?.error ? null : (
+          {thread?.error || (opensWithOwnWords && !counted) ? null : (
             <div className="messages-reply-count" aria-hidden={!merged.length}>
-              <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+              <span>{counted ? t('messages:replies.count', { count: counted }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
             </div>
           )}
           {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}

@@ -44,10 +44,10 @@ const titles = (html) => [...html.matchAll(/<span class="fr-t">(?:<span class="f
 test('the list is the kit\'s pane: the head with one sentence and one action, the People tab, the product\'s search under it', () => {
   const html = render();
   assert.match(html, /^<div class="fr fr-pane" data-messages-frame-list=""><div class="fr-scroll"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Messages<\/h1><p class="fr-purpose">People and groups you talk to\.<\/p><\/div><div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>New message<\/button><\/div><\/div>/s);
-  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">People<span class="fr-n">2<\/span><\/button><\/nav><div class="fr-search">/,
+  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">DMs &amp; groups<span class="fr-n">2<\/span><\/button><\/nav><div class="fr-search">/,
     'People, the one tab, says how many messages from people are unread, as the standard heading does');
   assert.doesNotMatch(html, /Agents|Changes your agents are building/, 'Agents is no tab of Messages any more');
-  assert.match(html, /<input type="search" class="fr-v" placeholder="Search" aria-label="Search messages" value=""\/>/, 'the standard search\'s own words');
+  assert.match(html, /<input type="search" class="fr-v" placeholder="Search people and chats" aria-label="Search people and chats" value=""\/>/, 'the standard search\'s own words');
   assert.equal((html.match(/type="search"/g) || []).length, 1, 'one field, under the tabs at every width');
   const src = read(LIST);
   for (const id of ['messages:inbox.new.button', 'messages:inbox.section.people', 'messages:inbox.searchPlaceholder', 'messages:inbox.searchLabel']) {
@@ -82,7 +82,7 @@ test('what the list says when it has nothing to list is the standard list\'s sen
   const none = { people: [] };
   assert.match(render({ ...none, state: { ...state, empty: true } }), /<div class="fr-card fr-pad fr-text"><div class="fr-sub15">No messages yet<\/div><p class="fr-txt">Start a direct conversation or bring a group together\.<\/p><div class="fr-btnrow"><button type="button" class="fr-btn fr-quiet fr-sm">New conversation<\/button><\/div><\/div>/,
     'an empty inbox: the product\'s words and its one action');
-  assert.match(render({ ...none, state: { ...state, searched: 'zz' } }), /<div class="fr-card fr-pad"><span data-inbox-search-empty="">No messages match “zz”\.<\/span><\/div>/, 'a search that matched nothing names what was typed');
+  assert.match(render({ ...none, state: { ...state, searched: 'zz' } }), /<div class="fr-card fr-pad"><span data-inbox-search-empty="">No people or chats match “zz”\.<\/span><\/div>/, 'a search that matched nothing names what was typed');
   assert.match(render({ people: [], state }), /<div class="fr-card fr-pad">Nothing here yet\.<\/div>/, 'nothing listed and nothing read yet');
   const loading = render({ ...none, state: { ...state, loading: true } });
   assert.match(loading, /<p class="fr-txt" role="status" data-inbox-loading="">Loading conversations<\/p>/);

@@ -6,6 +6,8 @@
  * open on. So every door into the chat lands here and says where in it:
  *
  *   #homeroom-bot                       the lists alone, nothing beside them
+ *   #homeroom-bot/waiting               Waiting on you, the head's count's list
+ *   #homeroom-bot/progress              In progress, the head's other count's list
  *   #homeroom-bot/new                   a new chat (`?project=`, `?with=`)
  *   #homeroom-bot/thread/<id>           a thread, alone in the column
  *   …with /m/<id>                       at that message

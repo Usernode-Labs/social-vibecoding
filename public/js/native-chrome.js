@@ -2059,7 +2059,10 @@
     // compare overlay is open, 'dark' on a project's pages, whose header
     // wears its community's colour (`data-community-tint`,
     // frontend/src/features/header/community-tint.ts; every such colour is
-    // fitted for white text, lib/community-color.ts), else the running app's
+    // fitted for white text, lib/community-color.ts), 'dark' on a phone's
+    // top-level screens, whose header is the tab bar's blue in light and
+    // dark alike (`phoneBar`, app.css "THE PHONE'S TOP BAR IS THE TAB BAR'S
+    // BLUE"), else the running app's
     // tone, else null, which hands the bar back to the app's theme. A 'dark'
     // ground wants light glyphs. The tint is taken off inside a running app,
     // so there the app's own tone still decides. Unprivileged and not persisted (NATIVE-BRIDGE.md,
@@ -2096,14 +2099,39 @@
       if (s.sideStrip === true) return null;
       // Polish board #6: black clock and battery on the navy community bar.
       if (s.communityTint === true) return 'dark';
+      // Mobile 01 (24 Nov 2026): the phone's top bar is the tab bar's blue,
+      // #3c7bd8 in light and #122a52 in dark, both a ground for white. Ahead
+      // of the app's tone: it is only up where no running app is.
+      if (s.phoneBar === true) return 'dark';
       return s.appTone === 'dark' || s.appTone === 'light' ? s.appTone : null;
     },
 
+    // Where app.css draws the phone's top bar in the tab bar's blue ("THE
+    // PHONE'S TOP BAR IS THE TAB BAR'S BLUE"): under 768px, in the standard
+    // look (no `data-skin`), on a top-level screen or a project page the
+    // platform draws. Keep the query and the screens in step with that rule.
+    // The side strip and the community tint are left to statusBarToneFor,
+    // which answers them first.
+    _PHONE_BAR_QUERY: '(max-width: 767.98px)',
+    _PHONE_BAR_SCREENS: ['home-screen', 'leaderboard-screen', 'profile-screen',
+      'settings-screen', 'messages-screen', 'workshop-screen', 'weekly-digest-screen',
+      'communities-screen', 'ai-screen', 'profile-proposals-screen'],
+
+    _phoneBarUp(shown) {
+      if (document.documentElement.getAttribute('data-skin') !== null) return false;
+      if (typeof window.matchMedia !== 'function'
+        || !window.matchMedia(NativeChrome._PHONE_BAR_QUERY).matches) return false;
+      if (!shown(document.getElementById('platform-header'))) return false;
+      if (NativeChrome._PHONE_BAR_SCREENS.some((id) => shown(document.getElementById(id)))) return true;
+      const app = document.getElementById('app-view');
+      return shown(app) && app.getAttribute('data-app-surface') === 'platform';
+    },
+
     // Read off the document: the overlays' classes (React toggles them
-    // through refs, frontend/src/features/staging/), the community tint and
-    // the app-tone attribute.
+    // through refs, frontend/src/features/staging/), the community tint,
+    // the app-tone attribute and the phone's blue bar.
     _statusBarToneState() {
-      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false };
+      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false, phoneBar: false };
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
@@ -2115,6 +2143,7 @@
         state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
         state.sideStrip = document.documentElement.getAttribute('data-side-strip') !== null;
+        state.phoneBar = NativeChrome._phoneBarUp(shown);
       } catch (_) { /* no document to read: the theme's bar */ }
       return state;
     },
@@ -2205,7 +2234,7 @@
           NativeChrome.publishStatusBarTone();
         });
         observer.observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] });
+          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint', 'data-side-strip', 'data-skin'] });
         // Both overlays are in the shell's static markup ahead of this
         // script, and their islands never unmount (the staging one holds
         // the preview iframe, whose identity is pinned).
@@ -2213,6 +2242,28 @@
           const el = document.getElementById(id);
           if (el) observer.observe(el, { attributes: true, attributeFilter: ['class', 'data-placement'] });
         });
+        // The phone's blue bar follows the route: the header, the screen
+        // roots and the app view, all in the same static markup, show and
+        // hide by their `hidden` class, and the app view says whose page it
+        // holds in `data-app-surface`.
+        ['platform-header', ...NativeChrome._PHONE_BAR_SCREENS].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+        const app = document.getElementById('app-view');
+        if (app) observer.observe(app, { attributes: true, attributeFilter: ['class', 'data-app-surface'] });
+      } catch (err) {
+        console.warn('[native-chrome] status-bar tone observer failed:',
+          err && err.message);
+      }
+      // …and the width: a phone turned on its side, or an iPad's split view,
+      // crosses 768px with nothing in the document changing.
+      try {
+        if (typeof window.matchMedia !== 'function') return;
+        const phone = window.matchMedia(NativeChrome._PHONE_BAR_QUERY);
+        const onWidth = () => { NativeChrome.publishStatusBarTone(); };
+        if (typeof phone.addEventListener === 'function') phone.addEventListener('change', onWidth);
+        else if (typeof phone.addListener === 'function') phone.addListener(onWidth);
       } catch (err) {
         console.warn('[native-chrome] status-bar tone observer failed:',
           err && err.message);

@@ -222,9 +222,19 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
   const why = offer.status === 'gone' || offer.refused?.code === 'gone' ? 'gone'
     : offer.status === 'retired' || offer.refused?.code === 'retired' ? 'retired'
       : offer.status === 'expired' || offer.refused?.code === 'expired' ? 'expired' : (offer.refused?.code || '');
-  return (
+  // #6988: a close offer that is gone or expired still lets the requester
+  // propose the close. Its own buttons are gone, so this line carries one
+  // that opens the close-request dialog with the bot's reason in its box.
+  const goneOrExpired = offer.status === 'gone' || offer.status === 'expired'
+    || offer.refused?.code === 'gone' || offer.refused?.code === 'expired';
+  const issueNumber = Number(offer.issueNumber);
+  const canPropose = offer.kind === 'close_request' && goneOrExpired
+    && Number.isSafeInteger(issueNumber) && issueNumber > 0;
+  const statusLine = (
     <p
-      className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400"
+      className={canPropose
+        ? 'text-[12px] text-zinc-500 dark:text-zinc-400'
+        : 'mt-1 text-[12px] text-zinc-500 dark:text-zinc-400'}
       role="status"
       data-gc-bot-offer-status={why}
       data-gc-bot-offer-gone={why === 'gone' ? '' : undefined}
@@ -232,6 +242,30 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
     >
       {t(line)}
     </p>
+  );
+  if (!canPropose) return statusLine;
+  return (
+    <div className="mt-1 flex flex-col gap-2">
+      {statusLine}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="pillNeutral"
+          ink="neutral"
+          size="sm"
+          className="font-semibold"
+          data-gc-bot-offer-close=""
+          onClick={() => {
+            // Its own document's entry point, as the page's ⋯ row is.
+            (window as unknown as {
+              AppView?: { promptCloseIssue?: (n: number, reason?: string) => void };
+            }).AppView?.promptCloseIssue?.(issueNumber, offer.why || '');
+          }}
+        >
+          {t('chat:group.botOffer.proposeClose')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -620,6 +654,8 @@ export interface SeeVote {
   sessionId: number;
   number: number | null;
   title: string | null;
+  /** The change is live, so its vote is over: the line offers the change, not the vote (#116). */
+  live?: boolean;
 }
 
 /**
@@ -645,7 +681,7 @@ export const SystemRow = memo(function SystemRow({ msg, seeVote = null }: { msg:
         <span className="gc-msg-system-repeat" title={t('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
       ) : null}
       {vote ? (seeVote
-        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
         : <VoteCard msg={msg} />) : null}
       {/*
           A system or vote row is savable and reactable, exactly as the string
@@ -1022,7 +1058,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
               the vote, elsewhere the small card with Preview and Vote.
           */}
           {msg.voteRef ? (seeVote
-            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
             : <VoteCard msg={msg} />) : null}
           {/* #6533: what a change looks like under Homeroom bot's reply. */}
           {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
@@ -1333,7 +1369,8 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
           <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
         {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>{t('project:topic.request.stream.read')}</button></> : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+        {/* Its own muted line under the sentence, with nothing before it (#116). */}
+        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{msg.time}</span> : null}
       </span>
     </div>
   );
@@ -1387,7 +1424,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     const out = new Map<number, SeeVote>();
     for (const key of Object.keys(changes.numbers)) {
       const id = Number(key);
-      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null });
+      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null, live: !!changes.live?.[id] });
     }
     return out;
   }, [changes]);
@@ -1504,8 +1541,17 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
         {line.kind === 'spec' && msg.specShare?.sessionId ? (
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
         ) : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
-        {tag ? <span className="dev-request-event-time" data-change-event-tag="">{` · ${tag}`}</span> : null}
+        {/* The time and the change it happened to are their own muted line
+            under the sentence (phone review #116, 23 Nov 2026): a separator
+            baked into the start of the time began that line with a stray
+            "·" whenever the sentence wrapped. The tag rides inside the
+            time's span, so the dot is only ever between the two. */}
+        {msg.time ? (
+          <span className="dev-request-event-time" title={msg.timeTitle}>
+            {msg.time}
+            {tag ? <span data-change-event-tag="">{` · ${tag}`}</span> : null}
+          </span>
+        ) : tag ? <span className="dev-request-event-time" data-change-event-tag="">{tag}</span> : null}
       </span>
     </div>
   );

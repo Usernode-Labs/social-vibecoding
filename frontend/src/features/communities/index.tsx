@@ -40,8 +40,10 @@
  * members, what it says it is and this week on one line (the pins' own
  * picture, GET /api/me/home-pins; the rest from GET
  * /api/me/home-pins/activity). One you joined is the compact card, its icon
- * beside its name and members (the joined list's own count), on the same
- * columns. The standard look (and Standard (WIP)) draws the big cards from
+ * beside its name and its week: the members (the joined list's own count)
+ * and who was active, then what went live, from the same activity read,
+ * one to a line on a phone, two across from 768px and three from 1280px.
+ * The standard look (and Standard (WIP)) draws the big cards from
  * 768px and the compact ones at every width; under 768px a pin is the small
  * tile, its picture on its band and its own icon on it. The brand look draws
  * both cards from 1280px, as it drew its cards before, and keeps its tiles
@@ -137,15 +139,23 @@ export function CommunitiesScreen() {
   // joined community the compact card wherever its look draws cards. Read
   // after mount only (useMinWidth), as the look is.
   const wideCards = useMinWidth(768);
+  // Under 480px the field beside New community has about 180px, and its
+  // words were cut mid-word ("Search your commur"): a phone says "Search"
+  // (phone review, 23 Nov 2026). The prerender is the narrow one.
+  const roomySearch = useMinWidth(480);
   const brandCards = useMinWidth(1280);
   const pinCards = wip ? wideCards : brand && brandCards;
   const joinCards = wip || (brand && brandCards);
-  // What a pinned card says beyond its name, read only where one is drawn.
+  // What a card says beyond its name (a pin's, and a joined community's
+  // week), read only where a card is drawn. Until it lands a joined card
+  // says what the joined list knows, its members, and its week's lines
+  // then appear under them.
   const activity = useStoreState(homePinsActivityStore);
   const pinKey = state.pins.map((p) => p.slug).join(',');
+  const joinedKey = state.joined.map((c) => c.slug).join(',');
   useEffect(() => {
-    if (pinCards && shown && state.ready && pinKey) void loadHomePinsActivity();
-  }, [pinCards, shown, state.ready, pinKey]);
+    if (shown && state.ready && ((pinCards && pinKey) || (joinCards && joinedKey))) void loadHomePinsActivity();
+  }, [pinCards, joinCards, shown, state.ready, pinKey, joinedKey]);
   // The joined list's member counts: the compact card's second line, and a
   // pinned card's while its activity is on its way.
   const joinedMembers = useMemo(() => new Map(state.joined.map((c) => [c.slug, c.member_count])), [state.joined]);
@@ -156,6 +166,7 @@ export function CommunitiesScreen() {
       name: pin.name,
       iconUrl: pin.iconUrl,
       iconEmoji: pin.iconEmoji,
+      iconColor: pin.iconColor,
       pictureUrl: pin.illustrationUrl,
       pictureDarkUrl: pin.illustrationDarkUrl,
       members: week ? week.members : joinedMembers.get(pin.slug),
@@ -187,6 +198,8 @@ export function CommunitiesScreen() {
   }, [wip, shown, directoryAttempt]);
   const mine = useMemo(() => new Set([...state.joined.map((c) => c.slug), ...state.pins.map((p) => p.slug)]), [state.joined, state.pins]);
   useEffect(() => { if (q) setEditing(false); }, [q]);
+  // The directory answered and none of the communities to join match the words.
+  const noneToJoin = !!directory && !directory.some((a) => !mine.has(a.slug) && matchesQuery(q, a.name, a.slug, a.description));
 
   const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(q, p.name, p.slug)), [state.pins, q]);
   const joined = useMemo(() => {
@@ -199,6 +212,11 @@ export function CommunitiesScreen() {
       }))
       .filter((c) => matchesQuery(q, c.name, c.slug));
   }, [state.joined, state.pins, q]);
+  /** A joined community as its compact card draws it: its week, once the activity read has it. */
+  const joinedCard = (c: (typeof joined)[number]): CardCommunity => {
+    const week = activity.bySlug[c.slug];
+    return week ? { ...c, activeWeek: week.activeWeek, liveWeek: week.liveWeek } : c;
+  };
   /** A joined community as the pin a + makes of it. */
   const pinOf = ({ members: _members, ...c }: (typeof joined)[number]) => ({ ...c, member: true } as HomePin);
   const say = (name: string) => ({
@@ -258,7 +276,10 @@ export function CommunitiesScreen() {
   );
 
   return (
-    <main ref={screenRef} id="communities-screen" className="hidden flex-1 overflow-y-auto" data-page-bounce="">
+    <main ref={screenRef} id="communities-screen" className="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce="">
+      {/* `platform-safe-scroll` (phone review S15, 23 Nov 2026): the page's
+          foot clears the tab bar and the Resume strip above it, as every
+          other page's does; without it the last rows ran under both. */}
       <div id="communities-body" className="home-column communities-page" data-editing={editing ? '' : undefined}>
         {/* The search row, from 768px (app.css): the field, and in the looks
             that draw Home with the kit, New community as the page's one
@@ -274,11 +295,25 @@ export function CommunitiesScreen() {
               type="search"
               autoComplete="off"
               value={query}
-              placeholder={t('communities:page.search.placeholder')}
+              placeholder={roomySearch ? t('communities:page.search.placeholder') : t('communities:page.search.placeholderShort')}
               aria-label={t('communities:page.search.label')}
-              className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+              className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Escape' && query) { event.preventDefault(); setQuery(''); } }}
             />
+            {/* Home's search row, here too (phone review, 23 Nov 2026): a ×
+                empties the field, and while there are words in it New
+                community gives the field its place (app.css). */}
+            <button
+              type="button"
+              id="communities-search-clear"
+              className={`${query ? 'flex' : 'hidden'} absolute end-2 top-1/2 -translate-y-1/2 w-5 h-5 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400 un-touch-target`}
+              title={t('communities:page.search.clear')}
+              aria-label={t('communities:page.search.clear')}
+              onClick={(event) => { setQuery(''); (event.currentTarget.previousElementSibling as HTMLInputElement | null)?.focus(); }}
+            >
+              &times;
+            </button>
           </div>
           {kit && offerCreate ? (
             <WipCta
@@ -332,7 +367,7 @@ export function CommunitiesScreen() {
               {joinedShown.map((c) => (joinCards ? (
                 <CommunityPageCard
                   key={c.slug}
-                  community={c}
+                  community={joinedCard(c)}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
                   compact
@@ -375,6 +410,26 @@ export function CommunitiesScreen() {
 
         {state.ready && q && !pinned.length && !joined.length ? (
           <p id="communities-no-match" className="communities-note" role="status">{t('communities:page.noMatch', { query: q })}</p>
+        ) : null}
+        {/* A search with nothing on the page is not a bare line (phone
+            review, 23 Nov 2026): Home's search looks through the public
+            communities to join as well, so the words can go there. Under the
+            kit's look this page lists those communities too, so it is
+            offered only once they have answered with no match either. */}
+        {state.ready && q && !pinned.length && !joined.length && (!wip || noneToJoin) ? (
+          <div className="flex justify-center px-3 pt-2 pb-6" data-communities-search-to-join="">
+            <Button
+              type="button"
+              layout="iconRow"
+              variant="pill"
+              size="sm"
+              className="min-h-11 px-5 py-0 un-touch-target"
+              onClick={() => { (window as any).Home?.searchFor?.(q); }}
+            >
+              <SearchIcon className="w-4 h-4" aria-hidden="true" />
+              {t('communities:page.search.toJoin')}
+            </Button>
+          </div>
         ) : null}
         {/* "Not in a community yet" only from an answer that says so: a read
             with no answer and nothing saved on this phone says what will

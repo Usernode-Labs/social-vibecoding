@@ -66,7 +66,7 @@ test('B9: the chat place\'s turn hands a mention over once it is heard, and only
   assert.doesNotMatch(read('src/services/ws.js'), /noteChatMessage/);
   const chat = read('src/routes/chat.js');
   assert.match(chat, /router\.post\('\/api\/apps\/:slug\/messages\/:id\/request', groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\),/);
-  assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatReadLimiter,/);
+  assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatLoadLimiter,/);
   const policy = require('../src/services/cli-api-policy');
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/x/messages/5/request'), false, 'a person\'s own browser only');
 });

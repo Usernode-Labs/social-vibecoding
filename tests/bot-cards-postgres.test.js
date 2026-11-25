@@ -201,7 +201,7 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     const card = await one('SELECT chat_message_id, status FROM bot_cards WHERE id = $1', [sent.cardId]);
     assert.deepEqual([Number(card.chat_message_id), card.status], [sent.id, 'open'], 'its message is set in the same transaction');
     const { metadata } = await one('SELECT metadata FROM chat_messages WHERE id = $1', [sent.id]);
-    assert.deepEqual(metadata.homeroomBot.offer, { id: sent.cardId, kind: 'close_request', status: 'open', forUserId: null });
+    assert.deepEqual(metadata.homeroomBot.offer, { id: sent.cardId, kind: 'close_request', status: 'open', forUserId: null, issueNumber: 6 });
     assert.deepEqual(metadata.homeroomBot.actions.map((a) => [a.id, a.label, a.offerId]),
       [['yes', 'Propose to close', sent.cardId], ['no', 'Keep it open', sent.cardId]], 'each button names its card');
 

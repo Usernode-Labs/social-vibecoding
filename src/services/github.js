@@ -1653,8 +1653,18 @@ async function compareCommitSubjects(owner, repo, base, head) {
 // generic sibling of listChangedFiles / compareRefs.
 const PROPOSAL_DIFF_CHAR_BUDGET = 12000;
 
-async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET) {
-  if (onGitHost(owner)) return hostedGit().getProposalDiff(owner, repo, basehead, charBudget);
+//
+// `opts.clipLongLines` cuts each very long line (minified output) to its
+// start before it is counted, so a committed bundle does not use the whole
+// budget ahead of the source: services/diff-long-lines.js. `clippedLines`
+// says how many were cut, and `longLines` carries the added ones whole, as
+// { filename, line }, for a caller with rules to apply. Off unless asked for: a check that must see a
+// whole line (the outside-script check) reads it as before.
+async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET, opts = {}) {
+  if (onGitHost(owner)) return hostedGit().getProposalDiff(owner, repo, basehead, charBudget, opts);
+  const clip = opts && opts.clipLongLines ? require('./diff-long-lines').clipLongLines : null;
+  let clippedLines = 0;
+  const longLines = [];
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
@@ -1664,8 +1674,15 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
   let truncated = false;
   for (const f of files) {
     const header = `diff --git a/${f.filename} b/${f.filename}\n`;
-    const patch = f.patch
-      ? `${f.patch}\n`
+    let body = f.patch || '';
+    if (body && clip) {
+      const c = clip(body);
+      body = c.text;
+      clippedLines += c.clipped;
+      for (const line of c.added) longLines.push({ filename: f.filename, line });
+    }
+    const patch = body
+      ? `${body}\n`
       : `(no textual diff — ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`;
     const block = header + patch;
     if (out.length + block.length > charBudget) {
@@ -1681,7 +1698,7 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
     out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
   }
   return {
-    diff: out, fileCount: files.length, truncated,
+    diff: out, fileCount: files.length, truncated, clippedLines, longLines,
     // #6037: the full list, so a reviewer knows what exists beyond the
     // truncated text. `filesComplete` false means the compare's 300-file
     // page was full, so an unlisted path is not proven absent.

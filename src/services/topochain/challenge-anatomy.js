@@ -54,11 +54,12 @@ const READS = {
       + 'never to the person who asked.',
   },
   PROPOSAL_ACCEPTED: {
-    tables: ['events', 'chat_sessions', 'apps'],
+    tables: ['events', 'chat_sessions', 'requests', 'homeroom_bot_requesters', 'apps'],
     key: 'merged:',
     keyLabel: 'merged:<event id>',
-    text: () => 'Merges inside the window, credited to the proposal\'s author. A merge an admin forced is '
-      + 'left out: it is not a change the group accepted.',
+    text: () => 'Merges inside the window, credited once to each person they were for: the change\'s '
+      + 'author, and the person who filed each request it was built for, whether the bot built it or '
+      + 'somebody else did. A merge an admin forced is left out: it is not a change the group accepted.',
   },
   USEFUL_FEEDBACK: {
     tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],

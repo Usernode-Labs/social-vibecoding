@@ -5,7 +5,9 @@
  * a project's Workshop and its Hub open
  *
  *   #homeroom-bot?project=<slug>          that project's work
- *   #homeroom-bot/history                 the History card (./lists.tsx)
+ *   #homeroom-bot/waiting                 Waiting on you (./lists.tsx)
+ *   #homeroom-bot/progress                In progress, the head's other count
+ *   #homeroom-bot/history                 the Done band, opened into History
  *   #homeroom-bot/history?kind=vote       History, one kind of work
  *   …?project=a,b                         several projects
  *
@@ -67,6 +69,37 @@ export function historyAsked(hash: string | null | undefined): boolean {
 }
 
 /**
+ * Pure: whether the address asks for Waiting on you (24 Nov 2026): the list
+ * of everything that needs you, opened from the head's Needs you count. It
+ * is the path's one segment (`#homeroom-bot/waiting`), the query riding on
+ * it as on every place in the tab.
+ */
+export function waitingAsked(hash: string | null | undefined): boolean {
+  if (!isBotTabHash(hash)) return false;
+  const parts = pathOf(hash).replace(/^#/, '').replace(/\/+$/, '').split('/');
+  return parts.length === 2 && parts[1] === 'waiting';
+}
+
+/**
+ * Pure: whether the address asks for In progress (25 Nov 2026): the list of
+ * everything being built, checked or waiting on somebody else, opened from
+ * the head's In progress count. It is Waiting on you's sibling, one segment
+ * of the path (`#homeroom-bot/progress`), the query riding on it as on every
+ * place in the tab.
+ */
+export function progressAsked(hash: string | null | undefined): boolean {
+  if (!isBotTabHash(hash)) return false;
+  const parts = pathOf(hash).replace(/^#/, '').replace(/\/+$/, '').split('/');
+  return parts.length === 2 && parts[1] === 'progress';
+}
+
+/** Pure: whether the address is the tab itself, with no place in it (`#homeroom-bot`, any query). */
+export function bareTab(hash: string | null | undefined): boolean {
+  if (!isBotTabHash(hash)) return false;
+  return /^#?(homeroom-bot|ai)\/?$/.test(pathOf(hash));
+}
+
+/**
  * Pure: `href` (one of the tab's addresses) carrying the filter: the
  * projects, and History's kind when there is one. With neither, the bare
  * address.
@@ -99,4 +132,14 @@ export function botTabAddress(slug: string | null | undefined): string {
 /** Pure: the History card, narrowed to a kind (Me's old Your work rows). */
 export function historyAddress(kind: HistoryKind | null = null, projects: readonly string[] = []): string {
   return withFilter('#homeroom-bot/history', { projects, kind });
+}
+
+/** Pure: Waiting on you, narrowed to the projects the filter picked. */
+export function waitingAddress(projects: readonly string[] = []): string {
+  return withFilter('#homeroom-bot/waiting', { projects });
+}
+
+/** Pure: In progress, narrowed to the projects the filter picked. */
+export function progressAddress(projects: readonly string[] = []): string {
+  return withFilter('#homeroom-bot/progress', { projects });
 }

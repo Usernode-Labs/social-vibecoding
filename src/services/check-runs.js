@@ -46,6 +46,7 @@ function selfOwner() {
 // thin provisional row the moment the run is admitted (launched: false — a
 // process that dies here has nothing to harvest, so the adopter re-drives
 // straight away), then the full manifest just before the Jobs are created.
+// Capacity grants belong to the held row and survive either manifest write.
 async function record(pool, { runId, sessionId, commitSha, manifest }) {
   if (!pool || !runId || !sessionId) return false;
   try {
@@ -53,7 +54,8 @@ async function record(pool, { runId, sessionId, commitSha, manifest }) {
       `INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at)
        VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
        ON CONFLICT (run_id) DO UPDATE
-         SET manifest = EXCLUDED.manifest,
+         SET manifest = CASE WHEN check_runs.manifest->>'proposalOverflow' = 'true'
+               THEN EXCLUDED.manifest || '{"proposalOverflow": true}'::jsonb ELSE EXCLUDED.manifest END,
              commit_sha = EXCLUDED.commit_sha,
              owner = EXCLUDED.owner,
              heartbeat_at = NOW()`,
@@ -86,16 +88,49 @@ async function heartbeat(pool, runId) {
 // found by a harvester, and a settled run has nothing left to harvest. It is
 // also the run's checks slot (services/checks-queue.js), so this process's
 // runs waiting for one are woken to take it now.
-async function finish(pool, runId) {
+//
+// A failed DELETE is tried again a few times, backing off (FINISH_ATTEMPTS):
+// on 23 Nov 2026 a run settled on a draining conductor, whose pool is cut to
+// DRAIN_DB_POOL_MAX, and its row held one of the four slots for nine minutes
+// more. A row that still cannot go is the admission pass's to clear once its
+// run's work item says it is over (checks-queue.js sweepReason).
+const FINISH_ATTEMPTS = 4;
+const FINISH_BACKOFF_MS = 200;
+
+async function finish(pool, runId, { attempts = FINISH_ATTEMPTS, backoffMs = FINISH_BACKOFF_MS } = {}) {
   if (!pool || !runId) return false;
   try {
-    const { rowCount } = await pool.query('DELETE FROM check_runs WHERE run_id = $1', [runId]);
-    return rowCount > 0;
-  } catch (err) {
-    log.warn('check-runs', 'Could not clear the run manifest (non-fatal)', { runId, err: err.message });
-    return false;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const { rowCount } = await pool.query('DELETE FROM check_runs WHERE run_id = $1', [runId]);
+        return rowCount > 0;
+      } catch (err) {
+        if (attempt >= attempts) {
+          log.warn('check-runs', 'Could not clear the run manifest (non-fatal)', { runId, attempts: attempt, err: err.message });
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoffMs * 2 ** (attempt - 1)));
+      }
+    }
   } finally {
     require('./checks-queue').slotFreed();
+  }
+}
+
+// A settled run whose Jobs may still be stopping (the early unit suite it
+// adopted could not be stopped yet): its row stays counted in the checks
+// queue only until those Jobs' deadline, and the admission pass deletes it
+// then (checks-queue.js `lingering`). Never forever. Never throws; false
+// when the row could not be marked.
+async function linger(pool, runId) {
+  if (!pool || !runId) return false;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE check_runs SET manifest = manifest || '{"settled": true}'::jsonb WHERE run_id = $1`, [runId]);
+    return rowCount > 0;
+  } catch (err) {
+    log.warn('check-runs', 'Could not mark the run settled (non-fatal)', { runId, err: err.message });
+    return false;
   }
 }
 
@@ -197,6 +232,7 @@ module.exports = {
   record,
   heartbeat,
   finish,
+  linger,
   startHeartbeat,
   listOrphans,
   release,

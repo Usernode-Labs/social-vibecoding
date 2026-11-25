@@ -73,6 +73,15 @@ export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTML
  */
 export const PLANE_FILL = 'bg-[color:var(--dc-sheet-solid)]';
 
+/**
+ * A CARD THAT IS NOT A LIST, in the list's own recipe: the plane colour, the
+ * 20px radius and the one inset hairline below. The You page drew its hero,
+ * stat cards and "This week" as `rounded-2xl` plane cards with no hairline
+ * beside lists that had one, so half its cards had an edge and half did not
+ * (phone review #99, 23 Nov 2026). One literal, here, beside the list's.
+ */
+export const PLANE_CARD = 'rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+
 /*
  * ONE HAIRLINE AND A 20px RADIUS (AGENTS.md, "Type and colour"). Figure and
  * ground still do the separating; the hairline is what keeps the card's edge

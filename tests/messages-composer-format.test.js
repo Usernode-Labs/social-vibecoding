@@ -225,7 +225,7 @@ test('a formatted draft is drawn as it will be sent, above the field', () => {
   assert.match(COMPOSER, /<MessageMarkdown content=\{preview\} \/>/);
   assert.ok(message('messages:composer.format.preview'), 'the preview label is in the messages catalog');
   const previewAt = COMPOSER.indexOf('messages-format-preview');
-  const fieldAt = COMPOSER.indexOf('<div className="flex items-end gap-1.5">');
+  const fieldAt = COMPOSER.indexOf('<div className="messages-composer-row flex items-end gap-1.5"');
   assert.ok(previewAt > 0 && previewAt < fieldAt, 'the preview sits above the field');
 });
 

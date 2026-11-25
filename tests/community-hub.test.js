@@ -164,7 +164,10 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // What's happening, your work and what is new for you); WHAT HAPPENED,
   // this week and a row for each week before it, its new requests nobody has
   // picked up ending with Build it.
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
+  // 24 Nov 2026: that is the brand look's tab. The standard look draws the
+  // front page in its place (./front-page.tsx; tests/workshop-front-page.test.js).
+  assert.match(LANDER, /\{tab === 'workshop' && !weekUp && !frontPage && wipLook \? \(\n\s*<WorkshopFront\n/);
+  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp && !frontPage && !wipLook ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   // #4457: a week's page replaces the tab's body.
   const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', '<YourWorkCard',
@@ -174,7 +177,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
     'Overview (All items and the rule), Your work, then What happened');
   assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
   assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
-  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? <YourWorkCard slug=\{slug\} name=\{projectName\} \/> : null\}/,
+  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? \(\n\s+<YourWorkCard\n\s+slug=\{slug\}\n\s+name=\{projectName\}\n\s+solo=\{community\?\.audience === 'solo'\}\n\s+live=\{[^\n]+\}\n\s+\/>\n\s+\) : null\}/,
     'your work is one row, for a signed-in viewer');
   assert.ok(!/data-ws-mine=|data-ws-fresh|data-ws-part="happening"/.test(ws), 'and What\'s happening is gone');
   assert.match(ws, /act=\{freshAct\}/, 'What happened\'s new requests end with Build it');
@@ -182,7 +185,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // The Overview label opens the Workshop page, All items straight under it;
   // the approval rule is the card's last line, and only there.
-  assert.match(ws, /^\{tab === 'workshop' && !weekUp \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
+  assert.match(ws, /^\{tab === 'workshop' && !weekUp && !frontPage && !wipLook \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
     'the Overview opens the Workshop page');
   assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>/, 'the rule ends the card');
   assert.equal(ws.split('<ApprovalLine').length - 1, 1, 'and only there');
@@ -213,7 +216,8 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   const html = card(community());
   assert.match(html, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-channel="preview" data-ws-channel-open="">/,
     'one door, to the Discussion place');
-  assert.match(html, />Discussion <span class="dev-ws-foryou-handle">#general<\/span><\/div>/, 'the project\'s channel is its #general');
+  // Phone review #91: the count rides the title line, so the line under it has the row's width.
+  assert.match(html, /<div class="[^"]*ui-lrow-t[^"]*dev-ws-foryou-title[^"]*"><span class="dev-ws-foryou-name">Discussion <span class="dev-ws-foryou-handle">#general<\/span><\/span><span class="dev-ws-foryou-pill" data-ws-channel-unread="2">2 new<\/span><\/div>/, 'the project\'s channel is its #general');
   assert.match(html, /<span data-ws-channel-last=""><span data-ws-channel-said="">@lin: See you Sunday<\/span><span data-ws-channel-ago=""> · [^<]+<\/span><\/span>/,
     'the newest line, who said it and when: the words give way, the time stays whole (audit P04)');
   assert.doesNotMatch(html, /Who has seeds/, 'the rest are the Discussion\'s');
@@ -253,7 +257,8 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   assert.match(needs, /^<section class="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby="([^"]+)"><h2 class="[^"]*uppercase[^"]*" id="\1">For you<\/h2><div class="dev-ws-strip dev-ws-foryou">/,
     'the small-caps label over one card');
   assert.match(needs, /<div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="3"><button type="button" class="[^"]*" data-ws-hub-needs-open="">/);
-  assert.match(needs, />Needs you<\/div><div class="[^"]*"><span data-ws-hub-needs-first="">Dark mode, and 2 more<\/span><\/div><\/div><span class="dev-ws-foryou-pill">3 to vote<\/span>/);
+  assert.match(needs, /dev-ws-foryou-title[^"]*"><span class="dev-ws-foryou-name">Needs you<\/span><span class="dev-ws-foryou-pill">3 to vote<\/span><\/div><div class="[^"]*"><span data-ws-hub-needs-first="">Dark mode, and 2 more<\/span><\/div>/,
+    'the count on the title line, the first vote on the whole line under it (phone review #91)');
   assert.equal((needs.match(/dev-ws-foryou-pill/g) || []).length, 1, 'one pill on the row');
   assert.doesNotMatch(needs, /Join to vote/);
   assert.match(card([row('a', 'Dark mode', 'ada')]), /<span data-ws-hub-needs-first="">Dark mode<\/span>/, 'one vote: its title alone');

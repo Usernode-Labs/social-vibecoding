@@ -77,9 +77,10 @@ import {
   type SignInResume,
   spendReleaseLink,
 } from './sign-in-sheet';
-import { Story } from './story';
+import { COMMUNITIES_PATH, Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
+import { GuestCommunities } from '../guest/guest-communities';
 import { GuestDiscover } from '../guest/guest-discover';
 import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
@@ -1046,6 +1047,13 @@ export function LandingScreen() {
     () => typeof location !== 'undefined' && onInviteLink(location.pathname),
   );
   useEffect(() => { setOnInvitePath(onInviteLink(location.pathname)); }, []);
+  // The page about private communities has an address of its own
+  // (./story.tsx COMMUNITIES_PATH), read in the first render for the same
+  // reason the invite path is.
+  const [onGroupsPath, setOnGroupsPath] = useState(
+    () => typeof location !== 'undefined' && location.pathname === COMMUNITIES_PATH,
+  );
+  useEffect(() => { setOnGroupsPath(location.pathname === COMMUNITIES_PATH); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -1140,6 +1148,10 @@ export function LandingScreen() {
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
+  // …and, at its own address, the page about private communities in
+  // Discover's place (../guest/guest-communities.tsx). A project's page or a
+  // members' link's sheet named by the hash still comes first.
+  const groupsPage = guestPages && onGroupsPath && !guestProject && !linkPending && !gate;
   // Discover inside the app, reached from the story: its bar has a back.
   const appDiscover = storyOn && inApp && discoverLink;
   // The project's name, when the link is for a public one.
@@ -1224,8 +1236,11 @@ export function LandingScreen() {
       const signedIn = hasSession();
       // Guard the actual viewer entry, not only tile presentation: the legacy
       // bridge calls this opener too. An anonymous visitor still needs an
-      // account; a waiting-room session already has one (#1895).
-      if (accountRequired && !signedIn) {
+      // account, unless the app offers a guest's view (#7128: Open from a
+      // public project's page keeps Homeroom's bar around the app); a
+      // waiting-room session already has one (#1895).
+      const asGuest = accountRequired && !signedIn && app.guest_ready === true;
+      if (accountRequired && !signedIn && !asGuest) {
         (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
           '/app/' + encodeURIComponent(app.slug || ''),
         );
@@ -1238,12 +1253,14 @@ export function LandingScreen() {
       st.launchId = launchId;
       let launchUrl = app.url;
 
-      // Public apps keep their anonymous URL. An account-required app is
-      // loaded only after the platform has minted the app-scoped identity it
-      // already permits for waitlist sessions. URL.searchParams.set both
-      // preserves existing query/fragment state and replaces any stale token
-      // rather than concatenating a second credential.
-      if (accountRequired) {
+      // Public apps keep their anonymous URL, and so does a guest-ready app an
+      // anonymous visitor opened: the edge gate serves a tokenless request to
+      // its production address as a guest (src/services/edge-gate.js).
+      // An account-required app is loaded only after the platform has minted
+      // the app-scoped identity it already permits for waitlist sessions.
+      // URL.searchParams.set both preserves existing query/fragment state and
+      // replaces any stale token rather than concatenating a second credential.
+      if (accountRequired && !asGuest) {
         const token = await legacy().AppView?._mintToken?.(slug);
         if (launchId !== st.launchId) return;
         if (!token) {
@@ -1789,6 +1806,19 @@ export function LandingScreen() {
             its own aspect ratio, and is inked black (white in dark mode) like
             the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
+            `max-w-full` draws it smaller, and whole, where this box is
+            narrower than it: beside Sign in and Join the waitlist on a 360px
+            phone the box is 101px and the mark 109, and the box clipped it to
+            "Homeroon" ("Ho" at the largest text size).
+
+            While an app is open for a visitor, Pin sits beside Sign in over
+            the trailing box (below). The two are 110px wide (137px once it
+            reads "Pinned"), and `px-10` with the trailing box ends a name
+            80px short of where they end, room for Sign in alone: the name ran
+            under Pin. With Pin in the bar the name keeps 112px clear at its
+            end instead, and a long one ends in an ellipsis before the
+            buttons. Pixels, not rems: the buttons hardly grow with the text
+            size, and at the largest one 7rem left the name no room at all.
 
             Not a heading (polish N10): the page under it has its own <h1>
             (the story's or the pitch's headline), and a second one in the
@@ -1796,9 +1826,9 @@ export function LandingScreen() {
         */}
         <div
           id="landing-header-title"
-          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start"
+          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start [#landing-header:has([data-landing-pin-app])_&]:pe-[112px]"
         >
-          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto max-w-full inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1824,8 +1854,9 @@ export function LandingScreen() {
             (tests/header-height-parity.test.js), and placed over the
             trailing box rather than in the row, so the mark stays on the
             bar's true centre; the title's `px-10` keeps a long project name
-            from running under it. Making an account is still the body's
-            Continue, under the sentence that says what this place is.
+            from running under it (112px at its end when Pin is beside it).
+            Making an account is still the body's Continue, under the
+            sentence that says what this place is.
             Not for a waiting-room session, which is signed in already.
 
             `un-touch-target` on this button and the one beside it: both are
@@ -1993,7 +2024,7 @@ export function LandingScreen() {
               more thing between a stranger and what this is.
 
               `width`/`height` are the file's own pixels (public/brand/
-              people.png, 2x), which reserve the box before it decodes so the
+              people.png, about 2x), which reserve the box before it decodes so the
               heading under it does not jump. It sits straight on the
               wallpaper with no plate behind it, in both themes.
 
@@ -2032,8 +2063,8 @@ export function LandingScreen() {
           <img
             src="/brand/people.png"
             alt=""
-            width={816}
-            height={612}
+            width={576}
+            height={432}
             draggable={false}
             className={hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
           />
@@ -2341,6 +2372,12 @@ export function LandingScreen() {
               onAllCommunities={onBack}
             />
           ) : null}
+          {/* At `/communities`, the page about private communities, in the
+              guest Discover's place under either drawing of it. */}
+          {groupsPage ? (
+            <GuestCommunities waitlist={accountsWait} onStart={() => setSheet('start')} />
+          ) : (
+            <>
           {/* The same page in the one frame, ahead of the standard one, which
               app.css puts away while this is up. An account still in line
               looks around on it too. */}
@@ -2377,6 +2414,8 @@ export function LandingScreen() {
               )}
             />
           ) : null}
+            </>
+          )}
         </div>
       </div>
       {/*

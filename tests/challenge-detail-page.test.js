@@ -334,3 +334,204 @@ test('#3247: a weekly challenge says the list is this week; no credits, no secti
     assert.doesNotMatch(render({ ...VIEW, credits }), /tc-se-detail-credits/);
   }
 });
+
+// ── #7152: the viewer's own reports and proposals ───────────────────────
+
+const ITEM_ROWS = [
+  {
+    key: 'feedback:1', title: 'Map won’t zoom on phones',
+    subtitle: 'Plant Pal · Graded 210 of 250: says what happened and where.',
+    word: 'Counted', accent: false, counted: true,
+    link: { kind: 'request', slug: 'plant-pal', number: 11 },
+  },
+  {
+    key: 'feedback:2', title: 'Search skips accented names',
+    subtitle: 'Homeroom · Graded at the next count.',
+    word: 'Still grading', accent: false, counted: false, link: null,
+  },
+  {
+    key: 'feedback:3', title: 'Add dark mode',
+    subtitle: 'Quiz Night · It’s about a project you made.',
+    word: 'Not counted', accent: false, counted: false,
+    link: { kind: 'request', slug: 'quiz night', number: 4 },
+  },
+];
+
+const ITEMS_VIEW = {
+  ...VIEW,
+  feedbackLink: true,
+  items: { state: 'ready', kind: 'feedback', weekly: true, rows: ITEM_ROWS },
+};
+
+test('#7152: the report list stands above See your feedback and What counted', () => {
+  const html = render(ITEMS_VIEW);
+  const list = html.indexOf('data-tc-items');
+  const link = html.indexOf('tc-se-feedback-mine');
+  const whats = html.indexOf('>What counts<');
+  assert.ok(list > 0, 'the list is drawn');
+  assert.ok(list < link, 'above See your feedback');
+  assert.ok(list < whats, 'above What counts');
+  assert.match(html, />Your reports this week</, 'the weekly heading');
+  let at = list;
+  for (const title of ['Map won’t zoom on phones', 'Search skips accented names', 'Add dark mode']) {
+    const i = html.indexOf(title);
+    assert.ok(i > at, `${title} in order`);
+    at = i;
+  }
+  assert.match(html, /Graded 210 of 250: says what happened and where\./);
+  assert.match(html, /Homeroom · Graded at the next count\./);
+  // Counted is green; the rest are quiet; each row that has an address is a link.
+  assert.match(html, /text-emerald-700 dark:text-emerald-400">Counted</);
+  assert.match(html, /text-zinc-500 dark:text-zinc-400">Still grading</);
+  assert.match(html, /<a[^>]*href="#app\/plant-pal\/dev\/issues\/11"/);
+  assert.match(html, /<a[^>]*href="#app\/quiz%20night\/dev\/issues\/4"/);
+  assert.doesNotMatch(render({ ...VIEW, items: null }), /data-tc-items/,
+    'a challenge without the list draws none');
+});
+
+test('#7152: the list’s loading, error and empty states', () => {
+  const loading = render({ ...VIEW, items: { state: 'loading', kind: 'feedback', weekly: true } });
+  assert.match(loading, /data-tc-items/);
+  assert.match(loading, /animate-pulse/);
+  const error = render({ ...VIEW, items: { state: 'error', kind: 'proposals', weekly: false } });
+  assert.match(error, /Couldn&#x27;t load this list\./);
+  assert.match(error, /id="tc-se-items-retry"[^>]*>Try again<\/button>/);
+  assert.match(render({ ...VIEW, items: { state: 'ready', kind: 'feedback', weekly: true, rows: [] } }),
+    /You haven&#x27;t sent a report this week\./);
+  assert.match(render({ ...VIEW, items: { state: 'ready', kind: 'proposals', weekly: false, rows: [] } }),
+    /You haven&#x27;t got a proposal up this week\./);
+});
+
+test('#7152: proposals read Up for vote in the accent, and say how they stand', () => {
+  const html = render({
+    ...VIEW,
+    feedbackLink: false,
+    items: {
+      state: 'ready', kind: 'proposals', weekly: true,
+      rows: [
+        {
+          key: 'change:1', title: 'Water reminders', subtitle: 'Plant Pal · Counted: +420 pts.',
+          word: 'Live', accent: false, counted: false,
+          link: { kind: 'change', slug: 'plant-pal', session_id: 41, pr_number: 7 },
+        },
+        {
+          key: 'change:2', title: 'Weekly score email',
+          subtitle: "Quiz Night · Built for your request. Counts once it's accepted and live.",
+          word: 'Up for vote', accent: true, counted: false,
+          link: { kind: 'change', slug: 'quiz-night', session_id: 42, pr_number: 8 },
+        },
+      ],
+    },
+  });
+  assert.match(html, />Your proposals this week</);
+  assert.match(html, /text-violet-700 dark:text-violet-400">Up for vote</);
+  assert.match(html, /href="#app\/plant-pal\/dev\/changes\/7\/41"/);
+  assert.match(html, /href="#app\/quiz-night\/dev\/changes\/8\/42"/);
+});
+
+// The controller half: the status words and reasons the server's statuses map
+// onto. The shipped topochain-challenges.js runs in a vm with a stub store,
+// as in tests/challenge-history.test.js.
+function loadItemsController() {
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { englishPlatformI18n } = require('./lib/platform-i18n');
+  const root = path.join(__dirname, '..');
+  const source = fs.readFileSync(
+    path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
+  const sandbox = {
+    window: {}, console, setTimeout, clearTimeout, URLSearchParams,
+    location: { hash: '', search: '' },
+  };
+  sandbox.window.window = sandbox.window;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
+  vm.runInContext(source, sandbox, { filename: 'topochain-challenges.js' });
+  const pane = sandbox.window.TopochainChallenges;
+  const state = { mounted: true, grid: null, history: null, detail: null };
+  pane._store = { get: () => state, set: (patch) => Object.assign(state, patch) };
+  pane._open = true;
+  return pane;
+}
+
+const FEEDBACK_CHALLENGE = {
+  id: 5, card_preview: { goal: 'Send useful feedback' }, counted_by: { measure: 'USEFUL_FEEDBACK', target: 4 },
+};
+const PROPOSAL_CHALLENGE = {
+  id: 6, card_preview: { goal: 'Get a proposal accepted' }, counted_by: { measure: 'PROPOSAL_ACCEPTED', target: 2 },
+};
+
+test('#7152: itemsView maps the server’s statuses onto words and reasons', () => {
+  const pane = loadItemsController();
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  pane._detailChallenge = FEEDBACK_CHALLENGE;
+  pane._items = undefined;
+  assert.deepEqual(plain(pane.itemsView()), { state: 'loading', kind: 'feedback', weekly: false });
+  pane._items = null;
+  assert.deepEqual(plain(pane.itemsView()), { state: 'error', kind: 'feedback', weekly: false });
+
+  pane._items = {
+    measure: 'USEFUL_FEEDBACK', target: 4, weekly: true,
+    items: [
+      { key: 'feedback:1', title: 'A', app_name: 'Plant Pal', status: 'counted', points: 210, max: 250, reason_text: 'clear', link: null },
+      { key: 'feedback:2', title: 'B', app_name: 'Homeroom', status: 'grading', link: null },
+      { key: 'feedback:3', title: 'C', app_name: 'Mine', status: 'own_project', link: null },
+      { key: 'feedback:4', title: 'D', app_name: 'Plant Pal', status: 'duplicate', link: null },
+      { key: 'feedback:5', title: 'E', app_name: 'Plant Pal', status: 'over_target', link: null },
+    ],
+  };
+  const view = pane.itemsView();
+  assert.equal(view.state, 'ready');
+  assert.equal(view.weekly, true);
+  assert.deepEqual(view.rows.map((r) => r.word),
+    ['Counted', 'Still grading', 'Not counted', 'Not counted', 'Not counted']);
+  assert.deepEqual(view.rows.map((r) => r.counted), [true, false, false, false, false]);
+  assert.equal(view.rows[0].subtitle, 'Plant Pal · Graded 210 of 250: clear');
+  assert.equal(view.rows[1].subtitle, 'Homeroom · Graded at the next count.');
+  assert.equal(view.rows[2].subtitle, "Mine · It's about a project you made.");
+  assert.equal(view.rows[3].subtitle, 'Plant Pal · A copy of a report you already sent.');
+  assert.equal(view.rows[4].subtitle, "Plant Pal · This week's 4 reports are already counted.");
+});
+
+test('#7152: a proposal row keeps the Workshop’s state word and says how it counts', () => {
+  const pane = loadItemsController();
+  pane._detailChallenge = PROPOSAL_CHALLENGE;
+  pane._items = {
+    measure: 'PROPOSAL_ACCEPTED', target: 2, weekly: false,
+    items: [
+      { key: 'change:1', title: 'Live one', app_name: 'Plant Pal', state: 'live', status: 'counted', points: 420, via: 'author', link: null },
+      { key: 'change:2', title: 'Voting', app_name: 'Quiz Night', state: 'up_for_vote', status: 'needs_accept', via: 'request', link: null },
+      { key: 'change:3', title: 'Forced', app_name: 'Homeroom', state: 'live', status: 'forced', via: 'author', link: null },
+      { key: 'change:4', title: 'Ended', app_name: 'Homeroom', state: 'closed', status: 'closed', via: 'author', link: null },
+      { key: 'change:5', title: 'Waiting', app_name: 'Plant Pal', state: 'going_live', status: 'pending_count', via: 'author', link: null },
+    ],
+  };
+  const { rows } = pane.itemsView();
+  assert.deepEqual(rows.map((r) => r.word), ['Live', 'Up for vote', 'Live', 'Closed', 'Going live']);
+  assert.deepEqual(rows.map((r) => r.accent), [false, true, false, false, false]);
+  assert.equal(rows[0].subtitle, 'Plant Pal · Counted: +420 pts.');
+  assert.equal(rows[1].subtitle,
+    "Quiz Night · Built for your request. Counts once it's accepted and live.");
+  assert.equal(rows[2].subtitle, "Homeroom · An admin put it live without a vote, so it doesn't count.");
+  assert.equal(rows[3].subtitle, "Homeroom · Closed without going live, so it doesn't count.");
+  assert.equal(rows[4].subtitle, 'Plant Pal · Counts at the next count.');
+});
+
+test('#7152: detailView publishes the list on those two challenges only', () => {
+  const pane = loadItemsController();
+  pane._mine = new Map();
+  pane._detailChallenge = FEEDBACK_CHALLENGE;
+  pane._items = { measure: 'USEFUL_FEEDBACK', target: 4, weekly: false, items: [] };
+  assert.equal(pane.detailView().items.kind, 'feedback');
+
+  pane._detailChallenge = PROPOSAL_CHALLENGE;
+  pane._items = { measure: 'PROPOSAL_ACCEPTED', target: 2, weekly: false, items: [] };
+  assert.equal(pane.detailView().items.kind, 'proposals');
+
+  pane._detailChallenge = {
+    id: 9, card_preview: { goal: 'Try apps' }, counted_by: { measure: 'TRY_APPS', target: 3 },
+  };
+  assert.equal(pane.detailView().items, null, 'any other challenge draws no list');
+});

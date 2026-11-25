@@ -146,8 +146,13 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   assert.doesNotMatch(CARD_SRC, /HeroActivity|HeroPulse/, 'who is around is one row');
   // The people, Invite and the ⋯ lead the row; Join is across from them at
   // its far end. "Make it public" and Leave are the ⋯'s now (#4045), and
-  // Open app gives way to the First version card while it shows.
-  assert.match(CARD_SRC, /const appButton = data\.first_version \? null : openApp;/);
+  // Open app gives way to the First version card while that is being built,
+  // and is the hero's again once it is live (phone review #53).
+  assert.match(CARD_SRC, /const appLive = hubAppLive\(data\);\s*const appButton = appLive \? openApp : null;/);
+  const { hubAppLive } = loadTsx(CARD, LEGACY_HUB);
+  assert.equal(hubAppLive({ first_version: null }), true);
+  assert.equal(hubAppLive({ first_version: { line: 'building' } }), false);
+  assert.equal(hubAppLive({ first_version: { line: 'live' } }), true);
   const row = CARD_SRC.slice(CARD_SRC.indexOf('<div className="dev-ws-hero-row">'), CARD_SRC.indexOf('{data.audience_change ? ('));
   assert.doesNotMatch(row, /<MakePublic|data-ws-community-leave/);
   // How a change gets in is the last line of the Workshop's Overview card now.
@@ -326,7 +331,7 @@ test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, openin
   assert.ok(row, 'a button: it opens the Workshop on this page, not an address');
   assert.match(row, /class="[^"]*dev-ws-foryou-row[^"]*"/);
   assert.match(html, /<div class="[^"]*">Workshop<\/div>/);
-  assert.match(html, /<div class="[^"]*">What happened, and every item<\/div>/);
+  assert.match(html, /<div class="[^"]*">Make and vote on changes<\/div>/);
   // It is the Workshop's row, wired to onWork, not the Homeroom bot tab's.
   assert.match(read(HUB), /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
   assert.doesNotMatch(html, /data-ws-mine-card|#homeroom-bot\?project=/, 'no Your work row on the Hub, at any width');
@@ -419,7 +424,10 @@ test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, a
   assert.deepEqual(say({ policy: 'anyone', electorate: 1, required: 1 }, { audience: 'solo', is_member: true }, null), [`${L}you approve it.`, null]);
   // The names' faces lead them, then the names in bold, in both wordings.
   const words = renderToHtml(createElement(RuleWords, { line: ruleSentence({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']) }));
-  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span><b class="dev-ws-ov-names">evan or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span class="dev-ws-ov-faces"/);
+  // Phone review #64: the faces and the first name are one run that does
+  // not break, so a narrow card never ends a line on the faces.
+  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span>evan<\/span> or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces"/);
+  assert.match(CSS, /\.dev-ws-ov-glued \{ white-space: nowrap; \}/);
   // Polish board #13: the names come with the community record, so the line
   // is drawn once; only an older server's record, without them, asks their
   // own route.
@@ -668,7 +676,11 @@ test('every hub\'s Recently live ends with how many more went live this month, o
   let opened = 0;
   const live = (props) => renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows, onAll() { opened++; }, ...props }));
   const html = live({ month: 39 });
-  assert.match(html, /<button type="button" class="dev-ws-recent-more" data-ws-recent-more="36"><span class="dev-ws-recent-more-n" aria-hidden="true">\+36<\/span><span class="dev-ws-recent-more-words">36 more live this month<\/span>/);
+  // Said once (phone review #91): no "+36" badge before "36 more…".
+  assert.match(html, /<button type="button" class="dev-ws-recent-more" data-ws-recent-more="36"><span class="dev-ws-recent-more-words">36 more live this month<\/span>/);
+  assert.doesNotMatch(html, /dev-ws-recent-more-n/);
+  // A count in the thousands is written as the reader's language writes it.
+  assert.match(live({ month: 1048 }), /data-ws-recent-more="1045"><span class="dev-ws-recent-more-words">1,045 more live this month<\/span>/);
   assert.ok(html.indexOf('</ul>') < html.indexOf('data-ws-recent-more'), 'under the pictures');
   assert.doesNotMatch(live({ month: 3 }), /data-ws-recent-more/, 'all of the month shown: nothing more to say');
   assert.doesNotMatch(live({}), /data-ws-recent-more/, 'an older server without the count');

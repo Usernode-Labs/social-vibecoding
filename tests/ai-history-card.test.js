@@ -1,18 +1,21 @@
 'use strict';
 
 // The Homeroom bot tab as the desk for your work (5 Nov 2026): its project
-// filter in its address, and the History card below Live this week.
+// filter in its address, and History. 24 Nov 2026 (the three bands): History
+// is no card of its own; Done is the whole past, this week's rows and then
+// History's.
 //
 // What this pins:
 //   1. The filter is the address's (frontend/src/features/ai/filter-address.ts):
 //      #homeroom-bot?project=<slug> narrows the lists to a project, and
-//      #homeroom-bot/history?kind=<kind> opens History on one kind; the
-//      query rides along on any of the tab's places.
-//   2. A project picked that no list names is still a chip, and Needs you
-//      says there is nothing of yours in it rather than showing every project.
-//   3. History groups by month, then by project, in quiet rows whose right
-//      word says how each thing ended; a community you left says so; its
-//      chips pick a kind; Earlier months reads the next page.
+//      #homeroom-bot/history?kind=<kind> opens Done into History on one
+//      kind; the query rides along on any of the tab's places.
+//   2. A project picked that no list names is still named by the project
+//      filter, and Needs you says there is nothing of yours in it rather
+//      than showing every project.
+//   3. Done runs on into History with no month headings: a tick for what
+//      went live, History's word for anything else; a community you left
+//      says so; its kind chips show once it is opened; Show more reads on.
 //   4. A change of your own that waits on your fix is Needs you's, Fix it.
 
 const test = require('node:test');
@@ -77,17 +80,18 @@ test('the filter is the address\'s: projects and History\'s kind ride on any of 
   assert.match(app, /const fragQuery = qIdx === -1 \? '' : rawHash\.slice\(qIdx \+ 1\);/);
 });
 
-test('a project a link picked is a chip even when no list names it, and Needs you says nothing of yours is there', () => {
+test('a project a link picked is named by the filter even when no list names it, and Needs you says nothing of yours is there', () => {
   const html = lists({ picked: ['garden'], appFor: (slug) => (slug === 'garden' ? garden : null), history: historyState([]) });
-  assert.match(html, /data-ai-chip="garden"/, 'its chip');
+  assert.match(html, /<button[^>]*data-ai-project-more=""[^>]*data-ai-picked="garden"[^>]*>[\s\S]*?Garden club[\s\S]*?<\/button>/, 'the filter says the project');
   assert.match(html, new RegExp(message('messages:ai.filter.emptyProject', { project: 'Garden club' })));
   assert.match(html, /data-ai-empty="project"/);
   const all = lists({ history: historyState([]) });
-  assert.doesNotMatch(all, /data-ai-empty="project"/, 'with nothing picked, the plain empty line');
-  assert.match(all, new RegExp(message('messages:ai.work.empty')));
+  assert.doesNotMatch(all, /data-ai-empty="project"/, 'with nothing picked, the band\'s own line');
+  assert.match(all, /data-ai-empty=""[^>]*>[\s\S]*?<strong[^>]*>Nothing needs you\.<\/strong>/, 'nothing needs you, and nothing is in progress either');
+  assert.match(all, new RegExp(message('messages:ai.filter.allProjects')), 'with nothing picked, All projects');
 });
 
-test('History: by month, then by project, quiet rows that say how each thing ended', () => {
+test('History: Done runs on into it, quiet rows that say how each thing ended (24 Nov 2026: no months)', () => {
   const h = loadTsx(HISTORY);
   const rows = [
     { key: 'thread:1', threadId: 1, number: 392, title: 'Watering reminders', app: garden, href: '#app/garden/dev/issues/392', at: '2026-10-24T12:00:00Z', kind: 'change', outcome: 'live', by: 'bot' },
@@ -120,26 +124,54 @@ test('History: by month, then by project, quiet rows that say how each thing end
     '/api/ai/history?project=garden&kind=vote&before=2026-10-01T00%3A00%3A00.000Z');
   assert.equal(h.historyPath({ projects: ['a', 'b'], kind: null }), '/api/ai/history', 'several projects: the card narrows them');
 
-  const html = lists({ history: historyState(rows, { next: '2026-09-10T12:00:00.000Z' }), historyKind: null });
-  assert.match(html, /data-ai-sheet="history"/);
-  assert.match(html, new RegExp(message('messages:ai.history.title')));
+  // 24 Nov 2026: Done is the whole past. History's rows run on under this
+  // week's in the one band, with no card and no month headings of their own.
+  const html = lists({ history: historyState(rows, { next: '2026-09-10T12:00:00.000Z' }), historyKind: null, doneOpen: 1 });
+  assert.doesNotMatch(html, /data-ai-sheet="history"|data-ai-history-month/, 'no History card, no months');
+  assert.doesNotMatch(html, new RegExp(`>${message('messages:ai.history.title')}<`), 'History is no heading');
+  assert.match(html, /data-ai-sheet="live"[\s\S]*data-ai-line="history-change"/, 'in Done');
   const at = (needle) => html.indexOf(needle);
-  assert.ok(at('data-ai-sheet="live"') === -1 || at('data-ai-sheet="live"') < at('data-ai-sheet="history"'), 'below Live this week');
-  assert.ok(at('data-ai-history-month="2026-10"') < at('data-ai-history-month="2026-09"'), 'newest month first');
-  assert.match(html, /data-ai-line="history-change"/);
-  assert.match(html, new RegExp(message('messages:ai.history.yesPassed')));
-  assert.match(html, new RegExp(message('messages:ai.history.closed')));
-  assert.match(html, new RegExp(`· ${message('messages:ai.history.left')}`), 'a community you left says so');
-  assert.match(html, /data-ai-history-more=""/, 'Earlier months while there is more');
+  assert.ok(at('Watering reminders') < at('Sign in with a code') && at('Sign in with a code') < at('Swap requests'), 'newest first');
+  // What went live ends in a tick and says when; anything else in History's word.
+  const row = (title) => html.slice(html.lastIndexOf('<button', at(title)), html.indexOf('</button>', at(title)));
+  assert.match(row('Watering reminders'), /data-ai-row-end="tick"/);
+  assert.match(row('Watering reminders'), new RegExp(message('messages:ai.done.wentLive', { day: 'Oct 24' })));
+  assert.match(row('Sign in with a code'), new RegExp(`data-ai-row-end="word">${message('messages:ai.history.closed')}<`));
+  assert.doesNotMatch(row('Sign in with a code'), /data-ai-row-end="tick"/, 'a closed thing has no tick');
+  assert.match(row('A new card picture'), new RegExp(message('messages:ai.history.yesPassed')));
+  assert.match(row('Swap requests'), new RegExp(`· ${message('messages:ai.history.left')}`), 'a community you left says so');
+  assert.match(html, /data-ai-history-more=""/, 'Show more while there is more');
+  assert.match(html, new RegExp(`data-ai-history-more="">${message('messages:ai.band.showMore')}`), 'with no count');
   for (const kind of ['all', 'change', 'request', 'vote', 'solo']) assert.match(html, new RegExp(`data-ai-history-kind="${kind}"`));
-  // Narrowed by the chips above, as every list is.
+  // At rest, five rows and no kind chips; they come once Show more is pressed
+  // (or an address picks a kind).
+  const rest = lists({ history: historyState(rows, { next: '2026-09-10T12:00:00.000Z' }) });
+  assert.doesNotMatch(rest, /data-ai-history-kinds/, 'no kind chips at rest');
+  assert.match(lists({ history: historyState(rows), historyKind: 'change' }), /data-ai-history-kind="change" aria-pressed="true"|aria-pressed="true"[^>]*data-ai-history-kind="change"/, 'a kind picked shows them');
+  // #7059: the kind chips ride the shared fading rail (chip.tsx's FadeRail,
+  // under an alias), and each stays on one line.
+  const src = fs.readFileSync(path.join(ROOT, LISTS), 'utf8');
+  assert.match(src, /import \{[^}]*FadeRail as KindRail[^}]*\} from '@\/components\/ui\/chip';/, 'the shared fading rail, under an alias');
+  assert.match(src, /<KindRail role="group" aria-label=\{t\('messages:ai\.history\.kind\.label'\)\} className="gap-1\.5 px-1\.5 pt-2 pb-1" data-ai-history-kinds="">/);
+  assert.match(html, /role="group"[^>]*data-ai-history-kinds=""/, 'the rail still reads as the filters\' group');
+  for (const kind of ['all', 'change', 'request', 'vote', 'solo']) {
+    assert.match(html, new RegExp(`class="[^"]*whitespace-nowrap[^"]*"[^>]*data-ai-history-kind="${kind}"`), `${kind}'s chip never wraps`);
+  }
+  // A kind narrows the whole of Done: this week's rows too.
+  const week = [{ threadId: 70, number: 70, kind: 'request', title: 'Frost alerts', app: garden, change: null, href: '#app/garden/dev/issues/70', group: 'live', work: { stage: 'live', why: null, reason: null, line: null, since: null }, at: new Date().toISOString() }];
+  assert.match(lists({ live: week, history: historyState(rows), historyKind: 'change' }), /Frost alerts/, 'what went live this week is a change');
+  assert.doesNotMatch(lists({ live: week, history: historyState(rows), historyKind: 'vote' }), /Frost alerts/, 'and is no vote');
+  // A thread both lists carry is shown once.
+  const twice = lists({ live: [{ ...week[0], threadId: 1 }], history: historyState(rows) });
+  assert.equal((twice.match(/data-ai-line="history-change"[^>]*>[\s\S]{0,1200}?Watering reminders/g) || []).length, 0, 'History\'s copy of a thread this week shows gives way');
+  // Narrowed by the project filter, as every band is.
   const narrowed = lists({ history: historyState(rows), picked: ['book-swap'], appFor: () => club });
   assert.match(narrowed, /Swap requests/);
   assert.doesNotMatch(narrowed, /Watering reminders/);
   // Nothing finished: it says so; a read that failed says that, with Try again.
   assert.match(lists({ history: historyState([]) }), /data-ai-history-empty=""/);
   assert.match(lists({ history: historyState([], { failed: true }) }), /data-ai-history-failed=""/);
-  // Until it is read, two bars and no words.
+  // Until it is read, two bars where its rows will be.
   assert.match(lists({ history: historyState([], { ready: false }) }), /data-ai-history-loading=""/);
 });
 

@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 const express = require('express');
 
 // ─── Module-cache pool/ws stubbing (same pattern as kudos.test.js) ───
@@ -287,7 +288,7 @@ test('lists only proposed PRs with credit-union kudos counts and stats', async (
   } finally { await srv.close(); }
 });
 
-test('the user block carries the picture, or null for a member without one', async () => {
+test('the user block carries the picture: a photo, or the generated one (#7135)', async () => {
   const pool = makeMockPool(fixtureState());
   const srv = await startTestServer(pool);
   try {
@@ -295,17 +296,18 @@ test('the user block carries the picture, or null for a member without one', asy
     assert.equal(alice.user.avatar_url, '/avatars/77');
 
     const bob = await (await fetch(`${srv.baseUrl}/api/leaderboard/users/bob/prs`)).json();
-    assert.equal(bob.user.avatar_url, null);
+    assert.equal(bob.user.avatar_url, generatedAvatarUrl(2));
   } finally { await srv.close(); }
 });
 
-test('a moderation-disabled profile gets no picture, matching the public card', async () => {
+test('a moderation-disabled profile shows the generated picture, revealing nothing', async () => {
   const state = fixtureState();
   state.users.find((u) => u.id === 1).profile_disabled_at = '2026-06-01T00:00:00.000Z';
   const srv = await startTestServer(makeMockPool(state));
   try {
     const body = await (await fetch(`${srv.baseUrl}/api/leaderboard/users/alice/prs`)).json();
-    assert.equal(body.user.avatar_url, null);
+    assert.equal(body.user.avatar_url, generatedAvatarUrl(1),
+      'no photo, just the abstract picture every account can have');
   } finally { await srv.close(); }
 });
 

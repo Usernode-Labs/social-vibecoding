@@ -2,7 +2,7 @@
 
 // The communities a person pins to the desktop sidebar are the account's
 // (src/services/community-pins.js, schema.sql "Pinned communities"): a
-// member's only, four at most, in pin order, gone when they leave, and the
+// member's only, ten at most, in pin order, gone when they leave, and the
 // pins a device kept before are taken in once, quietly.
 
 const test = require('node:test');
@@ -14,7 +14,7 @@ const express = require('express');
 const communities = require('../src/services/communities');
 const { communityPinRoutes } = require('../src/routes/community-pins');
 
-test('community pins: a member\'s, four at most, in order, dropped on leaving, imported quietly (PostgreSQL)', async (t) => {
+test('community pins: a member\'s, ten at most, in order, dropped on leaving, imported quietly (PostgreSQL)', async (t) => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
   const root = new Client({ connectionString: dsn, connectionTimeoutMillis: 2000 });
   try { await root.connect(); } catch (err) { await root.end().catch(() => {}); return t.skip(`Local test database unavailable: ${err.code}`); }
@@ -35,9 +35,10 @@ test('community pins: a member\'s, four at most, in order, dropped on leaving, i
       `INSERT INTO apps (slug, name, created_by, view_visibility, collab_visibility, icon_emoji)
        VALUES ($1, $1, $2, $3, $3, '🎲') RETURNING *`, [slug, bob.id, visibility])).rows[0];
     const apps = {};
-    for (const slug of ['chess', 'gym', 'run', 'dice', 'fifth', 'stranger']) apps[slug] = await addApp(slug);
+    const pinsSix = ['p6', 'p7', 'p8', 'p9', 'p10', 'p11'];
+    for (const slug of ['chess', 'gym', 'run', 'dice', 'fifth', 'stranger', ...pinsSix]) apps[slug] = await addApp(slug);
     apps.secret = await addApp('secret', 'private');
-    for (const slug of ['chess', 'gym', 'run', 'dice', 'fifth']) await communities.join(pool, apps[slug], alice.id);
+    for (const slug of ['chess', 'gym', 'run', 'dice', 'fifth', ...pinsSix]) await communities.join(pool, apps[slug], alice.id);
     for (const slug of ['chess', 'gym']) await communities.join(pool, apps[slug], carol.id);
 
     const web = express();
@@ -69,22 +70,29 @@ test('community pins: a member\'s, four at most, in order, dropped on leaving, i
     assert.equal(r.body.code, 'join_required');
     assert.deepEqual(r.body.app, { slug: 'stranger', name: 'stranger' });
 
-    // Four at most, in the order pinned.
-    for (const slug of ['gym', 'run', 'dice']) assert.equal((await call('PUT', `/api/me/community-pins/${slug}`)).status, 200);
-    r = await call('PUT', '/api/me/community-pins/fifth');
+    // Ten at most, in the order pinned.
+    for (const slug of ['gym', 'run', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10']) {
+      assert.equal((await call('PUT', `/api/me/community-pins/${slug}`)).status, 200);
+    }
+    r = await call('PUT', '/api/me/community-pins/p11');
     assert.equal(r.status, 409);
     assert.equal(r.body.code, 'pins_full');
-    assert.deepEqual(slugs(await call('GET', '/api/me/community-pins')), ['chess', 'gym', 'run', 'dice']);
+    assert.deepEqual(slugs(await call('GET', '/api/me/community-pins')),
+      ['chess', 'gym', 'run', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10'], 'the ten stay in pin order');
 
     // Unpinning makes room; a new pin goes at the end.
-    assert.deepEqual(slugs(await call('DELETE', '/api/me/community-pins/gym')), ['chess', 'run', 'dice']);
-    assert.deepEqual(slugs(await call('PUT', '/api/me/community-pins/fifth')), ['chess', 'run', 'dice', 'fifth']);
-    assert.deepEqual(slugs(await call('DELETE', '/api/me/community-pins/nothing-here')), ['chess', 'run', 'dice', 'fifth'],
+    assert.deepEqual(slugs(await call('DELETE', '/api/me/community-pins/gym')),
+      ['chess', 'run', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10']);
+    assert.deepEqual(slugs(await call('PUT', '/api/me/community-pins/p11')),
+      ['chess', 'run', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11']);
+    assert.deepEqual(slugs(await call('DELETE', '/api/me/community-pins/nothing-here')),
+      ['chess', 'run', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11'],
       'unpinning what is not pinned is no error');
 
     // Leaving a community takes its pin with it.
     assert.deepEqual(await communities.leave(pool, apps.run, alice.id), { ok: true });
-    assert.deepEqual(slugs(await call('GET', '/api/me/community-pins')), ['chess', 'dice', 'fifth']);
+    assert.deepEqual(slugs(await call('GET', '/api/me/community-pins')),
+      ['chess', 'dice', 'fifth', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11']);
 
     // Each person's own: Bob sees none of Alice's.
     assert.deepEqual(slugs(await call('GET', '/api/me/community-pins', 'bob')), []);

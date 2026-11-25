@@ -50,8 +50,8 @@ test('the storage keys are the one literals, exported so they cannot drift', () 
     assert.ok(storage.storage.has('usernode_community_pins_v1'), 'the account\'s copy, on this device');
     assert.equal(mod.PINNED_APPS_KEY, 'usernode_community_pins_v1');
     assert.equal(mod.PINNED_APPS_DEVICE_KEY, 'usernode_pinned_apps_v2', 'the device\'s own pins from before, sent up once');
-    assert.equal(mod.PINNED_APPS_MAX, 4, 'four is still the most there is room for');
-    assert.equal(require('../src/services/community-pins').PINS_MAX, mod.PINNED_APPS_MAX, 'the account keeps the same four');
+    assert.equal(mod.PINNED_APPS_MAX, 10, 'ten is still the most there is room for');
+    assert.equal(require('../src/services/community-pins').PINS_MAX, mod.PINNED_APPS_MAX, 'the account keeps the same ten');
   } finally {
     delete global.window;
   }
@@ -72,7 +72,7 @@ test('the retired mirrored key is ignored and cleared: nothing carries over', ()
   }
 });
 
-test('entries are cleaned to display data, junk dropped, capped at four', () => {
+test('entries are cleaned to display data, junk dropped, capped at ten', () => {
   makeStorage();
   try {
     const mod = loadTsx(STORE);
@@ -92,11 +92,11 @@ test('entries are cleaned to display data, junk dropped, capped at four', () => 
       { slug: 'b', name: 'b', iconUrl: null, iconEmoji: null },
       'a missing name falls back to the slug, missing icons to null');
 
-    // The cap: the fifth pin is refused, the four stay.
-    assert.ok(mod.pinApp(pin('p3'), 'ana'));
-    assert.ok(mod.pinApp(pin('p4'), 'ana'));
-    assert.equal(mod.pinApp(pin('p5'), 'ana'), false, 'a fifth pin is refused, not trimmed');
-    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['a', 'b', 'p3', 'p4']);
+    // The cap: the eleventh pin is refused, the ten stay in order.
+    for (const slug of ['p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10']) assert.ok(mod.pinApp(pin(slug), 'ana'));
+    assert.equal(mod.pinApp(pin('p11'), 'ana'), false, 'an eleventh pin is refused, not trimmed');
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug),
+      ['a', 'b', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10'], 'the ten stay in the order they were pinned');
   } finally {
     delete global.window;
   }
@@ -110,8 +110,8 @@ test('pinStatus answers what a drop would do: ok, already, full', () => {
     assert.equal(mod.pinStatus(null), 'already', 'a nameless drop can never pin');
     mod.pinApp(pin('a'), 'ana');
     assert.equal(mod.pinStatus('a'), 'already', 'pinned already, off the store\'s own list');
-    for (const slug of ['b', 'c', 'd']) mod.pinApp(pin(slug), 'ana');
-    assert.equal(mod.pinStatus('e'), 'full', 'four are the most there is room for');
+    for (const slug of ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) mod.pinApp(pin(slug), 'ana');
+    assert.equal(mod.pinStatus('k'), 'full', 'ten are the most there is room for');
     assert.equal(mod.pinStatus('a'), 'already', 'and full also answers already for a pinned one');
   } finally {
     delete global.window;
@@ -297,9 +297,9 @@ test('a pin lands at once and the account\'s answer stands; a refusal reads the 
     await settled();
     assert.deepEqual(calls.map((c) => [c.method, c.url]), [['PUT', '/api/me/community-pins/gym']]);
     assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['chess', 'gym'], 'the account\'s list');
-    // Refused (four already, or a Join said no to): back to what the account holds.
+    // Refused (ten already, or a Join said no to): back to what the account holds.
     calls = withFetch((url, opts) => (opts.method === 'PUT'
-      ? { status: 409, body: { error: 'Unpin one first: four is the most.', code: 'pins_full' } }
+      ? { status: 409, body: { error: 'Unpin one first: ten is the most.', code: 'pins_full' } }
       : { body: { pins: [pin('chess'), pin('gym')] } }));
     assert.equal(mod.pinApp(pin('run'), 'ana'), true);
     await settled(); await settled();

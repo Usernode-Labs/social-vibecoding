@@ -35,14 +35,19 @@ const dm = require('../src/services/homeroom-bot-dm');
 const rule = require('../src/services/homeroom-bot-verified');
 
 const SINCE = '2026-11-12T09:00:00.000Z';
+// The rule's mechanics are pinned with a list saved before github_x_age
+// existed (phone, X, GitHub), which is kept as it was; what a fresh rule
+// starts with is pinned on its own below.
+const SAVED_SIGNALS = { key: 'homeroom_bot_verified_signals', value: '["phone","x","github"]' };
 const settingsOf = (over = {}) => ({
   ...bot.parseSettings([
     { key: 'homeroom_bot_works_for', value: 'verified' },
     { key: 'homeroom_bot_verified_since', value: SINCE },
+    SAVED_SIGNALS,
   ]),
   ...over,
 });
-const NONE = { phone: false, x: false, github: false, zkpassport: false, oauth: false, email: false, isAdmin: false, letInAt: '2026-11-12T10:00:00.000Z' };
+const NONE = { phone: false, x: false, github: false, github_x_age: false, zkpassport: false, oauth: false, email: false, isAdmin: false, letInAt: '2026-11-12T10:00:00.000Z' };
 
 // A pool that answers the two reads the rule makes: the settings and one
 // account's signals. Everything else is empty.
@@ -57,7 +62,7 @@ function poolOf({ settings = [], flags = {}, fail = false } = {}) {
         if (fail) throw new Error('down');
         const f = { ...NONE, ...(flags[params[0]] || {}) };
         return { rows: [{
-          has_phone: f.phone, has_x: f.x, has_github: f.github, has_zkpassport: f.zkpassport, has_oauth: f.oauth,
+          has_phone: f.phone, has_x: f.x, has_github: f.github, has_github_x_age: f.github_x_age, has_zkpassport: f.zkpassport, has_oauth: f.oauth,
           has_email: f.email, is_admin: f.isAdmin, let_in_at: f.letInAt,
         }] };
       }
@@ -69,6 +74,7 @@ const RULE_ROWS = [
   { key: 'homeroom_bot_mode', value: 'shadow' },
   { key: 'homeroom_bot_works_for', value: 'verified' },
   { key: 'homeroom_bot_verified_since', value: SINCE },
+  SAVED_SIGNALS,
 ];
 
 // ── 1. The rule ─────────────────────────────────────────────────────────
@@ -90,9 +96,15 @@ test('each signal alone unlocks the bot when it is ticked, and not when it is no
     assert.equal(rule.passes(only, { ...NONE, [signal]: true }), true, `${signal}, ticked`);
     assert.equal(rule.passes(others, { ...NONE, [signal]: true }), false, `${signal}, not ticked`);
   }
-  assert.deepEqual([...rule.DEFAULT_SIGNALS], ['phone', 'x', 'github'], 'what starts ticked');
+  assert.deepEqual([...rule.DEFAULT_SIGNALS], ['phone', 'github_x_age'], 'what starts ticked: GitHub and X only together and old enough');
+  const fresh = bot.parseSettings([{ key: 'homeroom_bot_works_for', value: 'verified' }]);
+  assert.deepEqual(fresh.verifiedSignals, ['phone', 'github_x_age']);
+  assert.equal(rule.passes(fresh, { ...NONE, github: true }), false, 'GitHub alone no longer starts ticked');
+  assert.equal(rule.passes(fresh, { ...NONE, github: true, x: true }), false, 'both linked but not known to be old enough');
+  assert.equal(rule.passes(fresh, { ...NONE, github: true, x: true, github_x_age: true }), true);
+  assert.equal(rule.passes(fresh, { ...NONE, phone: true }), true);
   const start = settingsOf();
-  assert.equal(rule.passes(start, { ...NONE, github: true }), true, 'GitHub alone is enough here, unlike the verified-identity rule');
+  assert.equal(rule.passes(start, { ...NONE, github: true }), true, 'a list saved before keeps GitHub alone, unlike the verified-identity rule');
   assert.equal(rule.passes(start, { ...NONE, email: true, oauth: true, zkpassport: true }), false, 'offered, unticked');
   assert.equal(rule.passes(start, NONE), false);
   assert.equal(rule.passes(start, null), false, 'no account: the closed side');
@@ -291,7 +303,13 @@ test('the sheet has the bot\'s wording, names what counts, and offers the phone 
   assert.match(sheet, /askForBot: askToVerifyForBot/);
   assert.equal(message('auth:verify.bot.title'), 'Verify to use Homeroom bot');
   assert.match(message('auth:verify.bot.reason'), /^Homeroom bot works for verified accounts\. Any one of these is enough: \{\{signals\}\}\.$/);
-  for (const signal of rule.SIGNALS) assert.ok(message(`auth:verify.bot.signal.${signal}`), `${signal} has a name`);
+  for (const signal of rule.SIGNALS.filter((s) => s !== 'github_x_age')) assert.ok(message(`auth:verify.bot.signal.${signal}`), `${signal} has a name`);
+  // GitHub and X together, with the minimum age in it, and what a too-new account is told.
+  assert.match(sheet, /github_x_age: 'auth:verify\.bot\.signal\.githubXAge',/);
+  assert.equal(message('auth:verify.bot.signal.githubXAge', { count: 365 }), 'GitHub and X together, each account at least 365 days old');
+  assert.equal(message('auth:verify.bot.signal.githubXAge', { count: 1 }), 'GitHub and X together, each account at least a day old');
+  assert.match(message('auth:verify.bot.accountAgeNote', { count: 365 }), /at least 365 days old\. A newer account starts counting by itself when it is old enough\.$/);
+  assert.match(sheet, /note=\{aged \? t\('auth:verify\.bot\.accountAgeNote', \{ count: minAccountAgeDays \}\) : null\}/);
   // The bot's own reply carries a Verify button the chat opens the sheet for.
   assert.match(dm.VERIFY_TEXT, /^I work for verified accounts\./);
   assert.doesNotMatch(dm.VERIFY_TEXT, /—/);
@@ -343,24 +361,30 @@ test('the admin card saves the three fields, and refuses verified with nothing t
   const admin = loadTsx('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.deepEqual(admin.BOT_SIGNALS.map((s) => s.key), [...rule.SIGNALS], 'the card lists what the server reads');
   const saved = admin.savedForm({ settings: { mode: 'shadow' }, bot: null });
-  assert.deepEqual([saved.worksFor, saved.verifiedSignals, saved.verifiedGrandfather], ['everyone', ['phone', 'x', 'github'], true]);
+  assert.deepEqual([saved.worksFor, saved.verifiedSignals, saved.verifiedGrandfather, saved.verifiedMinAccountAgeDays],
+    ['everyone', ['phone', 'github_x_age'], true, '365']);
   const form = { ...saved, worksFor: 'verified', verifiedSignals: ['github', 'phone'], verifiedGrandfather: false };
   assert.deepEqual(admin.buildPatch(form, saved, ['worksFor', 'verifiedSignals', 'verifiedGrandfather']), {
     patch: { worksFor: 'verified', verifiedSignals: ['phone', 'github'], verifiedGrandfather: false }, error: null,
   });
   assert.deepEqual(admin.buildPatch({ ...form, verifiedSignals: [] }, saved, ['worksFor', 'verifiedSignals']),
     { patch: {}, error: 'Tick at least one signal that counts as verified.' });
-  assert.deepEqual(admin.dirtyFields({ verifiedSignals: ['github', 'x', 'phone'] }, saved), [], 'the order ticked in is not a change');
+  assert.deepEqual(admin.dirtyFields({ verifiedSignals: ['github_x_age', 'phone'] }, saved), [], 'the order ticked in is not a change');
+  assert.deepEqual(admin.buildPatch({ ...saved, verifiedMinAccountAgeDays: '730' }, saved, ['verifiedMinAccountAgeDays']),
+    { patch: { verifiedMinAccountAgeDays: 730 }, error: null });
+  assert.equal(admin.buildPatch({ ...saved, verifiedMinAccountAgeDays: '3651' }, saved, ['verifiedMinAccountAgeDays']).error,
+    'Days old, GitHub and X must be a whole number from 0 to 3650.');
+  assert.ok(tsx.includes('"admin-homeroom-bot-verified-min-age"'), 'the minimum age has its field');
   assert.equal(bot.validateSettingsPatch(admin.buildPatch(form, saved, ['worksFor', 'verifiedSignals', 'verifiedGrandfather']).patch).ok, true,
     'what Save sends is what the route takes');
 });
 
 test('the connector\'s allow-lists carry the three fields, and the moment is read-only', () => {
   const data = require('../src/services/bench/connector-data');
-  for (const field of ['worksFor', 'verifiedSignals', 'verifiedGrandfather']) {
+  for (const field of ['worksFor', 'verifiedSignals', 'verifiedGrandfather', 'verifiedMinAccountAgeDays']) {
     assert.ok(data.SETTINGS_FIELDS.includes(field), field);
   }
   assert.ok(!data.SETTINGS_FIELDS.includes('verifiedSince'));
   const tools = read('src/services/mcp-tools.js');
-  assert.match(tools, /worksFor: z\.enum\(\['everyone', 'verified'\]\)\.optional\(\),\s*verifiedSignals: z\.array\(z\.enum\(\['phone', 'x', 'github', 'zkpassport', 'oauth', 'email'\]\)\)\.min\(1\)\.max\(6\)\.optional\(\),\s*verifiedGrandfather: botSwitch,/);
+  assert.match(tools, /worksFor: z\.enum\(\['everyone', 'verified'\]\)\.optional\(\),\s*verifiedSignals: z\.array\(z\.enum\(\['phone', 'x', 'github', 'github_x_age', 'zkpassport', 'oauth', 'email'\]\)\)\.min\(1\)\.max\(7\)\.optional\(\),\s*verifiedGrandfather: botSwitch,[\s\S]{0,120}verifiedMinAccountAgeDays: botCount,/);
 });

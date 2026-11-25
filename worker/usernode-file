@@ -1,0 +1,129 @@
+#!/usr/bin/env node
+'use strict';
+
+// usernode-file (#7136): a file the request carries, written into the working
+// tree so this build can work with it — a zip of a website to unpack, a
+// spreadsheet to read, a document to adapt.
+//
+//   usernode-file --from <id> --out <path>
+//       saves the file the request carries with that id. `usernode-issues
+//       <number>` lists them ({ files: [{ id, name, size, contentType,
+//       from }] }); a file posted in the request's own discussion is listed
+//       there too. What to do with the file is the build's own decision:
+//       nothing here unpacks or merges it.
+//
+// Build mode only: it authenticates with WORKER_JWT, which a scout turn does
+// not have, and the platform serves a file only when THIS session's own
+// request carries it or somebody posted it in that request's discussion
+// (GET /api/internal/sessions/$SESSION_ID/request-files/:id). It writes
+// nothing outside the working tree, never through a symlink, and never under
+// .git. It prints one line of JSON ({ ok, path, name, contentType, bytes }
+// or { ok: false, message }) and exits 0 when the file was written.
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const USAGE = 'usage: usernode-file --from <id> --out <path>';
+// The chat's own ceiling for an attachment: nothing a request carries is
+// bigger, and a reply that somehow is must not fill the container.
+const MAX_BYTES = 20 * 1024 * 1024;
+
+function say(out, code) {
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+  process.exit(code);
+}
+
+function parse(argv) {
+  const out = { from: null, out: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--from' || arg === '--out') {
+      const value = argv[i + 1];
+      if (value == null) return null;
+      out[arg.slice(2)] = value;
+      i += 1;
+    } else {
+      // Anything else is not this command's: no positional, no other flag.
+      return null;
+    }
+  }
+  return out;
+}
+
+/**
+ * The file to write, inside the working tree, or null. Refuses an absolute
+ * path, a leading `-`, anything that resolves outside the tree, and anything
+ * under .git; also an existing symlink, or a parent that resolves outside the
+ * tree through one (so `--out link/elsewhere.html` cannot escape).
+ */
+function target(out, root) {
+  if (!out || path.isAbsolute(out) || out.startsWith('-')) return null;
+  const full = path.resolve(root, out);
+  const rel = path.relative(root, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || rel.split(path.sep).includes('.git')) return null;
+  // The file already there must not be a symlink: writing through one writes
+  // wherever it points, not here.
+  try {
+    if (fs.lstatSync(full).isSymbolicLink()) return null;
+  } catch { /* it does not exist yet: that is the usual case */ }
+  // The nearest parent that exists, resolved with symlinks followed, still
+  // has to be inside the tree.
+  let dir = path.dirname(full);
+  for (;;) {
+    let real = null;
+    try { real = fs.realpathSync(dir); } catch { real = null; }
+    if (real) {
+      const back = path.relative(root, real);
+      if (back.startsWith('..') || path.isAbsolute(back)) return null;
+      break;
+    }
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+  return { full, rel };
+}
+
+async function main() {
+  const args = parse(process.argv.slice(2));
+  if (!args || !args.from || !args.out) say({ ok: false, message: USAGE }, 2);
+  const root = process.cwd();
+  const file = target(args.out, root);
+  if (!file) say({ ok: false, message: '--out must be a path inside this repository, such as data/site.zip' }, 2);
+  const token = process.env.WORKER_JWT || '';
+  const session = process.env.SESSION_ID || '';
+  if (!token || !/^\d+$/.test(session)) say({ ok: false, message: 'usernode-file works only in a build turn.' }, 1);
+  const id = /([a-f0-9]{32})(?![a-f0-9])/.exec(String(args.from))?.[1];
+  if (!id) say({ ok: false, message: '--from takes the id usernode-issues prints for the request\'s file.' }, 2);
+  const base = `${String(process.env.PLATFORM_URL || 'http://usernode:3000').replace(/\/$/, '')}/api/internal/sessions/${session}`;
+  let res;
+  try {
+    res = await fetch(`${base}/request-files/${id}`, {
+      method: 'GET', headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(240_000),
+    });
+  } catch {
+    say({ ok: false, message: 'The platform could not be reached. No file was written.' }, 1);
+  }
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    say({ ok: false, message: 'That file is over 20 MB. No file was written.' }, 1);
+  }
+  const data = Buffer.from(await res.arrayBuffer());
+  if (!res.ok) {
+    let message = `The platform refused (HTTP ${res.status}).`;
+    try { message = JSON.parse(data.toString('utf8')).message || message; } catch { /* not JSON */ }
+    say({ ok: false, message: `${message} No file was written.` }, 1);
+  }
+  if (data.length > MAX_BYTES) say({ ok: false, message: 'That file is over 20 MB. No file was written.' }, 1);
+  if (!data.length) say({ ok: false, message: 'The request carries no bytes for that file. No file was written.' }, 1);
+  let name = '';
+  try { name = decodeURIComponent(String(res.headers.get('x-file-name') || '')); } catch { name = ''; }
+  const contentType = String(res.headers.get('content-type') || '').split(';')[0].trim() || 'application/octet-stream';
+  fs.mkdirSync(path.dirname(file.full), { recursive: true });
+  const part = `${file.full}.part-${process.pid}`;
+  fs.writeFileSync(part, data);
+  fs.renameSync(part, file.full);
+  say({ ok: true, path: file.rel, name: name || path.basename(file.rel), contentType, bytes: data.length }, 0);
+}
+
+main().catch((err) => say({ ok: false, message: `usernode-file failed: ${String(err && err.message || err).slice(0, 200)}` }, 1));

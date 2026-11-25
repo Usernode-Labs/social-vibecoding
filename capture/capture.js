@@ -2892,6 +2892,80 @@ const LOOK_MAX_SELECTOR = 300;
 const LOOK_STYLES = Object.freeze([
   'display', 'position', 'backgroundColor', 'color', 'borderRadius', 'margin', 'padding', 'overflow',
 ]);
+// 24 Nov 2026: the steps a look takes before it reads the page (the
+// platform checks them first: src/services/preview-look.js stepsOf), so a
+// change shown only after a tap can be looked at. Each runs against this one
+// page, behind the same fence; a step that fails stops them, says why, and
+// the page is read as it stands.
+const LOOK_MAX_STEPS = 6;
+const LOOK_STEP_SELECTOR = 200;
+const LOOK_STEP_TEXT = 500;
+const LOOK_STEP_WAIT_MS = 5000;
+const LOOK_STEP_TIMEOUT_MS = 3000;
+const LOOK_STEP_KEYS = new Set(['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'Space']);
+
+/** The steps of a look's spec, as they may run: a spec with anything else in them runs none. */
+function lookStepsOf(raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > LOOK_MAX_STEPS) return [];
+  const steps = [];
+  const sel = (v) => (typeof v === 'string' && v.trim() && v.length <= LOOK_STEP_SELECTOR ? v.trim() : null);
+  const words = (v) => (typeof v === 'string' && v.length <= LOOK_STEP_TEXT ? v : null);
+  for (const step of raw) {
+    const action = step && step.action;
+    if (action === 'press' && LOOK_STEP_KEYS.has(step.key)) steps.push({ action, key: step.key });
+    else if (action === 'wait' && Number.isInteger(step.ms) && step.ms >= 0 && step.ms <= LOOK_STEP_WAIT_MS) steps.push({ action, ms: step.ms });
+    else if (action === 'wait' && sel(step.selector)) steps.push({ action, selector: sel(step.selector) });
+    else if (['click', 'scroll'].includes(action) && sel(step.selector)) steps.push({ action, selector: sel(step.selector) });
+    else if (action === 'fill' && sel(step.selector) && words(step.text) != null) steps.push({ action, selector: sel(step.selector), text: step.text });
+    else if (action === 'select' && sel(step.selector) && words(step.value) != null) steps.push({ action, selector: sel(step.selector), value: step.value });
+    else return [];
+  }
+  return steps;
+}
+
+/**
+ * Run a look's steps on `page`, in order: each { action, ..., ok } and, for
+ * the one that failed (which stops the rest), its `error`. `settle` waits
+ * for the page to go quiet after each.
+ */
+async function runLookSteps(page, steps, { settle = null } = {}) {
+  const out = [];
+  for (const step of steps) {
+    const said = {
+      action: step.action,
+      ...(step.selector ? { selector: step.selector } : {}),
+      ...(step.key ? { key: step.key } : {}),
+      ...(step.ms != null ? { ms: step.ms } : {}),
+    };
+    try {
+      if (step.action === 'wait' && step.selector) {
+        await page.waitForSelector(step.selector, { timeout: LOOK_STEP_WAIT_MS });
+      } else if (step.action === 'wait') {
+        await new Promise((resolve) => setTimeout(resolve, step.ms));
+      } else if (step.action === 'press') {
+        await page.keyboard.press(step.key);
+      } else {
+        const el = await page.waitForSelector(step.selector, { visible: true, timeout: LOOK_STEP_TIMEOUT_MS });
+        if (!el) throw new Error('nothing on the page matches it');
+        if (step.action === 'click') await el.click();
+        else if (step.action === 'scroll') await el.evaluate((node) => node.scrollIntoView({ block: 'center' }));
+        else if (step.action === 'fill') {
+          await el.evaluate((node) => { if ('value' in node) node.value = ''; });
+          await el.type(step.text);
+        } else if (step.action === 'select') {
+          const chosen = await page.select(step.selector, step.value);
+          if (!Array.isArray(chosen) || !chosen.length) throw new Error('it has no option with that value');
+        }
+      }
+      if (settle) await settle();
+      out.push({ ...said, ok: true });
+    } catch (err) {
+      out.push({ ...said, ok: false, error: withoutToken((err && err.message) || 'failed').split('\n')[0].slice(0, 200) });
+      break;
+    }
+  }
+  return out;
+}
 
 function parsePreviewLook(env) {
   const raw = String((env || {}).PREVIEW_LOOK || '').trim();
@@ -2910,6 +2984,7 @@ function parsePreviewLook(env) {
       },
       selector: typeof spec.selector === 'string' ? spec.selector.trim().slice(0, LOOK_MAX_SELECTOR) : '',
       screenshot: spec.screenshot === true,
+      ...(lookStepsOf(spec.steps).length ? { steps: lookStepsOf(spec.steps) } : {}),
     };
   } catch {
     return null;
@@ -3040,6 +3115,12 @@ async function runPreviewLook(spec, deps = {}) {
     await page.setViewport({ ...spec.viewport, deviceScaleFactor: 1 });
     const response = await page.goto(spec.url, { waitUntil: 'load', timeout: 30000 });
     if (delayMs > 0) await waitForQuiet(activity, { minMs: delayMs, quietMs: 500, maxMs: 6000 });
+    // 24 Nov 2026: the steps it was asked to take first, on this page.
+    const steps = Array.isArray(spec.steps) && spec.steps.length
+      ? await runLookSteps(page, spec.steps, {
+        settle: delayMs > 0 ? () => waitForQuiet(activity, { minMs: 150, quietMs: 300, maxMs: 3000 }) : null,
+      })
+      : null;
     await sink.settle();
     const at = new URL(page.url());
     if (leftFor || at.origin !== origin) { emitLookFail('left_preview'); return null; }
@@ -3051,6 +3132,7 @@ async function runPreviewLook(spec, deps = {}) {
       viewport: spec.viewport,
       selector: spec.selector || null,
       ...facts,
+      ...(steps ? { steps } : {}),
       consoleErrors: errors,
     };
     emitLook(out);
@@ -3181,4 +3263,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture, parseDesignRender, runDesignRender, parsePreviewLook, runPreviewLook, lookInPage, withoutToken, LOOK_STYLES };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture, parseDesignRender, runDesignRender, parsePreviewLook, runPreviewLook, lookInPage, withoutToken, LOOK_STYLES, lookStepsOf, runLookSteps };

@@ -139,8 +139,12 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   // 5 Nov 2026: each row says its stored work state's stage (services/work-state.js).
   const titles = (list) => list.map((r) => `${r.title}:${r.work.stage}`);
-  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building'],
-    'hers, being worked on, soonest first');
+  // 24 Nov 2026 (mobile 04): Export, which she only wrote in, is listed
+  // while it is built, with its stage, below her own.
+  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building', 'Export:building'],
+    'hers, being worked on, soonest first; then one she only wrote in');
+  assert.equal(work.next.find((r) => r.title === 'Export').tookPart, true, 'not hers: drawn below her own');
+  assert.ok(!('tookPart' in work.next.find((r) => r.title === 'Calendar')), 'hers');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
   // Waiting: a change still waiting on its checks first, then the requests
@@ -157,7 +161,6 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
   assert.ok(!all.some((r) => r.title === 'Dark mode'), 'a vote she owes is Needs you\'s');
   assert.ok(!all.some((r) => r.title === 'Search'), 'one she only voted on');
-  assert.ok(!all.some((r) => r.title === 'Export'), 'one she only wrote in, being built');
   assert.ok(!all.some((r) => r.title === 'Muted one'), 'muted');
   assert.ok(!all.some((r) => r.title === 'Secret'), 'a private project she is not in');
   assert.equal(work.waiting.find((r) => r.title === 'Tags').threadId, Number(tags.thread_id));
@@ -203,6 +206,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // the end: Homeroom bot's plan for it, waiting for her Build it, is read and
   // listed, and so is Live this week, up to its own most rows. A thread
   // closed with nothing merged can never be listed, so it is not read.
+  // 24 Nov 2026 (mobile 04): with more than 80 live in a week, every one of
+  // them is read (THREADS_MAX).
   const busy = await one(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
      VALUES ('Busy', 'aw-busy', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
@@ -239,7 +244,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const busyWork = await aiWork.workFor(pool, { user: { id: cara.id }, deps: { bot, ...planned } });
   assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.work.stage}:${r.work.why}`), ['Her old plan:waiting_for_you:plan'],
     'the bot\'s plan waits for her Build it');
-  assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
+  assert.ok(aiWork.THREADS_MAX > 80, 'more than the 80 that cut a week off');
+  assert.equal(busyWork.live.length, 90, 'Live this week reads all 90 of her week');
 
   // 30 Oct 2026: claimed, with no change yet. Bob's claim on hers is In
   // progress, named for him; her own claim is hers; a claim older than the
@@ -1054,3 +1060,91 @@ test('#6667: a request whose bot-made change was handed back waits on its asker,
   assert.equal(queued.needs, undefined, 'a queued fix keeps it out of Needs you');
 });
 
+
+test('#7013: a change merged by hand leaves In progress the moment it is live', { timeout: 120000 }, async (t) => {
+  // A pull request merged straight on GitHub used to be noticed only every
+  // six hours (workflow/clock/services.ts 'merged-by-hand'); a `closed`
+  // delivery now runs that look at once (routes/github-webhook.js). Either
+  // way the row moves on the stored work state alone: merged with no
+  // live_at is Going live under In progress, and the moment live_at is
+  // written it is Live this week and in neither In progress nor Waiting.
+  // The project's board and Needs you read the same row, so nothing else is
+  // needed for them to agree.
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const name = `ai_work_live_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`, [username, synthetic]);
+  const ada = await user('lw_ada');
+  const bob = await user('lw_bob');
+  const bot = await user('homeroom-bot-lw', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Plant pal', 'lw-plant', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
+  await pool.query(
+    `INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 1, 'Show the plant''s age', $2)`, [app.id, ada.id]);
+  // Merged yesterday, and its release has not been recorded as live yet.
+  // Only the merge machine makes a merged row that is not live yet (schema
+  // chat_sessions_inserted_merged_live), so the row is written as it.
+  const tx = await pool.connect();
+  let change;
+  try {
+    await tx.query('BEGIN');
+    await tx.query(`SELECT set_config('app.wf_writer', 'transition', true)`);
+    change = (await tx.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, check_state, promoted_at, merged_at)
+       VALUES ($1, $2, 'merged', ARRAY[1]::int[], 12, 'Show the plant''s age', 'passing',
+               NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       RETURNING id`, [app.id, ada.id])).rows[0];
+    await tx.query('COMMIT');
+  } finally { tx.release(); }
+
+  const deps = { bot, settings: { mode: 'live' } };
+  const workState = require('../src/services/work-state');
+  // What the machine that records a merge or a live moment does after it.
+  const read = async () => {
+    await workState.refresh(pool, [{ sessionId: change.id }]);
+    return aiWork.workFor(pool, { user: { id: ada.id }, deps });
+  };
+  const mine = (list) => list.filter((r) => Number(r.number) === 1);
+
+  // Merged, not live: In progress, saying Going live (the row the report
+  // saw on the morning after a merge on GitHub).
+  const before = await read();
+  assert.deepEqual(mine(before.next).map((r) => r.work.stage), ['going_live']);
+  assert.deepEqual([mine(before.live), mine(before.waiting)], [[], []]);
+
+  // Live: out of In progress and into Live this week at once.
+  await pool.query(`UPDATE chat_sessions SET live_at = NOW() WHERE id = $1`, [change.id]);
+  const live = await read();
+  assert.deepEqual(mine(live.live).map((r) => r.work.stage), ['live']);
+  assert.deepEqual([mine(live.next), mine(live.waiting)], [[], []], 'no longer waiting on its release');
+
+  // A change live for more than the week is in no list.
+  await pool.query(`UPDATE chat_sessions SET live_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [change.id]);
+  const old = await read();
+  assert.deepEqual([mine(old.live), mine(old.next), mine(old.waiting)], [[], [], []],
+    'Live this week keeps it a week, then nothing');
+});

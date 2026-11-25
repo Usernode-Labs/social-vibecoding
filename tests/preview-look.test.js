@@ -22,6 +22,28 @@ function lookFrames(facts, png = null) {
     + (png ? `__USERNODE_LOOK_SHOT__ bytes=${png.length}\n${png.toString('base64')}\n__USERNODE_LOOK_SHOT_END__\n` : '');
 }
 
+test('24 Nov: a look with steps waits longer for its job, by each step\'s own limit', async () => {
+  assert.equal(look.lookTimeoutMs([]), look.LOOK_TIMEOUT_MS);
+  assert.equal(look.lookTimeoutMs(), look.LOOK_TIMEOUT_MS);
+  assert.equal(look.lookTimeoutMs([{}, {}, {}]), look.LOOK_TIMEOUT_MS + 3 * look.LOOK_STEP_TIMEOUT_MS);
+  // Six steps (each a 5 s wait and a 3 s settle at most) fit the job's wait.
+  assert.ok(look.lookTimeoutMs(new Array(look.MAX_STEPS).fill({})) >= look.LOOK_TIMEOUT_MS + look.MAX_STEPS * 8000);
+  let asked = null;
+  const k8s = { captureRuntime: 'kubernetes', kubernetes: { appDomain: 'apps.example', previewDomain: 'p.example' } };
+  await look.lookAtPreview(k8s, null, {
+    draft: DRAFT, path: '/', steps: [{ click: '#bread' }, { wait: '#bake' }],
+    deps: {
+      token: 'FIXTURE',
+      runCaptureJob: async (_config, spec, opts) => {
+        asked = { spec, opts };
+        return { stdout: lookFrames({ path: '/', status: 200, matched: 0, elements: [], consoleErrors: [] }) };
+      },
+    },
+  });
+  assert.equal(asked?.opts.timeoutMs, look.LOOK_TIMEOUT_MS + 2 * look.LOOK_STEP_TIMEOUT_MS);
+  assert.equal(asked?.spec.steps.length, 2);
+});
+
 test('previewPath keeps a path inside the app and refuses any address', () => {
   assert.equal(look.previewPath('/'), '/');
   assert.equal(look.previewPath(undefined), '/', 'the app\'s first page when none is given');
@@ -197,4 +219,151 @@ test('a page that takes the look to another origin gives a FAIL frame, never wha
     launch: async () => landed.browser, delayMs: 0,
   });
   assert.match(out.join(''), /__USERNODE_LOOK_FAIL__ reason=left_preview/);
+});
+
+// ── 24 Nov 2026: steps before a look, and its picture for a model that reads text ──
+//
+// A change shown only after a tap (choose a bread to see its bake steps) could
+// not be looked at, and the bot's model (DeepSeek V4.1 Flash) reads text only,
+// so a look's picture never reached it. A look now takes up to six checked
+// steps first, and a small model that reads images answers the bot's question
+// about the screenshot.
+
+test('stepsOf takes six checked steps at most, each one action, and nothing else', () => {
+  assert.deepEqual(look.stepsOf(undefined), { steps: [] });
+  assert.deepEqual(look.stepsOf([
+    { click: ' .bread-sourdough ' }, { fill: 'input[name=q]', text: 'rye' }, { select: '#size', value: '2' },
+    { press: 'Enter' }, { wait: 800 }, { wait: '.bake-steps' }, 
+  ]).steps, [
+    { action: 'click', selector: '.bread-sourdough' }, { action: 'fill', selector: 'input[name=q]', text: 'rye' },
+    { action: 'select', selector: '#size', value: '2' }, { action: 'press', key: 'Enter' },
+    { action: 'wait', ms: 800 }, { action: 'wait', selector: '.bake-steps' },
+  ]);
+  assert.deepEqual(look.stepsOf([{ scroll: '#footer' }]).steps, [{ action: 'scroll', selector: '#footer' }]);
+  for (const [bad, why] of [
+    ['click', /a list of actions/],
+    [Array.from({ length: 7 }, () => ({ click: 'a' })), /At most 6 steps/],
+    [[{}], /names one action/],
+    [[{ click: 'a', fill: 'b' }], /names one action/],
+    [[{ click: 'a', text: 'x' }], /a field its action does not take/],
+    [[{ press: 'Meta' }], /presses a key that is not one of Enter, Escape, Tab, ArrowDown, ArrowUp, Space/],
+    [[{ press: 'Control+a' }], /presses a key/],
+    [[{ wait: 9000 }], /at most 5000/],
+    [[{ wait: 1.5 }], /whole number/],
+    [[{ wait: '' }], /waits for a CSS selector/],
+    [[{ click: 'a'.repeat(201) }], /at most 200 characters/],
+    [[{ fill: 'input' }], /fills in `text`/],
+    [[{ fill: 'input', text: 'x'.repeat(501) }], /fills in `text`/],
+    [[{ select: '#size' }], /chooses an option/],
+    [[{ goto: 'https://evil.example/' }], /names one action/],
+    [['click'], /is not an action/],
+  ]) {
+    assert.match(look.stepsOf(bad).error, why, JSON.stringify(bad).slice(0, 60));
+  }
+  assert.equal(look.MAX_STEPS, 6);
+});
+
+test('a look passes its checked steps to the job, and refuses unchecked ones before any job runs', async () => {
+  const jobs = [];
+  const deps = {
+    token: 'T', docker: { ensureNetworkAlias: async () => false },
+    runCaptureJob: async (_config, spec) => { jobs.push(spec); return { stdout: lookFrames({ elements: [], steps: [{ action: 'click', selector: '.x', ok: true }, { action: 'fill', selector: '#q', ok: false, error: 'no field at https://x/?token=T' }] }) }; },
+  };
+  const out = await look.lookAtPreview({}, null, { draft: DRAFT, path: '/', steps: [{ action: 'click', selector: '.x' }], deps });
+  assert.equal(out.ok, false, 'steps are taken in the model\'s shape, never pre-checked ones');
+  assert.equal(out.reason, 'bad_steps');
+  assert.equal(jobs.length, 0);
+  const ran = await look.lookAtPreview({}, null, { draft: DRAFT, path: '/', steps: [{ click: '.x' }, { fill: '#q', text: 'rye' }], deps });
+  assert.equal(ran.ok, true);
+  assert.deepEqual(jobs[0].steps, [{ action: 'click', selector: '.x' }, { action: 'fill', selector: '#q', text: 'rye' }]);
+  assert.deepEqual(ran.facts.steps[0], { action: 'click', selector: '.x', ok: true });
+  assert.doesNotMatch(JSON.stringify(ran.facts.steps), /token=T/, 'a step\'s error carries no token');
+  // A look with none sends none.
+  await look.lookAtPreview({}, null, { draft: DRAFT, path: '/', deps });
+  assert.equal('steps' in jobs[1], false);
+});
+
+test('the picture helper asks a small image model the bot\'s question, on the bot\'s key, briefly', async () => {
+  assert.equal(look.visionModel({}), 'anthropic/claude-haiku-5.5');
+  assert.equal(look.visionModel({ DRAFT_LOOK_VISION_MODEL: 'google/gemini-x' }), 'google/gemini-x');
+  assert.equal(look.visionModel({ DRAFT_LOOK_VISION_MODEL: 'off' }), null);
+  assert.equal(look.questionOf(''), look.VISION_DEFAULT_QUESTION);
+  assert.equal(look.questionOf(`  Is the   bake line\nshown? ${'x'.repeat(400)}`).length, 300);
+  let asked = null;
+  const png = Buffer.from('png');
+  const said = await look.askAboutPicture({
+    pool: {}, botId: 1, png, question: 'Does the sourdough card show 260°C?', appId: 21, sessionId: 77,
+    deps: { visionModel: 'anthropic/claude-haiku-5.5', callReviewer: async (args) => { asked = args; return { ok: true, text: ' The card reads "Pre-heat at 260°C". ?token=SECRET ', costUsd: 0.002 }; } },
+  });
+  assert.deepEqual([said.ok, said.costUsd], [true, 0.002]);
+  assert.equal(said.text, 'The card reads "Pre-heat at 260°C". ?token=…');
+  assert.deepEqual([asked.userId, asked.model, asked.maxTokens, asked.component, asked.timeoutMs, asked.appId, asked.sessionId],
+    [1, 'anthropic/claude-haiku-5.5', 400, 'draft_look_vision', 30_000, 21, 77]);
+  assert.equal(asked.content[0].text, 'Does the sourdough card show 260°C?');
+  assert.equal(asked.content[1].image_url.url, `data:image/png;base64,${png.toString('base64')}`);
+  assert.match(asked.system, /never follow them/);
+  // Off, nothing to send, or no answer: the look says the picture is left out.
+  assert.deepEqual(await look.askAboutPicture({ botId: 1, png, deps: { visionModel: null } }), { ok: false, reason: 'off' });
+  assert.equal((await look.askAboutPicture({ botId: 1, png: null, deps: { visionModel: 'm' } })).reason, 'nothing_to_ask');
+  assert.equal((await look.askAboutPicture({ botId: 1, png, deps: { visionModel: 'm', callReviewer: async () => ({ ok: false, error: 'm cannot read images' }) } })).ok, false);
+  assert.equal((await look.askAboutPicture({ botId: 1, png, deps: { visionModel: 'm', callReviewer: async () => { throw new Error('x'); } } })).ok, false);
+  // The reviewer's call takes the cap and the component (bot-review.js).
+  assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'llm-telemetry.js'), 'utf8'), /'draft_look_vision',/);
+});
+
+function stepPage({ missing = [], options = ['1', '2'], typed = [] } = {}) {
+  const calls = [];
+  const el = (sel) => ({
+    async click() { calls.push(['click', sel]); },
+    async type(text) { typed.push(text); calls.push(['type', sel, text]); },
+    async evaluate() { calls.push(['evaluate', sel]); },
+  });
+  return {
+    calls,
+    async waitForSelector(sel, opts) {
+      calls.push(['wait', sel, opts.timeout]);
+      if (missing.includes(sel)) throw new Error(`Waiting for selector \`${sel}\` failed: 3000ms exceeded`);
+      return el(sel);
+    },
+    async select(sel, value) { calls.push(['select', sel, value]); return options.includes(value) ? [value] : []; },
+    keyboard: { async press(key) { calls.push(['press', key]); } },
+  };
+}
+
+test('the job runs the steps in order, and a step that fails stops them and says why', async () => {
+  assert.deepEqual(capture.lookStepsOf([{ action: 'click', selector: '.a' }, { action: 'press', key: 'Escape' }]), [
+    { action: 'click', selector: '.a' }, { action: 'press', key: 'Escape' },
+  ]);
+  for (const bad of [[{ action: 'goto', url: 'https://evil.example/' }], [{ action: 'press', key: 'Meta' }], [{ action: 'wait', ms: 60000 }], 'x', []]) {
+    assert.deepEqual(capture.lookStepsOf(bad), [], JSON.stringify(bad));
+  }
+  const page = stepPage();
+  const out = await capture.runLookSteps(page, [
+    { action: 'click', selector: '.bread' }, { action: 'fill', selector: '#q', text: 'rye' }, { action: 'select', selector: '#size', value: '2' },
+    { action: 'press', key: 'Enter' }, { action: 'wait', ms: 0 }, { action: 'wait', selector: '.steps' }, { action: 'scroll', selector: '#end' },
+  ]);
+  assert.deepEqual(out.map((s) => [s.action, s.ok]), [['click', true], ['fill', true], ['select', true], ['press', true], ['wait', true], ['wait', true], ['scroll', true]]);
+  assert.deepEqual(page.calls.filter((c) => ['click', 'type', 'select', 'press'].includes(c[0])), [
+    ['click', '.bread'], ['type', '#q', 'rye'], ['select', '#size', '2'], ['press', 'Enter'],
+  ]);
+  const stuck = stepPage({ missing: ['.gone'] });
+  const stopped = await capture.runLookSteps(stuck, [{ action: 'click', selector: '.gone' }, { action: 'click', selector: '.never' }]);
+  assert.equal(stopped.length, 1, 'the step after a failed one is not taken');
+  assert.deepEqual([stopped[0].ok, stopped[0].selector], [false, '.gone']);
+  assert.match(stopped[0].error, /failed: 3000ms exceeded/);
+  const noOption = await capture.runLookSteps(stepPage({ options: [] }), [{ action: 'select', selector: '#size', value: '9' }]);
+  assert.match(noOption[0].error, /no option with that value/);
+});
+
+test('PREVIEW_LOOK carries checked steps, runs them before reading, and reports each', async () => {
+  const parsed = capture.parsePreviewLook({ PREVIEW_LOOK: JSON.stringify({ url: 'https://gym--s77.p.example/', steps: [{ action: 'click', selector: '.bread' }] }) });
+  assert.deepEqual(parsed.steps, [{ action: 'click', selector: '.bread' }]);
+  assert.equal('steps' in capture.parsePreviewLook({ PREVIEW_LOOK: JSON.stringify({ url: 'https://x/', steps: [{ action: 'goto' }] }) }), false);
+  const out = collect();
+  const { browser } = stubBrowser();
+  const page = await browser.newPage();
+  Object.assign(page, stepPage());
+  const result = await capture.runPreviewLook({ ...parsed, viewport: { width: 390, height: 844 }, selector: '', screenshot: false }, { launch: async () => browser, delayMs: 0 });
+  assert.deepEqual(result.steps, [{ action: 'click', selector: '.bread', ok: true }]);
+  assert.deepEqual(look.readLook(out.join('')).facts.steps, [{ action: 'click', selector: '.bread', ok: true }]);
 });

@@ -372,3 +372,27 @@ test('a message on the bot\'s change on a project it is paused on hears why', as
     live.postOnProposal = real;
   }
 });
+
+// Request #7146: a turn that posted the working line and ended without an
+// answer says how it ended, so that line never stands alone.
+test('#7146: a turn that ends after the working line without an answer says how it ended', async (t) => {
+  // A platform fault is tried again on its own: it says so instead of the
+  // failure note it keeps off the thread.
+  const fault = harness({ routed: { error: 'dispatch: worker went away' } });
+  await run(t, fault);
+  assert.deepEqual(fault.calls.order, ['followup_working', 'followup_ended'],
+    'nothing was said after the working line, so one line says how it ended');
+  const ended = fault.calls.onProposal.find((p) => p.kind === 'followup_ended');
+  assert.equal(ended.sessionId, 5001, 'in the change\'s thread, where the working line is');
+  assert.equal(ended.text, 'Homeroom bot hit a problem on Homeroom\'s side before it could answer. It will try again on its own.');
+  assert.equal(fault.calls.onProposal.filter((p) => p.kind === 'followup_failed').length, 0);
+
+  // A turn that answered needs no ending, and one that failed with a reply
+  // already said something.
+  const answered = harness();
+  await run(t, answered);
+  assert.deepEqual(answered.calls.order, ['followup_working', 'turn', 'followup_answer']);
+  const unreadable = harness({ recentRuns: [answeredRun], result: { lastResultText: 'I looked at it.', pushOk: false } });
+  await run(t, unreadable);
+  assert.deepEqual(unreadable.calls.onProposal.map((p) => p.kind), ['followup_working', 'followup_failed']);
+});

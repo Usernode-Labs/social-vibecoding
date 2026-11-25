@@ -60,6 +60,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { EllipsisHorizontalIcon, ListBulletIcon, XIcon } from '@/components/ui/icons';
@@ -90,6 +91,7 @@ import {
   probeLayout,
   readStoredWidth,
   reopenWidth,
+  storedBounds,
   inlineStartOf,
   shownWidth,
   writeStoredWidth,
@@ -230,6 +232,8 @@ type PanelHeadView = {
   kind: 'request' | 'change';
   pill: StatusPillState | null;
   menuKey: string | null;
+  /** #7120: the title the page's bar draws in place of its plain one, when it has one. */
+  title?: string | null;
 };
 
 /** Which "Project · …" line a page's route reads as, and its number. */
@@ -265,7 +269,8 @@ function PanelHeading({ route, place, reported, label, head }: {
   const slug = panelPage(route)?.slug || null;
   const same = !!place && place.slug === slug;
   const project = slug ? ((same ? place!.name : '') || String(reported || '').trim() || slug) : '';
-  const title = (label && label.route === route && label.text) || titleFor(route, reported);
+  const title = (head && head.kind === 'request' && head.title && samePage(head.route, route) ? head.title : null)
+    || (label && label.route === route && label.text) || titleFor(route, reported);
   const where = whereOf(route);
   const link = pageLinkFor(route);
   const pill = head && head.pill && samePage(head.route, route) ? head.pill : null;
@@ -418,13 +423,13 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
               key={`${i}:${row.label}`}
               type="button"
               role="menuitem"
-              data-side-panel-page-row={i}
+              data-side-panel-page-row={row.index}
               title={row.title || undefined}
               disabled={row.disabled}
               onClick={(e) => {
                 btnRef.current?.focus({ preventScroll: true });
                 setOpen(false);
-                controller.runPanelMenuRow(i, row.label, e.nativeEvent);
+                controller.runPanelMenuRow(row.index, row.label, e.nativeEvent);
               }}
             >
               {row.label}
@@ -513,12 +518,14 @@ export function SidePanelDivider({
   // What is on screen now: the stored width, held inside this window, or the
   // stylesheet's default when there is none. Never writes the store — a
   // window that narrows gives the width back, and one that grows returns it.
+  // A column the stylesheet floors (the bot page's, beside its list) is
+  // given the width as stored and raised there (./resize.ts storedBounds).
   const settle = useCallback(() => {
     const key = resolveKey();
     const probe = measure();
     const b = bounds(probe);
     const stored = readStoredWidth(undefined, key);
-    applyWidth(stored == null ? null : clampWidth(stored, b), undefined, key);
+    applyWidth(stored == null ? null : clampWidth(stored, storedBounds(probe)), undefined, key);
     const panel = panelRef.current;
     // Its width as chosen, which on the Duo held sideways leaves out the
     // column of system chrome it runs under (./resize.ts).
@@ -532,8 +539,14 @@ export function SidePanelDivider({
     if (!shown) return undefined;
     window.addEventListener('resize', settle);
     const other = watch?.current;
-    const observer = other && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
-    if (observer && other) observer.observe(other);
+    // The rail folding or unfolding moves the room's start edge as a window
+    // resize would (24 Nov 2026): the bot page's column has a floor read off
+    // the room (./resize.ts), so its range is read again then too. Settling
+    // never resizes the rail, so this cannot feed back on itself.
+    const rail = typeof document !== 'undefined' ? document.getElementById('platform-tabs') : null;
+    const observed = [other, rail].filter((node): node is HTMLElement => !!node);
+    const observer = observed.length && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
+    if (observer) observed.forEach((node) => observer.observe(node));
     return () => {
       window.removeEventListener('resize', settle);
       observer?.disconnect();
@@ -585,22 +598,26 @@ export function SidePanelDivider({
       d.width = set(raw, false);
       return;
     }
-    const b = bounds(measure());
     if (d.collapsed) {
       // Back out from the hidden neighbour: the pointer has come SNAP_PX the
       // other way from where it was hidden, and the pane opens again at the
       // width last chosen.
       const base = d.collapseX ?? d.startX;
       if ((e.clientX - base) * dirSign() <= SNAP_PX) return;
-      onRestore?.();
+      // The neighbour is drawn back before the room is read (24 Nov 2026):
+      // beside a preview the list's return turns halves into three columns
+      // again, and the pane reopens inside those, not inside the halves it
+      // leaves.
+      flushSync(() => { onRestore?.(); });
       const key = resolveKey();
-      const next = reopenWidth(readStoredWidth(undefined, key), b);
+      const back = bounds(measure());
+      const next = reopenWidth(readStoredWidth(undefined, key), back);
       if (next == null) {
         applyWidth(null, undefined, key);
         settle();
       } else {
         applyWidth(next, undefined, key);
-        setRange({ now: next, ...b });
+        setRange({ now: next, ...back });
       }
       // The drag carries on from here as an ordinary one.
       d.collapsed = false;
@@ -610,6 +627,7 @@ export function SidePanelDivider({
       d.width = d.startW;
       return;
     }
+    const b = bounds(measure());
     if (raw > b.max + SNAP_PX) {
       onCollapse?.();
       d.collapsed = true;

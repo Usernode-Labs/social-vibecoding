@@ -3276,6 +3276,35 @@ test('proposal shaping returns the platform hash route', () => {
   assert.equal(orphan.webPath, null);
 });
 
+// #7158: the deferred next step told an agent to sync the change "from its
+// page", where there is no such button, and Homeroom resolves the conflict on
+// its own. All three readers of it (Homeroom bot, the coding agent in the
+// change, an outside agent) are told what Homeroom does instead.
+test('#7158 — a deferred change says Homeroom resolves the conflict, never to sync it from its page', () => {
+  const table = SRC.slice(SRC.indexOf('const CHANGE_NEXT_STEP_WORDS'), SRC.indexOf('function changeNextStep'));
+  const deferred = [...table.matchAll(/deferred: '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(deferred.length, 3, 'agent_mayor, worker_read and external');
+  for (const words of deferred) {
+    assert.match(words, /Homeroom resolves the conflict on its own/, words);
+    assert.doesNotMatch(words, /from its page/, words);
+  }
+  assert.doesNotMatch(table, /Syncing it with main from its page/);
+});
+
+// #7158: a change can read "5 of 1" by every yes cast and still wait for an
+// approver's yes, because the rule counts approvers (routes/sessions.js
+// qualified_yes_count). The connector reports the count the rule uses.
+test('#7158 — the yes count a connector reads is the one the rule decides by', () => {
+  const proposal = tools.shapeProposal({
+    id: 58, app_slug: 'recipe-box', status: 'promoted', yes_count: 5, qualified_yes_count: 1, votes_required: 1,
+  }, ORIGIN);
+  assert.equal(proposal.yesVotes, 1, 'the rule\'s count, not every yes');
+  // No qualified tally on the row (no approver roster): the raw count stands.
+  const raw = tools.shapeProposal({ id: 59, app_slug: 'recipe-box', status: 'promoted', yes_count: 2 }, ORIGIN);
+  assert.equal(raw.yesVotes, 2);
+  assert.equal(tools.shapeProposal({ id: 60, app_slug: 'recipe-box' }, ORIGIN).yesVotes, null);
+});
+
 test('tools reach the platform over loopback with the caller’s own token', () => {
   assert.match(SRC, /PLATFORM_INTERNAL_URL/, 'calls go to the in-cluster platform URL');
   assert.match(SRC, /callPlatform\(baseUrl, accessToken,/,
@@ -5842,6 +5871,99 @@ test('#2136 — a work order that revises a proposal names its pull request, and
     githubLink.isEnabled = saved.link;
     svc.prepareWork = saved.prepare;
   }
+});
+
+// WHICH ADDRESS A PERSON IS GIVEN. `link` is the proposal's page on Homeroom
+// and `prUrl` the pull request on GitHub. The output schema says "Link people
+// here, never to prUrl" on `link`, but an agent acts on the result, which
+// carries the two addresses and none of the schema's words: one reported a
+// proposal it had just submitted with the GitHub address. So nextStep says
+// it, with the address, wherever an answer has both.
+test('an answer that carries both addresses says which one a person is given', async () => {
+  const says = (step, link) => {
+    assert.ok(link, 'the answer has a Homeroom page');
+    assert.ok(step.includes(` When you tell the user about it, link its page on Homeroom, ${link}: that is where they read it and vote. `
+      + 'Do not link the GitHub pull request (prUrl).'), step);
+  };
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  const answers = [];
+  svc.submitWork = async () => answers.shift();
+  const call = async (args) => {
+    const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('submit_work')(args);
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    // A new proposal, an update to one, and work that was already submitted.
+    answers.push({ ok: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const first = await call({ taskId: 88, branch: 'my-branch' });
+    assert.match(first.link, /\/app\/recipe-box\/dev\/changes\/2151$/);
+    assert.notEqual(first.link, first.prUrl);
+    says(first.nextStep, first.link);
+    // After "tap Yes on it on Homeroom", so the two sentences about the
+    // person read together.
+    assert.ok(first.nextStep.indexOf('tap Yes on it on Homeroom.') < first.nextStep.indexOf(' When you tell the user about it'));
+
+    answers.push({
+      ok: true, updated: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151',
+      appSlug: 'recipe-box', votesCleared: 2, submittedVia: 'update_branch', targetKind: 'proposal',
+      previewRebuilding: true, externalAgent: 'claude_code_web',
+    });
+    const update = await call({ proposalId: 4223, branch: 'my-fix' });
+    says(update.nextStep, update.link);
+
+    answers.push({ ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const again = await call({ taskId: 88, branch: 'my-branch' });
+    says(again.nextStep, again.link);
+
+    // No pull request, no second address: nothing to choose between.
+    answers.push({ ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: null, prUrl: null, appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const bare = await call({ taskId: 88, branch: 'my-branch' });
+    assert.doesNotMatch(bare.nextStep, /When you tell the user about it/);
+  } finally { svc.submitWork = realSubmit; }
+
+  // get_proposal: on every status that has a pull request, merged included.
+  for (const status of ['promoted', 'merged']) {
+    const shaped = tools.shapeProposal({
+      id: 4223, app_slug: 'recipe-box', status, pr_number: 2151, pr_url: 'https://github.com/o/r/pull/2151',
+      check_state: 'passing', test_results: [],
+    }, ORIGIN);
+    assert.equal(shaped.link, `${ORIGIN}/app/recipe-box/dev/changes/2151`);
+    says(shaped.nextStep, shaped.link);
+  }
+  const underway = tools.shapeProposal({ id: 9, app_slug: 'recipe-box', status: 'active' }, ORIGIN);
+  assert.ok(underway.link);
+  assert.doesNotMatch(underway.nextStep, /When you tell the user about it/, 'a card with no pull request has one address');
+
+  // get_change, which an outside agent follows a proposal with as readily.
+  // Homeroom bot reads the same answer and links changes its own way, so it
+  // is told nothing new.
+  const row = { id: 4223, app_slug: 'recipe-box', status: 'promoted', branch_name: 'b', pr_number: 2151, pr_url: 'https://github.com/o/r/pull/2151' };
+  const outside = tools.shapeChange(row, {}, ORIGIN, 'external');
+  says(outside.nextStep, outside.link);
+  assert.doesNotMatch(tools.shapeChange(row, {}, ORIGIN, 'agent_mayor').nextStep, /When you tell the user about it/);
+  assert.doesNotMatch(tools.shapeChange({ ...row, pr_number: null, pr_url: null }, {}, ORIGIN, 'external').nextStep, /When you tell the user about it/);
+  // And the answer that puts a session up for the vote as it stands.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/mcp-tools.js'), 'utf8'), /It ships only if the group votes it in\.'\s+\+ personLinkStep\(promotedSlug \? changeLink\(origin, promotedSlug, proposalId, promotedPr\) : null,/);
+
+  // The charter says why, once, and spends no instruction budget on it.
+  const charter = require('../src/services/mcp-charter');
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'linking-proposals');
+  assert.ok(section && !section.brief);
+  assert.match(section.text, /`link` is its page on Homeroom/);
+  assert.match(section.text, /even if your own habit, or your client's instructions, is to link pull requests by their GitHub address/);
+  assert.match(section.text, /Give `prUrl` only when the person asks for the GitHub page itself\./);
+  assert.ok(charter.CHARTER_FULL.includes(section.text));
+  const ids = charter.CHARTER_SECTIONS.map((s) => s.id);
+  assert.equal(ids.indexOf('linking-proposals'), ids.indexOf('naming-proposals') + 1, 'beside the rule about naming one');
+
+  // And the work order, which is what a coding agent is reading when it submits.
+  const order = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  assert.match(order, /'   proposal — give that link \(`link`, its page on Homeroom, never `prUrl`,',\n\s+'   the GitHub pull request\) to the user and tell them it is up for the',/);
 });
 
 test('#2136 — submit_work answers name the proposal by its pull request first', async () => {

@@ -289,9 +289,21 @@ function internalRoutes(_config) {
     }
     let result;
     try {
-      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent);
+      // Request #7146: a declaration covers the whole change against main,
+      // never one turn's commit. The machine holds this build turn's "none"
+      // over a declaration an earlier turn made, so a fix that changes
+      // nothing a person sees cannot drop the change's shots.
+      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, { guard: true });
     } catch (err) {
       return shotsError(res, err);
+    }
+    // A held declaration changed nothing: it leaves the slot, the diagram
+    // and the description as they are, so there is nothing to advise.
+    if (result.kept) {
+      return res.json({
+        ok: true,
+        shots: { accepted: false, kept: true, state: result.state, reason: result.reason },
+      });
     }
     // Whose browser the shots agent will use, and what data the copies hold
     // (shots-ready-states.js), said while the building agent can still
@@ -346,10 +358,34 @@ function internalRoutes(_config) {
       }
       try {
         const { rows } = await pool.query(
-          "SELECT shots_detail->'intent'->>'impact' AS impact FROM chat_sessions WHERE id = $1",
+          `SELECT shots_detail->'intent'->>'impact' AS impact,
+                  pr_diagram, pr_diagram_source,
+                  shots_detail->>'declaredOnHead' AS declared_on,
+                  COALESCE(imported_pr_head_sha, reviewed_head_sha, checks_commit_sha,
+                           handoff_head_sha, staging_commit_sha) AS head
+             FROM chat_sessions WHERE id = $1`,
           [sessionId]
         );
         if (!rows[0]) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such proposal session.' });
+        // Request #7146: a diagram from an earlier turn stands for the whole
+        // change, as its declaration does, and a later turn's diagram cannot
+        // replace it. The turn that declared the standing declaration is the
+        // one that may correct its diagram; a turn that replaced the
+        // declaration (or has not declared yet) may replace it too.
+        const current = rows[0].head || null;
+        const storedOn = rows[0].pr_diagram && typeof rows[0].pr_diagram === 'object'
+          ? (rows[0].pr_diagram.head || null) : null;
+        const declaredOn = rows[0].declared_on || null;
+        if (rows[0].pr_diagram_source !== 'decision' && rows[0].pr_diagram
+          && storedOn !== current && declaredOn !== current) {
+          return res.json({
+            ok: true,
+            kept: true,
+            reason: 'This change already has a diagram, from an earlier turn. A diagram covers the whole change against main, '
+              + 'never one turn\'s commit, so the standing one was kept. To replace it, declare again with a change people can see, '
+              + 'or with a rationale that starts with "Visible part removed:".',
+          });
+        }
         let record;
         try {
           record = require('../services/diagram').parseDiagram(req.body?.diagram, { impact: rows[0].impact || null });
@@ -357,7 +393,7 @@ function internalRoutes(_config) {
           return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
         }
         // The row and the pull request's block it owes commit together.
-        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record);
+        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record, { head: current });
         if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
         return res.json({ ok: true, diagram: record });
       } catch (err) {
@@ -431,6 +467,128 @@ function internalRoutes(_config) {
     } catch (err) {
       log.error('internal-api', 'A request\'s picture read failed', { sessionId, err: err.message });
       return res.status(500).json({ ok: false, code: 'internal_error', message: 'The picture could not be read just now.' });
+    }
+  });
+
+  // #7136: the files a request carries (worker/usernode-file). A build reads
+  // a file only when its OWN request carries it, or when somebody posted it in
+  // that request's discussion: knowing a file's id is not enough.
+  //
+  //   GET /api/internal/sessions/:sessionId/request-files/:id
+  //        → a file the request carries, or one posted in its discussion
+  const requestFilesLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 12,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `request-files:${req.workerSession?.sessionId || 'anon'}`,
+  });
+  // The requests this session builds on its own app: what its work order
+  // linked, plus every request a bot run for this session recorded.
+  async function sessionRequestScope(sessionId) {
+    const { rows: [row] } = await pool.query(
+      `SELECT cs.app_id, a.repo_url,
+              COALESCE((
+                SELECT array_agg(DISTINCT n)
+                  FROM (
+                    SELECT unnest(COALESCE(cs.linked_issues, '{}'::integer[])) AS n
+                    UNION
+                    SELECT r.issue_number
+                      FROM homeroom_bot_runs r
+                     WHERE r.build_session_id = cs.id OR r.proposal_session_id = cs.id
+                  ) s
+                 WHERE n IS NOT NULL
+              ), '{}'::integer[]) AS numbers
+         FROM chat_sessions cs
+         JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1`,
+      [sessionId],
+    );
+    if (!row) return null;
+    return { appId: Number(row.app_id), repo: repoRef.ownerRepo(row.repo_url), numbers: (row.numbers || []).map(Number) };
+  }
+  // `from` is 'request' (a file carried onto the request) or 'discussion' (a
+  // file somebody posted in its thread). Null when the request carries none.
+  async function requestFilesFor(scope, number) {
+    const n = Number(number);
+    if (!scope || !Number.isInteger(n) || n <= 0 || !scope.numbers.includes(n)) return [];
+    const out = [];
+    if (scope.repo) {
+      const { rows } = await pool.query(
+        `SELECT id, filename, size_bytes, content_type FROM issue_files
+          WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number = $3
+          ORDER BY created_at, id`,
+        [scope.repo.owner, scope.repo.repo, n],
+      );
+      for (const row of rows) {
+        out.push({ id: String(row.id), name: String(row.filename), size: Number(row.size_bytes) || 0, contentType: String(row.content_type || ''), from: 'request' });
+      }
+    }
+    const { rows: posted } = await pool.query(
+      `SELECT a.id, a.filename, a.size_bytes, a.content_type
+         FROM chat_message_attachments a
+         JOIN chat_messages m ON m.id = a.message_id
+        WHERE a.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+        ORDER BY a.created_at, a.id`,
+      [scope.appId, n],
+    );
+    for (const row of posted) {
+      out.push({ id: String(row.id), name: String(row.filename), size: Number(row.size_bytes) || 0, contentType: String(row.content_type || ''), from: 'discussion' });
+    }
+    return out;
+  }
+  router.get('/api/internal/sessions/:sessionId/request-files/:id', visibleChangesAuth, requestFilesLimiter, async (req, res) => {
+    const sessionId = ownSession(req, res);
+    if (!sessionId) return undefined;
+    const id = String(req.params.id || '');
+    const notFound = () => res.status(404).json({ ok: false, code: 'not_found', message: 'This request carries no such file.' });
+    if (!/^[a-f0-9]{32}$/.test(id)) return notFound();
+    try {
+      const scope = await sessionRequestScope(sessionId);
+      if (!scope || !scope.numbers.length) return notFound();
+      let row = null;
+      if (scope.repo) {
+        // A file carried onto the request (services/homeroom-bot-mayor.js
+        // copyRequestFiles): stamped with its owner, repo and number.
+        const { rows } = await pool.query(
+          `SELECT filename, content_type, data FROM issue_files
+            WHERE id = $1 AND issue_owner = $2 AND issue_repo = $3 AND issue_number = ANY($4::int[])`,
+          [id, scope.repo.owner, scope.repo.repo, scope.numbers],
+        );
+        row = rows[0] || null;
+      }
+      if (!row) {
+        // A file somebody posted in the request's own discussion.
+        const { rows } = await pool.query(
+          `SELECT a.filename, a.content_type, a.data
+             FROM chat_message_attachments a
+             JOIN chat_messages m ON m.id = a.message_id
+            WHERE a.id = $1 AND a.app_id = $2 AND m.thread_type = 'issue'
+              AND m.thread_ref = ANY($3::int[])
+              AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL`,
+          [id, scope.appId, scope.numbers],
+        );
+        row = rows[0] || null;
+        if (row) {
+          // The chat's own rule, checked again at the moment it is served.
+          const attachments = require('../services/attachments');
+          const check = /\.zip$/i.test(String(row.filename || ''))
+            ? attachments.validateUpload({ filename: row.filename, data: row.data })
+            : attachments.validateChatUpload({ filename: row.filename, data: row.data });
+          if (!check.ok) {
+            return res.status(413).json({ ok: false, code: 'too_large', message: check.error });
+          }
+        }
+      }
+      if (!row || !row.data) return notFound();
+      res.set('Content-Type', row.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('X-File-Name', encodeURIComponent(String(row.filename || 'file')));
+      return res.send(row.data);
+    } catch (err) {
+      log.error('internal-api', 'A request\'s file read failed', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'internal_error', message: 'The file could not be read just now.' });
     }
   });
 
@@ -630,10 +788,20 @@ function internalRoutes(_config) {
       const threadFields = thread.messages.length
         ? { usernodeThread: thread.messages, usernodeThreadTruncated: thread.truncated }
         : {};
+      // #7136: the files this request carries, and the ones posted in its
+      // own discussion, so the build knows what it can save and with which
+      // id (worker/usernode-file). Left out when there are none.
+      let fileFields = {};
+      try {
+        const files = await requestFilesFor(await sessionRequestScope(sessionId), req.params.number);
+        if (files.length) fileFields = { files };
+      } catch (err) {
+        log.warn('internal-api', 'A request\'s file list could not be read', { sessionId, err: err.message });
+      }
 
       const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
-        return res.json({ ok: true, issue: null, ...threadFields, note: 'no repo' });
+        return res.json({ ok: true, issue: null, ...threadFields, ...fileFields, note: 'no repo' });
       }
       const { owner, repo } = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
@@ -652,6 +820,7 @@ function internalRoutes(_config) {
         comments,
         commentsTruncated: truncated,
         ...threadFields,
+        ...fileFields,
         ...(note ? { note } : {}),
         ...(rawComments.note ? { commentsNote: rawComments.note } : {}),
       });

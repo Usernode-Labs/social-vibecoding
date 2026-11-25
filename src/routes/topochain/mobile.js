@@ -51,6 +51,7 @@ const {
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 const { inviteStatuses } = require('../../services/topochain/invite-statuses');
+const { challengeItems } = require('../../services/topochain/challenge-items');
 const { checkAppAccess } = require('../../services/app-access');
 
 const { Router } = require('express');
@@ -748,7 +749,17 @@ async function resolveCreditChanges(pool, user, activityRows) {
        FROM events e
        JOIN chat_sessions cs ON cs.id = e.session_id
        JOIN apps a ON a.id = cs.app_id
-      WHERE e.id = ANY($1::bigint[]) AND e.event_type = 'pr_merged' AND e.user_id = $3
+      WHERE e.id = ANY($1::bigint[]) AND e.event_type = 'pr_merged'
+        AND (e.user_id = $3
+             OR EXISTS (SELECT 1 FROM requests rq
+                          WHERE rq.app_id = cs.app_id
+                            AND (rq.number = ANY(COALESCE(cs.linked_issues, '{}'))
+                                 OR rq.number = cs.created_from_issue_number)
+                            AND (rq.created_by = $3
+                                 OR EXISTS (SELECT 1 FROM homeroom_bot_requesters hbr
+                                             WHERE hbr.app_id = rq.app_id
+                                               AND hbr.issue_number = rq.number
+                                               AND hbr.user_id = $3))))
      UNION ALL
      SELECT 'session:' || cs.id, cs.id, cs.pr_number, cs.pr_title,
             a.id, a.slug, a.view_visibility, a.collab_visibility, a.moderation_suspended_at
@@ -1003,6 +1014,27 @@ function topochainMobileRoutes(config) {
       return ok(res, { data });
     } catch (err) {
       log.error('topochain-mobile', 'GET me/invites failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  }
+
+  // ── GET /me/challenge-items (#7152) ──────────────────────────────────
+  // Every report or proposal the viewer has for the challenge's current
+  // period, with the status the scorer's own rules give it. Read-only over
+  // the same rule row and records the scorer pays by (./challenge-items.js);
+  // the decision of what each status means lives there, not here.
+  async function meChallengeItemsHandler(req, res) {
+    try {
+      const challengeId = toIntId(req.query.challenge_id);
+      if (challengeId == null) return fail(res, 422, 'challenge_id must be a positive integer.');
+      const data = await challengeItems(pool, {
+        userId: req.user.id,
+        challengeId,
+      });
+      if (!data) return fail(res, 404, 'Not found.');
+      return ok(res, { data });
+    } catch (err) {
+      log.error('topochain-mobile', 'GET me/challenge-items failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   }
@@ -1454,6 +1486,10 @@ function topochainMobileRoutes(config) {
       const activityView = (a) => ({
         points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
         activity_time_precision: activityTimePrecision(a),
+        // #6986: which relationship to a merge earned the credit — its
+        // author, or the filer of a request it was built for — so the page
+        // can print the request's own wording instead of the change's title.
+        via: a.metadata && typeof a.metadata.via === 'string' ? a.metadata.via : null,
         // When the points were written to the ledger, which on a challenge
         // counted on a schedule can be later than the action itself.
         credited_at: iso(a.created_at),
@@ -1689,6 +1725,7 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
   router.get('/challenges-api/me/invites', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meInvitesHandler);
+  router.get('/challenges-api/me/challenge-items', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meChallengeItemsHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function

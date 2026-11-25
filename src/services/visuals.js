@@ -46,6 +46,7 @@ const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+const dbRetry = require('./db-retry');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
 const { isFrontendFile, isUiAffecting } = require('./visual-file-classifier');
@@ -1828,6 +1829,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   let closeProgress = () => {};
   // The early unit suite this run reads, when it does (below).
   let earlyUnitRunId = null;
+  let adoptedEarlyUnit = null;
+  const requiredPool = config.kubernetes?.checkNodePoolRequired === true;
   // The run's identity on the cluster (services/check-runs.js): the work
   // item claim's run id, which labels its Jobs, so the retry of the item can
   // find THIS run's Jobs and nobody else's (check-harvest.collectForWorkflow).
@@ -1887,9 +1890,28 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt,
           workflow: true, runKey: workflow.runKey },
       };
-      const place = checksQueue.isEnabled()
-        ? await checksQueue.enqueue(pool, { ...provisional, queuedSince: workflow.queuedSince || null })
-        : null;
+      let place = null;
+      if (requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes') {
+        // Transfer only once the whole suite exists; if the launcher is
+        // already gone or has written only some Jobs, it keeps its slot.
+        const jobs = await kubernetes.findCheckJobs(config, {
+          sessionId: session.id, previewRunId: workflow.unitRunId,
+        }).catch(() => null);
+        if (jobs?.unitSuites?.length >= (jobs?.unitShards || 1)) {
+          place = await checksQueue.takeEarlyUnitSlot(pool, {
+            ...provisional, earlyRunId: workflow.unitRunId,
+          });
+          if (place) {
+            adoptedEarlyUnit = workflow.unitRunId;
+            log.info('checks-queue', 'Adopted an early unit-suite slot', {
+              sessionId: session.id, commitSha: commitHash, runId, earlyRunId: adoptedEarlyUnit,
+            });
+          }
+        }
+      }
+      if (!place && checksQueue.isEnabled()) {
+        place = await checksQueue.enqueue(pool, { ...provisional, queuedSince: workflow.queuedSince || null });
+      }
       if (!place) await checkRuns.record(pool, provisional);
       stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
       if (place) {
@@ -2355,7 +2377,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The unit suite started with this attempt's build, when its Jobs are on
     // the cluster: read rather than run again. A deferred verdict runs no
     // suite; the attempt's retirement stops it.
-    earlyUnitRunId = !shotsOnly && workflow.unitRunId && config.workerRuntime === 'kubernetes'
+    earlyUnitRunId = !shotsOnly && adoptedEarlyUnit
+      ? adoptedEarlyUnit
+      : !shotsOnly && !requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes'
       ? await kubernetes.findCheckJobs(config, { sessionId: session.id, previewRunId: workflow.unitRunId })
         .then((jobs) => ((jobs.unitSuites && jobs.unitSuites.length) || jobs.unitSuite ? workflow.unitRunId : null))
         .catch(() => null)
@@ -2413,7 +2437,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
           captureShards,
           // Where a collect finds the unit suite when it is the early one.
-          ...(earlyUnitRunId ? { unitRunId: earlyUnitRunId } : {}),
+          ...((adoptedEarlyUnit || earlyUnitRunId) ? { unitRunId: adoptedEarlyUnit || earlyUnitRunId } : {}),
           // Or the pass it copied instead of running one: a collect stores
           // the same row, and looks for no unit-suite Job.
           ...(reusedUnit ? { unitReused: { row: reusedUnit.row, earned: reusedUnit.earned || null, snapshot: reusedUnit.snapshot } } : {}),
@@ -2454,7 +2478,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       ? unitSuite.collectUnitSuite({
         config, pool, appId: app.id, sessionId: session.id, previewRunId: earlyUnitRunId,
         onProgress: progress.observeUnit, signal: operation.signal,
-      }).then((outcome) => outcome || ownUnitSuite())
+      }).then(async (outcome) => {
+        if (outcome && (!adoptedEarlyUnit || !outcome.row?.couldNotRun)) return outcome;
+        // An unreadable early suite cannot share the slot with its fallback.
+        if (adoptedEarlyUnit) {
+          await kubernetes.cancelPreviewChecks(config, session.id, adoptedEarlyUnit, { includeEarly: true });
+        }
+        return ownUnitSuite();
+      })
       : ownUnitSuite()).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run', {
         sessionId: session.id, err: err.message,
@@ -2653,8 +2684,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The run broke before a verdict: the machine records an 'error' with
     // this reason, and its error lane runs it again. A Job the API refused
     // or lost, or a Pod that never started, is the platform's fault and says
-    // so (check-pod-start.js).
+    // so (check-pod-start.js), and so is a database that gave no connection.
+    if (dbRetry.handBackOnDrain(err)) {
+      // Its process drains (a release replaced it) and had no connection for
+      // it: not settled here. The work item's next claim, in the process
+      // that replaced this one, collects what its Jobs wrote or runs it
+      // again in the place in line it had (preview services checks.run).
+      traceStatus = 'handed_over';
+      throw err;
+    }
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
+    if (dbRetry.isConnectionError(err)) return databaseBusyResult();
     const fault = require('./check-pod-start').checkStartFault(err);
     return fault
       ? { outcome: 'blocked', reason: require('./check-pod-start').browserNotRunSentence(fault), platformFault: true }
@@ -2671,14 +2711,52 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     stopHeartbeat();
     // A run that did not settle keeps its row: the retry of its work item
     // collects its Jobs by it, and the machine's cancel clears it.
-    if (harvestable && settledRun) await checkRuns.finish(pool, runId);
+    if (harvestable && settledRun) {
+      await giveBackSettledSlot(config, pool, { sessionId: session.id, runId, adoptedEarlyUnit });
+    }
     // ...and so do its Jobs, once it settled: with the row gone nothing will
     // read them, and the Job TTL would hold the worker namespace's Job slots
     // for another hour. A run that ended any other way keeps its Jobs for
     // whoever cancels them, and the TTL.
     if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);
-    if (harvestable && settledRun && earlyUnitRunId) releaseCheckJobs(config, session.id, earlyUnitRunId);
+    if (harvestable && settledRun && (adoptedEarlyUnit || earlyUnitRunId)) {
+      releaseCheckJobs(config, session.id, adoptedEarlyUnit || earlyUnitRunId);
+    }
   }
+}
+
+// A settled run gives its checks slot back (its check_runs row). Some
+// capture paths (shots-only among them) settle without reading the early
+// unit suite the run adopted, so its Pods are stopped first: they use the
+// slot's share of the check pool until they stop. When they cannot be
+// stopped now, the row stays counted only until those Jobs' own deadline
+// (check-runs.linger), and the checks queue's admission pass deletes it
+// then; it used to stay until somebody deleted it by hand. Resolves
+// 'freed' or 'lingering'; never throws.
+async function giveBackSettledSlot(config, pool, { sessionId, runId, adoptedEarlyUnit = null }) {
+  if (adoptedEarlyUnit) {
+    try {
+      await kubernetes.cancelPreviewChecks(config, sessionId, adoptedEarlyUnit, { includeEarly: true });
+    } catch (err) {
+      log.warn('visuals', 'Early unit Jobs still stopping; the checks slot counts until their deadline', {
+        runId, err: err.message,
+      });
+      if (await checkRuns.linger(pool, runId)) return 'lingering';
+    }
+  }
+  await checkRuns.finish(pool, runId);
+  return 'freed';
+}
+
+// 23 Nov 2026: a run that could not get a database connection in time (a
+// release's draining process on its small pool, or a server refusing
+// connections: db-retry.isConnectionError) tested nothing. It is the
+// platform's fault, so the error lane's platform allowance runs it again
+// (check_error_platform), and the card says so in words rather than the
+// driver's "timeout exceeded when trying to connect".
+const CHECKS_DATABASE_BUSY = 'Homeroom was too busy to run the checks, so nothing was tested. This says nothing about the change.';
+function databaseBusyResult() {
+  return { outcome: 'blocked', reason: CHECKS_DATABASE_BUSY, platformFault: true };
 }
 
 // What captureForSession reads from the machine's work item: the abort
@@ -3617,6 +3695,10 @@ module.exports = {
   kubernetesCaptureOrigin,
   sessionEventEnvelope,
   captureForSession,
+  // How a settled run's slot goes back (exported for tests).
+  giveBackSettledSlot,
+  CHECKS_DATABASE_BUSY,
+  databaseBusyResult,
   // The settlement half of a run, for the retry of a machine's work item
   // (check-harvest.collectForWorkflow) reading a run whose launcher died.
   settleCaptureRun,

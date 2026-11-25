@@ -76,7 +76,8 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   // The welcome and the maker's hello both offer "How do I invite friends?".
   assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
+  // The hub's Invite leads with its glyph under the standard look.
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*(?:\{wipLook \? <UserPlusIcon aria-hidden="true" \/> : null\}\s*)?\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
     'the buttons it names are called that');
   assert.equal(require('./lib/platform-i18n').message('project:communityCard.invite.button'), 'Invite');
   assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.share\.invite'\)\}\s*<\/Button>/);
@@ -937,17 +938,19 @@ test('#4525: offering a vote on closing a request, as the model and the person s
 test('#6251: offer_request carries pictures, related requests, where it happened and Done when', () => {
   const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
   assert.deepEqual(Object.keys(tool.parameters.properties).sort(),
-    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'projects', 'related', 'title']);
+    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'projects', 'related', 'title', 'undecided']);
   assert.ok(tool.parameters.required.includes('doneWhen'), 'a draft always says what done looks like');
   assert.deepEqual(tool.parameters.properties.related.items.properties.relation.enum,
     ['same', 'part_of', 'depends_on', 'build_together']);
-  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 3);
+  // #7136: three pictures and three other files go with one request.
+  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 6);
   assert.equal(tool.parameters.properties.related.maxItems, 3);
   assert.equal(tool.parameters.properties.doneWhen.minItems, 1);
   assert.equal(tool.parameters.properties.doneWhen.maxItems, 3);
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /Put up to three\n  that overlap in related, each with how \(part_of, depends_on, build_together\)/);
-  assert.match(prompt, /Pass in attachmentIds the ids of their pictures that belong with the\n  request, from the "id \.\.\." in a picture's history line/);
+  // #7136: their files go in there too, so a request can carry one to its build.
+  assert.match(prompt, /Pass in attachmentIds the ids of their pictures or files that belong\n  with the request, from the "id \.\.\." in an attachment's history line/);
   assert.match(prompt, /ask which project when a bare number is ambiguous/);
   assert.match(prompt, /Propose one\n  to three doneWhen checks in their words/);
   // Its doneWhen is trimmed and de-dashed, and nothing else is accepted.
@@ -1027,6 +1030,56 @@ test('#6251: the filed body carries the pictures, Done when, Related and Where, 
   const long = mayor.requestBody({ details: 'x'.repeat(70000), username: 'evan', extras, domain: 'app.test', slug: 'homeroom' });
   assert.ok(long.length <= 65536, 'inside GitHub\'s limit');
   assert.match(long, /^x+…\n\n\*\*Done when\*\*/);
+});
+
+// What a draft leaves undecided was the last sentence of its details. It is
+// its own short list, like Done when: asked of the model as one, said on the
+// draft, listed beside the words in the draft's pane, and filed with it.
+test('a draft\'s open questions are their own list: asked for, said on the draft, read by its pane, and filed', () => {
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.equal(tool.parameters.properties.undecided.maxItems, 3);
+  assert.ok(!tool.parameters.required.includes('undecided'), 'a draft may leave nothing undecided');
+  assert.match(tool.parameters.properties.details.description, /What is still undecided goes in undecided, not here/);
+  assert.match(tool.parameters.properties.details.description, /put a short heading over each part/);
+  assert.match(mayor.systemPrompt({ username: 'ada' }), /What is still undecided goes in\n  undecided, up to three short questions, and stays out of details/);
+
+  // Trimmed and de-dashed; an empty line is dropped; more than three, or not a list, is refused.
+  assert.deepEqual(mayor.draftUndecided([' Same window — or a new one ', '', 'What it is called']),
+    ['Same window, or a new one', 'What it is called']);
+  assert.deepEqual(mayor.draftUndecided(undefined), []);
+  assert.deepEqual(mayor.draftUndecided([]), []);
+  assert.equal(mayor.draftUndecided(['one', 'two', 'three', 'four']), null);
+  assert.equal(mayor.draftUndecided('one'), null);
+
+  const extras = {
+    project: 'Homeroom',
+    undecided: ['Whether it opens in the same window', 'What it is called'],
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { request: { slug: 'homeroom', name: 'Homeroom', number: 15 }, saw: 'the draft bar' },
+    doneWhen: ['The draft bar has a button that opens the change'],
+    attachmentIds: ['a'.repeat(32)],
+    chatHref: '#homeroom-bot/thread/42',
+  };
+  // On the draft's message, before Done when.
+  const text = mayor.draftExtrasText(extras);
+  assert.match(text, /\*\*Still undecided:\*\*\n- Whether it opens in the same window\n- What it is called\n\n\*\*Done when:\*\*/);
+  assert.doesNotMatch(mayor.draftExtrasText({ project: 'Homeroom', doneWhen: ['Done'] }), /Still undecided/, 'nothing undecided, no heading');
+  // In the filed request, its own section, before Done when.
+  const body = mayor.requestBody({ details: 'A button in the draft bar.', username: 'evan', extras, domain: 'app.test', slug: 'homeroom' });
+  assert.match(body, /^A button in the draft bar\.\n\n\*\*Still undecided\*\*\n- Whether it opens in the same window\n- What it is called\n\n\*\*Done when\*\*\n/);
+  // For the pane: every list there, the pictures and the chat's address left out.
+  assert.deepEqual(mayor.draftExtrasView(extras), {
+    files: [],
+    undecided: ['Whether it opens in the same window', 'What it is called'],
+    doneWhen: ['The draft bar has a button that opens the change'],
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    where: { request: { number: 15, name: 'Homeroom', slug: 'homeroom' }, saw: 'the draft bar' },
+  });
+  // A draft made before any of it, or whose message is gone: empty lists, never a throw.
+  const none = { files: [], undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } };
+  assert.deepEqual(mayor.draftExtrasView(null), none);
+  assert.deepEqual(mayor.draftExtrasView({ related: [{ number: 'x' }], doneWhen: 'no' }), none);
+  assert.equal(mayor.draftExtrasView({ related: [{ number: 4, title: 'T', relation: 'made_up' }] }).related[0].relation, null, 'a relation this build does not know');
 });
 
 // ── #6346: the chat turn's last round, stand-in answers and read cap ─────

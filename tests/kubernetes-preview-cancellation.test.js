@@ -53,7 +53,10 @@ test('run-scoped cancellation leaves successor Jobs alone', async t => {
   kubernetes._setClientsForTest({ batch: {
     listNamespacedJob: async ({ labelSelector }) => {
       selector = labelSelector;
-      return { items: [job('sv-capture-s42-old', 'old'), job('sv-unit-suite-s42-new', 'new')] };
+      return { items: [
+        job('sv-capture-s42-old', 'old'), job('sv-unit-suite-s42-new', 'new'),
+        job('sv-unit-early-s42-first', 'first'), job('sv-unit-early-s42-next', 'next'),
+      ] };
     },
     deleteNamespacedJob: async ({ name }) => { deleted.push(name); },
     readNamespacedJob: async () => missing(),
@@ -62,6 +65,8 @@ test('run-scoped cancellation leaves successor Jobs alone', async t => {
   await kubernetes.cancelPreviewChecks(config, 42, 'old');
   assert.match(selector, /social\.usernode\.io\/preview-run-id=old/);
   assert.deepEqual(deleted, ['sv-capture-s42-old']);
+  await kubernetes.cancelPreviewChecks(config, 42, 'first', { includeEarly: true });
+  assert.deepEqual(deleted, ['sv-capture-s42-old', 'sv-unit-early-s42-first']);
 });
 
 // preview-lifecycle.run leaves a run of its revision to the harvest and

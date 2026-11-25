@@ -484,7 +484,7 @@
     "description": "Heading of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, for a person Homeroom bot builds changes for there. \"Change\" is a verb; the project is what changes."
   },
   "hub.startHere.bot.text": {
-    "text": "Say it in your own words. Homeroom bot makes the change for you.",
+    "text": "Describe what you want. Homeroom bot makes the change for you.",
     "description": "Text of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, under the heading \"What do you want to change?\". \"Homeroom bot\" is the name of Homeroom's assistant, which builds changes to the project; keep it as it is. \"Change\" is a noun here."
   },
   "hub.startHere.bot.button": {
@@ -510,6 +510,10 @@
   "hub.update.ready": {
     "text": "Its changes are ready for you to try and vote on.",
     "description": "Line on the Update card when it lists none of the original's changes by name."
+  },
+  "hub.update.sent": {
+    "text": "Sent {{when}}",
+    "description": "Grey line under the title of the Update card on a version's hub: when the original's update was offered to this version. {{when}} is already worded, for example \"3d ago\", \"just now\" or \"Nov 2\"."
   },
   "hub.update.bringsMore_one": {
     "text": "{{title}}, and {{count}} more",
@@ -655,6 +659,10 @@
     "text": "waiting on votes",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
   },
+  "workshop.dash.none": {
+    "text": "Nothing open. Ask Homeroom bot for a change.",
+    "description": "One line in place of the four figures at the top of a project's Workshop (open items, nobody on them, waiting on votes, live this week) when all four are zero: the project has nothing going on, and the person can ask Homeroom bot to make a change."
+  },
   "workshop.dash.shipped": {
     "text": "live this week",
     "description": "Label under the fourth large figure on a project's Workshop tab: how many changes were merged and went live in the app this week. The number is drawn above it."
@@ -747,6 +755,222 @@
     "text": "Ask Homeroom bot for a change, a fix or an answer",
     "description": "The line under the title of the New chat row on a project's Workshop tab (\"New chat about Garden club\"): what the person can ask Homeroom bot for in the chat it opens."
   },
+  "workshop.front.title": {
+    "text": "What should change in {{project}}?",
+    "description": "The one large heading of the Workshop tab's front page, under the standard look, over a message box to Homeroom bot. {{project}} is the project's name, for example \"What should change in Homeroom?\"."
+  },
+  "workshop.front.ask.placeholder": {
+    "text": "Tell Homeroom bot what to change…",
+    "description": "Placeholder of the message box under the heading of the Workshop tab's front page, under the standard look. Sending what is typed opens a new chat with Homeroom bot about the project, with the words in its box."
+  },
+  "workshop.front.ask.label": {
+    "text": "Tell Homeroom bot what should change in {{project}}",
+    "description": "Accessible name of the message box on the Workshop tab's front page, under the standard look. {{project}} is the project's name."
+  },
+  "workshop.front.ask.send": {
+    "text": "Open a new chat with this",
+    "description": "Accessible name and tooltip of the round send button of the message box on the Workshop tab's front page, under the standard look: it opens a new chat with Homeroom bot about the project with the typed words in its box, ready to send. Nothing is sent yet."
+  },
+  "workshop.front.start.label": {
+    "text": "Ways to start",
+    "description": "Accessible name of the row of starts under the message box on the Workshop tab's front page, under the standard look."
+  },
+  "workshop.front.start.live": {
+    "text": "Edit the app live",
+    "description": "First start under the message box on the Workshop tab's front page, under the standard look, with a small preview icon and the accent tint: opens a new chat with Homeroom bot set to change the project live, which opens a live draft of the app beside the chat. Shown only where that start is offered."
+  },
+  "workshop.front.start.fix": {
+    "text": "Fix an issue",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I want to fix an issue\", as the same start inside New chat does."
+  },
+  "workshop.front.start.add": {
+    "text": "Add a feature",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I want to add a feature\", as the same start inside New chat does."
+  },
+  "workshop.front.start.ask": {
+    "text": "Ask a question",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I have a question about\", as the same start inside New chat does."
+  },
+  "workshop.front.yours.both_one": {
+    "text": "<0>{{count}} needs you</0> · {{progress}} in progress",
+    "description": "Second line of the Your work card beside the heading of the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them ({{count}}) and how many are being worked on ({{progress}}). <0> is the first count, in the accent. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.yours.needs_one": {
+    "text": "<0>{{count}} needs you</0>",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them. <0> is the count, in the accent."
+  },
+  "workshop.front.yours.both_other": {
+    "text": "<0>{{count}} need you</0> · {{progress}} in progress",
+    "description": "Second line of the Your work card beside the heading of the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them ({{count}}) and how many are being worked on ({{progress}}). <0> is the first count, in the accent. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.yours.needs_other": {
+    "text": "<0>{{count}} need you</0>",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them. <0> is the count, in the accent."
+  },
+  "workshop.front.yours.progress_one": {
+    "text": "{{count}} in progress",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project are being worked on, when none needs them."
+  },
+  "workshop.front.yours.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project wait on somebody else, when nothing needs them or is in progress."
+  },
+  "workshop.front.yours.progress_other": {
+    "text": "{{count}} in progress",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project are being worked on, when none needs them."
+  },
+  "workshop.front.yours.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project wait on somebody else, when nothing needs them or is in progress."
+  },
+  "workshop.front.yours.empty": {
+    "text": "What you ask for shows up here.",
+    "description": "Second line of the faint Your work card on the Workshop tab's front page, under the standard look, for a visitor or a member with nothing of theirs in this project yet. It is not a link."
+  },
+  "workshop.front.path.title": {
+    "text": "In the workshop now",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look that draws how a change travels: four stops, Asked, Being built, Up for a vote and Live."
+  },
+  "workshop.front.path.board": {
+    "text": "Open the board",
+    "description": "Link at the top right of the \"In the workshop now\" card on the Workshop tab's front page, under the standard look: opens the project's board (All items) with no stage filter."
+  },
+  "workshop.front.path.boardFiltered": {
+    "text": "Open the board<0></0><1> (filtered)</1>",
+    "description": "The same link as \"Open the board\" on the Workshop tab's front page, under the standard look, while a search or filter is still on in All items. <0></0> is a small dot drawn after the words; <1> is said to screen readers only."
+  },
+  "workshop.front.path.asked.word": {
+    "text": "Asked",
+    "description": "Word under the first stop of the path on the Workshop tab's front page, under the standard look (a yellow circle): the requests nobody is building yet and that are not up for a vote. Pressing it opens the board narrowed to them."
+  },
+  "workshop.front.path.asked.line_one": {
+    "text": "{{count}} waiting",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+  },
+  "workshop.front.path.asked.line_other": {
+    "text": "{{count}} waiting",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+  },
+  "workshop.front.path.building.word": {
+    "text": "Being built",
+    "description": "Word under the second stop of the path on the Workshop tab's front page, under the standard look (a blue circle): what Homeroom bot is building for this project. Pressing it opens Homeroom bot's builds for the project."
+  },
+  "workshop.front.path.building.line_one": {
+    "text": "{{count}} right now",
+    "description": "Line under \"Being built\" on the path of the Workshop tab's front page, under the standard look: how many builds Homeroom bot has under way or waiting their turn on the project. Never shown for zero."
+  },
+  "workshop.front.path.building.line_other": {
+    "text": "{{count}} right now",
+    "description": "Line under \"Being built\" on the path of the Workshop tab's front page, under the standard look: how many builds Homeroom bot has under way or waiting their turn on the project. Never shown for zero."
+  },
+  "workshop.front.path.votes.word": {
+    "text": "Up for a vote",
+    "description": "Word under the third stop of the path on the Workshop tab's front page, under the standard look (a near-black circle): the changes and group decisions waiting for votes. Pressing it opens the board narrowed to them."
+  },
+  "workshop.front.path.votes.yours": {
+    "text": "Ready for your yes",
+    "description": "The third stop's word on the path of the Workshop tab's front page, under the standard look on a project whose approval rule is the reader's own yes (a project that is just theirs): the changes waiting for it."
+  },
+  "workshop.front.path.votes.line_one": {
+    "text": "{{count}} open",
+    "description": "Line under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many changes and decisions are up for a vote. Not shown when the pill says how many wait on the reader, nor for zero."
+  },
+  "workshop.front.path.votes.line_other": {
+    "text": "{{count}} open",
+    "description": "Line under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many changes and decisions are up for a vote. Not shown when the pill says how many wait on the reader, nor for zero."
+  },
+  "workshop.front.path.live.word": {
+    "text": "Live",
+    "description": "Word under the last stop of the path on the Workshop tab's front page, under the standard look (a green circle): the changes that went live. Pressing it opens this week's log."
+  },
+  "workshop.front.path.live.line_one": {
+    "text": "{{count}} this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look: how many changes went live this week. Never shown for zero."
+  },
+  "workshop.front.path.live.lineAtLeast_one": {
+    "text": "{{count}}+ this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look when the count is a floor (only part of the history is loaded): at least {{count}} changes went live this week."
+  },
+  "workshop.front.path.mine_one": {
+    "text": "{{count}} of yours",
+    "description": "In the accent, with the reader's small picture, over a stop of the path on the Workshop tab's front page, under the standard look: how many of the reader's own threads are at that stop."
+  },
+  "workshop.front.path.pill_one": {
+    "text": "{{count}} needs your vote",
+    "description": "Black pill under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many votes wait on the reader. Pressing it opens Needs you for the project. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.path.pillYours_one": {
+    "text": "{{count}} needs your yes",
+    "description": "Black pill under \"Ready for your yes\" on the path of the Workshop tab's front page, under the standard look, on a project that is just the reader's: how many changes wait for their yes. Pressing it opens Needs you."
+  },
+  "workshop.front.path.live.line_other": {
+    "text": "{{count}} this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look: how many changes went live this week. Never shown for zero."
+  },
+  "workshop.front.path.live.lineAtLeast_other": {
+    "text": "{{count}}+ this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look when the count is a floor (only part of the history is loaded): at least {{count}} changes went live this week."
+  },
+  "workshop.front.path.mine_other": {
+    "text": "{{count}} of yours",
+    "description": "In the accent, with the reader's small picture, over a stop of the path on the Workshop tab's front page, under the standard look: how many of the reader's own threads are at that stop."
+  },
+  "workshop.front.path.pill_other": {
+    "text": "{{count}} need your vote",
+    "description": "Black pill under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many votes wait on the reader. Pressing it opens Needs you for the project. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.path.pillYours_other": {
+    "text": "{{count}} need your yes",
+    "description": "Black pill under \"Ready for your yes\" on the path of the Workshop tab's front page, under the standard look, on a project that is just the reader's: how many changes wait for their yes. Pressing it opens Needs you."
+  },
+  "workshop.front.lately.title": {
+    "text": "Lately",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look listing the three last changes that went live, title only."
+  },
+  "workshop.front.lately.fresh_one": {
+    "text": "{{count}} new since you were last here",
+    "description": "Beside the \"Lately\" label on the Workshop tab's front page, under the standard look: how many things moved this week since the reader last opened the Workshop. Not shown for zero, nor on a first visit."
+  },
+  "workshop.front.lately.fresh_other": {
+    "text": "{{count}} new since you were last here",
+    "description": "Beside the \"Lately\" label on the Workshop tab's front page, under the standard look: how many things moved this week since the reader last opened the Workshop. Not shown for zero, nor on a first visit."
+  },
+  "workshop.front.lately.none": {
+    "text": "Nothing has gone live yet.",
+    "description": "The one line of the Lately card on the Workshop tab's front page, under the standard look for a project where no change has gone live."
+  },
+  "workshop.front.weeks.title": {
+    "text": "Live by week",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look with three bars: how many changes went live this week so far and in each of the two weeks before it."
+  },
+  "workshop.front.weeks.now": {
+    "text": "This week so far",
+    "description": "Label of the first bar in the Live by week card on the Workshop tab's front page, under the standard look: the week that has not finished yet."
+  },
+  "workshop.front.weeks.bar_one": {
+    "text": "{{week}}: {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look, which opens that week's log. {{week}} is the week's label (\"This week so far\", \"Last week\" or its dates)."
+  },
+  "workshop.front.weeks.bar_other": {
+    "text": "{{week}}: {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look, which opens that week's log. {{week}} is the week's label (\"This week so far\", \"Last week\" or its dates)."
+  },
+  "workshop.front.weeks.barAtLeast_one": {
+    "text": "{{week}}: at least {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look when its count is a floor (only part of the history is loaded). {{week}} is the week's label."
+  },
+  "workshop.front.weeks.barAtLeast_other": {
+    "text": "{{week}}: at least {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look when its count is a floor (only part of the history is loaded). {{week}} is the week's label."
+  },
+  "workshop.front.earlier.none": {
+    "text": "No earlier weeks yet.",
+    "description": "Line on the Earlier weeks page under the Workshop (opened from the Workshop tab's front page, under the standard look) for a project in its first week."
+  },
+  "workshop.front.private.row": {
+    "text": "<0>Private requests</0> · only admins see these",
+    "description": "The quiet row at the foot of the Workshop tab's front page, under the standard look, for platform admins only, with a lock: opens the list of private requests. <0> is the name, in bold."
+  },
   "workshop.desk.both": {
     "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
@@ -779,6 +1003,14 @@
     "text": "Pick who does the building. Whatever it makes goes to the group for a vote.",
     "description": "Under \"Make your first change here\" on a project's Workshop page, over three rows: Homeroom bot, Claude Code and ChatGPT."
   },
+  "workshop.first.titleLive": {
+    "text": "Make a change here",
+    "description": "Heading of the card on a project's Workshop page for a member who has made nothing on it yet, on a project that already has changes live (so it is not the project's first change): it asks who should build what they have in mind, Homeroom bot or their own Claude Code or ChatGPT."
+  },
+  "workshop.first.textSolo": {
+    "text": "Pick who does the building. You approve what it makes.",
+    "description": "Line under the heading of the card on a Just you project's Workshop page (a project with one person, who approves every change) for somebody who has made nothing on it yet: they choose who builds (Homeroom bot or their own Claude Code or ChatGPT), and whatever it makes waits for their own approval, not a group vote."
+  },
   "workshop.first.label": {
     "text": "Who builds it",
     "description": "Accessible name of the group of three rows (Homeroom bot, Claude Code, ChatGPT) in the \"Make your first change here\" card on a project's Workshop page."
@@ -800,8 +1032,8 @@
     "description": "A small pill on the Claude Code or ChatGPT row of the \"Make your first change here\" card while Homeroom's connector is not connected in that product yet: opening the row shows the steps to add it."
   },
   "hub.workshop.sub": {
-    "text": "What happened, and every item",
-    "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
+    "text": "Make and vote on changes",
+    "description": "The line under \"Workshop\", the Workshop row of a project's Hub (For you): what the Workshop is for, making changes and voting on them. It opens the project's Workshop. Not the person's own work, which has its own card on the Workshop tab (Your work)."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
@@ -818,10 +1050,6 @@
   "workshop.private.note": {
     "text": "Only platform admins can see these. They are kept in Homeroom, never on GitHub.",
     "description": "Grey line under the label of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
-  },
-  "workshop.private.badge": {
-    "text": "Private",
-    "description": "Short badge, beside a lock, on each row of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
   },
   "workshop.private.someone": {
     "text": "Someone",
@@ -874,6 +1102,22 @@
   "happened.earlierWeeks": {
     "text": "Earlier weeks",
     "description": "Button at the foot of the \"What happened\" card on the Workshop tab of a project's page: lists more of the weeks before, one row each."
+  },
+  "happened.kind.request": {
+    "text": "Request",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a request somebody filed. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.change": {
+    "text": "Change",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change somebody is building or has put up for a vote. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.live": {
+    "text": "Live",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change that went live in the app. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.vote": {
+    "text": "Vote",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a group decision being voted on. A request and the change built for it can share a title, so this tells them apart."
   },
   "happened.row.new": {
     "text": "New",
@@ -1871,6 +2115,34 @@
     "text": "Topics",
     "description": "Small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under or beside the For you card. Pressing a row opens that topic's channel."
   },
+  "hub.contributors.title": {
+    "text": "Top contributors",
+    "description": "Small heading over the card on a project's Hub that lists the up to five people who took part most in the project, most first. Not the platform's points Leaderboard."
+  },
+  "hub.contributors.span": {
+    "text": "Time span",
+    "description": "Spoken name, for screen readers, of the two-button switch beside the Top contributors heading on a project's Hub: This month or All time."
+  },
+  "hub.contributors.month": {
+    "text": "This month",
+    "description": "First button of the small switch beside the Top contributors heading on a project's Hub: the list counts contributions since the first day of the current calendar month."
+  },
+  "hub.contributors.allTime": {
+    "text": "All time",
+    "description": "Second button of the small switch beside the Top contributors heading on a project's Hub: the list counts every contribution since the project began."
+  },
+  "hub.contributors.count_one": {
+    "text": "{{count}} contribution",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.count_other": {
+    "text": "{{count}} contributions",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.emptyMonth": {
+    "text": "Nobody has taken part yet this month.",
+    "description": "Line shown inside the Top contributors card on a project's Hub when This month is picked and nobody has had a change go live, voted or filed a request since the month began."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
@@ -1939,21 +2211,13 @@
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
   },
-  "hub.recent.morePill_one": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
-  "hub.recent.morePill_other": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
   "hub.recent.moreThisMonth_one": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.moreThisMonth_other": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.own.today": {
     "text": "Live since today",
@@ -2246,6 +2510,10 @@
   "communityCard.people.members_other": {
     "text": "{{count}} members",
     "description": "Line beside the members' faces at the top of a project's Hub, when the audience's name is not known: how many members the community has."
+  },
+  "communityCard.people.open": {
+    "text": "See who is in it",
+    "description": "Tooltip of the members' faces and count at the top of a project's Hub, which open the list of its members."
   },
   "communityCard.people.audienceMembers_one": {
     "text": "<0>{{audience}}</0> · {{count}} member",
@@ -3503,6 +3771,10 @@
     "text": "Request #{{number}}",
     "description": "Title in the header of a request's page. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
   },
+  "topic.request.bar.closeTitle": {
+    "text": "Close: {{title}}",
+    "description": "Title in the header of a request's page while a vote to close the request is open. \"Close\" is a verb. {{title}} is the request's title, translated when the reader asked."
+  },
   "topic.request.bar.more": {
     "text": "More actions",
     "description": "Accessible name and tooltip of the ⋯ button in the header of a request's page: opens the menu with everything else that can be done with the request."
@@ -4596,12 +4868,12 @@
     "description": "Second line of the 'Build it now' row in a project's ⋯ menu: the person works with an AI coding agent, then puts the result up for the community's approval."
   },
   "menu.importPr.title": {
-    "text": "Import Feature from a PR",
+    "text": "Import a feature from a PR",
     "description": "Row in a project's ⋯ menu, shown to people who may build the project: brings in a feature that already exists as a GitHub pull request (PR), so it becomes a proposal here."
   },
   "menu.importPr.sub": {
     "text": "Your computer · your own tools. You have already built it, so there is no chat for this one",
-    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
+    "description": "Second line of the 'Import a feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
   },
   "menu.settings.title": {
     "text": "Settings & rules",
@@ -4614,6 +4886,18 @@
   "menu.settings.back": {
     "text": "Back to the menu",
     "description": "Accessible name of the heading button at the top of the settings panel in a project's ⋯ menu: returns from the settings rows to the menu's first list."
+  },
+  "menu.settings.group.people": {
+    "text": "People and rules",
+    "description": "Small heading in a project's Settings & rules menu, over who can see and change it, its members and its topics."
+  },
+  "menu.settings.group.look": {
+    "text": "Look",
+    "description": "Small heading in a project's Settings & rules menu, over its name and its featured illustration: how it looks to others."
+  },
+  "menu.settings.group.advanced": {
+    "text": "Advanced",
+    "description": "Small heading in a project's Settings & rules menu, over the rows few people need: its settings, its web address, its secrets and its versions."
   },
   "menu.leave.named": {
     "text": "Leave {{project}}",
@@ -4636,35 +4920,35 @@
     "description": "The same row once the community is pinned: lets it move with the rest of the desktop sidebar's Recents again. It stays one of the person's communities."
   },
   "menu.homeApp.add": {
-    "text": "Pin app to Home",
-    "description": "Row in a project's ⋯ menu on its hub: puts the project's app among Home's Pinned apps, where its tile opens the app. Pinning does not join."
+    "text": "Pin to Home",
+    "description": "Row in a project's ⋯ menu: puts the project's app on the viewer's Home as a tile. The second line says the tile opens the app; the community has its own pin, to Communities."
   },
   "menu.homeApp.sub": {
     "text": "Its tile opens the app",
     "description": "Second line under Pin app to Home in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeApp.remove": {
-    "text": "Unpin app from Home",
-    "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
+    "text": "Unpin from Home",
+    "description": "Row in a project's ⋯ menu: takes the project's app off the viewer's Home. Names the place it is pinned to, as the Communities pin's row does."
   },
   "menu.homeCommunity.add": {
-    "text": "Pin community",
-    "description": "Row in a project's ⋯ menu on its hub: puts the community in the Pinned group of the Communities page, where its tile opens this hub. Pinning does not join."
+    "text": "Pin to Communities",
+    "description": "Row in a project's ⋯ menu: pins the community to the top of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.homeCommunity.sub": {
     "text": "Its tile opens this hub",
     "description": "Second line under Pin community in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeCommunity.remove": {
-    "text": "Unpin community",
-    "description": "The same row once the community is pinned: takes its tile out of the Pinned group of the Communities page. Membership does not change."
+    "text": "Unpin from Communities",
+    "description": "Row in a project's ⋯ menu: takes the community off the Pinned part of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.appSettings.title": {
-    "text": "App settings",
+    "text": "Project settings",
     "description": "Row among a project's settings, shown to those who manage it: opens the dialog for who can use and build the app, and for deleting it."
   },
   "menu.appSettings.sub": {
-    "text": "Manage who can use and build this app",
+    "text": "Manage who can use and build this project",
     "description": "Second line of the 'App settings' row in a project's settings. 'Build' is a verb, to work on the app's code."
   },
   "menu.domain.title": {
@@ -4696,11 +4980,11 @@
     "description": "Row among a project's settings: opens the dialog listing the project's collaborators and admins and the rule for approving proposals."
   },
   "menu.members.sub": {
-    "text": "Manage collaborators, app admins and proposal approvals",
+    "text": "Manage members, admins and proposal approvals",
     "description": "Second line of the 'Members & approvals' row in a project's settings. Collaborators are people allowed to build the project; a proposal is a change put up for a vote."
   },
   "menu.rename.title": {
-    "text": "App display name",
+    "text": "Project name",
     "description": "Row among a project's settings: opens the dialog for proposing a new name for the app, the name people see."
   },
   "menu.rename.sub": {
@@ -4708,7 +4992,7 @@
     "description": "Second line of the 'App display name' row in a project's settings: a new name is itself a change put up for a vote, and takes effect only when the vote passes."
   },
   "menu.secrets.appTitle": {
-    "text": "App secrets",
+    "text": "Project secrets",
     "description": "Row among a project's settings: opens the dialog for the app's secret values, such as API keys its server reads. A short status may follow this title."
   },
   "menu.secrets.appSub": {
@@ -6335,6 +6619,10 @@
     "text": "No",
     "description": "Button on the Votes card of a proposal to close the request: vote no, keep it open."
   },
+  "topic.thread.close.sending": {
+    "text": "Sending…",
+    "description": "Label replacing Yes or No on the Votes card of a vote to close a request, or of a decision, while that vote is being sent."
+  },
   "topic.thread.close.note": {
     "text": "If it passes, every request here closes, and the changes up for a vote close with them.",
     "description": "Line under the Votes card of a proposal to close the request, before the person has voted: what happens if the vote passes."
@@ -6804,7 +7092,7 @@
     "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the request or the change is closed."
   },
   "topic.card.ownWords": {
-    "text": "{{name}}’s own words.",
+    "text": "Written by {{name}}.",
     "description": "Small line under the request's text on a request's page: the text above is exactly what the person who asked wrote, not a summary. {{name}} is their username."
   },
   "topic.card.summaryBy": {
@@ -7071,6 +7359,10 @@
     "text": "No picture yet",
     "description": "Heading in the box where a change's picture would be, on a change that changes nothing on screen and has no picture of what it does yet."
   },
+  "topic.card.shots.noPictureTakenTitle": {
+    "text": "No picture was taken for this change",
+    "description": "The one line in the box where a change's picture would be, on a change that changes nothing on screen and is already live, going live or closed without a picture of what it does: nothing will be added any more."
+  },
   "topic.card.shots.noPictureText": {
     "text": "Nothing on screen changes, and this change has no picture of what it does yet. Homeroom bot is adding one.",
     "description": "Sentence under “No picture yet” in the box where a change's picture would be."
@@ -7078,5 +7370,21 @@
   "topic.details.touches": {
     "text": "What it touches",
     "description": "Sub-heading in the Details sheet of a change, over the picture of which parts of the project the change edits: screens, server, database and tests, with a count of files."
+  },
+  "topic.rail.updated": {
+    "text": "Updated",
+    "description": "Name of a step in the \"How it got here\" timeline on a change's or a request's page (the list of the thread's big events, beside its card): the change was updated after it was first built."
+  },
+  "topic.rail.votesCleared": {
+    "text": "Earlier votes were cleared.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update moved the code, so the votes cast on the earlier version no longer count."
+  },
+  "topic.rail.votesStand": {
+    "text": "Earlier votes still stand.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update only brought the change up to date with main, so the votes cast on it still count."
+  },
+  "topic.rail.byBot": {
+    "text": "By Homeroom bot.",
+    "description": "Line under a step in the \"How it got here\" timeline: Homeroom bot made the update. Used when the update names no person."
   }
 }

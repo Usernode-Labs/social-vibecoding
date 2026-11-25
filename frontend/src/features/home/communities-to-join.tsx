@@ -26,7 +26,8 @@
  * the rest under "More communities" whenever Featured is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
- * Popular or Most active; most active until somebody picks another), so no
+ * Popular, Most active or A to Z; most active until somebody picks another),
+ * so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
  * it is not drawn. No heading while searching, or with nothing featured:
@@ -55,7 +56,7 @@ import { matchesQuery } from './use-home-query';
 export const JOIN_PAGE = 8;
 
 /** The sorts the "More communities" control offers, in the order it shows them. */
-export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
+export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
 /** The cards' grid (app.css `.cm-grid`), and the larger first row's. */
@@ -67,7 +68,7 @@ export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, emptyLine, ids }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -81,6 +82,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   onRetry?: () => void;
   /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
   headingAction?: ReactNode;
+  /** Drawn when a search matches nothing. Home's own search answers that itself; the visitor's page has only this list, and was left blank. */
+  emptyLine?: ReactNode;
   /** The section's and its Featured label's ids where it is drawn a second time in the document (the Communities page): Home's own stay Home's. */
   ids?: { section: string; featured: string };
 }) {
@@ -91,7 +94,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   // pages (Home, and the Communities page): the visitor's landing draws this
   // same list, and keeps the standard drawing of it.
   const live = useLiveSkin();
-  const wip = live === 'wip' || (isKitHome(live) && signedIn);
+  const wip = isKitHome(live) && signedIn;
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
@@ -109,6 +112,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const leadCount = useLeadCount(probe);
   const lead = useMemo(() => featured.slice(0, leadCount), [featured, leadCount]);
   const leadStyle = { ['--cm-lead-cols' as string]: String(leadCount) } as CSSProperties;
+  // One featured community where the row has room for more is the whole row,
+  // a wide card, not one card beside an empty half page (phone review, 23 Nov
+  // 2026, the Duo unfolded sideways). Its picture is a band (app.css).
+  const lone = lead.length === 1 && leadCount > 1;
+  const shownLeadStyle = lone ? ({ ['--cm-lead-cols' as string]: '1' } as CSSProperties) : leadStyle;
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
     // rest, in the chosen sort, the featured ones left out because Featured
@@ -148,7 +156,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     return () => { io.disconnect(); if (timer) window.clearTimeout(timer); };
   }, [more, shown]);
 
-  if (query && !list.length) return null;
+  if (query && !list.length) return emptyLine ?? null;
   const sortMenu = (
     <Select
       variant="plain"
@@ -197,7 +205,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         // list: its place is held while the directory is read, by its larger
         // first row's cards, so the rows under it do not move when they land.
         <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
-          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featuredAppsCommunities')}</h3>
+          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
           {probeGrid}
           <div className={GRID} data-cm-grid="lead" style={leadStyle}>
             {Array.from({ length: leadCount }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
@@ -207,8 +215,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
           <h3 id={featuredId} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
-            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
-              : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
+            {/* One name for one thing on Home (phone review, 23 Nov 2026): the
+                row is Featured in every look, not "Featured apps / communities". */}
+            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) }) : t('home:join.featured')}
           </h3>
           {probeGrid}
           {/* The first few featured communities are drawn larger, a row of
@@ -221,8 +230,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             aria-labelledby={featuredId}
             data-home-join-lead={lead.length}
             data-cm-grid="lead"
+            data-cm-lone={lone ? '' : undefined}
             className={GRID}
-            style={leadStyle}
+            style={shownLeadStyle}
           >
             {lead.map((app, i) => (
               <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">

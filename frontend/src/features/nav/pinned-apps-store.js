@@ -29,7 +29,7 @@
  *
  * A pin or an unpin changes the list here first, so the sidebar moves under
  * the press, then goes to the server, whose answer is the list from then
- * on. A refusal (four already, or a community you are not in, which the
+ * on. A refusal (ten already, or a community you are not in, which the
  * fetch wrapper turns into a Join prompt first: lib/join-required.ts) reads
  * the account's list again. An answer for an account no longer signed in
  * here is dropped (`generation`). With nobody signed in the list changes
@@ -54,8 +54,8 @@ const DEVICE_KEY = 'usernode_pinned_apps_v2';
 // clears it, best effort, and it is never read as pins.
 const LEGACY_KEY = 'usernode_pinned_apps_v1';
 
-/** Four pins, the same limit as before. src/services/community-pins.js says the same. */
-export const PINNED_APPS_MAX = 4;
+/** Ten pins, the same limit as before. src/services/community-pins.js says the same. */
+export const PINNED_APPS_MAX = 10;
 
 /** @typedef {{ slug: string, name: string, iconUrl: string|null, iconEmoji: string|null }} PinnedApp */
 
@@ -190,7 +190,7 @@ async function sendChange(owner, method, slug) {
 
 /**
  * What a drop of `slug` would do right now, off the store's list: 'ok' to
- * append, 'already' when it is pinned, 'full' when four are.
+ * append, 'already' when it is pinned, 'full' when ten are.
  *
  * @param {string|null|undefined} slug
  * @returns {'ok'|'already'|'full'}

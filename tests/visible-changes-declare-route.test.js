@@ -199,3 +199,77 @@ test('a recorded declaration says what data the copies hold, and warns when a ch
   assert.equal(Object.hasOwn(none, 'availableStates'), false);
   assert.equal(Object.hasOwn(none, 'warnings'), false);
 });
+
+// Request #7146: a declaration covers the whole change against main, never
+// one turn's commit. The tool asks for the guard, and a kept "none" answers
+// so instead of replacing what an earlier turn declared.
+test('the worker\'s declaration is guarded, and a kept one answers why', async (t) => {
+  const seen = [];
+  stub(t, shotsState, 'recordIntent', async (_pool, sessionId, intent, options) => {
+    seen.push({ intent, options });
+    return {
+      accepted: false, kept: true, state: 'verified', intent,
+      reason: 'This change already declares what a person sees, from an earlier turn.',
+    };
+  });
+  const url = await serve(t);
+  const out = await declare(url, { version: 1, impact: 'none', rationale: 'Server only.', stories: [] });
+  assert.deepEqual(seen[0].options, { guard: true }, 'the hosted build turn asks for the guard');
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.body.shots, {
+    accepted: false, kept: true, state: 'verified',
+    reason: 'This change already declares what a person sees, from an earlier turn.',
+  });
+  assert.equal(Object.hasOwn(out.body, 'warnings'), false, 'a kept declaration leaves the diagram nudge out');
+  assert.equal(Object.hasOwn(out.body, 'availableStates'), false);
+});
+
+// The diagram follows the declaration it belongs to: one from an earlier turn
+// is kept, and this turn's replaces it before or after its own declaration.
+test('#7146: a diagram stored on an earlier turn is kept, and this turn\'s replaces it', async (t) => {
+  const proposalDiagram = require('../src/services/proposal-diagram');
+  const stored = [];
+  stub(t, proposalDiagram, 'storeDeclared', async (_pool, sessionId, record, options) => {
+    stored.push({ sessionId, record, options });
+    return true;
+  });
+  const url = (await serve(t)).replace('/visible-changes', '/diagram');
+  const original = appRow;
+  t.after(() => { appRow = original; });
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const flow = (head) => ({ version: 1, kind: 'flow', before: ['One step'], after: ['Two steps'], ...(head ? { head } : {}) });
+  const post = async (diagram) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformJwt.signWorkerToken({ sessionId: 42 })}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ diagram }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+
+  // Stored on an earlier head, and this turn's declaration was not made on
+  // the current head either: a later turn's picture cannot replace it.
+  appRow = { id: 7, pr_diagram: flow(A), pr_diagram_source: 'author', declared_on: A, head: B };
+  const kept = await post(flow(null));
+  assert.equal(kept.status, 200);
+  assert.equal(kept.body.ok, true);
+  assert.equal(kept.body.kept, true);
+  assert.match(kept.body.reason, /whole change against main/);
+  assert.equal(Object.hasOwn(kept.body, 'diagram'), false);
+  assert.equal(stored.length, 0, 'nothing was stored');
+
+  // The same turn corrects the diagram it made.
+  appRow = { ...appRow, pr_diagram: flow(B) };
+  const same = await post(flow(null));
+  assert.equal(same.body.kept, undefined);
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored[0].options, { head: B }, 'stored on the head this turn declared on');
+
+  // This turn's declaration replaced the standing one, so its diagram may
+  // replace the earlier turn's.
+  appRow = { ...appRow, pr_diagram: flow(A), declared_on: B };
+  const redeclared = await post(flow(null));
+  assert.equal(redeclared.body.kept, undefined);
+  assert.equal(stored.length, 2);
+});

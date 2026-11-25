@@ -494,7 +494,7 @@ test('the "New" line, the banner and the jump button, as drawn', () => {
   // low (1 Nov 2026, Evan's call; it sat at the right edge from run six).
   const overlay = (edge) => renderToHtml(createElement(chat.TranscriptOverlay, { edge }));
   assert.equal(overlay('top'), '<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="top"><div class="pointer-events-none absolute inset-x-0 flex top-2 justify-center px-4"></div></div>');
-  assert.equal(overlay('foot'), '<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-center px-3"></div></div>');
+  assert.equal(overlay('foot'), '<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex top-0 -translate-y-1/2 justify-center px-3"></div></div>');
   assert.doesNotMatch(overlay('foot'), /justify-end/);
 
   // On the compositor: opacity and transform only, no delay, no size change.
@@ -728,7 +728,7 @@ test('the hook, watching content: a topic opened at its card shows the way down 
 test('Jump to latest alone: hidden until the reader is up the transcript, and a sibling of the scroller', () => {
   const mod = loadTsx('frontend/src/features/messages/jump-to-latest.tsx');
   const html = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null } }));
-  assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
+  assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex top-0 -translate-y-1\/2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
     'centred over the foot, low, just above the composer, with nothing behind it');
   assert.match(html, /aria-label="Jump to latest" title="Jump to latest"/);
 
@@ -762,7 +762,7 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
   // 1 Nov 2026: the button floats over the foot of the thread's scroller, as
   // in a chat, with nothing behind it. It docked in a strip of its own here
   // (#4553), which cut the transcript off above it and read as a solid box.
-  assert.match(fill, /<div id="gc-thread-messages" class="pt-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
+  assert.match(fill, /<div id="gc-thread-messages" class="pt-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex top-0 -translate-y-1\/2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
     'after the thread\'s scroller, floating over its foot, centred');
   assert.doesNotMatch(fill, /data-transcript-strip/, 'no strip of its own');
   for (const kind of ['change', 'request']) {

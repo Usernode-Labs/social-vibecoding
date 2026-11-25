@@ -10,6 +10,7 @@
 
 const log = require('./logger');
 const socialIdentity = require('./social-identity');
+const accountAge = require('./social-account-age');
 
 const SCOPE = '';
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
@@ -140,7 +141,9 @@ async function exchangeCode(config, { code, redirectUri, verifier }) {
     const id = body.id;
     if (!userResp.ok || typeof handle !== 'string' || !LOGIN_RE.test(handle)
         || !Number.isSafeInteger(id) || id <= 0) return null;
-    return { provider: 'github', subject: String(id), handle };
+    // created_at: when the account was made on GitHub, for Homeroom bot's
+    // account-age signal (services/social-account-age.js).
+    return { provider: 'github', subject: String(id), handle, accountCreatedAt: accountAge.parseProviderDate(body.created_at) };
   } finally {
     await revokeCredential(config, token, revokeKind);
   }
@@ -151,6 +154,7 @@ async function saveLink(pool, _config, userId, linked) {
     provider: 'github',
     subject: linked && linked.subject,
     handle: linked && (linked.handle || linked.login),
+    accountCreatedAt: linked && linked.accountCreatedAt,
   });
 }
 

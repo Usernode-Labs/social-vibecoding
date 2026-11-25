@@ -216,12 +216,13 @@ is no replay plan to write and nothing to verify locally.
   `focusTarget` locates the element to point at. Hints guide; they are never
   executed.
 - If a fresh staging copy lacks the state a change shows, seed it in the same
-  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches the
-  after copy, the side a new state needs. Seed rows for the shots' fixture
+  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches both
+  copies when main's schema can hold it. A seed that needs a table or column
+  main lacks reaches the after copy only. Seed rows for the shots' fixture
   accounts (`usernode-capture` is the member) and fake people, never a signal
   the code reads to decide something, and a bot's reply as the stored message,
-  never asked for. A change to a state that already existed needs it on both
-  sides: its seed merges first, in its own proposal.
+  never asked for. A change to a state that already existed can be seeded in
+  its own proposal too.
 - `impact: none` applies only when no user-visible state changes. Changed
   text, counts, loading, error, and status states need a `ui` change even if
   the code reuses existing markup and styles. If a required state can be
@@ -250,8 +251,9 @@ is no replay plan to write and nothing to verify locally.
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Pinned apps).
-- **The phone's bar is Home · Communities · AI · Messages · You; the desktop
-  sidebar is Home, AI, Messages, Communities, then Recents and You** (#6019;
+- **The phone's bar is Home · Communities · AI · Messages · You, and the
+  desktop sidebar draws the same order, then Recents and You** (one order on
+  every layout since the phone review of 23 Nov 2026; #6019;
   One Home, #6361; the Communities tab came back on 18 Nov 2026). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
   (`frontend/src/features/ai/`) is the lists, with **New chat**, a labelled
@@ -332,7 +334,7 @@ is no replay plan to write and nothing to verify locally.
   pinned; Edit lets each be pinned), New community, which starts a project,
   and a Discover card whose button opens Home at Communities to join. Its
   Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
-  Home has no Needs you card (Standard (WIP) and the brand look have the
+  Home has no Needs you card (the standard look and the brand look have the
   card on Home). The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
@@ -349,7 +351,9 @@ is no replay plan to write and nothing to verify locally.
   Communities page (`goToCommunity(null)`, `openCommunitiesPage` in
   `features/workshop/community-scope.ts`). The tab is a plain door to that
   page on both bars, lit there and on a community's own page. The markup
-  is the sidebar's order, and app.css orders the phone's five cells.
+  keeps the old sidebar order (Home, AI, Messages, Communities) for the
+  declared checks; app.css draws every layout in the one order with `order`,
+  and `tab-bar.tsx` hands screen readers and the Tab key that order.
   **Needs you** (`#needs`, `features/workshop/index.tsx`, the
   `#workshop-screen` root) is a page under Home, its header's arrow up to
   it: every decision owed across your projects
@@ -364,7 +368,7 @@ is no replay plan to write and nothing to verify locally.
   row's pin, before its count, keeps it at the top, and the header's name
   is only a name. **A sidebar pin is the account's**
   (`community_pins`, `services/community-pins.js`,
-  `/api/me/community-pins`), apart from Home's: a member's only, four at
+  `/api/me/community-pins`), apart from Home's: a member's only, ten at
   most, gone when they leave, made from a community's row (its pin, or
   right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
   (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour
@@ -695,7 +699,9 @@ carry most of them.
 
 - **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
   subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
-  same pair. A 17px bold row title makes every row a heading.
+  same pair. A 17px bold row title makes every row a heading. Write them in
+  rem (0.9375rem over 0.8125rem), as the primitives do: Settings' Text size
+  scales rem, and a size in px stays put when someone turns it up.
   **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
   `frontend/src/features/ai/lists.tsx`): every thread you are in across
   projects, so a row is one 14px line (a glyph, its number from 768px, its
@@ -743,24 +749,44 @@ carry most of them.
 - **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
   heading's own words to a row's label so the row does not repeat them.
 
-- **The signed-out landing wears the website's look, not the shell's (13 Nov
-  2026).** The guest Discover (its short story and its list) is a visitor's
-  next click after onhomeroom.com, so it is drawn as that site is: clouds
-  with a white window in them, serif headlines (Young Serif, the stand-in
-  the new look already ships; the hero's headline and button are Source
-  Serif 4, `--site-display`, lighter and tighter), sun pills on an ink
-  outline and outlined cards. The hero is one frame (17 Nov 2026): the words
-  centred in the window, a pill under them, and the people on the window's
-  bottom edge; the pictures are in `public/brand/`, whose README says where
-  each came from. `public/css/app.css` ("THE WEBSITE'S LOOK ON THE
-  SIGNED-OUT PAGES") declares that look's variables on `#auth-landing-screen`
-  and moves them for the dark shell in one rule. The component drawn only
-  there (`features/auth/story.tsx`'s short story) spells every colour as one
-  of those variables and names no `dark:` class; the pieces shared with the
-  signed-in app (the bar's button, the search, the chips, the cards) keep
-  their classes and are repainted from that block by their own hooks.
-  Everything a member sees once signed in keeps the rules above.
-  `tests/guest-discover.test.js` holds it.
+- **The signed-out pages wear the website's look, not the shell's (13 Nov
+  2026).** The guest Discover (its short story and its list) and the page
+  about private communities are a visitor's next click after onhomeroom.com,
+  so they are drawn as that site is: clouds with a white window in them,
+  serif headlines (Young Serif, the stand-in the new look already ships;
+  the two heroes' headline and buttons are Source Serif 4, `--site-display`,
+  lighter and tighter), sun pills on an ink outline, outlined cards, and
+  bands of colour down the page. The two heroes share one frame (17 Nov
+  2026): a white window on the clouds with two pills under its words; the
+  pictures are in `public/brand/`, whose README says where each came from.
+  `public/css/app.css` ("THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES")
+  declares that look's variables on `#auth-landing-screen` and moves them for
+  the dark shell in one rule. The two components drawn only there
+  (`features/auth/story.tsx`'s short story, `features/guest/guest-communities.tsx`)
+  spell every colour as one of those variables and name no `dark:` class; the
+  pieces shared with the signed-in app (the bar's button, the search, the
+  chips, the cards) keep their classes and are repainted from that block by
+  their own hooks. The one exception is the walk through a community in the
+  private page's hero (the B3 design, 23 Nov 2026): it is a picture of the
+  app, so it keeps one palette of its own in both modes, declared on
+  `.hr-demo` in the same block. Everything a member sees once signed in
+  keeps the rules above. `tests/guest-discover.test.js` and
+  `tests/guest-communities.test.js` hold it.
+
+- **Settings and Profile wear the brand's editorial voice in the standard
+  look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
+  in Source Serif 4 (the supplied brand pack’s variable face, at weight 460), paper cards
+  with one thin outline, and a green row for the Settings page you are on.
+  These pages also tune their surrounding navigation to quiet ivory, use
+  the original sky and stars fading into the page, and share the labelled
+  name/bio editor between Profile and Settings (with distinct form ids).
+  It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
+  EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is
+  an `--ed-*` token declared once in light and dark. The two pages are the
+  exception to "a label over a card is small caps": a group's name on Profile
+  and a part's heading in Settings are serif headings there. The brand look
+  and the other screens keep the rules above.
+  `tests/editorial-settings-profile.test.js` holds it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is

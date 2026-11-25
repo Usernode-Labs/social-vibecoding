@@ -405,6 +405,18 @@ test('platform limit rows say which cap, how full, and what happens next', async
     appName: null, sourceUsername: null });
   assert.equal(lowNoRate.subject, '$480 left. Add credit before Homeroom bot stops building.');
 
+  // Homeroom bot's automatic switch to verified accounts only
+  // (services/homeroom-bot-verified-auto.js detailToken): it fired, or a
+  // figure passed 80% of its threshold.
+  const switched = await lines({ kind: 'platform_incident', detail: 'verify:on:s:5120:5000',
+    appName: null, sourceUsername: null });
+  assert.equal(switched.label, 'Homeroom bot now works for verified accounts only');
+  assert.equal(switched.subject, 'It switched by itself: AI spend over the last 30 days reached $5,120, and it switches at $5,000.');
+  const close = await lines({ kind: 'platform_incident', detail: 'verify:near:u:410:500',
+    appName: null, sourceUsername: null });
+  assert.equal(close.label, 'Homeroom bot may soon switch to verified accounts only');
+  assert.equal(close.subject, '410 people were active in the last 30 days. It switches at 500.');
+
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
     appName: null, sourceUsername: null });

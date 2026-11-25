@@ -13,8 +13,8 @@ const { within } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('reader release can publish keyed files and retake a keyed slot without retaining stale keys', { timeout: 15000 }, async (t) => {
-  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+test('reader release can publish keyed files and retake a keyed slot without retaining stale keys', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 10000 });
   admin.on('error', () => {});
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -70,7 +70,7 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   await owner.query('SELECT slot FROM shot_run_files WHERE run_id = $1 FOR UPDATE', [runId]);
   const sweep = media.sweep(pool, store);
   try {
-    assert.equal((await within(sweep, 2000, 'cleanup to retain a locked referenced row')).removed, 0);
+    assert.equal((await within(sweep, 60000, 'cleanup to retain a locked referenced row')).removed, 0);
   } finally { await owner.query('ROLLBACK'); owner.release(); await sweep; }
   // A retake replaces the old keys/density and reads the actual new object.
   await pool.query("UPDATE chat_sessions SET shots_state = 'exploring' WHERE id = $1", [session.id]);

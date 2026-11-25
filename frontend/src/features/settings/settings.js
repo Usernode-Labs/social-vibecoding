@@ -197,6 +197,13 @@
     return timeZone ? { ...options, timeZone } : options;
   };
 
+  // ONE WAY TO WRITE AN INSTANT on these pages (phone review #126, 23 Nov
+  // 2026): "Nov 23, 2026, 2:04 PM", the date as Linked devices writes it and
+  // the time to the minute. A bare `toLocaleString()` wrote
+  // "11/23/2026, 2:04:26 PM", seconds and all, beside "Nov 23, 2026".
+  const STAMP = { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  const stamp = (value) => new Date(value).toLocaleString(undefined, inZone(STAMP));
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -749,8 +756,8 @@
 
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
-      // applies at once. Its options are the looks the head stores ('wip'
-      // and 'brand', lib/skin.ts MENU_SKINS); nothing stored reads as
+      // applies at once. Its options are the looks the head stores
+      // ('brand', lib/skin.ts MENU_SKINS); nothing stored reads as
       // Standard.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
@@ -2108,7 +2115,7 @@
         // format it uses.
         params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
         if (connection.last_used_at) {
-          params.lastUsed = new Date(connection.last_used_at).toLocaleString(undefined, inZone());
+          params.lastUsed = stamp(connection.last_used_at);
           id = 'settings:connectors.test.result.okUsed';
         } else {
           id = 'settings:connectors.test.result.ok';
@@ -2453,12 +2460,12 @@
     // One connection's row on its card: one whole line per case of what is
     // known, in the date format this page uses everywhere.
     _connectorRowView(connector) {
-      const stamp = (value) => (value && Number.isFinite(Date.parse(value))
-        ? new Date(value).toLocaleString(undefined, inZone()) : null);
+      const when = (value) => (value && Number.isFinite(Date.parse(value))
+        ? stamp(value) : null);
       const expired = !this._connectorIsLive(connector);
-      const connected = stamp(connector.connected_at);
-      const lastUsed = stamp(connector.last_used_at);
-      const ranOut = stamp(connector.expired_at);
+      const connected = when(connector.connected_at);
+      const lastUsed = when(connector.last_used_at);
+      const ranOut = when(connector.expired_at);
       // Reconnect only where a guide step really signs in again (#6137).
       const reconnect = expired && !!this.CONNECTOR_RECONNECT_STEP[this._connectorTool(connector.client_name)];
       let detail;
@@ -2499,7 +2506,19 @@
         if (live.some((c) => c.last_used_at)) status = 'working';
         else if (live.length) status = 'unused';
         else if (held.length) status = 'attention';
-        return { key, status, connections: held.map((c) => this._connectorRowView(c)) };
+        const connections = held.map((c) => this._connectorRowView(c));
+        // Two rows with one name ("Claude" and "Claude") say nothing about
+        // which is which (phone review #126): each gets its place in the
+        // card after the name, and the line under it its dates.
+        const seen = {};
+        for (const row of connections) seen[row.title] = (seen[row.title] || 0) + 1;
+        const nth = {};
+        for (const row of connections) {
+          if (seen[row.title] < 2) continue;
+          nth[row.title] = (nth[row.title] || 0) + 1;
+          row.title = tr('settings:connectors.row.sameName', { name: row.title, number: nth[row.title] });
+        }
+        return { key, status, connections };
       });
     },
 
@@ -2566,7 +2585,7 @@
         // Two whole sentences: how often the tip was sent, then why it is not
         // showing now. Each is one message; hint.summaryAndAdvice orders them.
         const summary = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString(undefined, inZone()) })
+          ? tr('settings:connectors.hint.sent', { count: shown, days, when: stamp(hint.lastShownAt) })
           : tr('settings:connectors.hint.sentWhenUnknown', { count: shown, days });
         let advice;
         // Three different answers to "why am I not seeing it", and they are
@@ -2595,7 +2614,7 @@
           };
           advice = dayOf(end) === dayOf(new Date())
             ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString(undefined, inZone()) })
-            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString(undefined, inZone()) });
+            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: stamp(end) });
         } else {
           advice = tr('settings:connectors.hint.openNewConversation');
         }
@@ -3104,7 +3123,7 @@
           : (link.linked ? { text: tr('settings:socialIdentity.badge.connected'), tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString(undefined, inZone()) })
+          ? tr('settings:socialIdentity.row.linkedAt', { when: stamp(link.linkedAt) })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
@@ -3353,9 +3372,9 @@
           // One whole line per combination of what is known. `status` is the
           // server's own word for the credential's state.
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString(undefined, inZone()) : null;
+            ? stamp(token.created_at) : null;
           const lastUsed = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? new Date(token.last_used_at).toLocaleString(undefined, inZone()) : null;
+            ? stamp(token.last_used_at) : null;
           const state = token.status || tr('settings:cliTokens.row.statusUnknown');
           let detail;
           if (created && lastUsed) detail = tr('settings:cliTokens.row.createdUsed', { status: state, created, lastUsed });

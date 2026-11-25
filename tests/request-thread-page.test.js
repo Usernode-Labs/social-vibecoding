@@ -178,7 +178,7 @@ test('the root post is the card: the kicker, the title, the words and whose they
   assert.match(html, /messages-message-author">evan<\/span><time[^>]*>04:01 PM<\/time>/);
   assert.match(html, /<h1 class="dev-request-title" data-issue-title="4417">Add topics as discussion containers<\/h1>/);
   assert.match(html, /class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4"/);
-  assert.match(html, /<\/div><p class="dev-thread-by" data-thread-by="asker"><span>evan’s own words\.<\/span><\/p>/);
+  assert.match(html, /<\/div><p class="dev-thread-by" data-thread-by="asker"><span>Written by evan\.<\/span><\/p>/);
   assert.doesNotMatch(html, /dev-request-steps|data-request-stage=/, 'no stepper: the timeline has the steps');
   // The foot: the stage, one sentence for who is on it, the action, and the
   // date the claim lapses under them.
@@ -904,7 +904,7 @@ test('the request bar publishes the page\'s pill and its ⋯ key for the column 
   // The bar itself does not change: the column's heading draws the pill and
   // the rows beside the bot page, and this is what tells it which.
   assert.match(src, /const menuKey = r\.menuKey \|\| threadMenu \? requestMenuKey\(r\.menuKey, r\.number\) : null;/);
-  assert.match(src, /usePanelHead\(\{ kind: 'request', pill, menuKey \}\);/);
+  assert.match(src, /usePanelHead\(\{ kind: 'request', pill, menuKey, title: closing \? shown : null \}\);/);
   assert.match(src, /data-card-menu=\{menuKey\}/, 'the page\'s ⋯ carries the same key it publishes');
   const store = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/side-panel/head-store.ts'), 'utf8');
   assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,

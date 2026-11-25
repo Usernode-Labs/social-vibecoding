@@ -58,6 +58,25 @@ const CANDIDATE_LIMIT = 5000;
 const DEFAULT_INTERVAL_MINUTES = 10;
 const DEFAULT_AGGREGATE_HOURS = 6;
 
+// #6986: the week whose acceptances were credited to the bot, before a merge
+// credited the filer of its request too. A weekly challenge is scored week by
+// week, so once that week is behind the grace window nothing would ever look
+// at it again, and the two acceptances people reported would stay at 0 of 2.
+// The scorer scores that week once more for PROPOSAL_ACCEPTED until the
+// catch-up ends; credits are idempotent through the source key, so a week it
+// already covers costs nothing.
+const PROPOSAL_ACCEPTED_CATCH_UP = {
+  weekStarts: [Date.UTC(2026, 10, 16)],
+  untilMs: Date.UTC(2026, 11, 7),
+};
+
+// The catch-up weeks a run of one measure also scores. Empty for every other
+// measure, and empty once the one-time pass has ended.
+function catchUpWeekStarts(measure, now = Date.now()) {
+  if (measure !== 'PROPOSAL_ACCEPTED') return [];
+  return now < PROPOSAL_ACCEPTED_CATCH_UP.untilMs ? PROPOSAL_ACCEPTED_CATCH_UP.weekStarts : [];
+}
+
 
 // ── The challenges each rule covers ────────────────────────────────────
 //
@@ -199,19 +218,63 @@ const PROPOSAL_SENT_SQL = `
 
 // The merge EVENT rather than the session, because it is the only record of
 // whether an admin forced the merge — a forced merge is not a change the
-// group accepted. The event is attributed to the PR's author, which is who
-// the challenge is about.
+// group accepted.
+//
+// One merge credits more than its author (#6986). A change the Homeroom bot
+// built from somebody's request belongs to the bot: `cs.user_id` and the
+// event's `user_id` are the bot's, so the person who asked saw a counter that
+// never moved. So each merge also credits the filer of every request it was
+// linked to — by the request's own `created_by`, and by
+// `homeroom_bot_requesters`, which is who a request the bot took from a DM is
+// for. One person, one credit, however many of those name them.
 const PROPOSAL_ACCEPTED_SQL = `
-  SELECT e.id AS event_id, e.user_id, e.created_at, e.session_id,
-         cs.pr_title, cs.spec_md, a.name AS app_name
-    FROM events e
-    JOIN chat_sessions cs ON cs.id = e.session_id
-    LEFT JOIN apps a ON a.id = e.app_id
-   WHERE e.event_type = 'pr_merged'
-     AND e.user_id IS NOT NULL
-     AND e.created_at >= $1 AND e.created_at <= $2
-     AND COALESCE((e.metadata->>'forced')::boolean, FALSE) = FALSE
-   ORDER BY e.user_id ASC, e.created_at ASC, e.id ASC
+  WITH merges AS (
+    SELECT e.id AS event_id, e.user_id, e.created_at, e.session_id,
+           cs.app_id, cs.pr_title, cs.spec_md,
+           COALESCE(cs.linked_issues, '{}') AS linked_issues,
+           cs.created_from_issue_number
+      FROM events e
+      JOIN chat_sessions cs ON cs.id = e.session_id
+     WHERE e.event_type = 'pr_merged'
+       AND e.created_at >= $1 AND e.created_at <= $2
+       AND COALESCE((e.metadata->>'forced')::boolean, FALSE) = FALSE
+  ),
+  linked_requests AS (
+    SELECT m.event_id, m.session_id, m.created_at, m.app_id,
+           m.pr_title, m.spec_md, rq.created_by, rq.number
+      FROM merges m
+      JOIN requests rq
+        ON rq.app_id = m.app_id
+       AND (rq.number = ANY(m.linked_issues) OR rq.number = m.created_from_issue_number)
+  ),
+  credited AS (
+    SELECT m.event_id, m.user_id, m.session_id, m.created_at, m.app_id,
+           m.pr_title, m.spec_md, 'author'::text AS via
+      FROM merges m
+     WHERE m.user_id IS NOT NULL
+    UNION ALL
+    SELECT lr.event_id, lr.created_by, lr.session_id, lr.created_at, lr.app_id,
+           lr.pr_title, lr.spec_md, 'request'::text
+      FROM linked_requests lr
+     WHERE lr.created_by IS NOT NULL
+    UNION ALL
+    SELECT lr.event_id, hbr.user_id, lr.session_id, lr.created_at, lr.app_id,
+           lr.pr_title, lr.spec_md, 'request'::text
+      FROM linked_requests lr
+      JOIN homeroom_bot_requesters hbr
+        ON hbr.app_id = lr.app_id AND hbr.issue_number = lr.number
+     WHERE hbr.user_id IS NOT NULL
+  ),
+  one_per_person AS (
+    SELECT DISTINCT ON (event_id, user_id) *
+      FROM credited
+     ORDER BY event_id ASC, user_id ASC, (via = 'author') DESC
+  )
+  SELECT c.event_id, c.user_id, c.session_id, c.created_at, c.via,
+         c.pr_title, c.spec_md, a.name AS app_name
+    FROM one_per_person c
+    LEFT JOIN apps a ON a.id = c.app_id
+   ORDER BY c.user_id ASC, c.created_at ASC, c.event_id ASC
    LIMIT $3
 `;
 
@@ -230,19 +293,25 @@ const PROPOSAL_ACCEPTED_SQL = `
 // and the project they made in their first session is the one they have
 // something to say about. It is paid once in a life, so it is never paid
 // twice; the weekly and repeatable challenges still leave it out.
+// The eligibility test USEFUL_FEEDBACK_SQL applies, lifted out so the
+// challenge page's itemized report list (./challenge-items.js) reads the
+// same rule rather than retyping it. Both use `$4` for the own-apps flag
+// (a First challenge's `first_challenge`) and the same `fr`/`a` aliases.
+const USEFUL_FEEDBACK_ELIGIBLE_SQL = `fr.app_id IS NULL
+          OR $4::boolean
+          OR (a.created_by IS DISTINCT FROM fr.user_id
+              AND (a.view_visibility = 'public'
+                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+                   OR EXISTS (SELECT 1 FROM app_collaborators ic
+                               WHERE ic.app_id = a.id AND ic.status = 'invited')))`;
+
 const USEFUL_FEEDBACK_SQL = `
   SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
     FROM feedback_reports fr
     LEFT JOIN apps a ON a.id = fr.app_id
    WHERE fr.created_at >= $1 AND fr.created_at <= $2
      AND fr.issue_number IS NOT NULL
-     AND (fr.app_id IS NULL
-          OR $4::boolean
-          OR (a.created_by IS DISTINCT FROM fr.user_id
-              AND (a.view_visibility = 'public'
-                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
-                   OR EXISTS (SELECT 1 FROM app_collaborators ic
-                               WHERE ic.app_id = a.id AND ic.status = 'invited'))))
+     AND (${USEFUL_FEEDBACK_ELIGIBLE_SQL})
    ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
    LIMIT $3
 `;
@@ -541,13 +610,24 @@ async function loadCandidates(pool, measure, window, { target, ownApps = false }
     }
     case 'PROPOSAL_ACCEPTED': {
       const { rows } = await pool.query(PROPOSAL_ACCEPTED_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
-      return rows.map((r) => ({
-        userId: r.user_id,
-        sourceKey: `merged:${r.event_id}`,
-        activityAt: isoOf(r.created_at),
-        description: r.app_name ? `Accepted proposal on ${r.app_name}` : 'Accepted proposal',
-        gradeInput: { appName: r.app_name, title: r.pr_title, text: r.spec_md },
-      }));
+      return rows.map((r) => {
+        // A person's own change says so; one built for a request they filed
+        // says that instead, since the bot's account is the change's author.
+        const mine = r.via === 'request';
+        return {
+          userId: r.user_id,
+          sourceKey: `merged:${r.event_id}`,
+          activityAt: isoOf(r.created_at),
+          // Which relationship earned it, kept on the ledger row so the
+          // challenge page's "What counted this week" can say "Your request
+          // went live on ..." instead of the change's own title (#6986).
+          via: r.via,
+          description: mine
+            ? (r.app_name ? `Your request went live on ${r.app_name}` : 'Your request went live')
+            : (r.app_name ? `Accepted proposal on ${r.app_name}` : 'Accepted proposal'),
+          gradeInput: { appName: r.app_name, title: r.pr_title, text: r.spec_md },
+        };
+      });
     }
     case 'USEFUL_FEEDBACK': {
       const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT, own]);
@@ -678,6 +758,7 @@ async function writeCredits(pool, { challenge, activityType, credits }) {
         rule_id: credit.ruleId,
         measure: credit.measure,
         timestamp_precision: credit.timestampPrecision || 'instant',
+        ...(credit.via ? { via: credit.via } : {}),
         ...(credit.completion ? { kind: 'challenge_completion' } : {}),
         ...(credit.grade ? { grade: credit.grade } : {}),
       };
@@ -741,10 +822,12 @@ async function scoreChallenge(pool, row, rule, run) {
   const window = rules.resolveWindow(row, { now: run.now });
   const target = rules.effectiveTarget(rule, row);
   // A WEEKLY challenge is scored a week at a time (rules.weeklyWindows): this
-  // week, plus last week while its grace lasts. The measure's own query runs
-  // once per week, so "10 minutes" means 10 minutes in that week and each
-  // week's unit has a key of its own.
-  const windows = rules.isWeekly(row) ? rules.weeklyWindows(window, { now: run.now }) : [window];
+  // week, plus last week while its grace lasts, plus any catch-up week the
+  // measure names. The measure's own query runs once per week, so "10 minutes"
+  // means 10 minutes in that week and each week's unit has a key of its own.
+  const windows = rules.isWeekly(row)
+    ? rules.weeklyWindows(window, { now: run.now, extraWeekStarts: catchUpWeekStarts(rule.measure, run.now) })
+    : [window];
   let candidates;
   try {
     candidates = [];
@@ -1437,6 +1520,7 @@ module.exports = {
   scoreOnAppTime,
   maybeAggregate,
   loadCandidates,
+  catchUpWeekStarts,
   loadCredited,
   dueRuleIds,
   loadCadence,
@@ -1452,6 +1536,7 @@ module.exports = {
   CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
   INVITES_FIRST_TAKEN_SQL,
+  USEFUL_FEEDBACK_ELIGIBLE_SQL,
   ONBOARDING_LIMIT,
   CADENCE_RULES_SQL,
   CREDITED_SQL,

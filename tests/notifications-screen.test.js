@@ -110,8 +110,9 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // #3206: on All a kind chip may narrow it (tests/notifications-kind-filter.test.js).
   assert.match(screen, /const rows = isThreads \? \[\]\s*: tab === 'unread' \? unread\s*: kindOn \? all\.filter\(/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
-  // #6479: Today / Earlier is the picked zone's calendar day (splitToday).
-  assert.match(screen, /const \{ today, earlier \} = splitToday\(entries\)/);
+  // Phone review #118: All draws the cards Unread's older rows do, in the
+  // same Today / Yesterday / Last 7 days / Older sections (groupOlderByTime).
+  assert.match(screen, /const allSections = tab === 'all' && !searching \? groupOlderByTime\(rows, t\) : \[\];/);
   assert.match(screen, /_onItemClick\(view\.id\)/);
   assert.match(screen, /markAllRead\(\)/);
   assert.match(screen, /loadOlder\(\)/);

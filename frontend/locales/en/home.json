@@ -31,6 +31,10 @@
     "text": "Pinned projects",
     "description": "Heading over the grid of project tiles on the Home screen under the Standard (WIP) look: the projects this person keeps a tile for. It replaces \"Pinned apps\" there."
   },
+  "grid.headingSearch": {
+    "text": "Your projects",
+    "description": "Heading over the project tiles on the Home screen while something is typed in its search field: every project of the viewer's that matches, pinned to Home or not. Pairs with \"Your communities\", the heading over the matching communities further down."
+  },
   "grid.seeLess": {
     "text": "Show less",
     "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown once See all has unfolded the grid: it folds the grid back to its first rows."
@@ -62,6 +66,22 @@
   "grid.showAll_other": {
     "text": "Show all {{count}} apps",
     "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
+  },
+  "grid.showAllCount_one": {
+    "text": "Show all {{count}}",
+    "description": "Link at the end of the Pinned projects heading on Home: unfolds the grid of project tiles to show the rows folded away. {{count}} is the total number of the viewer's pinned projects. The heading beside it already names them, so it says no noun."
+  },
+  "grid.showAllCount_other": {
+    "text": "Show all {{count}}",
+    "description": "Link at the end of the Pinned projects heading on Home: unfolds the grid of project tiles to show the rows folded away. {{count}} is the total number of the viewer's pinned projects. The heading beside it already names them, so it says no noun."
+  },
+  "grid.showAllProjects_one": {
+    "text": "Show all {{count}} pinned project",
+    "description": "Accessible name and tooltip of the Pinned projects heading's Show all link on Home: unfolds the grid of project tiles. {{count}} is the total number of the viewer's pinned projects."
+  },
+  "grid.showAllProjects_other": {
+    "text": "Show all {{count}} pinned projects",
+    "description": "Accessible name and tooltip of the Pinned projects heading's Show all link on Home: unfolds the grid of project tiles. {{count}} is the total number of the viewer's pinned projects."
   },
   "grid.notice.offline": {
     "text": "You're offline. Apps you've opened before will appear here once this device has loaded them.",
@@ -137,35 +157,47 @@
   },
   "needsCard.seeAll": {
     "text": "See all",
-    "description": "Link at the end of the heading line of Home's Recent threads card: opens the notifications sheet's Recent threads list, every discussion the viewer took part in."
+    "description": "Button at the end of the heading of Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. Opens the Homeroom bot tab with every project's work. The heading beside it already names the section."
+  },
+  "needsCard.seeAllLabel": {
+    "text": "See all recent activity",
+    "description": "Accessible name and tooltip of the See all button on the heading of Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. Opens the Homeroom bot tab with every project's work."
   },
   "needsCard.eyebrow": {
-    "text": "Recent threads",
-    "description": "Title of Home's Recent threads card, in the side column: the discussions the viewer took part in, newest activity first. The card opens the same list in the notifications sheet."
+    "text": "Recent activity",
+    "description": "Title of Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. It was called Recent threads."
   },
-  "needsCard.kind.change": {
-    "text": "Change #{{number}}",
-    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a change to a project. {{number}} is its number, like 6800."
+  "needsCard.state.needs_one": {
+    "text": "{{count}} needs you",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many things in the project wait on the viewer (a vote, an answer, a plan to start). It is the count of the Needs you list on the Homeroom bot tab narrowed to that project. Drawn in the accent colour."
   },
-  "needsCard.kind.changeBare": {
-    "text": "Change",
-    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a change to a project that has no number yet."
+  "needsCard.state.needs_other": {
+    "text": "{{count}} need you",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many things in the project wait on the viewer (a vote, an answer, a plan to start). It is the count of the Needs you list on the Homeroom bot tab narrowed to that project. Drawn in the accent colour."
   },
-  "needsCard.kind.request": {
-    "text": "Request #{{number}}",
-    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a request. {{number}} is its number, like 6790."
+  "needsCard.state.progress_one": {
+    "text": "{{count}} in progress",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many of the viewer's requests and changes in the project are under way: being worked on, or waiting on somebody else. It is the count of the In progress list on the Homeroom bot tab narrowed to that project."
   },
-  "needsCard.kind.requestBare": {
-    "text": "Request",
-    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a request filed on a project that has no number yet."
+  "needsCard.state.progress_other": {
+    "text": "{{count}} in progress",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many of the viewer's requests and changes in the project are under way: being worked on, or waiting on somebody else. It is the count of the In progress list on the Homeroom bot tab narrowed to that project."
   },
-  "needsCard.kind.decision": {
-    "text": "Decision",
-    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a group decision on how a project is run (a vote on a new name, a card picture, and so on)."
+  "needsCard.state.waiting_one": {
+    "text": "{{count}} waiting on others",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. Said instead of the in progress line when none of those requests and changes is being worked on: {{count}} is how many of them wait on somebody else (other people's votes, a free builder, the clock). It is the count of the In progress list on the Homeroom bot tab narrowed to that project."
   },
-  "needsCard.meta": {
-    "text": "{{project}} · <0>{{when}}</0>",
-    "description": "Second, small line of a row on Home's Recent threads card, under the thread's title: the thread's project, then how long ago something last happened in it. Keep the <0></0> tags around the time. {{project}} is a project's name, like Plant Pal; {{when}} is a time, like 2h ago."
+  "needsCard.state.waiting_other": {
+    "text": "{{count}} waiting on others",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. Said instead of the in progress line when none of those requests and changes is being worked on: {{count}} is how many of them wait on somebody else (other people's votes, a free builder, the clock). It is the count of the In progress list on the Homeroom bot tab narrowed to that project."
+  },
+  "needsCard.state.live_one": {
+    "text": "{{count}} live this week",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many of the viewer's changes in the project went live in the last week. It is the \"this week\" count of the Done list on the Homeroom bot tab narrowed to that project."
+  },
+  "needsCard.state.live_other": {
+    "text": "{{count}} live this week",
+    "description": "A line on one project's card in Home's Recent activity section, under Pinned projects: a sideways row of cards, one per project the viewer has work in, each opening the Homeroom bot tab narrowed to that project. {{count}} is how many of the viewer's changes in the project went live in the last week. It is the \"this week\" count of the Done list on the Homeroom bot tab narrowed to that project."
   },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",
@@ -985,11 +1017,11 @@
   },
   "communities.activeWeek_one": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeWeek_other": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeShort_one": {
     "text": "{{formatted}} active",
@@ -1001,11 +1033,27 @@
   },
   "communities.liveThisWeek_one": {
     "text": "{{formatted}} change live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.liveThisWeek_other": {
     "text": "{{formatted}} changes live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+  },
+  "communities.compactMembersActive_one": {
+    "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
+    "description": "Line under a community's name on its compact card (the Communities page's Joined list), in grey: how many people are in the community, then how many took part in it in the last seven days (talked in its channel, started a change or voted). Shown only when somebody took part; otherwise the line is the member count alone. {{members}} is the member count already worded, for example \"34 members\" (communities.members). <0> and <1> each hold one of the two facts, which a narrow card keeps whole and puts on two lines rather than break one: keep each tag round its fact, with this language's own joining punctuation inside <0>. {{formatted}} is the number active with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactMembersActive_other": {
+    "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
+    "description": "Line under a community's name on its compact card (the Communities page's Joined list), in grey: how many people are in the community, then how many took part in it in the last seven days (talked in its channel, started a change or voted). Shown only when somebody took part; otherwise the line is the member count alone. {{members}} is the member count already worded, for example \"34 members\" (communities.members). <0> and <1> each hold one of the two facts, which a narrow card keeps whole and puts on two lines rather than break one: keep each tag round its fact, with this language's own joining punctuation inside <0>. {{formatted}} is the number active with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactLive_one": {
+    "text": "{{formatted}} change live this week",
+    "description": "Second line under a community's name on its compact card (the Communities page's Joined list), after a tick, in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactLive_other": {
+    "text": "{{formatted}} changes live this week",
+    "description": "Second line under a community's name on its compact card (the Communities page's Joined list), after a tick, in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
   },
   "join.heading": {
     "text": "Communities to join",
@@ -1015,13 +1063,9 @@
     "text": "Communities",
     "description": "Heading over the cards of public communities at the bottom of Home for a visitor who is not signed in."
   },
-  "join.featuredAppsCommunities": {
-    "text": "Featured apps / communities",
-    "description": "Small label over the row of featured cards on the Home screen under the Standard (WIP) look, where that row stands apart from Communities to join. Each card is an app and the community that builds it."
-  },
   "join.featured": {
     "text": "Featured",
-    "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
+    "description": "Small heading over the communities the platform features: the first group of cards in Communities to join on Home (signed in or out), and the row of featured cards that stands apart from that list in the standard look."
   },
   "join.featuredKind": {
     "text": "Featured in {{kind}}",
@@ -1033,7 +1077,7 @@
   },
   "join.sort.label": {
     "text": "Sort communities",
-    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular and Most active."
+    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular, Most active and A to Z."
   },
   "join.sort.new": {
     "text": "New",
@@ -1046,6 +1090,10 @@
   "join.sort.active": {
     "text": "Most active",
     "description": "One choice of the sort menu in Communities to join on Home: the communities with the most people active lately first. It is the starting order."
+  },
+  "join.sort.name": {
+    "text": "A to Z",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities in alphabetical order by name."
   },
   "join.members_one": {
     "text": "{{count}} member",

@@ -214,16 +214,28 @@ export function placeBeside(pin: Point, size: Size, viewport: Size, gap = 14, ma
  * until it clears `margin` on every side, keeping the screen's shape,
  * centred. `top` is a band kept clear above it all the way across (the
  * view's header lives there), so the picture is smaller still and never
- * runs under the header.
+ * runs under the header. `side` is what the system keeps of the screen's
+ * left and right (the iPhone Duo's column of clock and camera, THE USABLE
+ * BOX in app.css): the picture is still of the whole page, and is fitted
+ * and centred in what is left beside it, so neither its corner nor the bar
+ * above it goes under the camera.
  */
-export function insetFrame(viewport: Size, margin: number, top = 0): { x: number; y: number; scale: number } {
+export function insetFrame(
+  viewport: Size,
+  margin: number,
+  top = 0,
+  side: { left: number; right: number } = { left: 0, right: 0 },
+): { x: number; y: number; scale: number } {
   const w = Math.max(1, viewport.width);
   const h = Math.max(1, viewport.height);
-  const scale = Math.min((w - 2 * margin) / w, (h - 2 * margin - top) / h);
+  const left = Math.max(0, Number(side?.left) || 0);
+  const right = Math.max(0, Number(side?.right) || 0);
+  const room = Math.max(1, w - left - right);
+  const scale = Math.max(0, Math.min((room - 2 * margin) / w, (h - 2 * margin - top) / h));
   return {
-    x: (w - w * scale) / 2,
+    x: left + (room - w * scale) / 2,
     y: top + (h - top - h * scale) / 2,
-    scale: Math.max(0, scale),
+    scale,
   };
 }
 
@@ -278,11 +290,34 @@ export interface CloseUp {
 
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 
+/** The most the close-up zooms in: four times the picture's width in the box. */
+export const CLOSE_UP_MAX_ZOOM = 4;
+
 /**
- * The close-up's drawn picture. Zoom is 1 to 4 about the pin (1 = the
- * picture's width fits the box), pan moves the view from there; both are
- * clamped so the picture always covers the box, and the returned `pan` is
- * the clamped one, so a caller can keep it as its state.
+ * The least the close-up zooms out: the zoom at which the whole picture is in
+ * the box. Zoom 1 is the picture's width fitting the box's, so a wide picture
+ * that is no taller than the box at that zoom stops at 1; a phone's tall
+ * picture goes on down until its height fits too.
+ */
+export function closeUpMinZoom(box: Size, picture: Size): number {
+  const base = box.width / Math.max(1, picture.width);
+  const tall = picture.height * base;
+  if (!(tall > box.height) || !(box.height > 0)) return 1;
+  return Math.max(0.05, box.height / tall);
+}
+
+/**
+ * The close-up's drawn picture. Zoom 1 is the picture's width fitting the
+ * box, about the pin; it goes up to four times that and down to the whole
+ * picture in the box (`closeUpMinZoom`), and pan moves the view from there.
+ * Both are clamped: an axis on which the picture is bigger than the box
+ * always covers it, an axis on which it is smaller is centred. The returned
+ * `pan` is the clamped one, so a caller can keep it as its state.
+ *
+ * It used to return `offset - wanted`, where `wanted` already held the pan:
+ * the clamp's correction, not the pan. While the view was inside the picture
+ * that is 0, so a caller that kept it lost every drag on the next move
+ * (iPhone 17, 23 Nov 2026: a finger across the close-up moved nothing).
  */
 export function closeUpView(input: {
   /** Where the pin is on the picture, in the picture's own pixels. */
@@ -295,15 +330,20 @@ export function closeUpView(input: {
   pan: Point;
 }): CloseUp {
   const base = input.box.width / Math.max(1, input.picture.width);
-  const zoom = clamp(Number(input.zoom) || 1, 1, 4);
+  const zoom = clamp(Number(input.zoom) || 1, closeUpMinZoom(input.box, input.picture), CLOSE_UP_MAX_ZOOM);
   const size = {
     width: input.picture.width * base * zoom,
     height: input.picture.height * base * zoom,
   };
   const centre = { x: input.box.width / 2, y: input.box.height / 2 };
+  // Where the picture's corner goes with the pin in the middle and no pan.
+  const home = {
+    x: centre.x - input.pin.x * base * zoom,
+    y: centre.y - input.pin.y * base * zoom,
+  };
   const wanted = {
-    x: centre.x - input.pin.x * base * zoom + (Number(input.pan?.x) || 0),
-    y: centre.y - input.pin.y * base * zoom + (Number(input.pan?.y) || 0),
+    x: home.x + (Number(input.pan?.x) || 0),
+    y: home.y + (Number(input.pan?.y) || 0),
   };
   const offset = {
     x: size.width <= input.box.width
@@ -317,7 +357,7 @@ export function closeUpView(input: {
     size,
     offset,
     zoom,
-    pan: { x: offset.x - wanted.x, y: offset.y - wanted.y },
+    pan: { x: offset.x - home.x, y: offset.y - home.y },
   };
 }
 

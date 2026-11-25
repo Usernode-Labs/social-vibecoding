@@ -116,15 +116,57 @@ test('claim is a compare-and-swap on the owner the row was listed with', async (
   assert.equal(calls[0].params[1], checkRuns.selfOwner(), 'the winner stamps itself');
 });
 
-test('record / heartbeat / finish never throw into the checks pipeline', async () => {
+test('record / heartbeat / finish / linger never throw into the checks pipeline', async () => {
   const pool = { async query() { throw new Error('db down'); } };
   assert.equal(await checkRuns.record(pool, { runId: 'r', sessionId: 1, commitSha: 'a', manifest: {} }), false);
   assert.equal(await checkRuns.heartbeat(pool, 'r'), false);
-  assert.equal(await checkRuns.finish(pool, 'r'), false);
+  assert.equal(await checkRuns.finish(pool, 'r', { backoffMs: 0 }), false);
+  assert.equal(await checkRuns.linger(pool, 'r'), false);
   assert.equal(await checkRuns.record(null, { runId: 'r', sessionId: 1 }), false);
   const stop = checkRuns.startHeartbeat(null, 'r');
   assert.equal(typeof stop, 'function');
   stop(); stop();
+});
+
+// 23 Nov 2026: a run settled on a draining conductor, whose pool is cut to
+// four connections, and the one DELETE that gives its slot back failed. The
+// row held one of the four slots for nine minutes more.
+test('finish tries a failed delete again, backing off, and wakes this process\'s waiters once', async (t) => {
+  const woken = t.mock.method(require('../src/services/checks-queue'), 'slotFreed', () => {});
+  let calls = 0;
+  const flaky = { async query(sql, params) {
+    calls += 1;
+    assert.deepEqual([sql, params], ['DELETE FROM check_runs WHERE run_id = $1', ['run-1']]);
+    if (calls < 3) throw new Error('timeout exceeded when trying to connect');
+    return { rowCount: 1 };
+  } };
+  const started = Date.now();
+  assert.equal(await checkRuns.finish(flaky, 'run-1', { backoffMs: 20 }), true, 'the third try deletes it');
+  assert.equal(calls, 3);
+  assert.ok(Date.now() - started >= 55, 'backing off 20 ms, then 40');
+  assert.equal(woken.mock.callCount(), 1);
+
+  calls = 0;
+  const down = { async query() { calls += 1; throw new Error('db down'); } };
+  assert.equal(await checkRuns.finish(down, 'run-1', { backoffMs: 0 }), false);
+  assert.equal(calls, 4, 'four tries in all; the admission pass clears what is left');
+  assert.equal(woken.mock.callCount(), 2);
+
+  // A row already gone is not tried again.
+  calls = 0;
+  assert.equal(await checkRuns.finish({ async query() { calls += 1; return { rowCount: 0 }; } }, 'run-1'), false);
+  assert.equal(calls, 1);
+});
+
+test('linger marks a settled run\'s row, which the checks queue counts only until its Jobs\' deadline', async () => {
+  const calls = [];
+  const pool = { async query(sql, params) { calls.push({ sql, params }); return { rowCount: 1 }; } };
+  assert.equal(await checkRuns.linger(pool, 'run-1'), true);
+  assert.match(calls[0].sql, /UPDATE check_runs SET manifest = manifest \|\| '\{"settled": true\}'::jsonb WHERE run_id = \$1/);
+  assert.deepEqual(calls[0].params, ['run-1']);
+  assert.equal(await checkRuns.linger(null, 'run-1'), false);
+  const queue = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'checks-queue.js'), 'utf8');
+  assert.match(queue, /\(cr\.manifest->>'settled' = 'true'\) AS lingering,/, 'the flag the queue reads');
 });
 
 // ── collectForWorkflow: the settle path ─────────────────────────────────
@@ -820,8 +862,10 @@ test('captureForSession records a manifest before its Jobs exist and clears it o
   const launch = src.indexOf('kubernetes.runCaptureJob(');
   assert.ok(provisional > 0 && full > provisional && launch > full,
     'provisional manifest, then the full one, then the Job launch — in that order');
-  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && settledRun\) await checkRuns\.finish\(pool, runId\);/,
+  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && settledRun\) \{\s+await giveBackSettledSlot\(config, pool, \{ sessionId: session\.id, runId, adoptedEarlyUnit \}\);/,
     'the manifest is cleared in the run\'s finally once it settled; otherwise its retry collects by it');
+  const give = src.slice(src.indexOf('async function giveBackSettledSlot('), src.indexOf('function workflowOperation('));
+  assert.match(give, /await checkRuns\.finish\(pool, runId\);\s+return 'freed';/);
   assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the collect finds them');
 });
 

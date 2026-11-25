@@ -10,10 +10,11 @@
 // The web half has three parts, and this file pins each:
 //
 //   1. publishStatusBarTone (public/js/native-chrome.js): the tone of the
-//      ground UNDER the status bar. 'dark' while the fullscreen preview or
-//      the before/after compare overlay is open, else the running app's
-//      `data-app-tone`, else null. Sent only when it changes, only to a
-//      build that advertises `setStatusBarTone`.
+//      ground UNDER the status bar. 'dark' while the before/after compare
+//      overlay is open, on a project's pages (the community's colour) and
+//      on a phone's top-level screens (the tab bar's blue, Mobile 01), else
+//      the running app's `data-app-tone`, else null. Sent only when it
+//      changes, only to a build that advertises `setStatusBarTone`.
 //   2. The bridge wrapper (public/usernode-bridge.js): unprivileged, and on
 //      an older build that drops the unknown method it rejects after its
 //      timeout, with no console.error anywhere on the way.
@@ -59,8 +60,19 @@ function fakeElement(classes = []) {
  * the test fires by hand.
  *
  * opts: { capabilities, native, framed, setStatusBarToneImpl,
- *         getBridgeInfoImpl, withOverlays (default true), noMethod }
+ *         getBridgeInfoImpl, withOverlays (default true), noMethod,
+ *         phone (the window is under 768px; default false),
+ *         screen (the root on show at boot), noMatchMedia }
+ *
+ * The page has the header (shown) and every screen root the phone's blue bar
+ * is drawn on, all hidden, plus the app view (hidden, on the platform's
+ * surface): `screens`, which the test shows and hides as the router does.
  */
+const PHONE_QUERY = '(max-width: 767.98px)';
+const SCREEN_IDS = ['home-screen', 'leaderboard-screen', 'profile-screen',
+  'settings-screen', 'messages-screen', 'workshop-screen', 'weekly-digest-screen',
+  'communities-screen', 'ai-screen', 'profile-proposals-screen'];
+
 function boot(opts = {}) {
   const calls = { tones: [], bridgeInfo: 0, errors: [], warnings: [] };
   const attrs = new Map();
@@ -70,6 +82,12 @@ function boot(opts = {}) {
     'staging-overlay': fakeElement(['hidden']),
     'visual-compare-overlay': fakeElement(['hidden']),
   };
+  const screens = { 'platform-header': fakeElement() };
+  for (const id of SCREEN_IDS) screens[id] = fakeElement(['hidden']);
+  screens['app-view'] = fakeElement(['hidden']);
+  screens['app-view'].attributes.set('data-app-surface', 'platform');
+  if (opts.screen) screens[opts.screen].classes.delete('hidden');
+  const width = { phone: !!opts.phone, listeners: [] };
   const observed = [];
   let observerCallback = null;
   class FakeMutationObserver {
@@ -110,11 +128,15 @@ function boot(opts = {}) {
       documentElement: html,
       visibilityState: 'visible',
       getElementById(id) {
-        return opts.withOverlays === false ? null : (overlays[id] || null);
+        return opts.withOverlays === false ? null : (overlays[id] || screens[id] || null);
       },
       createElement() { return {}; },
       addEventListener() {},
     },
+    matchMedia: opts.noMatchMedia ? undefined : (query) => ({
+      get matches() { return query === PHONE_QUERY && width.phone; },
+      addEventListener(type, fn) { if (type === 'change') width.listeners.push(fn); },
+    }),
     addEventListener() {},
     dispatchEvent() {},
     setTimeout,
@@ -132,6 +154,8 @@ function boot(opts = {}) {
     calls,
     html,
     overlays,
+    screens,
+    width,
     observed,
     NativeChrome: sandbox.NativeChrome,
     tones: () => plain(calls.tones).map((t) => t.tone),
@@ -141,6 +165,23 @@ function boot(opts = {}) {
     // community-tint.ts sets it empty while a project's pages are up.
     setCommunityTint(on) {
       if (on) attrs.set('data-community-tint', ''); else attrs.delete('data-community-tint');
+    },
+    setAttr(name, value) {
+      if (value === null || value === undefined) attrs.delete(name); else attrs.set(name, value);
+    },
+    // What App._showOnlyScreen does: one root shown, the rest hidden.
+    showOnly(id, surface) {
+      for (const key of [...SCREEN_IDS, 'app-view']) {
+        if (key === id) screens[key].classes.delete('hidden'); else screens[key].classes.add('hidden');
+      }
+      if (surface) screens['app-view'].attributes.set('data-app-surface', surface);
+    },
+    // The window crossing 768px: the media query's own change event.
+    async setPhone(on) {
+      width.phone = on;
+      for (const fn of width.listeners) fn();
+      await settle();
+      await settle();
     },
     // What React's useHiddenClass / useClassToggle do, then the observer.
     async mutate(fn) {
@@ -191,7 +232,7 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
 test('the preview counts while it fills the screen, not docked beside a page', async () => {
   const h = boot();
   const read = () => h.NativeChrome._statusBarToneState();
-  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false });
+  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false, phoneBar: false });
 
   h.overlays['staging-overlay'].classes.delete('hidden');
   assert.equal(read().previewFullscreen, true, 'shown, and full until it says otherwise');
@@ -261,16 +302,110 @@ test('a project\'s pages publish light glyphs over the community\'s colour (poli
 
 test('it watches exactly what decides the tone', () => {
   const h = boot();
+  const all = { ...h.overlays, ...h.screens };
   const targets = h.observed.map(({ target, options }) => ({
     target: target === h.html ? 'html'
-      : Object.keys(h.overlays).find((id) => h.overlays[id] === target),
+      : Object.keys(all).find((id) => all[id] === target),
     filter: options.attributeFilter,
   }));
   assert.deepEqual(plain(targets), [
-    { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] },
+    { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip', 'data-skin'] },
     { target: 'staging-overlay', filter: ['class', 'data-placement'] },
     { target: 'visual-compare-overlay', filter: ['class', 'data-placement'] },
+    // Mobile 01: the phone's blue bar follows the route and the look.
+    { target: 'platform-header', filter: ['class'] },
+    ...SCREEN_IDS.map((id) => ({ target: id, filter: ['class'] })),
+    { target: 'app-view', filter: ['class', 'data-app-surface'] },
   ]);
+  assert.equal(h.width.listeners.length, 1, 'and the width, which crosses 768px with nothing in the document changing');
+});
+
+// ── 1b. The phone's top bar (Mobile 01) ────────────────────────────────
+
+test('statusBarToneFor: the phone\'s blue top bar is a dark ground', () => {
+  const { NativeChrome } = boot();
+  const tone = (s) => NativeChrome.statusBarToneFor(s);
+  assert.equal(tone({ phoneBar: true }), 'dark',
+    'the tab bar\'s blue, #3c7bd8 light and #122a52 dark: white clock and battery in both');
+  assert.equal(tone({ phoneBar: false }), null, 'off it, the app\'s theme decides as before');
+  assert.equal(tone({ phoneBar: true, sideStrip: true }), null,
+    'iPhone Duo: the clock is in the side strip, over the wallpaper, not over the bar');
+  assert.equal(tone({ phoneBar: true, previewFullscreen: true }), null,
+    'the preview fills the screen in the theme\'s own colours');
+  assert.equal(tone({ phoneBar: true, compareOpen: true }), 'dark');
+  assert.equal(tone({ phoneBar: true, appTone: 'light' }), 'dark',
+    'the bar is blue wherever it is up, whatever tone an app frame left behind');
+  assert.equal(tone({ phoneBar: true, communityTint: true }), 'dark');
+});
+
+test('the blue bar is read off the page: a phone, the standard look, a top-level screen', () => {
+  const h = boot({ phone: true });
+  const read = () => h.NativeChrome._statusBarToneState().phoneBar;
+  assert.equal(read(), false, 'no screen root on show yet');
+  for (const id of SCREEN_IDS) {
+    h.showOnly(id);
+    assert.equal(read(), true, id);
+  }
+  h.showOnly('home-screen');
+  h.html.classes.add('dark');
+  assert.equal(read(), true, 'dark mode too: the bar is the tab bar\'s dark blue');
+  assert.equal(h.NativeChrome.statusBarToneFor(h.NativeChrome._statusBarToneState()), 'dark');
+  h.html.classes.delete('dark');
+
+  h.showOnly('app-view', 'platform');
+  assert.equal(read(), true, 'a project page the platform draws (its tint, once known, says the same)');
+  h.showOnly('app-view', 'app');
+  assert.equal(read(), false, 'a running app: its own tone decides');
+
+  h.showOnly('home-screen');
+  h.setAttr('data-skin', 'brand');
+  assert.equal(read(), false, 'a look draws its own bar');
+  h.setAttr('data-skin', null);
+  h.screens['platform-header'].classes.add('hidden');
+  assert.equal(read(), false, 'no header, no bar');
+  h.screens['platform-header'].classes.delete('hidden');
+  h.width.phone = false;
+  assert.equal(read(), false, 'from 768px the header is a different drawing');
+
+  const none = boot({ phone: true, noMatchMedia: true });
+  none.showOnly('home-screen');
+  assert.equal(none.NativeChrome._statusBarToneState().phoneBar, false, 'no media queries: no claim');
+});
+
+test('the tone follows the route on a phone: light glyphs on the top level, the app\'s inside it', async () => {
+  const h = boot({ phone: true, screen: 'home-screen' });
+  await settle();
+  assert.deepEqual(h.tones(), ['dark'], 'Home, at boot');
+
+  await h.mutate(() => h.showOnly('messages-screen'));
+  assert.deepEqual(h.tones(), ['dark'], 'Messages: the same bar, nothing re-sent');
+
+  h.setCommunityTint(true);
+  await h.mutate(() => h.showOnly('app-view', 'platform'));
+  assert.deepEqual(h.tones(), ['dark'], 'a project\'s pages: its colour, still dark');
+
+  h.setCommunityTint(false);
+  await h.mutate(() => h.showOnly('app-view', 'app'));
+  assert.deepEqual(h.tones(), ['dark', null], 'the running app, with no tone of its own: the theme');
+  h.setAppTone('light');
+  await h.mutate(() => {});
+  assert.deepEqual(h.tones(), ['dark', null, 'light']);
+
+  h.setAppTone(null);
+  await h.mutate(() => h.showOnly('ai-screen'));
+  assert.deepEqual(h.tones(), ['dark', null, 'light', 'dark'], 'back on the Homeroom bot tab');
+
+  h.setAttr('data-side-strip', 'right');
+  await h.mutate(() => {});
+  assert.deepEqual(h.tones(), ['dark', null, 'light', 'dark', null], 'the Duo\'s side strip: the wallpaper');
+  h.setAttr('data-side-strip', null);
+  await h.mutate(() => {});
+
+  await h.setPhone(false);
+  assert.deepEqual(h.tones(), ['dark', null, 'light', 'dark', null, 'dark', null],
+    'widened past 768px (an iPad\'s split view): the desktop bar, the theme');
+  await h.setPhone(true);
+  assert.deepEqual(h.tones().slice(-1), ['dark'], 'and narrowed again');
 });
 
 test('a change that lands while a publish is in flight is not lost', async () => {
@@ -308,6 +443,7 @@ test('outside the app, in a framed copy, or with an older bridge: nothing at all
     assert.deepEqual(h.tones(), [], JSON.stringify(opts));
     assert.equal(h.calls.bridgeInfo, 0, `${JSON.stringify(opts)}: not even a probe`);
     assert.equal(h.observed.length, 0, `${JSON.stringify(opts)}: nothing observed`);
+    assert.equal(h.width.listeners.length, 0, `${JSON.stringify(opts)}: not even the width`);
   }
 });
 

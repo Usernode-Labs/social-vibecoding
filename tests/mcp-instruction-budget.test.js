@@ -221,7 +221,7 @@ test('the charter says what the before & after copies cannot show', () => {
   assert.ok(!section.brief && !charter.BRIEF_ORDER.includes(section.id), 'charter-only');
   assert.ok(section.text.includes(copyLimits.copyLimitsText({ rule: false })), 'the shared list, whole');
   assert.match(section.text, /check each declared change against that list/);
-  assert.match(section.text, /one that can be neither reached nor seeded is a blocker to report in your summary/);
+  assert.match(section.text, /One that can be neither reached nor seeded is a blocker to report in your summary/);
 });
 
 // ── 3. The tool that delivers it ───────────────────────────────────────

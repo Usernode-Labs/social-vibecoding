@@ -1058,5 +1058,81 @@
   "frame.allProjects": {
     "text": "All projects",
     "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: the first choice in the list of projects, which shows finished work from every project."
+  },
+  "details.title": {
+    "text": "Your profile",
+    "description": "Heading of the in-page profile editor on the standard profile page."
+  },
+  "details.intro": {
+    "text": "Keep your info up to date and let the community know what you’re building.",
+    "description": "Introduction to the in-page profile editor."
+  },
+  "details.handleNote": {
+    "text": "Change your handle in Settings",
+    "description": "Link under the read-only handle in the in-page profile editor."
+  },
+  "details.save": {
+    "text": "Save changes",
+    "description": "Saves the name and bio in the in-page profile editor."
+  },
+  "projects.title": {
+    "text": "Projects you’ve helped build",
+    "description": "Heading above real projects with the viewer’s recently merged changes on their profile."
+  },
+  "projects.intro": {
+    "text": "Your latest changes, out in the world.",
+    "description": "Introduction to the profile’s recently live projects."
+  },
+  "projects.latest": {
+    "text": "Latest change: {{title}}",
+    "description": "Description of a project card on the profile, naming a real merged change."
+  },
+  "projects.empty": {
+    "text": "Your projects will appear here when your first change goes live.",
+    "description": "Empty state for projects with recently merged changes on the profile."
+  },
+  "preferences.title": {
+    "text": "Preferences",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "preferences.appearance": {
+    "text": "Appearance",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "preferences.privacy": {
+    "text": "Privacy",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.label": {
+    "text": "Profile sections",
+    "description": "Accessible name of the row of tabs on the viewer's own profile in the standard look, which switches the column below it. Each tab keeps the person on the profile."
+  },
+  "sections.projects": {
+    "text": "Projects",
+    "description": "Tab of the viewer's own profile in the standard look: the overview, with the projects they have helped build, their recent activity, their work and rewards."
+  },
+  "sections.changes": {
+    "text": "Changes",
+    "description": "Tab of the viewer's own profile in the standard look: their finished changes listed below the row. A noun, plural."
+  },
+  "sections.requests": {
+    "text": "Requests",
+    "description": "Tab of the viewer's own profile in the standard look: the requests they filed, listed below the row. A noun, plural."
+  },
+  "sections.votes": {
+    "text": "Votes",
+    "description": "Tab of the viewer's own profile in the standard look: the changes and decisions they voted on, listed below the row. A noun, plural."
+  },
+  "sections.activity": {
+    "text": "Activity",
+    "description": "Tab of the viewer's own profile in the standard look: their recent activity, listed below the row."
+  },
+  "recent.title": {
+    "text": "Recent activity",
+    "description": "Heading above the profile’s recently merged changes."
+  },
+  "recent.all": {
+    "text": "View all activity",
+    "description": "Link from the profile’s recent activity to the full changes history."
   }
 }

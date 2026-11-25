@@ -838,6 +838,21 @@ export interface DevWorkshopView {
    */
   dashboard: {
     open: number;
+    /**
+     * 24 Nov 2026: the Workshop path's Asked stop — the open lane, requests
+     * nobody is building and that are not up for a vote — counted with the
+     * board's own `asked` stage test (AppView._devCardInStage), so the list
+     * the stop opens holds what it counts. Optional for an older view.
+     */
+    asked?: number;
+    /**
+     * How many of the viewer's own threads (the Yours filter's reading) sit
+     * at three of the path's stops: each a part of what that stop counts.
+     * Null for a guest, who has none.
+     */
+    mine?: { asked: number; votes: number; live: number } | null;
+    /** The digest the weeks come from has not answered yet: Live by week holds its place. */
+    weeksPending?: boolean;
     themes: number;
     votesWaiting: number;
     /**
@@ -958,7 +973,10 @@ export interface DevWorkshopView {
     who: string | null;
     at: string | null;
     going: boolean;
+    /** The run's element shot, drawn whole; null without one. */
     picture: string | null;
+    /** The after screen framed on what its claim is about (#41): its URL, size and the element's box, in CSS px. */
+    frame?: { url: string; width: number; height: number; box: number[] } | null;
   }[];
   /**
    * One unclaimed open issue to suggest, as a row. Null when there is none;

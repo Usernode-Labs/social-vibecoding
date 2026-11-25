@@ -10,10 +10,11 @@
 //
 //   advance   the proposal's branch moved to the draft's head, as a
 //             fast-forward only (github.js advanceBranchToSha): the proposal
-//             began at the draft's head and every edit since is on top of
-//             it, so anything else means the proposal moved some other way
-//             (brought up to date with main, say), and it is refused rather
-//             than overwritten
+//             began at the draft's head, or (24 Nov 2026) the draft began at
+//             the proposal's, and every edit since is on top of it, so
+//             anything else means the proposal moved some other way (brought
+//             up to date with main, or changed by its own builder), and it is
+//             refused rather than overwritten
 //   settle    the head-moved machinery the bot's own commits go through
 //             (proposal-update.js settleLandedHead): an authored move clears
 //             the votes, says so in the change's discussion, and builds the
@@ -22,6 +23,10 @@
 // Both under the proposal lock every revision writer of a proposal takes,
 // and each kept as a step, so a retry after a lost reply never moves the
 // branch twice. Input: { draftId, sessionId, head }.
+//
+// 24 Nov 2026: a draft can also be opened on a proposal it did not make
+// (live-drafts.js open), so the proposal's own author is read here too: only
+// a proposal of the draft's author is ever moved, whoever made it.
 
 const github = require('./github');
 const repoRef = require('./repo-ref');
@@ -35,7 +40,8 @@ async function draftOf(pool, request) {
   const { draftId, sessionId } = request.input || {};
   const { rows: [row] } = await pool.query(
     `SELECT d.id, d.user_id, d.app_id, d.state, d.head_sha, d.proposal_session_id, d.proposed_head_sha,
-            a.slug AS app_slug, a.repo_url, ps.status AS proposal_status, ps.branch_name AS proposal_branch
+            a.slug AS app_slug, a.repo_url, ps.status AS proposal_status, ps.branch_name AS proposal_branch,
+            ps.user_id AS proposal_user_id
        FROM live_drafts d
        JOIN apps a ON a.id = d.app_id
        LEFT JOIN chat_sessions ps ON ps.id = d.proposal_session_id
@@ -51,6 +57,8 @@ async function authorize({ pool }, request, user, { steps = null } = {}) {
   const draft = await draftOf(pool, request);
   if (!draft || Number(draft.user_id) !== Number(user.id)) return { status: 404, error: 'No such draft of yours.' };
   if (draft.state !== 'proposed') return { status: 409, error: 'This draft is no longer up for a vote.' };
+  // Nobody but its author moves a proposal (proposal-update.js ownershipGate).
+  if (Number(draft.proposal_user_id) !== Number(user.id)) return { status: 403, error: 'That proposal is someone else\'s, so this draft cannot update it.' };
   if (!SHA.test(String(request.input?.head || ''))) return { status: 400, error: 'bad_head' };
   const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [draft.app_id]);
   if (!app || !(await appAccess.checkAppAccess(pool, app, user, 'collab'))) return { status: 404, error: 'No such draft of yours.' };
@@ -86,7 +94,7 @@ async function run({ config, pool }, request, _user, steps) {
       log.warn('live-draft-update', 'A draft\'s proposal moved some other way', { draftId: draft.id, sessionId });
       return {
         ok: false, status: 409, code: 'branch_moved',
-        error: 'The proposal changed since this draft was proposed (it may have been brought up to date with main), so the draft cannot update it.',
+        error: 'The proposal changed since this draft last matched it (it may have been brought up to date with main), so the draft cannot update it.',
       };
     }
     await pool.query(

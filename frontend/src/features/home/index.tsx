@@ -113,6 +113,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { gridStore } from './grid-store';
 import { HOME_SEARCH_SHORTCUT_KEYS } from './search-shortcut';
+import { keepHomeAnchor } from './scroll-anchor';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -134,6 +135,12 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
+  // Unfolding the Duo keeps the section that was at the top of the view there
+  // (./scroll-anchor.ts). At rest is the parked search row's height.
+  useEffect(() => keepHomeAnchor(screenRef.current, () => {
+    const bar = document.getElementById('home-search-bar');
+    return (bar && bar.offsetHeight) || 0;
+  }), []);
   // EDIT MODE (#4669) is read here for the heading's doors: "Edit" that
   // starts it (#5871) and "Done" that ends it. The store starts not ready,
   // with no items and editing off, so the prerender and the first client
@@ -385,11 +392,16 @@ export function HomeScreen() {
                  screen rides, the way Discover's "See all" rides its heading.
                  With few apps, or unfolded, the tile ends the grid and the
                  heading has no action. `heldBack` is never true while
-                 editing, so the two branches cannot both draw. */
+                 editing, so the two branches cannot both draw.
+
+                 Each of the row's links is 32px tall (min-h-8), the height of
+                 the label's own Show all link, so the row is one height in
+                 both states and the grid under it does not jump on entering
+                 Edit (phone review, 23 Nov 2026: 54px, then 39). */
               <span className="flex items-center gap-4">
                 <button
                   type="button"
-                  className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  className="home-edit-add shrink-0 flex min-h-8 items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
                   aria-label={t('home:edit.addTile')}
                   onClick={() => { openAddAppsSheet(); }}
                 >
@@ -397,7 +409,7 @@ export function HomeScreen() {
                 </button>
                 <button
                   type="button"
-                  className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  className="home-edit-done shrink-0 flex min-h-8 items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
                   aria-label={t('home:edit.done')}
                   onClick={() => { (window as any).Home?.setEditing?.(false); }}
                 >
@@ -414,7 +426,7 @@ export function HomeScreen() {
                 {canEdit ? (
                   <button
                     type="button"
-                    className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                    className="home-edit-start shrink-0 flex min-h-8 items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
                     aria-label={t('home:edit.startLabel')}
                     onClick={() => { (window as any).Home?.setEditing?.(true); }}
                   >
@@ -429,8 +441,15 @@ export function HomeScreen() {
                 thing to press, which unfolds the grid and folds it again.
                 Down while rows are held back; up once they are out and
                 folding would hide some; plain words when neither. */}
-            {wip && moreCount > 0 ? (
-              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} pill={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
+            {/* A search lists every project of yours that matches, pinned
+                or not (Home.isYours), so its heading says that (phone
+                review #13): "Pinned projects" over an unpinned one was
+                wrong, beside "Your communities" under it. */}
+            {grid.view === 'search' ? t('home:grid.headingSearch') : wip && moreCount > 0 ? (
+              /* "Show all 17", no noun: the heading it ends names them, and
+                 "apps" there was a third name for one thing (phone review,
+                 23 Nov 2026). Its accessible name says what it shows. */
+              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAllProjects', { count: moreCount })} pill={t('home:grid.showAllCount', { count: moreCount })} onClick={() => { foldApps(false); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
             ) : wip && canFold ? (

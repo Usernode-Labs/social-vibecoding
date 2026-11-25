@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { build, twin, START, END } = require('../scripts/thread-look');
+const { build, twin, voteTwin, START, END } = require('../scripts/thread-look');
 
 const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
 const block = css.slice(css.indexOf(START) + START.length, css.indexOf(END)).replace(/\/\*[\s\S]*?\*\//g, '');
@@ -26,9 +26,66 @@ test('every rule of the block is the standard look\'s, inside the thread page, a
   assert.ok(selectors.length > 150, 'the look is carried over');
   for (const one of selectors) {
     assert.ok(one.startsWith('html:not([data-skin])'), `"${one.slice(0, 90)}" is the standard look's`);
-    assert.match(one, /#dev-topic-thread|#gc-thread/, `"${one.slice(0, 90)}" stays inside the thread page`);
+    assert.match(one, /#dev-topic-thread|#gc-thread|\[data-vote-look="thread"\]/, `"${one.slice(0, 90)}" stays inside the thread page`);
     assert.doesNotMatch(one, /data-skin="/, `"${one.slice(0, 90)}" names a look`);
+    if (one.includes('[data-vote-look=')) {
+      assert.ok(one.startsWith('html:not([data-skin])'), `"${one.slice(0, 90)}" reaches the picker only outside every skin`);
+    }
   }
+});
+
+test('the portaled vote picker is painted with the page\'s own colours', () => {
+  // The picker is portaled out of the page, so the scoped rules cannot reach
+  // it: its frame carries data-vote-look="thread" (dev-card.tsx) and the
+  // carried rules are written again on that marker.
+  const rule = (sel) => {
+    const at = block.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `the block has ${sel}`);
+    const open = block.indexOf('{', at);
+    return block.slice(open + 1, block.indexOf('}', open)).replace(/\s+/g, ' ').trim();
+  };
+  const MARK = '[data-vote-look="thread"]';
+  const HOST = `:is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form):where(${MARK})`;
+  assert.match(rule(`.dev-vote-pop:where(${MARK})`), /background: var\(--bl-card\)/,
+    'the picker is the page card');
+  assert.match(rule(`${HOST} .dev-vote-switch`),
+    /background: var\(--bl-page\)/, 'the switch track is the page ground');
+  assert.match(rule(`${HOST} .dev-vote-switch-yes[aria-pressed="true"]`),
+    /background: var\(--bl-sun\)/, 'Yes is the page sun');
+  assert.match(rule(`html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`),
+    /box-shadow: inset 0 0 0 1px var\(--bl-on-sun\)/, 'the light look gives Yes the ink outline');
+  const send = rule(`${HOST} .dev-vote-reason-send-yes`);
+  assert.match(send, /background: var\(--bl-sun\)/);
+  assert.match(send, /box-shadow: var\(--bl-pill-edge\)/, 'Vote yes is the page pill');
+  assert.match(rule(`${HOST} :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label)`),
+    /color: var\(--bl-label\)/, 'the labels are the page label ink');
+  assert.match(rule(`${HOST} .dev-vote-reason-box`),
+    /var\(--bl-field-edge\)/, 'the line box is the page field');
+  // The look's tokens reach the marker itself, so the page's dark and
+  // high-contrast token rules follow it there too.
+  const lightRoot = block.split('\n').find((l) => l.includes(`[data-vote-look="thread"]`) && l.includes('--bl-card: #ffffff'));
+  assert.ok(lightRoot && lightRoot.includes('--bl-sun: #ffee6f'), 'the light tokens are declared on the marker');
+  assert.ok(lightRoot.startsWith('html:not([data-skin])'), 'and only outside every skin');
+});
+
+test('how a selector reaches the portaled picker', () => {
+  assert.equal(voteTwin('html:not([data-skin]) #dev-topic-thread'), 'html:not([data-skin]) [data-vote-look="thread"]',
+    'the page\'s tokens and typeface land on the marker');
+  assert.equal(voteTwin('html:not([data-skin]).dark #dev-topic-thread'), 'html:not([data-skin]).dark [data-vote-look="thread"]');
+  assert.equal(voteTwin('html:not([data-skin]) :where(#dev-topic-thread) .dev-vote-pop'),
+    'html:not([data-skin]) .dev-vote-pop:where([data-vote-look="thread"])', 'the marker goes on the picker\'s frame');
+  assert.equal(voteTwin('html:not([data-skin]) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch'),
+    'html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form):where([data-vote-look="thread"]) .dev-vote-switch');
+  assert.equal(voteTwin('html:not([data-skin]) :where(#dev-topic-thread) .dev-thread-card'), null, 'an unrelated rule is left alone');
+});
+
+test('dev-card.tsx marks the picker only when its button stands inside the thread page', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf8');
+  assert.match(src, /const threadLook = !!btnRef\.current\?\.closest\('#dev-topic-thread'\);/);
+  assert.match(src, /const voteLook = threadLook \? 'thread' : \(boardLook \? 'board' : undefined\);/,
+    'the thread page\'s marker is chosen first; the All items board\'s is only the fallback');
+  assert.equal((src.match(/data-vote-look=\{voteLook\}/g) || []).length, 2,
+    'the popover and the phone sheet both carry it');
 });
 
 test('colours are the look\'s tokens: no rule of the block writes one outside a token', () => {

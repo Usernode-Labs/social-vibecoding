@@ -10,11 +10,13 @@
 // machine's work (src/workflow/shots-eval/), on the trial's attempt id.
 
 const appManifest = require('./app-manifest');
+const dbRetry = require('./db-retry');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff-worker');
+const pureDiff = require('./shots-diff');
 const shotsFiles = require('./shots-files');
 const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
@@ -65,9 +67,11 @@ function agentBusyRetryable(error) {
 // (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
 // wording: a database or clone step the platform runs for the copies tags
 // its own error (shots-environment), GitHub's hourly limit and the shots
-// agent's exit have their own codes, and the worker's bootstrap names its
-// transient failures. Anything else, a revision that does not build
-// included, is the proposal's and is not taken again.
+// agent's exit have their own codes, the worker's bootstrap names its
+// transient failures, and a database connection that could not be had in
+// time is known by its shape (db-retry.isConnectionError, 23 Nov 2026).
+// Anything else, a revision that does not build included, is the
+// proposal's and is not taken again.
 const GITHUB_RESET_GRACE_MS = 60_000;
 const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
 const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
@@ -86,6 +90,9 @@ function platformFault(error, { now = Date.now() } = {}) {
   // once, a few minutes on, by the recovery sweep.
   if (error.code === 'github_unavailable') return { kind: 'github_unavailable', retryAt: now + 5 * 60_000 };
   if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  // No connection in time (a release's draining process on its small pool,
+  // a server refusing connections): whichever step met it, the database's.
+  if (dbRetry.isConnectionError(error)) return { kind: 'database' };
   // The change's worker could not start (its volume, its image, no room on
   // any node, a setup that never finished): the platform's, never the
   // change's, so the run is taken again once.
@@ -578,6 +585,25 @@ function fitBrief(brief, budget = BRIEF_BUDGET) {
   };
 }
 
+// What the change's own staging seeds could not put on the before copy, for
+// the shots agent: a claim whose before side needs one of those rows is
+// skipped with a plain reason rather than reported as a vague capture
+// failure.
+function changeSeedsBrief(beforeSeeds) {
+  const leftOut = (beforeSeeds.leftOut || []).map(({ name, why }) => ({ seed: name, why }));
+  const beforeCopy = beforeSeeds.ran === true ? 'applied'
+    : beforeSeeds.ran === 'partial' ? 'partial' : 'not_run';
+  return {
+    beforeCopy,
+    leftOut,
+    note: 'Every seed named here is on the after copy only. If a declared change\'s before side lacks data one of'
+      + ' them writes, call skip_change for it at once with the reason "the before copy can\'t hold the demo data'
+      + ' this change adds (seed name)", and do not try other browsers.'
+      + (beforeSeeds.ran === 'partial' ? ' The seed step did not finish in time, so other seeds may be missing too.' : '')
+      + (beforeSeeds.ran === false ? ' The seed step did not run, so none of the change\'s own seeds are on the before copy.' : ''),
+  };
+}
+
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
   childApp = false, afterOnly = false, declaredChecks = null,
@@ -650,6 +676,12 @@ function shotsBrief({
     },
     declaredChecks: declaredChecks || declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // Only Homeroom's own pair runs the change's seeds against the before
+    // copy (shots-environment.applyChangeSeedsToBefore). When any were left
+    // out, or the step did not fully run, say so and name them.
+    ...(selfApp && deployment.beforeSeeds
+      && (deployment.beforeSeeds.ran !== true || (deployment.beforeSeeds.leftOut || []).length)
+      ? { changeSeeds: changeSeedsBrief(deployment.beforeSeeds) } : {}),
     // The only files upload_file can choose where a page asks for one, the
     // same on both copies (worker/shots-samples.js).
     sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
@@ -698,7 +730,12 @@ function sameProvenance(actual, expected) {
     && actual.headImageDigest === expected.headImageDigest;
 }
 
+// The code a run that ended on `error` records. A connection the database
+// would not give in time is one code whatever the driver said (its errno, a
+// SQLSTATE, or none at all), so every reader can say it in plain words
+// (shots-state DATABASE_BUSY_REASON) instead of the driver's.
 function errorCode(error) {
+  if (dbRetry.isConnectionError(error)) return state.DATABASE_BUSY_CODE;
   const code = String(error?.code || '');
   return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'shots_failed';
 }
@@ -1495,18 +1532,55 @@ async function dispatchAgent(config, pool, {
   };
 }
 
+// A verdict with the comparison's screens: the changes whose screens came
+// out the same marked so, a change folded onto another one's screen said so
+// beside it, and a screen on which something sizeable changed outside every
+// change's frame noted (shots-diff elsewhereChanged). Injected comparers may
+// lack the optional readers.
+function withScreens(verdict, screens, diff) {
+  let stories = verdict.stories;
+  if (typeof diff.unchangedStories === 'function') {
+    stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
+  }
+  // A change folded onto another one's screen kept its own after shot, but
+  // the card draws the first change's: say so beside it. Injected comparers
+  // may return screens without the field.
+  if (typeof shotsFiles.markFolded === 'function') {
+    const folded = new Set();
+    for (const screen of screens) {
+      if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
+    }
+    if (folded.size) stories = shotsFiles.markFolded(stories, folded);
+  }
+  const notices = typeof diff.elsewhereNotices === 'function'
+    ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
+    : (verdict.notices || []);
+  return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+}
+
+// The ready changes of a run's declaration, each slot their comparison reads.
+function readyStories(intent, verdict) {
+  return (intent?.stories || []).filter((story) => (verdict.stories || [])
+    .some((result) => result.id === story.id && result.status === 'ready'));
+}
+
 /**
  * Where each ready change's before and after screens differ, so the card
  * can outline it, with the changes whose screens came out the same marked
  * so (shots.publish). Resolves the verdict to store. A screen that cannot be
- * compared is shown without outlines; it never holds the run back.
+ * compared never holds the run back: when the comparison fails (its worker
+ * busy past the wait, out of time, or an image it cannot read), the verdict
+ * still carries a screen for each one the run shot (shots-diff
+ * fallbackScreens: nothing outlined, and no change marked unchanged, since
+ * nothing was compared), so the card draws the current viewer, and says
+ * `screensFallback`: the shots machine compares them again later
+ * (recompareScreens below) and puts the real screens in their place.
  */
 async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
   const diff = injected.shotsDiff || shotsDiff;
   const control = await shotsControl.read(pool, runId);
   if (!control || verdict.afterOnly) return verdict;
-  const ready = control.intent.stories.filter((story) => verdict.stories
-    .some((result) => result.id === story.id && result.status === 'ready'));
+  const ready = readyStories(control.intent, verdict);
   const slots = [];
   for (const story of ready) {
     for (const viewport of story.viewports) {
@@ -1517,37 +1591,50 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
       }
     }
   }
+  let files = null;
   try {
-    const files = await shotsControl.filesFor(pool, runId, slots);
-    const screens = await diff.screensFor(ready, files, { signal });
-    let stories = verdict.stories;
-    if (typeof diff.unchangedStories === 'function') {
-      stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
-    }
-    // A change folded onto another one's screen kept its own after shot, but
-    // the card draws the first change's: say so beside it. Injected comparers
-    // may return screens without the field.
-    if (typeof shotsFiles.markFolded === 'function') {
-      const folded = new Set();
-      for (const screen of screens) {
-        if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
-      }
-      if (folded.size) stories = shotsFiles.markFolded(stories, folded);
-    }
-    // A screen on which something sizeable changed outside every change's
-    // frame says so beside the agent's own notices (shots-diff
-    // elsewhereChanged). Injected comparers may not have it.
-    const notices = typeof diff.elsewhereNotices === 'function'
-      ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
-      : (verdict.notices || []);
-    return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+    files = await shotsControl.filesFor(pool, runId, slots);
+    // The run's own comparison waits for a worker, with the longer deadline
+    // (shots-diff-worker RUN_COMPARE_TIMEOUT_MS).
+    const screens = await diff.screensFor(ready, files, { signal, wait: true });
+    return withScreens(verdict, screens, diff);
   } catch (error) {
     if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {
       runId, code: error?.code, error: String(error?.message || error).slice(0, 300),
     });
-    return verdict;
+    let screens = [];
+    try { screens = files ? pureDiff.fallbackScreens(ready, files) : []; } catch { screens = []; }
+    return { ...verdict, screens, screensFallback: true };
   }
+}
+
+/**
+ * The comparison of a published run whose first one failed (its verdict
+ * says `screensFallback`), tried again (shots.recompare), from the run's
+ * published shots: its workspace is gone by then. Resolves { verdict } with
+ * the real screens in place of the fallback ones, or { skipped } when there
+ * is nothing to do (the run is no longer published, or already compared).
+ * A comparison that fails again throws, so the work item tries again later
+ * (src/workflow/shots/services.ts RECOMPARE_ATTEMPTS, spaced out).
+ */
+async function recompareScreens(pool, { runId, signal }, injected = {}) {
+  const diff = injected.shotsDiff || shotsDiff;
+  const { rows: [run] } = await pool.query(
+    'SELECT id, state, intent, hard_verdict FROM shot_runs WHERE id = $1', [runId]);
+  const verdict = run?.hard_verdict;
+  if (!run || run.state !== 'verified' || !verdict || typeof verdict !== 'object' || verdict.screensFallback !== true) {
+    return { skipped: true };
+  }
+  const ready = readyStories(run.intent, verdict);
+  if (!ready.length || verdict.afterOnly) return { skipped: true };
+  const files = await (injected.publishedFilesFor || shotsControl.publishedFilesFor)(pool, runId);
+  const screens = await diff.screensFor(ready, files, { signal, wait: true });
+  // The verdict as published, less what the fallback put in it.
+  const compared = { ...verdict };
+  delete compared.screensFallback;
+  delete compared.screens;
+  return { verdict: withScreens(compared, screens, diff) };
 }
 
 // Another run on the proposal's worker is under way: its own (the shots
@@ -1636,6 +1723,7 @@ module.exports = {
   MAX_AGENT_BUSY_RETRIES,
   MIN_AGENT_RETRY_MS,
   platformFault,
+  errorCode,
   visibleError,
   redactDiagnosticText,
   newRunMetrics,
@@ -1650,5 +1738,6 @@ module.exports = {
   agentErrorOf,
   dispatchAgent,
   compareScreens,
+  recompareScreens,
   cleanupRun,
 };

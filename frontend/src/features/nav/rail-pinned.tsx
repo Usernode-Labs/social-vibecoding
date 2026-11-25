@@ -14,7 +14,7 @@
  * Pinned and Recent apps apart from the communities (#5323). A community and
  * its app are one to one, so the pins ./pinned-apps-store.js has kept since
  * are the same slugs and carry over as they are: an app pinned before is its
- * community's pin now. Four at most, as before.
+ * community's pin now. Ten at most, as before.
  *
  * ── Pinning and unpinning (#5323) ────────────────────────────────────
  *

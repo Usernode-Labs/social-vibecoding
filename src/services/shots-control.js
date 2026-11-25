@@ -766,6 +766,29 @@ async function filesFor(pool, runId, slots = null, { withData = true, store = me
   return files;
 }
 
+// A published run's light PNG screen and element shots with their bytes, as
+// filesFor gives a run's own: what comparing its screens again reads once
+// its workspace is gone (its cleanup removes it soon after the publish;
+// shots-orchestrator.recompareScreens). The published copies keep the same
+// stored bytes, sha256 and recorded place.
+async function publishedFilesFor(pool, runId, { store = mediaStore.getStore() } = {}) {
+  const { rows } = await pool.query(
+    `SELECT story_id, viewport, side, variant, media, theme, sha256, focus_rect, object_key
+       FROM shot_artifacts
+      WHERE run_id = $1 AND media = 'png' AND variant IN ('context', 'focus') AND theme IS DISTINCT FROM 'dark'`,
+    [runId]);
+  const files = [];
+  for (const row of rows) {
+    files.push({
+      storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
+      theme: 'light', sha256: row.sha256,
+      focusRect: row.variant === 'focus' ? focusRectOf(row.focus_rect) : null,
+      data: await mediaStore.bytes(store, row),
+    });
+  }
+  return files;
+}
+
 async function remove(pool, runId) {
   await pool.query('DELETE FROM shot_run_control WHERE run_id = $1', [runId]);
 }
@@ -886,6 +909,7 @@ module.exports = {
   noteProgress,
   read,
   filesFor,
+  publishedFilesFor,
   wantedCloseups,
   saveChecksFor,
   stillsFor,

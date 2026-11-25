@@ -2,8 +2,10 @@ import type * as React from 'react';
 import { useCallback, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { CameraIcon, ChevronRightIcon } from '@/components/ui/icons';
 
+import { ProfileDetailsCard } from '../../profile/profile-details-card';
+import { useLiveSkin } from '../../../lib/skin';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { displayNameOf, initialOf } from '../../profile/profile-store.js';
@@ -31,6 +33,7 @@ interface ProfileUser {
   username?: string | null;
   displayName?: string | null;
   avatarUrl?: string | null;
+  bio?: string | null;
 }
 
 function readUser(): ProfileUser | null {
@@ -64,6 +67,7 @@ function Avatar({ user }: { user: ProfileUser | null }) {
 
 export function ProfileSection() {
   const t = useMessages('settings');
+  const editorial = useLiveSkin() === 'standard';
   const [user, setUser] = useState<ProfileUser | null>(null);
   const sync = useCallback(() => setUser(readUser()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
@@ -80,12 +84,14 @@ export function ProfileSection() {
         <SectionHeading title={t('settings:profile.title')}>
           {t('settings:profile.intro')}
         </SectionHeading>
+        <div className="settings-profile-layout">
         <a
           id="settings-profile-card"
           href="#profile?edit"
           className="ui-card ui-row flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
         >
           <Avatar user={user} />
+          {editorial ? <span className="settings-profile-camera" aria-hidden="true"><CameraIcon /></span> : null}
           <span className="ui-row-tx flex-1 min-w-0">
             <span className="ui-row-t block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {displayNameOf(user)}
@@ -97,6 +103,11 @@ export function ProfileSection() {
           <span className="ui-link text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
+        {editorial && user ? <ProfileDetailsCard
+          key={`${user.username}:${user.displayName || ''}:${user.bio || ''}`}
+          id="settings-profile-details" embedded user={user} onSaved={sync}
+        /> : null}
+        </div>
       </div>
     </div>
   );

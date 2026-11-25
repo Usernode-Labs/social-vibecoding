@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.wipTokens\.brand'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy (one entry, the brand kit, since 20 Nov 2026): it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard (its work-in-progress copy was removed on 24 Nov 2026, #7071): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -249,6 +249,14 @@ test('every rule of the look is scoped to the flag, in one of its two modes or i
   assert.ok(seen.light > 10 && seen.dark > 10, 'and each mode has its own tokens and its own utility ramp');
 });
 
+test('the brand look\'s phone bar sizes each seat to its own label (#7059)', () => {
+  // The word-sized seats used to be the standard look's alone, so the brand
+  // look's blue bar cut Home and the long labels mid-word.
+  assert.match(read('public', 'css', 'app.css'),
+    /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\):not\(\[data-side-strip\]\) #platform-tabs \{ grid-template-columns: repeat\(5, auto\); \}/,
+    'the brand look starts each seat from its label');
+});
+
 test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
   const css = read('public', 'css', 'app.css');
   const block = lookBlock();
@@ -371,6 +379,24 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   }
   assert.ok(ruleFor('.platform-rail-nest-in::before').some((rule) => /background:\s*rgba\(255, 255, 255, 0\.45\);/.test(rule.body)),
     'the faint bar beside a community\'s nested rows');
+});
+
+test('the pin on the lit row is ink on the sun, not the bar\'s white', () => {
+  // The pin is the lit link's sibling, so the "YOU ARE HERE" rules never reach
+  // it: without this rule it kept the bar's white and could not be read on the sun.
+  const ROW = '.platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin';
+  const pinRules = ruleFor(ROW).filter((rule) => rule.selectors.every((sel) => sel.startsWith(EITHER) && sel.includes('#platform-tabs')));
+  const pin = pinRules.find((rule) => valueOf(rule.body, '--lit-tint'));
+  assert.ok(pin, 'the lit row\'s pin has a rule of its own');
+  assert.equal(valueOf(pin.body, 'color'), 'var(--bl-on-sun)', 'its glyph is the row\'s ink');
+  assert.equal(valueOf(pin.body, '--lit-ink'), 'var(--bl-on-sun)', 'hover and pressed take that ink');
+  assert.equal(valueOf(pin.body, '--accent'), 'var(--bl-on-sun)', 'and its focus ring');
+  assert.match(valueOf(pin.body, '--lit-tint'), /^color-mix\(in srgb, var\(--bl-on-sun\) 12%, transparent\)$/,
+    'its ground is a tint of that ink');
+  for (const rule of pinRules) {
+    assert.doesNotMatch(rule.body, /#fff\b|#ffffff|rgba\(255,\s*255,\s*255/,
+      `${rule.selectors.join(', ')} still reads the bar’s white`);
+  }
 });
 
 test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps its own colour', () => {
@@ -601,8 +627,11 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
   // Standard (WIP)'s second brand token set named it too, until it was removed on 20 Nov 2026.
-  const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
-  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look and the signed-out pages\' names Young Serif');
+  // The standard look's Settings and Profile draw their headings in it since #7072 (24 Nov 2026), in a block of their own.
+  const outsideSerif = outsideTheLooks()
+    .replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '')
+    .replace(/SETTINGS AND PROFILE, THE EDITORIAL PAGES[\s\S]*?END OF THE EDITORIAL PAGES\./, '');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, the signed-out pages and the editorial pages names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {
@@ -706,7 +735,7 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
-  assert.match(side, /if \(skin !== 'brand'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
+  assert.match(side, /if \(skin !== 'brand' && skin !== 'standard'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
     'the grid drops its tile only where the search row shows the button');
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   const tokens = at(':is(#home-screen, #communities-screen)').body;
@@ -724,47 +753,43 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
 });
 
-test('Recent threads stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
+test('Recent activity stands beside Pinned apps on a wide screen, its project cards two across, and is a sideways row of them on a phone', () => {
   const block = lookBlock();
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   // Only while the card and the apps section are both drawn: otherwise Home is one column as it was.
   const BOTH = '#home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden]))';
-  const wide = block.slice(block.indexOf('RECENT THREADS BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT THREADS BESIDE PINNED APPS')) > 0, 'from 1280px');
+  const wide = block.slice(block.indexOf('RECENT ACTIVITY BESIDE PINNED APPS'), block.indexOf('RECENT ACTIVITY IN THIS LOOK'));
+  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT ACTIVITY BESIDE PINNED APPS')) > 0, 'from 1280px');
   assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
   assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
   assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
   const beside = at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body;
   assert.match(beside, /grid-column:\s*2;\s*grid-row:\s*1;/);
   // Pinned apps alone sets the row's height: the column stretches to it and
-  // holds its rows to it, so the number of rows the card draws cannot change
-  // the box it was worked out from.
+  // holds its cards to it, so the cards it draws cannot change the box they
+  // are laid out in.
   assert.match(beside, /contain:\s*size;/, 'the column adds no height of its own to the row');
-  assert.match(beside, /min-height:\s*200px;/, 'a floor of a heading and about two rows');
+  assert.match(beside, /min-height:\s*200px;/);
   assert.match(beside, /overflow:\s*hidden;/);
-  // A short list ends after its last row instead of matching Pinned apps' height.
+  // The card fills the column, and its project cards are two across, scrolling in it upward.
   const card = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card').body;
-  const panel = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel').body;
-  assert.doesNotMatch(card, /flex:\s*1 1 auto;/, 'the card is its own height');
-  assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
-  assert.match(card, /flex:\s*none;/);
-  assert.match(panel, /flex:\s*none;/);
-  // 19 Nov 2026: no "N more" row; the heading opens the rest.
-  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
-  assert.doesNotMatch(block, /#home-needs-card \.wip-row-more/);
-  // The look sets no --wip-cell-pad, so the kit row's padding fell away: a recent thread's row is padded top and bottom.
-  assert.match(block, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;/);
+  assert.match(card, /flex:\s*1 1 auto;\s*min-height:\s*0;/);
+  const rail = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail').body;
+  assert.match(rail, /flex-wrap:\s*wrap;/);
+  assert.match(rail, /margin-inline:\s*0;\s*padding-inline:\s*0;/, 'the column clips at its edges: no gutter there');
+  assert.match(rail, /overflow-x:\s*hidden;\s*overflow-y:\s*auto;/);
+  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail > li').body, /width:\s*calc\(50% - 5px\);/);
+  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-card:focus-visible').body, /outline-offset:\s*-2px;/, 'the ring inside the column');
+  // The thread list's rules went with it: no row, no panel, no "N more".
+  assert.doesNotMatch(block, /#home-needs-card (?:> )?\.wip-(?:rows|row|panel)\b/);
+  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/);
   // The launcher grid is repainted, never moved: the card is the box around it.
   assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
   assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);
-  // On a phone the list is a row that scrolls and snaps card by card.
-  const phone = block.slice(block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.match(phone, /^[^{]*\*\/\s*@media \(max-width: 767\.98px\) \{/);
-  const rows = at('#home-needs-card .wip-rows').body;
-  assert.match(rows, /display:\s*flex;/);
-  assert.match(rows, /overflow-x:\s*auto;/);
-  assert.match(rows, /scroll-snap-type:\s*x mandatory;/);
-  assert.match(at('#home-needs-card .wip-rows > li').body, /flex:\s*0 0 78%;\s*scroll-snap-align:\s*start;/, 'the next card shows at the edge');
+  // At every width each project card is the look's card with its lift, and what needs the viewer is the sky.
+  assert.match(at('#home-needs-card .wip-activity-card').body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift-home\);/);
+  assert.match(at('#home-needs-card [data-ask]').body, /color:\s*var\(--bl-sky\);/);
+  assert.match(at('#home-needs-card .wip-activity-rail').body, /margin-bottom:\s*-1\.5rem;\s*padding-bottom:\s*1\.5rem;/, 'room below the cards for the lift, given back');
 });
 
 test('the Communities page wears the look: its button, its cards, and no count on its tab', () => {
@@ -785,7 +810,7 @@ test('the Communities page\'s cards wear the look: its card, its inks and its sm
   assert.match(page, /const brandCards = useMinWidth\(1280\);/);
   assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/, 'a pin is the big card from 1280px, as the look drew its cards');
   assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/, 'and a joined community the compact card');
-  assert.match(page, /if \(pinCards && shown && state\.ready && pinKey\) void loadHomePinsActivity\(\);/, 'what a pinned card says is read only where one is drawn');
+  assert.match(page, /if \(shown && state\.ready && \(\(pinCards && pinKey\) \|\| \(joinCards && joinedKey\)\)\) void loadHomePinsActivity\(\);/, 'what a card says (a pin\'s, and a joined community\'s week) is read only where one is drawn');
   const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
   assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
   // The card is "A COMMUNITY'S CARD", drawn from tokens: the look sets its own.
@@ -849,6 +874,40 @@ test('the board is calm: Vote and what is running are the sky, and a vote under 
   }
 });
 
+test('a vote to close is drawn with the page\'s card and the foot\'s two buttons (#7064)', () => {
+  // The card was white on the white thread card, with no edge, and Yes was
+  // the sky (the generic Vote face) beside a quiet grey patch: neither is
+  // what the page's own buttons look like.
+  const src = read('frontend', 'src', 'features', 'dev-board', 'topic', 'thread-changes.tsx');
+  assert.doesNotMatch(src, /style=\{sending \? \{ minWidth/, 'neither face carries an inline colour');
+  assert.match(src, /className=\{act \? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'\}/);
+  assert.equal((src.match(/const act = !sending && \(on \|\| \(!mine && side === 'up'\)\);/g) || []).length, 2,
+    'the request\'s close vote and the decision page\'s card');
+  const gate = ruleAt(`${EITHER} .dev-change-pair .dev-change-gate`);
+  assert.ok(gate, 'the card is the look\'s own, in both modes');
+  assert.match(gate.body, /background:\s*var\(--bl-card\);/);
+  assert.match(gate.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\);/);
+  const act = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act`);
+  assert.ok(act, 'the acting face');
+  assert.match(act.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(act.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(act.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act:hover`).body, /background:\s*var\(--bl-sun-lit\);/);
+  const quiet = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-quiet`);
+  assert.ok(quiet, 'and the quiet one');
+  assert.match(quiet.body, /background:\s*var\(--bl-raise\);/);
+  assert.match(quiet.body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  // The standard look's thread page carries the same rules (scripts/thread-look.js).
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /:where\(#dev-topic-thread\) \.dev-change-gate-act \.dev-vote-btn-act \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
+  // Every look keeps the quiet face's old fill, in the base rules.
+  assert.match(css, /\.dev-vote-btn-quiet, \.dev-vote-btn-quiet:hover \{ background: var\(--state-neutral-bg\); color: var\(--text-primary\); \}/);
+  // Both faces keep even sides, so neither label sits flush with its edge
+  // (the base button's 8px end is the caret's room, and these carry no
+  // caret).
+  assert.match(css, /\.dev-change-gate-act \.dev-vote-btn \{ min-width: 0; padding-inline: 11px; \}/);
+});
+
 test('Needs you\'s card is the look\'s white card from 768px, with the page\'s cream on it', () => {
   // The review flow draws from --rf-* tokens, and its page was the page's
   // own ground: a cream card on the cream page.
@@ -878,4 +937,65 @@ test('Messages on a phone is a white sheet with its rows flush on it', () => {
   assert.match(search, /background:\s*var\(--bl-page\);/, 'the search field is the page\'s cream on the white');
   assert.match(at('.messages-layout.messages-drawer .messages-search-input:focus').body, /border-color:\s*var\(--brand-line\);/);
   assert.match(read('frontend', 'src', 'features', 'messages', 'index.tsx'), /const drawerClass = drawer\.on \? ` messages-drawer/, 'the class the rules key on');
+});
+
+test('the vote picker is the look\'s white card, with a sun Yes and a sun send', () => {
+  // The picker that opens on Vote is one component in three places: a
+  // card's body-mounted popover, the phone's bottom sheet, and Needs you's
+  // vote sheet. Each host paints the same parts from the look's colours.
+  const HOST = ':is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form)';
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  // The popover is the look's card, not the shell's generic one.
+  const pop = at('.dev-vote-pop');
+  assert.ok(pop, 'one rule for the popover, in both modes');
+  assert.match(pop.body, /background:\s*var\(--bl-card\);/);
+  assert.match(pop.body, /border-color:\s*var\(--bl-edge\);/);
+  assert.match(pop.body, /box-shadow:\s*var\(--bl-lift-home\);/);
+  // The switch sits on the page's cream inside that card.
+  assert.match(at(`${HOST} .dev-vote-switch`).body, /background:\s*var\(--bl-page\);/);
+  assert.match(at(`${HOST} .dev-vote-switch-opt:not([aria-pressed="true"]):hover`).body,
+    /background:\s*var\(--bl-card\);/, 'hover is the card, not the shell\'s page fill');
+  // A picked Yes is the sun; the ink outline is light's alone, as every sun
+  // pill in this look is flat in dark.
+  const yes = at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"]`);
+  assert.match(yes.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(yes.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(ruleAt(`${LIGHT} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`).body,
+    /box-shadow:\s*inset 0 0 0 1px var\(--bl-on-sun\);/);
+  assert.equal(ruleAt(`${DARK} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`), undefined,
+    'no dark rule: the sun is flat there');
+  // Its tally stays readable on the sun.
+  assert.match(at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n`).body,
+    /color:\s*var\(--bl-on-sun\);/);
+  // The send is the page's own Vote pill.
+  const send = at(`${HOST} .dev-vote-reason-send-yes`);
+  assert.match(send.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(send.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(send.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):hover`).body,
+    /background:\s*var\(--bl-sun-lit\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):active`).body,
+    /box-shadow:\s*var\(--bl-pill-edge-down\);/);
+  // The line box wears the page's field edge; the reason chips its raised.
+  assert.match(at(`${HOST} .dev-vote-reason-box`).body, /box-shadow:\s*var\(--bl-field-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt`).body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt[aria-checked="true"]`).body, /box-shadow:\s*none;/,
+    'the picked reason keeps its own fill and drops the edge');
+  // The quiet words above the parts read the look's label ink.
+  assert.match(at(`${HOST} :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label)`).body,
+    /color:\s*var\(--bl-label\);/);
+  // Paint only: the three hosts are all covered, no size, padding or type
+  // moves, and a No keeps the app's own red.
+  const pieces = ['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form', '.dev-vote-switch',
+    '.dev-vote-why', '.dev-vote-reason', '.dev-vote-uncounted'];
+  const picker = lookRules().filter((rule) => rule.selectors.some((sel) => pieces.some((piece) => sel.includes(piece))));
+  assert.ok(picker.length >= 10, 'the picker\'s rules are all in the block');
+  for (const rule of picker) {
+    for (const sel of rule.selectors) {
+      assert.ok(['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form'].some((host) => sel.includes(host)),
+        `"${sel}" is scoped to the picker's three hosts`);
+    }
+    assert.doesNotMatch(rule.body, /\bheight:|padding|font-size|font:/, `"${rule.selectors[0]}" changes no size or type`);
+    assert.doesNotMatch(rule.body, /--state-blocked/, `"${rule.selectors[0]}" leaves a No its own red`);
+  }
 });

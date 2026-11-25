@@ -37,21 +37,48 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
+/** #6988: a bare number (the issue rows' old call) or the full open payload. */
+export type CloseIssuePayload = number | string | {
+  issueNumber?: number | string;
+  /** Prefills the reason box — the bot's own reason for a gone close offer. */
+  reason?: string;
+  /** The project to file the vote on, when AppView.appData does not have it. */
+  slug?: string;
+};
+
+function readPayload(payload?: CloseIssuePayload | null): {
+  issueNumber: number | string;
+  reason: string;
+  slug: string;
+} {
+  if (payload && typeof payload === 'object') {
+    return {
+      issueNumber: payload.issueNumber ?? '',
+      reason: typeof payload.reason === 'string' ? payload.reason : '',
+      slug: typeof payload.slug === 'string' ? payload.slug : '',
+    };
+  }
+  return { issueNumber: payload ?? '', reason: '', slug: '' };
+}
+
 export function CloseIssueDialog() {
   const t = useMessages('dialogs');
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<number | string | null>(null);
+  const slugRef = useRef('');
   const [issueNumber, setIssueNumber] = useState<number | string>('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const dialog = useDialog<number | string>('closeIssue', {
+  const dialog = useDialog<CloseIssuePayload>('closeIssue', {
     onOpen: (payload) => {
-      targetRef.current = payload ?? null;
-      setIssueNumber(payload ?? '');
+      const next = readPayload(payload);
+      targetRef.current = next.issueNumber;
+      slugRef.current = next.slug;
+      setIssueNumber(next.issueNumber);
       setError('');
-      if (reasonRef.current) reasonRef.current.value = '';
+      if (reasonRef.current) reasonRef.current.value = next.reason;
       // Was `setTimeout(() => reason.focus(), 0)`: the card is inside the
       // kit shell by now, and focusing before the shell's own opening
       // animation settles scrolls the page on iOS.
@@ -59,6 +86,7 @@ export function CloseIssueDialog() {
     },
     onClose: () => {
       targetRef.current = null;
+      slugRef.current = '';
       setError('');
       if (reasonRef.current) reasonRef.current.value = '';
     },
@@ -75,12 +103,19 @@ export function CloseIssueDialog() {
     const target = targetRef.current;
     const appView = window.AppView;
     const appData = appView?.appData;
-    if (!target || !appData) return;
+    // #6988: the side panel's column may not have appData yet; the open
+    // payload's slug, then the open app's, are what the vote is filed on.
+    const app = (window as unknown as { App?: { currentApp?: string | null } }).App;
+    const slug = slugRef.current || appData?.slug || app?.currentApp || '';
+    if (!target || !slug) {
+      setError(t('dialogs:closeIssue.error.noApp'));
+      return;
+    }
     const reason = (reasonRef.current?.value || '').trim();
 
     setBusy(true);
     try {
-      const resp = await fetch(`/api/apps/${appData.slug}/issues`, {
+      const resp = await fetch(`/api/apps/${slug}/issues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -107,7 +142,7 @@ export function CloseIssueDialog() {
     // draws the vote card.
     (window.App?._liveRefresh as
       ((kind: string, ids: null, opts: Record<string, unknown>) => unknown) | undefined)
-      ?.('issue', null, { appSlug: appData.slug, issueNumber: target });
+      ?.('issue', null, { appSlug: slug, issueNumber: target });
     await (appView?._loadDevFeed as (() => Promise<void>) | undefined)?.();
     // Refresh the opened-topic card too (the issue row's button flips to
     // "Close proposed") — _loadDevFeed's repaint no-ops without #dev-feed.

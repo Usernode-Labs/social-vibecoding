@@ -97,6 +97,25 @@ jobs:
           path: ${{ runner.temp }}/audit-${{ matrix.component }}/
           if-no-files-found: error
           retention-days: 30
+      # Export the already-built toolchain from the trusted main audit.
+      # The final image, inventory and assessment stay outside this cache.
+      - name: Export standalone Buildx cache
+        id: standalone_cache
+        if: matrix.component == 'standalone'
+        continue-on-error: true
+        run: |
+          docker buildx build --pull --platform linux/amd64 --target buildx-tools \
+            --output type=cacheonly \
+            --cache-to "type=local,dest=$RUNNER_TEMP/standalone-buildx-cache,mode=min" .
+      - uses: actions/upload-artifact@v4
+        if: matrix.component == 'standalone' && steps.standalone_cache.outcome == 'success'
+        continue-on-error: true
+        with:
+          name: standalone-buildx-cache-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/standalone-buildx-cache/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
 
   report:
     name: Publish audit data for Homeroom

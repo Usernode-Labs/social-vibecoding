@@ -26,7 +26,8 @@ import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { k } from '@/components/ui/kit';
-import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { PLANE_CARD } from '@/components/ui/grouped-list';
+import { CheckIcon, PencilSquareIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -37,6 +38,11 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
+import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
+import { ProfileHistoryList } from './profile-history-list';
+import { ProfileRecentActivity } from './profile-recent-activity';
+import { ProfileLiveProjects } from './profile-live-projects';
+import { ProfileDetailsCard } from './profile-details-card';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
@@ -54,13 +60,15 @@ import type { YouTab } from './frame/you-tabs';
 import { walletSheetStore } from '../header/wallet-sheet-store';
 import { useFramePage } from '../frame/frame-page-store';
 
-/** The round picture, or the initial-in-a-circle fallback — the idiom the rest
- *  of the app already uses for people. */
-function IdentityAvatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
+/** The round picture. A person with no uploaded photo has a generated one,
+ *  so `url` is present for every known account; it is absent only where no
+ *  account is known, and then an empty neutral circle holds the frame
+ *  (#7135 — the two-character drawing is no longer a stand-in). */
+function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   if (url) {
     return (
       <img
-        className="w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+        className="profile-id-avatar w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
         src={url}
         alt=""
       />
@@ -68,26 +76,24 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   }
   return (
     <div
-      className={
-        'w-14 h-14 text-xl rounded-full shrink-0 flex items-center justify-center '
-        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-      }
+      className="profile-id-avatar w-14 h-14 rounded-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-800"
       aria-hidden="true"
-    >
-      {initial}
-    </div>
+    />
   );
 }
 
 /** Identity card (#982) — who this profile belongs to, and the way in to
  *  editing it. The prototype's compact card: the name, one muted line of
- *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio. */
-function IdentityCard({ identity }: { identity: any }): ReactNode {
+ *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio.
+ *  The `profile-id-*` classes are hooks for the standard look's header
+ *  (#7072, app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card
+ *  spans the page there, with a larger picture and the name in the serif. */
+function IdentityCard({ identity, editorial = false }: { identity: any; editorial?: boolean }): ReactNode {
   const t = useMessages('profile');
   return (
     <div
       id="profile-identity-card"
-      className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}
+      className={`${PLANE_CARD} p-4 mb-3`}
     >
       {/*
           QA 2026-09-24 Q30e: on a phone "Edit profile" took the right half of
@@ -98,32 +104,26 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
       */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex flex-1 min-w-0 items-center gap-3">
-          <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
+          <IdentityAvatar url={identity.avatarUrl} />
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. */}
-            <div className="text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
-            {identity.sub ? (
+            <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+            {editorial && identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
+            {!editorial && identity.sub ? (
               // Wraps rather than truncating: a fact cut off mid-word is not
               // a fact.
-              <div className="text-sm text-zinc-500 dark:text-zinc-400">
+              <div className="profile-id-sub text-sm text-zinc-500 dark:text-zinc-400">
                 {identity.sub}
               </div>
             ) : null}
-          </div>
-        </div>
-        <Button
-          id="profile-edit-btn"
-          layout="shrink"
-          variant="neutral"
-          size="sm"
-          ink="neutral"
-          className="self-start ms-[68px] sm:self-auto sm:ms-0"
-          onClick={() => Profile.showEditSheet()}
-        >
-          {t('profile:identity.edit')}
-        </Button>
-      </div>
+            {/*
+                The verified accounts are facts about the person, so they sit
+                with the other facts, in the text column: a check and a line
+                of text each, not a pill under the avatar at the card's edge
+                (phone review #99). Edit profile, below, starts on the same
+                edge.
+            */}
       {/*
           The bio is deliberately plain text, not markdown: React renders it as
           a text child, which is the whole safety story — no HTML string is ever
@@ -139,24 +139,43 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
             otherwise fit, so ordinary prose still wraps at spaces and nothing
             else about the card changes.
         */
-        <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
+        <p className="profile-id-bio text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
           {identity.bio}
         </p>
       ) : null}
-      {identity.chips.length ? (
-        <div className="flex flex-wrap items-center gap-2 mt-3">
-          {identity.chips.map((chip: any) => (
-            <a
-              key={chip.key}
-              className={chip.className}
-              href={chip.href}
-              {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            >
-              {chip.label}
-            </a>
-          ))}
+            {editorial && identity.about ? <p className="profile-id-about">{identity.about}</p> : null}
+            {identity.chips.length ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                {identity.chips.map((chip: any) => (
+                  <a
+                    key={chip.key}
+                    className={chip.className}
+                    href={chip.href}
+                    data-verified-account={chip.key}
+                    {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                  >
+                    <CheckIcon className="h-3.5 w-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
+                    <span className="min-w-0 break-all">{chip.label}</span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
-      ) : null}
+        <Button
+          id="profile-edit-btn"
+          layout="shrink"
+          variant="neutral"
+          size="sm"
+          ink="neutral"
+          className="self-start ms-[68px] sm:self-auto sm:ms-0"
+          onClick={() => Profile.showEditSheet()}
+        >
+          {editorial ? <PencilSquareIcon aria-hidden="true" /> : null}
+          {t('profile:identity.edit')}
+        </Button>
+      </div>
+
     </div>
   );
 }
@@ -180,7 +199,7 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
         <div
           key={stat.key}
           data-profile-stat={stat.key}
-          className={`rounded-2xl ${PLANE_FILL} px-2 py-3 text-center${stat.zero ? ' hidden' : ''}`}
+          className={`${PLANE_CARD} px-2 py-3 text-center${stat.zero ? ' hidden' : ''}`}
         >
           <div className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{stat.value}</div>
           <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{stat.label}</div>
@@ -244,7 +263,7 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
   );
   if (activity.empty) {
     return (
-      <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+      <section id="profile-activity" className={`${PLANE_CARD} p-4 mb-2`}>
         {title}
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('profile:activity.empty')}</p>
       </section>
@@ -252,7 +271,7 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
   }
   const days = activity.days || [];
   return (
-    <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+    <section id="profile-activity" className={`${PLANE_CARD} p-4 mb-2`}>
       {title}
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
         {activity.time ? (
@@ -335,7 +354,7 @@ function ProfileSkeleton(): ReactNode {
     <SkeletonGroup label={t('profile:screen.loading')}>
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
-          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
+          <div className={`${PLANE_CARD} p-4 mb-3`}>
             <div className="flex items-center gap-3">
               <Skeleton shape="circle" className="w-14 h-14" />
               <div className="flex-1 min-w-0">
@@ -348,14 +367,14 @@ function ProfileSkeleton(): ReactNode {
           {/* The three stat cards: a figure over its label. */}
           <div className={STAT_GRID}>
             {Array.from({ length: STAT_COUNT }, (_, i) => (
-              <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
+              <div key={i} className={`${PLANE_CARD} px-2 py-3 flex flex-col items-center`}>
                 <Skeleton shape="block" className="w-8 h-6" />
                 <Skeleton shape="muted" className="mt-1.5 w-14" />
               </div>
             ))}
           </div>
           {/* This week: its title, two figures and the plot. */}
-          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+          <div className={`${PLANE_CARD} p-4 mb-2`}>
             <Skeleton className="w-20 h-4" />
             <div className="mt-3 flex gap-6">
               <Skeleton shape="block" className="w-16 h-6" />
@@ -367,7 +386,7 @@ function ProfileSkeleton(): ReactNode {
         {/* Your work, then Rewards: the right column's rows. */}
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           {[3, KUDOS_PARKED ? 1 : 2].map((count, group) => (
-            <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+            <div key={group} className={`mt-8 ${PLANE_CARD}`}>
               {Array.from({ length: count }, (_, i) => (
                 <div key={i} className="flex items-center gap-4 px-4 py-3.5">
                   <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
@@ -382,7 +401,7 @@ function ProfileSkeleton(): ReactNode {
         </div>
         {/* Account: the two rows under the stats on the left. */}
         <div className="lg:col-start-1 lg:row-start-2">
-          <div className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+          <div className={`mt-8 ${PLANE_CARD}`}>
             {Array.from({ length: 2 }, (_, i) => (
               <div key={i} className="flex items-center gap-4 px-4 py-3.5">
                 <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
@@ -463,8 +482,16 @@ export function ProfileRoot(): ReactNode {
   const t = useMessages('profile');
   // Under one of the frame's looks your own page is the kit's (the tour's
   // s44); a public profile and the states before the data keep theirs.
-  const frame = isFrameSkin(useLiveSkin());
+  const skin = useLiveSkin();
+  const frame = isFrameSkin(skin);
+  const editorial = skin === 'standard';
   const view = buildProfileView(state);
+  // #7134: the standard page's section row is real tabs, and the tab that is
+  // up decides the right column. It is the same store field the frame's You
+  // page reads (./profile.js _readTab / showTab).
+  const tab = state.tab || 'overview';
+  const contributions = state.data?.summary?.contributions || [];
+  const onHistoryTab = tab === 'changes' || tab === 'requests' || tab === 'votes';
 
   if (view.kind === 'empty') return null;
   // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
@@ -565,15 +592,26 @@ export function ProfileRoot(): ReactNode {
       {frame ? <YouInFrame view={view} tab={(state.tab || 'overview') as YouTab} friendsPending={state.friendsPending ?? null} friendsStatus={state.friendsStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
-          <IdentityCard identity={view.identity} />
+          <IdentityCard identity={view.identity} editorial={editorial} />
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
-        <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
-          <WorkPanel rows={view.rows} />
-          <RewardsPanel rows={view.rows} />
+        <div id="profile-main" className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {editorial ? <ProfileSectionLinks tab={tab} /> : null}
+          {editorial && onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
+          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
+          {!editorial || (!onHistoryTab && tab !== 'activity') ? (
+            <>
+              {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
+              {editorial ? <ProfileRecentActivity changes={contributions} /> : null}
+              <WorkPanel rows={view.rows} />
+              <RewardsPanel rows={view.rows} />
+            </>
+          ) : null}
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
+          {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
+          {editorial ? <ProfilePreferences /> : null}
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
           <AdminPanel />

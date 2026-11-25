@@ -122,6 +122,16 @@ export function fitToContent(el: HTMLTextAreaElement, value: string, opts?: FitO
 }
 
 /**
+ * Size `el` to `value` from scratch, as on its first measure: for a change
+ * of the box's width rather than its text (lib/use-composer-stack.ts), which
+ * the insert-only shortcut above cannot see.
+ */
+export function refitToContent(el: HTMLTextAreaElement, value: string, opts?: FitOptions): void {
+  measured.delete(el);
+  fitToContent(el, value, opts);
+}
+
+/**
  * Keep `ref`'s textarea sized to its content, re-measuring whenever `value`
  * changes.
  *

@@ -92,13 +92,15 @@ const inputVariants = cva('', {
       // The settings screen's standard field.
       default:
         'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
-      // The dialogs' field: the same box, but inheriting its text size from
-      // the card rather than setting `text-sm` itself.
+      // The dialogs' field, inheriting its text size from the card rather
+      // than setting `text-sm` itself. White on the white card, with its
+      // edge (phone review #52, 23 Nov 2026): the settings screen's grey
+      // fill, on a dialog, read as a field that was switched off.
       dialog:
-        'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100',
+        'rounded-lg bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100',
       // #members-approvals-n — the same box at number-field size.
       tight:
-        'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+        'rounded-lg bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
       // The auth screens' field. A darker dark-mode fill than the settings
       // one (`zinc-900`, against the auth card's `zinc-800`), and no text
       // size of its own. Kept separate rather than normalised onto

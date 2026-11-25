@@ -305,12 +305,14 @@ test('the bar sits lower on iOS, and only there (#2766)', () => {
     'Android\'s inset is the navigation bar: borrowing from it puts the tabs under it');
 });
 
-test('an installed Android app spends the navigation bar\'s full height (#2755)', () => {
-  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android,\s*html\.un-android #app-view\[data-app-surface="platform"\] \{\s*--platform-safe-bottom: ([^;]+);/.exec(css);
-  assert.ok(block, 'standalone Android restates the inset on both the root and the platform surface');
+test('an installed Android app spends the navigation bar\'s full height (#2755, #7061)', () => {
+  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android:not\(\.un-kb\) \{\s*--un-safe-inset-bottom: ([^;]+);/.exec(css);
+  assert.ok(block, 'standalone Android writes the nav bar\'s max into the kit token');
   assert.equal(block[1],
-    'max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px))',
-    'the larger of the live inset and the navigation bar\'s full height, still in the kit form');
+    'max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px))',
+    'the larger of the live inset and the navigation bar\'s full height, in the token every bottom rule reads');
+  assert.match(css, /--platform-safe-bottom: var\(--un-safe-inset-bottom, env\(safe-area-inset-bottom, 0px\)\);/,
+    'the bar\'s own token still resolves through the kit token, so it inherits the max');
 });
 
 test('a drag that starts on the bar never pans the document (#2771)', () => {
@@ -725,7 +727,9 @@ test('the Messages count is the quiet one: grey, on the glyph\'s corner on the p
   assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
     'a grey disc on the phone, one value in both themes');
   assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
-  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*inset-inline-start: calc\(100% - 7px\);/,
+  // Anchored at the glyph's right edge and growing outward, its top the
+  // glyph's (phone review #105): a second figure no longer covers the icon.
+  assert.match(phone[0], /position: absolute;\s*top: 0;\s*inset-inline-start: calc\(100% - 1px\);/,
     'and it keeps its place on the glyph\'s corner');
 
   // From 768px the sidebar of rows draws a row, and the count sits at its
@@ -890,7 +894,7 @@ test('a slide waits out the screen swap\'s frame before it starts (#3046)', () =
 });
 
 test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only', () => {
-  const rule = css.match(/\.platform-tabs-marker \{[^}]*\}/);
+  const rule = css.match(/\n\.platform-tabs-marker \{[^}]*\}/);
   assert.ok(rule);
   assert.match(rule[0], /position: absolute;/);
   assert.match(rule[0], /background: var\(--lit-tint\);/);
@@ -1424,26 +1428,29 @@ test('the folded Duo\'s corner shifts the bar\'s cells, never its shape (6072)',
   assert.doesNotMatch(corner, /flex-direction: column/);
 });
 
-test('the phone\'s bar is read in the order it is drawn; the markup keeps the rail\'s (audit N01)', () => {
-  const { PHONE_TAB_ORDER, phoneReadingOrder } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
-  // The five, in the order app.css's `order` draws them (TWO ORDERS, ONE
-  // MARKUP): Communities, fourth in the markup, is second on the bar. One
-  // Home (#6361) had taken it off; it is back (18 Nov 2026).
-  assert.deepEqual([...PHONE_TAB_ORDER],
-    ['platform-tab-home', 'platform-tab-workshop', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me']);
+test('the bar is read in the order it is drawn, on every layout; the markup keeps the rail\'s (audit N01, phone review #81)', () => {
+  const { TAB_DRAWN_ORDER, tabReadingOrder } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  // The five, then the sidebar's Recents and the foot, in the order app.css's
+  // `order` draws them (TWO ORDERS, ONE MARKUP): Communities, fourth in the
+  // markup, is second, on the phone's bar, the Duo's strip and the sidebar.
+  assert.deepEqual([...TAB_DRAWN_ORDER], [
+    'platform-tab-home', 'platform-tab-workshop', 'platform-tab-ai', 'platform-tab-messages',
+    'platform-rail-pinned', 'platform-rail-communities', 'platform-tab-me', 'platform-rail-settings',
+  ]);
   const css = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
   const block = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
   const drawn = ['home', 'ai', 'messages', 'workshop']
-    .map((k) => [k, Number(new RegExp(`#platform-tab-${k} \\{ order: (-?\\d+); \\}`).exec(block)[1])])
+    .map((k) => [k, Number(new RegExp(`\\n#platform-tab-${k} \\{ order: (-?\\d+); \\}`).exec(block)[1])])
     .sort((a, b) => a[1] - b[1]).map(([k]) => `platform-tab-${k}`);
-  assert.deepEqual(PHONE_TAB_ORDER.slice(0, 4), drawn, 'aria-owns follows the bar\'s own order');
-  assert.equal(phoneReadingOrder(true, false), PHONE_TAB_ORDER.join(' '));
-  assert.equal(phoneReadingOrder(false, false), null, 'the rail reads in its markup order');
-  assert.equal(phoneReadingOrder(true, true), null, 'the Duo strip is left alone');
+  assert.deepEqual(TAB_DRAWN_ORDER.slice(0, 4), drawn, 'aria-owns follows the bar\'s own order');
+  // ONE ORDER ON EVERY LAYOUT: the four rules stand outside any media query.
+  const rules = block.slice(0, block.indexOf('#platform-tab-messages { order: -2; }'));
+  assert.doesNotMatch(rules.slice(rules.lastIndexOf('*/')), /@media/, 'not the phone\'s alone');
+  assert.equal(tabReadingOrder(), TAB_DRAWN_ORDER.join(' '));
   // Written from an effect, never rendered: the prerender has no width.
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
   assert.doesNotMatch(src, /aria-owns=\{/);
-  assert.match(src, /bar\.setAttribute\('aria-owns', owns\)/);
+  assert.match(src, /bar\.setAttribute\('aria-owns', tabReadingOrder\(\)\)/);
 });
 
 test('the Communities tab draws a glyph like every other tab, so its label sits on the bar\'s one baseline (audit N02)', () => {
@@ -1461,18 +1468,48 @@ test('the Communities tab draws a glyph like every other tab, so its label sits 
   assert.doesNotMatch(tab, /platform-tab-ring|platform-tab-tile/);
 });
 
-test('on a phone the Tab key moves through the bar in its drawn order (audit N01 follow-up)', () => {
-  const { nextPhoneTab } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
-  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-workshop', 'Communities is next to Home');
-  assert.equal(nextPhoneTab('platform-tab-workshop', false), 'platform-tab-ai');
-  assert.equal(nextPhoneTab('platform-tab-ai', false), 'platform-tab-messages');
-  assert.equal(nextPhoneTab('platform-tab-messages', false), 'platform-tab-me');
-  assert.equal(nextPhoneTab('platform-tab-me', false), null, 'out of You: the browser\'s, as before');
-  assert.equal(nextPhoneTab('platform-tab-ai', true), 'platform-tab-workshop');
-  assert.equal(nextPhoneTab('platform-tab-workshop', true), 'platform-tab-home');
-  assert.equal(nextPhoneTab('platform-tab-home', true), null, 'back out of Home: the browser\'s');
-  assert.equal(nextPhoneTab('platform-tab-discover', false), null, 'the rail\'s alone');
+test('the Tab key moves through the bar in its drawn order, on every layout (audit N01 follow-up, phone review #81)', () => {
+  const { drawnFocusOrder } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  // Controls in markup order, each named by the bar's child it is inside.
+  const markup = [
+    ['app-left', null], // iPhone Duo's Apps section: first in the markup and drawn first
+    ['home', 'platform-tab-home'],
+    ['ai', 'platform-tab-ai'],
+    ['messages', 'platform-tab-messages'],
+    ['communities', 'platform-tab-workshop'],
+    ['pin-a', 'platform-rail-pinned'],
+    ['recent-a', 'platform-rail-communities'],
+    ['recent-b', 'platform-rail-communities'],
+    ['me', 'platform-tab-me'],
+    ['settings', 'platform-rail-settings'],
+  ];
+  const order = drawnFocusOrder(markup, (item) => item[1]).map((item) => item[0]);
+  assert.deepEqual(order, ['app-left', 'home', 'communities', 'ai', 'messages', 'pin-a', 'recent-a', 'recent-b', 'me', 'settings'],
+    'Communities next to Home, Recents in their own order, you and your settings last');
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
   assert.match(src, /bar\.addEventListener\('keydown', onKey\);/, 'from the effect, never in the prerender');
-  assert.doesNotMatch(src, /tabIndex=\{[^}]*phone/i, 'no tabindex rendered');
+  assert.doesNotMatch(src, /tabIndex=\{/, 'no tabindex rendered');
+});
+
+test('a phone tab\'s side padding steps down with the bar: 8px, then 6px up to 389.98px, then 3px below 375px (mobile polish 02)', () => {
+  // At 8px the five labels, the lit one's bold, the tabs' margins and the
+  // bar's own padding need 383px, so a 375px phone (iPhone mini, SE, X,
+  // 11 Pro) printed "Homeroom…" on every tab and "Communiti…" with
+  // Communities lit. Every step has the same scope: the standard look and
+  // the brand look, never the side strip, which stacks its tabs and pads
+  // them itself.
+  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const steps = [...css.matchAll(new RegExp(`${esc(scope)} \\{ padding-inline: (\\d+)px; \\}`, 'g'))].map((m) => {
+    const query = /^@media \(max-width: ([\d.]+px)\) \{/.exec(css.slice(css.lastIndexOf('@media', m.index)));
+    return [query && query[1], Number(m[1])];
+  });
+  // In this order, so the narrower query, later in the sheet, wins where two match.
+  assert.deepEqual(steps, [['767.98px', 8], ['389.98px', 6], ['374.98px', 3]]);
+  // The 6px step changes the padding and nothing else: the labels stay 11px
+  // down to 375px, and only the smallest phones drop half a point.
+  const at = css.indexOf('@media (max-width: 389.98px) {');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
+  assert.equal(block.split('\n').length, 2, 'one rule in the 6px step');
+  assert.doesNotMatch(block, /font-size|!important/);
 });

@@ -143,13 +143,20 @@ export function initialOf(user) {
   return '?';
 }
 
-/** A staged pick wins over the saved photo so the edit preview is live. */
+/** A staged pick wins over the saved photo so the edit preview is live.
+ *  While a removal is staged the preview shows the generated picture the
+ *  account falls back to, which is what Save will make current (#7135). */
 export function avatarUrlOf(state) {
   const u = state.user || {};
   if (state.pendingAvatarUrl) return state.pendingAvatarUrl;
-  if (state.pendingRemove) return null;
+  if (state.pendingRemove) return u.generatedAvatarUrl || null;
   return u.avatarUrl || null;
 }
+
+/** An address a person's picture may legitimately have: an uploaded photo
+ *  (/avatars/<32 hex>) or the one generated from the account
+ *  (/avatars/g/<20 hex>.svg). Anything else is dropped rather than drawn. */
+export const AVATAR_URL_RE = /^\/avatars\/(?:[a-f0-9]{32}|g\/[a-f0-9]{20}\.svg)$/;
 
 /** "today" / "3 days ago" / a plain date past a fortnight. Returns null for
  *  anything unparseable, so the caller just omits the segment. */
@@ -196,10 +203,14 @@ export function breakdownRows(breakdown) {
   return rows;
 }
 
-const CHIP_ZINC =
-  'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ' +
-  'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ' +
-  'hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// A verified account is a FACT about the person, so it is drawn as one: a
+// line of muted text after a check, not a pill. The pill (a filled, rounded
+// chip) was repainted as the standard look's outlined button, so a fact read
+// as an action (phone review #99, 23 Nov 2026). It stays a link to the
+// account; `ui-plain` keeps the looks' button rules off it.
+const VERIFIED_LINE =
+  'ui-plain inline-flex min-w-0 items-center gap-1 text-[0.8125rem] font-medium ' +
+  'text-zinc-500 dark:text-zinc-400 hover:underline';
 
 /** Provider links in both the owner's card and the public card. The server
  * supplies this `links` object exclusively from OAuth-backed identity rows;
@@ -212,7 +223,7 @@ export function verifiedSocialLinksView(profile) {
     const safe = safeHref(href);
     if (safe) {
       rows.push({
-        key, label, href: safe, external: true, className: CHIP_ZINC,
+        key, label, href: safe, external: true, className: VERIFIED_LINE,
       });
     }
   };
@@ -670,8 +681,7 @@ export function publicControlsView(state) {
 export function publicAvatarView(profile) {
   const source = String(profile.displayName || profile.username || '?');
   const match = source.match(/[\p{L}\p{N}]/u);
-  const url = (typeof profile.avatarUrl === 'string'
-    && /^\/avatars\/[a-f0-9]{32}$/.test(profile.avatarUrl))
+  const url = (typeof profile.avatarUrl === 'string' && AVATAR_URL_RE.test(profile.avatarUrl))
     ? profile.avatarUrl : null;
   return { initial: match ? match[0].toUpperCase() : '?', url };
 }
@@ -713,7 +723,7 @@ export function friendsView(lists, now = Date.now()) {
       id: Number(p.id),
       username,
       href: `#profile/${encodeURIComponent(username)}`,
-      avatarUrl: typeof p.avatarUrl === 'string' && /^\/avatars\/[a-f0-9]{32}$/.test(p.avatarUrl)
+      avatarUrl: typeof p.avatarUrl === 'string' && AVATAR_URL_RE.test(p.avatarUrl)
         ? p.avatarUrl : null,
       initial: match ? match[0].toUpperCase() : '?',
       meta,

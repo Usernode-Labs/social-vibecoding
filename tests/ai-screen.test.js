@@ -15,7 +15,7 @@
 //
 // What this pins:
 //   1. Needs you's order: the Needs you feed, the bot's plans waiting to be
-//      reviewed and the requests it handed back (Needs Reply, Restart
+//      reviewed and the requests it handed back (Needs reply, Restart
 //      build), then private threads; each thread is listed once.
 //   2. In progress and Waiting: what goes in each, in what order, and the
 //      words each row says, the bot's stages and claims among them.
@@ -45,6 +45,7 @@ const { message } = require('./lib/platform-i18n');
 const { withWords } = require('./lib/work-words');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
+const LINES = 'frontend/src/features/ai/lines.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 // A phrase's nested phrases (a stage's words inside a row's line) are said first.
 const words = (p) => message(p.id, {
@@ -125,7 +126,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
     'plan:7',
     'private:91', 'private:92',
   ], '#390 is the question owed above, so its plan is not listed again; nothing waiting on others is here');
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Needs Reply', 'Vote', 'Review plan', null, null]);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Needs reply', 'Vote', 'Review plan', null, null]);
   assert.equal(owedCount(rows), 5, 'the heading counts what asks for you, not your private threads');
   // B17: on a project that is just yours, your yes alone approves it, and
   // the row says so as its card and the project's Needs you do.
@@ -144,12 +145,14 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
     ['A reminder email', 'Garden club · #410 · Waiting for you to OK the plan', '#app/garden/dev/issues/410'],
     'the row says its stage in the words every screen uses');
   // #6210 (3 Nov 2026): its Build it is on the plan on the request's page,
-  // so the row opens that page, as a Vote or Needs Reply row for it
+  // so the row opens that page, as a Vote or Needs reply row for it
   // would. B06's way to Main Chat at the plan is gone.
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
+  // 24 Nov 2026 (mobile 04): a thread somebody named you in opens at the
+  // message that named you (group-chat.js revealInThread), on the same page.
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}[\s\S]*?const messageId = row\.named\?\.messageId;\s+const slug = row\.app\?\.slug;\s+if \(messageId && slug\) \(window as any\)\.GroupChat\?\.revealInThread\?\.\(slug, messageId\);\s+if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/,
     'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -160,8 +163,9 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(needsYou(null, { private: [], next: [], waiting: [], live: [] }).length, 0, 'an older server, with no plans');
 });
 
-test('each section groups its rows by project, and a project shows its first few before its own Show more', () => {
-  const { needsYou, byProject, GROUP_FIRST } = loadTsx(MODEL);
+test('each band is one list, newest first, with no project or day headings, and shows its first few before its own Show more', () => {
+  const { needsYou, byProject } = loadTsx(MODEL);
+  const { BAND_FIRST, DONE_STEP, newestFirst } = loadTsx(LINES);
   const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: '🎮' };
   const needs = [
     { kind: 'proposal', id: 1, number: 500, title: 'Change 0', app },
@@ -174,37 +178,30 @@ test('each section groups its rows by project, and a project shows its first few
     next: [], waiting: [], live: [thread(8, 411, 'live', { group: 'live', app: games })],
   };
   const rows = needsYou(needs, work);
-  const groups = byProject(rows);
-  assert.deepEqual(groups.map((g) => [g.app && g.app.slug, g.items.map((r) => r.key)]), [
-    ['garden', ['need:proposal:1', 'need:proposal:3', 'plan:7']],
-    ['games', ['need:proposal:2']],
-    [null, ['private:91']],
-  ], 'under each project once, in the order the projects first come; a private idea in no project apart');
-  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, busy: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
+  // The model still knows each row's project (the look's list groups by it).
+  assert.deepEqual(byProject(rows).map((g) => g.app && g.app.slug), ['garden', 'games', null]);
+  // 24 Nov 2026 (the three bands): the caps are the band's, not a project's.
+  assert.deepEqual({ ...BAND_FIRST }, { needs: 6, busy: 5, done: 5 }, 'Needs you shows the most: it is what you came for');
+  assert.equal(DONE_STEP, 20, 'Done\'s Show more adds twenty');
+  // Newest first; a row with no time keeps its place after the rest.
+  assert.deepEqual(newestFirst([{ k: 'a', at: '2026-11-01T00:00:00Z' }, { k: 'b', at: null }, { k: 'c', at: '2026-11-03T00:00:00Z' }]).map((r) => r.k), ['c', 'a', 'b']);
   const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.doesNotMatch(lists, /byProject\(|byDay\(|data-ai-group=\{|data-ai-project-head|data-ai-day=|DayRule|GroupList/, 'no project heads and no day lines');
+  // Mobile polish 05 (24 Nov 2026): what is new since your last visit before the rest (tests/ai-new-since.test.js).
+  assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/);
+  assert.match(lists, /<BandRows lines=\{needs\.held\} first=\{searching \? Infinity : BAND_FIRST\.needs\} since=\{newSince\} \/>/);
+  // #7138: In progress stays at its default length: only the row you are on
+  // and one that just moved are lifted past the first few.
+  assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} since=\{newSince\} lift="moved" \/>/);
+  // 24 Nov 2026 (mobile 04): newest first, your own before the threads you only wrote or were named in.
+  assert.match(read(LINES), /const progressLines: Line\[\] = newFirst\(ownFirst\(newestFirst\(kept\(\[/, 'In progress newest first, your own first');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
-  // past the first rows, it joins them. #6245: only while the group is
-  // folded (open ? -1): an opened group keeps every row's own place.
+  // past the first rows, it joins them. #6245: only while the band is
+  // folded (open ? -1): an opened band keeps every row's own place.
   assert.match(read(MODEL), /const litAt = open \? -1 : items\.findIndex\(\(row\) => row\.lit\);/);
-  // #6262: Needs you orders its rows with the new ones first, before the
-  // drawn order is held, then folds through the same pure rule (which never
-  // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/);
-  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
-    'the new first, then the drawn order held');
-  assert.match(lists, /const rows = dayHeads \? byDay\(g\.items\) : g\.items;\n\s+const \{ items, shown, hidden \} = kept \? openRows\(rows, kept\) : groupRows\(rows, first, false, !foldFresh\);/,
-    'the group draws through the pure order rules: folded, and opened with what was in sight kept');
-  // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
-  // the same drawn list (a day past the fold stays inside it).
-  assert.match(lists, /const visible = hidden \? drawn\.slice\(0, shown\) : drawn;/);
-  assert.match(lists, /const folded = hidden \? drawn\.slice\(shown\) : \[\];/);
-  assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
-  assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
-  assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
-  assert.match(read('frontend/src/features/ai/lines.ts'), /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
-    'B07: a private idea under that heading does not say Only you again on its row');
-  // One project picked: its chip names it, so its name is not said again.
-  assert.match(read('frontend/src/features/ai/lines.ts'), /const heads = picked\.length !== 1;/);
+  assert.match(lists, /const \{ items, shown, hidden \} = kept \? openRows\(lines, kept\) : groupRows\(lines, first, false, lift\);/,
+    'the band draws through the pure order rules: folded, and opened with what was in sight kept');
+  assert.equal(message('messages:ai.short.private'), 'Only you', 'a private thread\'s project, in no project');
 });
 
 // 19 Nov 2026 (Evan's recording): opening a project's Show more moved the
@@ -212,7 +209,7 @@ test('each section groups its rows by project, and a project shows its first few
 // from no height, so they vanished, the list jumped up, and they faded back
 // in; shutting, the folded rows were gone in a frame or two and left a blank
 // band that then closed.
-test('a project\'s Show more opens under the rows in sight and shuts without a blank band', () => {
+test('a band\'s Show more opens under the rows in sight and shuts without a blank band', () => {
   const { groupRows, openRows, GROUP_FIRST } = loadTsx(MODEL);
   // Eight rows, the fourth and fifth are new: folded, they join the first three.
   const rows = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 3 || i === 4 }));
@@ -241,17 +238,31 @@ test('a project\'s Show more opens under the rows in sight and shuts without a b
   assert.deepEqual(changed.items.map((r) => r.key), ['r1', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9']);
   assert.deepEqual([changed.shown, changed.hidden], [4, 4]);
 
-  // The list keeps what was in sight when Show more is pressed.
+  // #7138: In progress calls groupRows with 'moved'. New rows past the first
+  // five stay folded, so the band keeps its default length; a row that moved,
+  // and the row you are on, are still lifted above Show more.
+  const newer = Array.from({ length: 8 }, (_, i) => ({ key: `n${i + 1}`, isNew: i >= 5 }));
+  const quiet = groupRows(newer, 5, false, 'moved');
+  assert.deepEqual([quiet.shown, quiet.hidden], [5, 3], 'three new rows past the fold do not grow it');
+  assert.deepEqual(quiet.items.map((r) => r.key), ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8'], 'the new ones open with Show more');
+  const movedOne = newer.map((r, i) => (i === 6 ? { ...r, moved: true } : r));
+  assert.deepEqual([groupRows(movedOne, 5, false, 'moved').shown], [6], 'a row that just moved is still lifted');
+  const litOne = newer.map((r, i) => (i === 7 ? { ...r, lit: true } : r));
+  assert.deepEqual(groupRows(litOne, 5, false, 'moved').items.slice(0, 6).map((r) => r.key), ['n1', 'n2', 'n3', 'n4', 'n5', 'n8'],
+    'the row you are on is still lifted');
+
+  // The band keeps what was in sight when Show more is pressed.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const \[opened, setOpened\] = useState<Record<string, string\[\]>>\(\{\}\);/);
-  assert.match(lists, /if \(open\) delete next\[key\];\n\s+else next\[key\] = items\.slice\(0, shown\)\.map\(\(line\) => line\.key\);/);
-  // Both folds (a project's Show more and Not moving) open and shut on one
-  // curve for the height. Opening fades the rows in; shutting keeps them
-  // drawn while the clip closes over them, and hides them only at the end.
+  assert.match(lists, /const \[kept, setKept\] = useState<string\[\] \| null>\(null\);/);
+  assert.match(lists, /onClick=\{\(\) => setKept\(open \? null : items\.slice\(0, shown\)\.map\(\(line\) => line\.key\)\)\}/);
+  // A band's Show more opens and shuts on one curve for the height (24 Nov
+  // 2026: the only fold left; Not moving is a row's state now). Opening fades
+  // the rows in; shutting keeps them drawn while the clip closes over them,
+  // and hides them only at the end.
   assert.match(lists, /const FOLD_OPEN = 'grid-rows-\[1fr\] opacity-100 \[transition:grid-template-rows_300ms_cubic-bezier\(0\.4,0,0\.2,1\),opacity_200ms_ease-out\]';/);
   assert.match(lists, /const FOLD_SHUT = 'grid-rows-\[0fr\] opacity-0 \[transition:grid-template-rows_300ms_cubic-bezier\(0\.4,0,0\.2,1\),opacity_0s_linear_300ms\]';/);
-  assert.equal(lists.match(/className=\{`grid motion-reduce:transition-none \$\{(?:open|stillShown) \? FOLD_OPEN : FOLD_SHUT\}`\}/g).length, 2,
-    'a project\'s fold and the Not moving fold, each without motion under reduce motion');
+  assert.equal(lists.match(/className=\{`grid motion-reduce:transition-none \$\{open \? FOLD_OPEN : FOLD_SHUT\}`\}/g).length, 1,
+    'a band\'s fold, without motion under reduce motion');
   assert.doesNotMatch(lists, /cubic-bezier\(0\.22,1,0\.36,1\)/, 'not the sharp ease-out that emptied a shutting fold at once');
 });
 
@@ -287,14 +298,15 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
   assert.deepEqual(holdOrder([], drawn), [], 'an emptied list holds nothing');
 
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
-    'only Needs you holds its order, only while held');
-  assert.match(lists, /onPointerEnter=\{startHold\}\s+onPointerLeave=\{endHold\}/, 'the pointer over the list holds it');
-  assert.match(lists, /onFocus=\{\(e\) => \{ if \(!within\(e\.relatedTarget\)\) startHold\(\); \}\}/,
+  assert.match(lists, /const held = holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/,
+    'Needs you holds its order, only while held');
+  assert.match(lists, /onPointerEnter: start,\s+onPointerLeave: end,/, 'the pointer over the band holds it');
+  assert.match(lists, /onFocus: \(e: React\.FocusEvent\) => \{ if \(!within\(e\.relatedTarget\)\) start\(\); \},/,
     'a row with keyboard focus holds it too');
-  assert.match(lists, /<GroupList lines=\{held\}/, 'and it draws the held order');
+  assert.match(lists, /data-ai-list="work"\s+\{\.\.\.needs\.handlers\}/, 'on Needs you alone');
+  assert.match(lists, /<BandRows lines=\{needs\.held\}/, 'and it draws the held order');
 
-  // Rendered folded, the lit row is still the sixth drawn: today's rule.
+  // Rendered folded, the lit row joins the band's first six (24 Nov 2026).
   const { renderComponent } = require('./lib/render-tsx');
   const eight = Array.from({ length: 8 }, (_, i) => ({
     key: `need:proposal:${i + 1}`,
@@ -312,15 +324,15 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
     openRow() {}, openThread() {},
   });
   const shown = html.slice(0, html.indexOf('data-ai-group-rest'));
-  assert.ok(shown.indexOf('Row 7') > shown.indexOf('Row 5'), 'folded, the row you are on joins the first five');
-  assert.ok(!shown.includes('Row 6') && !shown.includes('Row 8'), 'and the rows below it fold away');
+  assert.ok(shown.indexOf('Row 7') > shown.indexOf('Row 6'), 'folded, the row you are on joins the first six');
+  assert.ok(!shown.includes('Row 8'), 'and the rows below it fold away');
 });
 
 // #6262 (4 Nov 2026, Evan): "Hard to tell which threads have unread content."
 // A thread somebody has written in since the viewer opened it gets a blue dot
 // and a bold title, and Needs you says how many are new: on its own heading,
 // on each project's name, in the header and on the filter chips.
-test('#6262: threads with something new get a dot, a bold title and a count', () => {
+test('#6262: threads with something new get a dot and a bold title, and are never folded away', () => {
   const { freshCount, freshByProject, freshFirst, groupRows, needsYou, heroWords } = loadTsx(MODEL);
   // Stable: the new ones first, each keeping its own order.
   assert.deepEqual(
@@ -348,13 +360,14 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   });
   assert.deepEqual(rows.map((r) => [r.threadId, r.unread]), [[41, 2], [42, 0], [7, 1], [null, 0]]);
   const hero = heroWords(13, 7, 4);
-  assert.equal(hero.id, 'messages:ai.hero.bothFresh');
-  assert.equal(words(hero), 'Needs you: 13 · <0>4 new</0> · In progress: 7', 'the count sits between the two');
-  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.both', 'nothing new says nothing');
-  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.needsFresh');
+  assert.equal(hero.id, 'messages:ai.hero.threadsBothFresh');
+  assert.equal(words(hero), '13 threads need you · <0>4 new</0> · In progress: 7', 'the count sits between the two');
+  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.threadsBoth', 'nothing new says nothing');
+  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.threadsNeedsFresh');
 
-  // Rendered: the dot, the bold title, the Earlier line, both pills and the
-  // chip number show; a zero shows nothing.
+  // Rendered: the dot and the bold title (24 Nov 2026: the bands carry no
+  // Earlier line and no "N new" pills; the head's line is the bands' counts,
+  // and the project filter is one control, not a chip a project).
   const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
   const line = (key, title, appIn, unread) => ({
     key, title, app: appIn, who: 'all',
@@ -370,20 +383,17 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
     lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
   });
   assert.match(html, /data-ai-dot=""/, 'a new row has its dot');
-  assert.match(html, /font-bold text-zinc-900 dark:text-zinc-100">New one</, 'and a bold title');
-  assert.match(html, /data-ai-earlier=""/, 'Needs you draws the Earlier line');
-  assert.ok(html.includes('2 new'), 'the heading pill counts them');
-  assert.ok(html.includes('1 new'), 'a project names its own count');
-  assert.match(html, /data-ai-chip="garden"[\s\S]*?data-ai-fresh=""/, 'a chip carries its number');
-  // Nothing new: no dot, no Earlier line, no pill anywhere.
+  assert.match(html, /font-bold text-zinc-900 dark:text-zinc-100" data-ai-line-title="">New one</, 'and a bold title');
+  assert.match(html, /data-ai-line="need" data-ai-fresh=""/, 'the row is marked new');
+  assert.ok(!html.includes('data-ai-earlier') && !html.includes(' new<'), 'no Earlier line and no count of new');
+  // Nothing new: no dot anywhere.
   const quiet = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, ready: true, owed: 2,
     rows: [line('need:proposal:1', 'One', app, 0), line('need:proposal:3', 'Two', games, 0)],
     lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
   });
   assert.ok(!quiet.includes('data-ai-dot'), 'nothing new has no dot');
-  assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
-  assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
+  assert.ok(!quiet.includes('data-ai-fresh'), 'and no row is marked new');
 });
 
 // #6672 (14 Nov 2026, Evan): "Private chats are always at the bottom of Needs
@@ -423,10 +433,13 @@ test('#6672: Needs you orders its projects by their newest activity', () => {
     { key: 'recipe', app: recipe, at: now },
   ]).map((r) => r.key), ['garden-newer', 'garden-older', 'recipe'], 'a group\'s rows keep their order; a tie keeps its place');
 
-  // Both faces of the list apply it, Needs you only, after the new-first pass.
+  // The look's list groups by project and lifts them so. 24 Nov 2026: the
+  // standard list's bands have no project groups; Needs you is newest first
+  // by each row's own time, so a fresh private chat leads it the same way.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/,
-    'Needs you lifts the projects after its new-first pass');
+  assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/, 'newest first, after what is new since your last visit');
+  const { newestFirst } = loadTsx(LINES);
+  assert.deepEqual(newestFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'], 'the private chat talked in today first');
   assert.match(read('frontend/src/features/ai/frame-list.tsx'),
     /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
     'the kit face draws the same order');
@@ -496,15 +509,13 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
   const movedRows = many.map((r) => ({ ...r, fresh: false, moved: r.key === 'r8' }));
   assert.deepEqual([groupRows(movedRows, GROUP_FIRST.live, false, false).shown], [3], 'Live folds a moved row too');
 
+  // 24 Nov 2026: Live this week is Done's first rows. Done shows five and
+  // folds what is new with the rest (it lifts only the row you are on); its
+  // Show more says no count.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
-    'the fold counts the new rows it holds');
-  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
-    'Live this week is the section that folds what is new');
-  assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
+  assert.match(lists, /: groupRows\(doneLines, doneShown, false, false\);/, 'Done folds what is new like anything else');
 
-  // Rendered: a project's eight live rows, six new, show three rows and the
-  // fold that holds the other three new ones.
+  // Rendered: eight live rows, six new, show Done's first five and Show more.
   const live = Array.from({ length: 8 }, (_, i) => thread(30 + i, 410 + i, 'going_live', {
     group: 'live', at: '2026-11-06T10:00:00Z', unread: i < 6 ? 1 : 0,
   }));
@@ -514,18 +525,8 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
     rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
   });
   const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
-  const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
-  assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
-  assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
-  // None of the folded rows new: the plain words, as every other list says them.
-  const older = live.map((t) => ({ ...t, unread: 0 }));
-  const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, ready: true, owed: 0,
-    rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
-  });
-  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
-  assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
-  assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
+  assert.equal((sheet.match(/data-ai-line=/g) || []).length, 5, 'five rows at rest');
+  assert.match(sheet, new RegExp(`data-ai-history-more="">${message('messages:ai.band.showMore')}`), 'then Show more, with no count');
 });
 
 
@@ -563,40 +564,23 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
   const folded = html.slice(0, html.indexOf('data-ai-group-rest'));
   assert.ok(folded.includes('Row 7'), 'the new row is lifted above the fold');
 
-  // The box a fold clips: it still clips (the animation needs it), and it
-  // carries the dot's room on the start side.
+  // The box a fold clips still clips (the animation needs it). 24 Nov 2026:
+  // the dot stands in the row's own leading padding (start-1 inside px-3), so
+  // a clip at the row's edge, folded or open, never cuts it off.
   const groupClip = /data-ai-group-rest=""><div class="([^"]*)">/.exec(html);
-  assert.ok(groupClip, 'a project folds its rest away');
+  assert.ok(groupClip, 'the band folds its rest away');
   assert.match(groupClip[1], /overflow-hidden/, 'the fold still clips');
-  assert.match(groupClip[1], /(?:^| )-ms-4(?: |$)/, 'its clip edge stands past the rows');
-  assert.match(groupClip[1], /(?:^| )ps-4(?: |$)/, 'and the same room is padding, so no row moves');
-
-  // The Still waiting fold clips the same way, so it keeps the same room.
-  const still = renderComponent(LISTS, 'AiLists', {
-    hero: null, ready: true, owed: 0, rows: [],
-    progress: [], live: [], openRow() {}, openThread() {},
-    waiting: [thread(1, 71, 'vote'), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
-  });
-  const stillClip = /data-ai-still-rest=""><div class="([^"]*)">/.exec(still);
-  assert.ok(stillClip, 'the still rows fold away under their own head');
-  assert.match(stillClip[1], /overflow-hidden/);
-  assert.match(stillClip[1], /(?:^| )-ms-4(?: |$)/);
-  assert.match(stillClip[1], /(?:^| )ps-4(?: |$)/);
-
-  // The room must stay at least the dot's own offset: 12px out (start-3), so
-  // 16px (4) of room, in the same 4px steps.
   const src = read(LISTS);
-  const at = Number(/const DOT = '[^']*-start-(\d+)/.exec(src)[1]);
-  const room = Number(/ps-(\d+)/.exec(groupClip[1])[1]);
-  assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
+  assert.match(src, /const DOT = 'absolute start-1 /, 'the dot is 4px in from the row\'s start');
+  assert.match(src, /const ROW = `group relative flex [^`]*px-3 /, 'inside its 12px of padding');
+  assert.doesNotMatch(src, /data-ai-still-rest/, 'Not moving folds nothing any more: it is a row\'s state');
 });
 
-// 6 Nov 2026 (Evan): "in Needs you and Waiting & in progress, keep the
-// project groups, and inside each group split the rows by day with the small
-// caps dividers and a thin rule ... Leave History's month headings as they
-// are." A project's rows are split by the reader's own calendar day: Today,
-// Yesterday, then the weekday and date. Nothing else grows a day heading.
-test('6 Nov 2026: Needs you and Waiting & in progress split each project by day, History keeps its months', () => {
+// 6 Nov 2026 (Evan) split each project's rows by day under small caps
+// dividers. 24 Nov 2026 (Evan's review, the three bands): "Inside a band there
+// are no project heads and no day lines." The model still knows the day (the
+// look's list draws it); the bands say it on each row's second line.
+test('24 Nov 2026: the bands draw no day lines; each row\'s second line says when, and History keeps no months', () => {
   const { dayKey, byDay } = loadTsx(MODEL);
   // Noon, so the test's own clock cannot turn a day into its neighbour.
   const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
@@ -629,27 +613,25 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
   const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
   const needs = sheet('open');
   const busy = sheet('busy');
-  // Inside the project group, one divider each day, in the order the rows come.
-  assert.ok(needs.indexOf('data-ai-group="garden"') < needs.indexOf('data-ai-day='), 'the day sits inside the project group');
-  assert.equal((needs.match(/data-ai-day="/g) || []).length, 3, 'Today, Yesterday and the older day, once each');
-  assert.ok(needs.indexOf(message('messages:ai.short.today')) < needs.indexOf('Today one'));
-  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two'), 'the day\'s rows are one run, whatever order they came in');
-  assert.ok(needs.indexOf('Today two') < needs.indexOf(message('messages:ai.short.yesterday')), 'a second row of the same day adds no divider');
-  assert.ok(needs.indexOf(message('messages:ai.short.yesterday')) < needs.indexOf('Yesterday one'));
-  assert.ok(needs.indexOf('Yesterday one') < needs.indexOf('Older one'));
-  const label = (key) => {
-    const found = new RegExp(`data-ai-day="${key}"><span[^>]*>([^<]+)</span>`).exec(needs);
-    return found ? found[1] : '';
+  // 24 Nov 2026 (the three bands): no project group and no day divider; the
+  // rows are newest first, and each row's second line says when.
+  assert.doesNotMatch(html, /data-ai-day=|data-ai-group=|data-ai-project-head/, 'no day lines and no project heads');
+  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two') && needs.indexOf('Today two') < needs.indexOf('Yesterday one')
+    && needs.indexOf('Yesterday one') < needs.indexOf('Older one'), 'newest first, a day\'s rows in the order they came');
+  const lineOf = (title) => {
+    const from = needs.indexOf(title);
+    return (/data-ai-line-why="">([^<]+)</.exec(needs.slice(from)) || [])[1] || '';
   };
-  assert.equal(label(dayKey(today)), message('messages:ai.short.today'));
-  assert.equal(label(dayKey(yesterday)), message('messages:ai.short.yesterday'));
-  assert.match(label(dayKey(older)), /\d/, 'an older day says its date');
-  // Waiting & in progress splits the same way, under its own project group.
-  assert.match(busy, /data-ai-group="garden"/);
-  assert.equal((busy.match(/data-ai-day="/g) || []).length, 2);
-  assert.ok(busy.indexOf(message('messages:ai.short.today')) < busy.indexOf(message('messages:ai.short.yesterday')));
+  assert.equal(lineOf('Today one'), message('messages:ai.row.reasonWhen', { reason: message('core:work.stage.upForVote'), when: message('messages:ai.when.today') }),
+    'a vote says so, and when: "Up for a vote · today"');
+  assert.match(lineOf('Yesterday one'), new RegExp(` · ${message('messages:ai.when.yesterday')}$`));
+  assert.match(lineOf('Older one'), /\d/, 'an older day says its date');
+  // In progress says since when it has stood where it stands.
+  assert.match(busy, new RegExp(message('messages:ai.when.sinceAlone', { day: message('messages:ai.when.today') })
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/^S/, '[Ss]')));
 
-  // History keeps its month headings, and Live this week keeps none of these.
+  // History has no card and no months of its own: Done runs on into it.
   const history = {
     rows: [{ key: 'thread:9', threadId: 9, number: 392, title: 'Watering reminders', app, href: '#app/garden/dev/issues/392', at: older, kind: 'change', outcome: 'live', by: 'bot' }],
     next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
@@ -659,14 +641,12 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
     rows: [], progress: [], waiting: [], live: [thread(3, 73, 'live', { at: today })],
     history, openRow() {}, openThread() {}, openHistory() {},
   });
-  const historySheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="history"'));
-  assert.match(historySheet, /data-ai-history-month="/, 'History still groups by month');
-  assert.doesNotMatch(historySheet, /data-ai-day=/, 'and grows no day divider');
-  const liveSheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'), withHistory.indexOf('data-ai-sheet="history"'));
-  assert.doesNotMatch(liveSheet, /data-ai-day=/, 'Live this week keeps its day on the right');
+  assert.doesNotMatch(withHistory, /data-ai-sheet="history"|data-ai-history-month|data-ai-day=/);
+  const done = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'));
+  assert.ok(done.indexOf('T3') < done.indexOf('Watering reminders'), 'this week first, then History');
 });
 
-test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
+test('the filter: projects ranked by what needs you most, one control that opens them all (the look keeps its chips)', () => {
   const { needsYou, rankProjects, railProjects, RAIL_PROJECTS } = loadTsx(MODEL);
   const at = (slug, name) => ({ slug, name, icon_url: null, icon_emoji: null });
   const [garden, games, run, birds, zines] = [
@@ -695,11 +675,28 @@ test('the filter: the three projects that need you most as chips, then any picke
   const tied = rankProjects([], [], [], [thread(6, 15, 'live', { group: 'live', app: zines }), thread(7, 16, 'live', { group: 'live', app: birds })]);
   assert.deepEqual(tied.map((p) => p.app.slug), ['birds', 'zines'], 'a tie goes by name');
 
+  // 24 Nov 2026 (the three bands): the standard list's filter is one
+  // control on the head card's tools line, All projects at rest, opening the
+  // picker; the rail of chips is the look's list's alone (./frame-list.tsx).
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="" className="min-w-0 flex-1">/);
-  // The chip primitive's own fade rail (#6660), which Home's kind chips use:
-  // the first render carries no mask and no edge marks, so a prerender and its
-  // hydration match; a caller's spacing wins over the rail's own through `cn`.
+  assert.doesNotMatch(lists, /data-ai-project-chips|data-ai-chip=|FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\}/, 'no chip a project');
+  assert.match(lists, /aria-haspopup="dialog"\s+aria-expanded=\{!!more\}\s+aria-label=\{t\('messages:ai\.filter\.button', \{ shown: filterWords \}\)\}/,
+    'a menu button, named by what it shows');
+  assert.match(lists, /data-ai-project-more=""\s+data-ai-picked=\{picked\.length \? picked\.join\(' '\) : undefined\}/);
+  assert.equal(message('messages:ai.filter.allProjects'), 'All projects');
+  assert.equal(message('messages:ai.filter.someProjects', { count: 2 }), '2 projects');
+  const { renderComponent } = require('./lib/render-tsx');
+  const drawn = (picked) => renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    ready: true, owed: 0, rows, progress: [], waiting: [], live: [], openRow() {}, openThread() {}, picked,
+  });
+  const filter = (html) => /<button[^>]*data-ai-project-more=""[^>]*>([\s\S]*?)<\/button>/.exec(html)[1];
+  assert.match(filter(drawn([])), /All projects/);
+  assert.match(filter(drawn(['games'])), /Game corner/, 'one picked: its name');
+  assert.match(filter(drawn(['games', 'garden'])), /2 projects/, 'several: how many');
+  // The chip primitive's own fade rail (#6660), which Home's kind chips and
+  // Done's kind chips use: the first render carries no mask and no edge
+  // marks, so a prerender and its hydration match; a caller's spacing wins
+  // over the rail's own through `cn`.
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const { FadeRail, ChipRail: PlainRail } = loadTsx('frontend/@/components/ui/chip.tsx');
   const rail = renderToHtml(createElement(FadeRail, { className: 'px-1 pb-2', 'data-x': 'y' }, 'A'));
@@ -708,23 +705,17 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.doesNotMatch(rail, /class="[^"]*\bpx-4\b[^"]*"/, 'the caller\'s padding replaces the rail\'s');
   assert.match(rail, /data-x="y"/);
   assert.equal(typeof PlainRail, 'function', 'the plain rail stays for callers that only clip');
-  assert.match(lists, /\{rail\.map\(\(app\) => \(/, 'the rail draws the chips railProjects gives it');
-  // #6706: All's new-items number clears the label, the same 8px gap the
-  // project chips beside it give theirs.
-  assert.match(lists, /className=\{`gap-2 px-4 \$\{CHIP_EDGE\}`\} selected=\{!picked\.length\} onClick=\{\(\) => setOnly\(\[\]\)\}/,
-    'All leaves a gap before its number');
-  // More stands outside the rail, so a narrow rail never scrolls it away,
-  // and it is a menu button, not a toggle.
-  assert.match(lists, /<\/FadeRail>\s*\{past > 0 \? \(\s*<Chip/);
-  assert.match(lists, /aria-pressed=\{undefined\}\s+aria-haspopup="dialog"\s+aria-expanded=\{!!more\}/);
-  assert.match(lists, /\{t\('messages:ai\.filter\.more', \{ count: past \}\)\}/);
-  assert.equal(message('messages:ai.filter.more', { count: 28 }), '28 more');
 
   const picker = read('frontend/src/features/ai/project-picker.tsx');
   assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,
     'a sheet on a phone, a menu under the chip on a wide window; nothing in the prerender');
   assert.match(picker, /type="checkbox"[\s\S]*?checked=\{picked\.includes\(p\.app\.slug\)\}[\s\S]*?onChange=\{\(\) => onToggle\(p\.app\.slug\)\}/, 'a pick applies at once');
-  assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on More toggles it rather than closing and reopening');
+  assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
+  // #7126: Show all projects clears the ticks and then closes, so the lists
+  // behind show every project again rather than the panel staying as it was.
+  assert.match(picker, /onClick=\{\(\) => \{ onClear\(\); onClose\(\); \}\}\s+disabled=\{!picked\.length\}\s+data-ai-pick-all=""/,
+    'Show all projects unpicks every project, then closes the panel; with nothing picked it is disabled');
+  assert.doesNotMatch(picker, /onClick=\{onClear\}/, 'the press does more than clear, which changed nothing inside the panel');
   assert.equal(message('messages:ai.filter.note.needs', { count: 1 }), '1 needs you');
   assert.equal(message('messages:ai.filter.note.needs', { count: 3 }), '3 need you');
   assert.equal(message('messages:ai.filter.note.live', { count: 2 }), '2 live this week');
@@ -825,10 +816,12 @@ test('each In progress and Waiting row says its stage and its second line, in th
   // A decision up for a vote has no number.
   assert.equal(words(nextWords(thread(1, null, 'vote', { kind: 'decision' }))), 'Garden club · Up for a vote');
   assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
-  assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
+  // Phone review #22: the count is threads, across every project, and says so.
+  assert.equal(words(heroWords(2, 3)), '2 threads need you · In progress: 3');
+  assert.equal(words(heroWords(1, 3)), '1 thread needs you · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
   // Y03: a zero says nothing, and with neither there is no line.
-  assert.equal(words(heroWords(2, 0)), 'Needs you: 2');
+  assert.equal(words(heroWords(2, 0)), '2 threads need you');
   assert.equal(heroWords(0, 0), null);
 });
 
@@ -870,7 +863,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     'Going live', 'Building', 'Building', 'Building', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
     'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
   ], 'the stage, in the words every screen uses');
-  // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
+  // Handed back by the bot: Needs reply, Restart build and Retry the fix,
   // each saying its stage.
   const work = {
     private: [], next: [], live: [],
@@ -881,7 +874,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   const rows = needsYou(bots, work);
   assert.deepEqual(rows.map((r) => [r.key, r.pill && message(r.pill.id), words(r.sub)]), [
     ['need:proposal:1', 'Vote', 'Garden club · #600 · Your vote helps free a build slot'],
-    ['decide:7', 'Needs Reply', 'Garden club · #410 · Waiting for you to decide'],
+    ['decide:7', 'Needs reply', 'Garden club · #410 · Waiting for you to decide'],
     ['stopped:8', 'Restart build', 'Garden club · #411 · Stopped: the build didn\'t finish'],
     ['fix_stopped:10', 'Retry the fix', 'Garden club · #413 · Stopped: its tests still fail'],
   ]);
@@ -899,10 +892,20 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   assert.equal(words(threadWhy(row('queued', { work: { line: { code: 'queued', place: 2 } } }))), 'Number 2 in line', 'the second line');
   assert.equal(words(threadWhy(row('vote', { myVote: 'yes' }))), 'You voted Yes');
   assert.equal(threadWhy(row('vote')), null, 'a stage with no second line has none');
+  // 24 Nov 2026 (the three bands): a Needs you row ends in what you do, as a
+  // verb (./lines.ts verbOf); the model's own pill stays the look's word.
+  const { verbOf, needReason } = loadTsx(LINES);
+  assert.deepEqual(rows.map((r) => message(verbOf(r.pill))), ['Vote', 'Reply', 'Restart build', 'Retry the fix'], 'Needs reply is Reply');
+  assert.equal(message(verbOf({ id: 'messages:ai.pill.testsFailing' })), 'Fix it', 'your own change waiting on your fix');
+  assert.equal(message(verbOf({ id: 'messages:ai.pill.conflicts' })), 'Fix it');
+  assert.equal(message(verbOf(null)), 'Read', 'a private thread Homeroom bot answered');
+  assert.equal(words(needReason(needsYou([{ kind: 'proposal', id: 2, number: 601, title: 'Plain', app }], null)[0])), 'Up for a vote',
+    'a plain vote\'s reason is its stage');
+  // The reason and the time are the wide row's second line (app.css hides
+  // it where the list is narrow); the tooltip says the whole line everywhere.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /<span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">\{line\.why\}<\/span>/,
-    'the reason is a phone\'s second line; the tooltip says it everywhere');
-  assert.match(lists, /const ROW = 'flex w-full min-h-\[44px\] md:min-h-\[36px\]/, 'a phone\'s 44px tap target');
+  assert.match(lists, /<span className="ai-row-sub block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400" data-ai-line-why="">\{line\.sub\}<\/span>/);
+  assert.match(lists, /const ROW = `group relative flex min-h-\[44px\]/, 'a 44px tap target');
 });
 
 test('#6306: a request the bot found already works says so, and offers Confirm it works', () => {
@@ -919,7 +922,7 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   };
   const rows = needsYou([], work);
   assert.deepEqual(rows.map((r) => r.key), ['works:7', 'works:8', 'decide:9']);
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs Reply']);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs reply']);
   assert.deepEqual(rows.map((r) => words(r.sub)), [
     'Garden club · #410 · It may already work: close it? · Homeroom bot: Visitors get the lobby and play as a guest.',
     'Garden club · #411 · It may already work: close it?',
@@ -931,10 +934,12 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
     'Homeroom bot: It changes who can sign in',
   ], 'the bot\'s own reason, where it gave one');
   assert.equal(rows[0].href, '#app/garden/dev/issues/410', 'the row opens the request, where Propose to close lives');
-  // The glyph is a check, not the raised hand a decision gets.
-  // The row's glyph is a name both faces draw (./lines.ts); the standard list's icon for it is the check.
+  // The glyph is a check, not the raised hand a decision gets: a name the
+  // look's list draws (./lines.ts). 24 Nov 2026: the standard list's row
+  // leads with its project's tile and ends in the verb.
   assert.match(read('frontend/src/features/ai/lines.ts'), /if \(kind === 'works'\) return 'check';/);
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon,/);
+  const { verbOf } = loadTsx(LINES);
+  assert.equal(message(verbOf(rows[0].pill)), 'Confirm it works');
 });
 
 test('#6306: the chat names already-done requests as working, not as decisions', () => {
@@ -956,7 +961,7 @@ test('#6306: the chat names already-done requests as working, not as decisions',
   assert.doesNotMatch(lists.needsYou[0].says, /decide/);
 });
 
-test('#6158: a Waiting row says what it waits on, and the rows nobody is moving fold under "Not moving"', () => {
+test('#6158: a Waiting row says what it waits on, and a row nobody is moving says Not moving in In progress', () => {
   const { shortWords, nextWords, notMoving } = loadTsx(MODEL);
   const row = (what, extra = {}) => thread(1, 7, what, extra);
   // Nobody is moving it: not started on, or waiting on somebody else's move.
@@ -966,25 +971,22 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.equal(words(shortWords(row('not_picked_up', { quietDays: 12 }))), 'Not started yet');
   assert.equal(words(nextWords(row('queued', { work: { line: { code: 'queued', place: 4 } } }))),
     'Garden club · #7 · Not started yet · Number 4 in line');
-  // The part is folded, with its count, over the rows that are not moving;
-  // the ones that are moving stay in the section above it.
+  // 24 Nov 2026 (the three bands): a thread nobody is moving stays in In
+  // progress, its state Not moving, and its reason says where it stopped.
+  // Nothing folds it away.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, ready: true, rows: [], owed: 0,
     progress: [], live: [], openRow() {}, openThread() {},
     waiting: [thread(1, 71, 'queued', { work: { line: { code: 'queued', place: 2 } } }), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
   });
-  assert.match(html, /data-ai-still=""/, 'the folded head');
-  assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
-  assert.match(html, /data-ai-still-rest=""/, 'and a fold of its own');
-  assert.match(html, /aria-expanded="false"/, 'closed until pressed');
-  // #6160 moved these rows to the card of their own, whose head counts the
-  // whole card: the rows moving and the rows folded under Not moving.
-  assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
-  assert.match(html, /Number 2 in line/, 'the moving rows lead the list');
-  const src = read('frontend/src/features/ai/lists.tsx');
-  assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
-  assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
+  assert.doesNotMatch(html, /data-ai-still/, 'no fold of its own');
+  assert.match(html, new RegExp(message('messages:ai.band.progressCount', { count: 3 })), 'the band counts every row');
+  assert.equal((html.match(new RegExp(`data-ai-row-end="state">${message('messages:ai.state.notMoving')}<`, 'g')) || []).length, 2,
+    'the two nobody is moving say so');
+  assert.match(html, /data-ai-row-end="state">Not started yet</, 'the one in line keeps its stage');
+  assert.match(html, /Number 2 in line/, 'with its second line');
+  assert.equal(message('messages:ai.state.notMoving'), 'Not moving');
 });
 
 test('a change waiting only on its before & after screenshots reads "Taking screenshots", with a camera', () => {
@@ -1002,9 +1004,8 @@ test('a change waiting only on its before & after screenshots reads "Taking scre
   assert.equal(waitGlyph(thread(2, 8, 'checking')), 'clock');
   assert.equal(waitGlyph(thread(3, 9, 'checking', { work: { line: { code: 'checks_running', minutes: 4 } } })), 'clock');
   assert.equal(waitGlyph(thread(4, 10, 'queued')), 'clock');
-  // Both faces draw the name: the standard list's camera, the kit's picture.
-  const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /clock: ClockIcon, camera: CameraIcon,/);
+  // The look's list draws the name as its picture (24 Nov 2026: the
+  // standard list's row leads with its project's tile, and ends in the word).
   assert.match(read('frontend/src/features/ai/frame-list.tsx'), /clock: 'clock', camera: 'image',/);
   assert.match(read('frontend/src/features/ai/lines.ts'), /const waitingLine = threadLine\(waitGlyph\);/);
   const { renderComponent } = require('./lib/render-tsx');
@@ -1013,9 +1014,7 @@ test('a change waiting only on its before & after screenshots reads "Taking scre
     progress: [], live: [], openRow() {}, openThread() {},
     waiting: [shots],
   });
-  assert.match(html, /Taking screenshots/, 'the word on the row\'s right');
-  // The camera's own path (icons.tsx CameraIcon), on the row.
-  assert.match(html, /M6\.827 6\.175A2\.31 2\.31 0 015\.186 7\.23/, 'drawn with the camera glyph');
+  assert.match(html, /data-ai-row-end="state">Taking screenshots</, 'the state at the row\'s end');
 });
 
 test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s rows and tooltips', () => {
@@ -1114,10 +1113,19 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
   const decide = ws('waiting_for_you', { why: 'decide', line: { code: 'reason', text: 'A person must choose.' } });
   assert.equal(aiWork.standing(open, ME, now, null, decide, { decides: true }).group, 'needs');
   assert.equal(aiWork.standing(open, ME, now, null, decide, { decides: false }).group, 'waiting');
-  assert.equal(aiWork.standing({ ...open, own: false }, ME, now, null, decide, { decides: false }).group, 'waiting',
+  // 24 Nov 2026 (mobile 04): `wrote` tells a writer (or someone named in
+  // it) from a voter. A writer's thread is listed at every stage, as their
+  // own would be; one they only voted in is listed at none while it is open.
+  assert.equal(aiWork.standing({ ...open, own: false, wrote: true }, ME, now, null, decide, { decides: false }).group, 'waiting',
     'one they only wrote in, with no change in flight, waits on that person');
+  assert.equal(aiWork.standing({ ...open, own: false, wrote: true, change_status: 'active', change_user: 9 }, ME, now, null, ws('building')).group, 'next',
+    'one they only wrote in, being built, is In progress');
+  assert.equal(aiWork.standing({ ...open, own: false }, ME, now, null, decide, { decides: false }), null,
+    'one they only voted in, with no change in flight, is not listed (it was Not moving)');
+  assert.equal(aiWork.standing({ ...open, own: false }, ME, now, null, ws('reading', { line: { code: 'waiting' } })), null,
+    'nor one nobody has picked up');
   assert.equal(aiWork.standing({ ...open, own: false, change_status: 'active', change_user: 9 }, ME, now, null, ws('building')), null,
-    'one they only wrote in, being built, asks nothing of them');
+    'one they only voted in, being built, asks nothing of them');
   // Who is building it is the viewer's to read.
   assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: 3 }, ME, now, 3, ws('building')).by, 'bot');
   assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: ME }, ME, now, 3, ws('building')).by, 'you');
@@ -1253,9 +1261,10 @@ test('Homeroom bot answers "where do things stand?" from the lists this page dra
 test('Needs you here is the threads you are in, counted in the label\'s ink, with no link to every vote', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`, init\)/);
+  // 24 Nov 2026: the band's count is its rows; its heading's spoken name says it.
   assert.match(read('frontend/src/features/ai/lists.tsx'),
-    /head=\{owedShown \? t\('messages:ai\.work\.titleCount', \{ count: owedShown \}\) : t\('messages:ai\.work\.title'\)\}/,
-    'the count is in the label\'s own words, not a link');
+    /spoken=\{needLines\.length\s+\? t\('messages:ai\.work\.titleCount', \{ count: needLines\.length \}\)/,
+    'the count is in the heading\'s own words, not a link');
   assert.ok(!src.includes('ws=needs#communities'), 'All votes is gone');
   assert.equal(message('messages:ai.work.title'), 'Needs you');
   assert.equal(message('messages:ai.work.titleCount', { count: 5 }), 'Needs you · 5');
@@ -1269,7 +1278,9 @@ test('Needs you here is the threads you are in, counted in the label\'s ink, wit
   // The most rows are not spent on threads that are never listed, and Live
   // this week has its own, apart from the rest, their own first (30 Oct 2026).
   const { THREADS_SQL } = require('../src/services/ai-work');
-  assert.match(THREADS_SQL, /AND \(mine\.own OR ch\.status IS NULL OR ch\.status = 'merged' OR ch\.user_id = \$1\)/);
+  // 24 Nov 2026 (mobile 04): a thread she wrote or was named in is read at
+  // every stage; one she only voted in only once a change of it merged.
+  assert.match(THREADS_SQL, /AND \(mine\.own OR mine\.wrote OR ch\.status = 'merged' OR ch\.user_id = \$1\)/);
   assert.match(THREADS_SQL, /AND \(t\.state = 'open' OR \(t\.closed_at > NOW\(\) - make_interval\(days => \$5\) AND ch\.status = 'merged'\)\)/,
     'a closed thread is read only for its merged change');
   assert.match(THREADS_SQL, /PARTITION BY COALESCE\(ch\.status = 'merged', FALSE\)\s+ORDER BY mine\.own DESC,/);
@@ -1359,6 +1370,22 @@ test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old
   // A Messages address of the bot's chat is swapped in place for the tab's.
   assert.match(app, /const botTab = validConversation \? window\.UsernodeReact\?\.ai\?\.botTabFromMessages\?\.\(`#\$\{hash\}`\) : null;\s+if \(botTab\) \{\s+try \{ history\.replaceState\(null, '', App\._rootUrl\(botTab\)\); \} catch \(_\) \{ return; \}\s+App\.restoreFromHash\(\);\s+return;\s+\}/);
   assert.match(read('frontend/src/features/nav-drawer/messages-drawer.ts'), /if \(at\.conversationId && at\.bot\) return false;/);
+});
+
+test('#7140: a thread beside the list sits on the tab\'s own ground, never a white sheet', () => {
+  // The private thread is drawn as cards on the page's ground: the docked
+  // column paints nothing round it. Pinned so the panel's white ground cannot
+  // come back as the thread's (the second copy of the list that did is
+  // covered by tests/side-panel.test.js and tests/thread-one-page.test.js).
+  const css = read('public/css/app.css');
+  const rule = css.match(/#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\.dev-private-thread\) \{([^}]*)\}/);
+  assert.ok(rule, 'the docked column\'s thread rule exists');
+  assert.match(rule[1], /background: none;/);
+  assert.match(rule[1], /border: 0;/);
+  assert.match(rule[1], /border-radius: 0;/);
+  // And the panel's document never mounts the bot page's lists at all.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(App\.embeddedPanel\) \{\s+const hash = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);\s+const route = \/\^homeroom-bot\(\?:\\\/\|\$\)\/\.test\(hash\) \? hash\.split\('\?'\)\[0\] : 'homeroom-bot';\s+window\.UsernodeReact\?\.sidePanelEmbed\?\.handTop\?\.\(route\);\s+return;\s+\}/);
 });
 
 test('the way into the bot\'s chat: each address and each door names a place in it, on its tab', () => {
@@ -1461,9 +1488,20 @@ test('the screen renders as the prerender does: hidden, the bot\'s name, New cha
   assert.ok(!html.includes('ai-drawer'), 'and no drawer before mount, on a phone either');
   assert.ok(!html.includes('data-ai-main=""'), 'and the column is not docked before mount');
   // 14 Nov 2026: no Main Chat row. New chat is in the head from the first
-  // render, after search: it needs nothing read.
+  // render, at the end of its line: it needs nothing read. 24 Nov 2026: the
+  // search field is on the line under it from the first render too, with no
+  // key named (the device is not known until after mount).
   assert.doesNotMatch(html, /data-ai-main-row|data-ai-sheet="main"|Main Chat/);
-  assert.match(html, /data-ai-search-toggle="">.*?<\/button><button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="[^"]*bg-violet-600[^"]*"><svg[^>]*>.*?<\/svg><span>New chat<\/span><\/button><\/section>/s);
+  assert.match(html, /<button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="[^"]*bg-violet-600[^"]*"><svg[^>]*>.*?<\/svg><span>New chat<\/span><\/button><\/section><div class="[^"]*" data-ai-tools="">/s);
+  assert.match(html, /data-ai-tools=""><label[^>]*data-ai-search-box=""><svg[^>]*>[\s\S]*?<\/svg><input type="search"[^>]*placeholder="Search threads…"[^>]*data-ai-search=""[^>]*\/><\/label>/);
+  assert.doesNotMatch(html, /data-ai-search-key|data-ai-search-toggle/, 'no key named, no toggle');
+  assert.match(html, /data-ai-hero=""><img src="\/brand\/homeroom-mark\.png" alt=""/, 'the Homeroom mark leads the line');
+  assert.doesNotMatch(html, /data-ai-hero-sub/, 'no counts before the lists are read');
+  // Needs you shows its rows' shape from the first render; In progress and
+  // Done follow once the lists are read, as the cards they replace did, so
+  // the prerendered document stays inside its bound (mount-on-reveal).
+  assert.match(html, /data-ai-sheet="open"[\s\S]*data-ai-loading=""/);
+  assert.doesNotMatch(html, /data-ai-sheet="(?:busy|live)"/);
   assert.ok(!html.includes('data-ai-lit'), 'nothing is lit before the page knows what its column shows');
 });
 
@@ -1481,7 +1519,7 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   // has no row for the chat itself; the title's sheet is followed by Needs you.
   const none = renderComponent(LISTS, 'AiLists', props());
   assert.doesNotMatch(none, /data-ai-main-row|data-ai-main-unread|data-ai-sheet="main"|Main Chat/);
-  assert.match(none, /data-ai-sheet="head">[\s\S]*?<\/div><div class="[^"]*" data-ai-sheet="open">/, 'Needs you follows the head');
+  assert.match(none, /data-ai-sheet="head">[\s\S]*?<\/div><\/div><div class="[^"]*" data-ai-sheet="open">/, 'Needs you follows the head');
   assert.throws(() => message('messages:ai.main.new', { count: 1 }));
   assert.throws(() => message('messages:store.header.main'));
   const quiet = renderComponent(LISTS, 'AiLists', props('private:730'));
@@ -1489,8 +1527,17 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   assert.equal((quiet.match(/data-ai-lit=""/g) || []).length, 1);
   assert.match(quiet, /data-ai-line="private" data-ai-lit="" aria-current="true"><span[^>]*>[\s\S]*?A darker header/);
   const src = read(LISTS);
-  assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
+  assert.match(src, /const LIT_ROW = `[^`]*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\] \$\{FOCUS\}`;/, 'the lit tint and ink, as the rail\'s rows are');
+  // Phone review #140: a private thread's row is lit whole, its ⋯ inside the tint.
+  assert.match(src, /const LIT_ROW_WHOLE = '[^']*rounded-xl bg-\[color:var\(--lit-tint\)\]';/);
+  assert.match(src, /const LIT_INK_ROW = `(?![^`]*bg-\[)[^`]*text-\[color:var\(--lit-ink\)\] \$\{FOCUS\}`;/, 'its button keeps the ink and no fill of its own');
+  // Mobile 04: lit whole with its Dismiss too.
+  assert.match(src, /const whole = !!line\.lit && \(!!done \|\| !!dismiss\);/);
+  assert.match(src, /<div className=\{whole \? LIT_ROW_WHOLE : 'flex min-w-0 items-center'\} data-ai-row="" data-ai-line-done=\{done \? '' : undefined\}>/);
+  assert.match(src, /<RowButton line=\{line\} inLitRow=\{whole\} \/>/);
   assert.doesNotMatch(src, /MainChatRow|MAIN_LIT|main\.(lit|unread|open)/);
+  // 24 Nov 2026: the lit row's title is in the lit ink too (its button's).
+  assert.match(quiet, /data-ai-lit=""[^>]*>[\s\S]*?class="ai-row-title [^"]*font-semibold" data-ai-line-title="">A darker header</);
   // A private thread's own new mark (no Main Chat counts it): the server's
   // count on its row, as any thread's (#6262).
   const { needsYou, freshCount } = loadTsx(MODEL);
@@ -1503,7 +1550,7 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   assert.equal(freshCount(made), 1);
   assert.match(read(MODEL), /unread: Math\.max\(0, Number\(p\.unread\) \|\| 0\),/);
   const fresh = renderComponent(LISTS, 'AiLists', props(null, made));
-  assert.match(fresh, /data-ai-fresh=""/, 'counted on the chips as what is new');
+  assert.match(fresh, /data-ai-line="private" data-ai-fresh=""/, 'the row is marked new');
   // The page lights what the column shows (./column.ts): a thread, a page
   // (#6218), or nothing while a new chat holds it.
   const index = read('frontend/src/features/ai/index.tsx');
@@ -1519,7 +1566,7 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
 // Needs you card, under a line each, so on a busy account that card of
 // to-dos ran on long past what needed you. They are one quieter card of
 // their own now, between Needs you and Live this week, drawn as that is.
-test('#6160: Waiting & in progress is a card of its own between Needs you and Live this week, quieter rows, work under way first', () => {
+test('#6160: In progress is a card of its own between Needs you and Done, every row ending in its quiet state', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
   const bakery = { slug: 'bakery', name: 'Bakery orders', icon_url: null, icon_emoji: null };
@@ -1545,41 +1592,35 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   const open = html.indexOf('data-ai-sheet="open"');
   const busy = html.indexOf('data-ai-sheet="busy"');
   const liveAt = html.indexOf('data-ai-sheet="live"');
-  assert.ok(open >= 0 && busy > open && liveAt > busy, 'a sheet between Needs you and Live this week');
+  assert.ok(open >= 0 && busy > open && liveAt > busy, 'a card between Needs you and Done');
 
-  // Needs you's card ends where your to-dos end: no In progress or Waiting
-  // section, no lines, and none of their rows.
+  // Needs you's card ends where your to-dos end: none of In progress's rows.
   const openSheet = html.slice(open, busy);
   assert.doesNotMatch(openSheet, /data-ai-list="(?:next|up)"/, 'the two sections are gone from Needs you');
   assert.doesNotMatch(openSheet, /data-ai-line="going_live"/);
   assert.match(openSheet, /data-ai-list="work"[^>]*><div class="[^"]*" data-ai-band="">/, 'Needs you keeps its own band');
 
-  // A card like Live this week: its own band, the quieter rows, and a count
-  // of everything in it, work under way and waiting together.
+  // 24 Nov 2026 (the three bands): In progress, a card of its own: its
+  // strip, a count of everything in it (work under way and waiting
+  // together, the rows nobody is moving among them), and rows that end in a
+  // quiet grey state.
   const busySheet = html.slice(busy, liveAt);
   assert.match(busySheet, /data-ai-list="busy"><div class="[^"]*" data-ai-band="">/);
-  assert.match(busySheet, /Waiting &amp; in progress · 8/);
-  assert.match(busySheet, /class="flex w-full min-h-\[40px\] md:min-h-\[32px\][^"]*"[^>]*data-ai-line="going_live"/, 'the quiet row');
-  assert.match(busySheet, /text-\[13px\] leading-5 text-zinc-600 dark:text-zinc-400/, 'the quiet title');
-  assert.equal((busySheet.match(/data-ai-band=""/g) || []).length, 1, 'one band, as Live this week has');
+  assert.match(busySheet, new RegExp(message('messages:ai.band.progressCount', { count: 8 })));
+  assert.match(busySheet, /data-ai-band-count="">8</, 'the count in the strip');
+  assert.equal((busySheet.match(/data-ai-band=""/g) || []).length, 1, 'one strip');
+  assert.equal((busySheet.match(/data-ai-row-end="state"/g) || []).length, 8, 'every row ends in its state');
+  assert.doesNotMatch(busySheet, /data-ai-row-end="act"/, 'none asks anything of you');
+  // One list, no project groups: its first five, then Show 3 more.
+  assert.doesNotMatch(busySheet, /data-ai-group=|data-ai-still/);
+  assert.match(busySheet, new RegExp(message('messages:ai.work.showMore', { count: 3 })));
+  assert.match(busySheet, /data-ai-group-rest=""/);
 
-  // One list, grouped by project: under way before waiting, and each
-  // project's rows under its own name.
-  const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
-  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="up_for_vote"'), 'work under way comes first');
-  assert.match(garden, />Garden club</, 'under its project\'s name');
-  // Four of the garden's rows are moving: three, then its own Show more for
-  // the last. Its two not picked up rows fold under Not moving below.
-  assert.match(garden, /Show 1 more/);
-  assert.match(garden, /data-ai-group-rest=""/);
-  assert.match(busySheet, /Not moving · 2/);
-  // The bakery's two moving rows show whole.
-  assert.doesNotMatch(busySheet.slice(busySheet.indexOf('data-ai-group="bakery"')), /data-ai-group-rest=""/);
-
-  // Nothing under way or waiting, no card, as Live this week has none.
+  // Nothing under way or waiting: the band stays, as all three always do,
+  // and says so in one line.
   const empty = renderComponent(LISTS, 'AiLists', props());
-  assert.doesNotMatch(empty, /data-ai-sheet="busy"/);
-  assert.doesNotMatch(empty, /data-ai-list="busy"/);
+  assert.match(empty, /data-ai-sheet="busy"[\s\S]*?data-ai-list="busy"/);
+  assert.match(empty, new RegExp(message('messages:ai.band.progressEmpty')));
 });
 
 // #6680 (15 Nov 2026): #6153 folded a design thread filed as a request into
@@ -1729,20 +1770,25 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
     'after the project\'s live requests');
   assert.deepEqual(needsYou([], work).map((r) => r.key), ['private:805'], 'a done thread is never Needs you\'s; the open one still is');
 
-  // The row in the list: the lock, the title, and the hover text, opening the thread.
+  // The row in Done (24 Nov 2026): the title, the hover text, and at its end
+  // the word History says for a thread marked done, with no tick; it opens
+  // the thread, and is lit while that is in the column.
   const { renderComponent } = require('./lib/render-tsx');
   const solo = { rootId: 806, title: 'An app for our garden plot rota', kind: 'idea', app: null, at: null, state: 'done', doneAt: '2026-11-02T12:00:00Z' };
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, lit: 'private:801', ready: true, rows: [], owed: 0,
     progress: [], waiting: [], live: liveThisWeek({ ...work, private: [...work.private, solo] }, now), openRow() {}, openThread() {},
   });
-  assert.match(html, /data-ai-line="closed"[^>]*[\s\S]*?M12 15v2m-6 4h12/, 'drawn with the lock glyph');
-  assert.match(html, /Closed 801/);
-  assert.match(html, /Garden club · Private thread · Closed/, 'its project, in front of "Private thread · Closed"');
-  assert.match(html, /Private thread · Closed/);
-  assert.match(html, /data-ai-line="closed" data-ai-lit="" aria-current="true"/, 'lit while its thread is in the column');
-  assert.match(html, /data-ai-group="none"[\s\S]*?An app for our garden plot rota/, 'one with no project is under Only you');
-  assert.ok(html.indexOf('data-ai-line="live"') < html.indexOf('data-ai-line="closed"'), 'under the project after its live row');
+  const doneSheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  assert.match(doneSheet, /Closed 801/);
+  assert.match(doneSheet, /Garden club · Private thread · Closed/, 'its project, in front of "Private thread · Closed"');
+  assert.match(doneSheet, /data-ai-line="closed" data-ai-lit="" aria-current="true"/, 'lit while its thread is in the column');
+  const rowOf = (title) => doneSheet.slice(doneSheet.lastIndexOf('<button', doneSheet.indexOf(title)), doneSheet.indexOf('</button>', doneSheet.indexOf(title)));
+  assert.match(rowOf('Closed 801'), new RegExp(`data-ai-row-end="word">${message('messages:ai.history.done')}<`), 'History\'s word');
+  assert.doesNotMatch(rowOf('Closed 801'), /data-ai-row-end="tick"/, 'and no tick: it did not go live');
+  assert.match(rowOf('Closed 801'), /data-ai-line-number="">Only you</, 'a private thread is Only you where a number would be');
+  assert.match(rowOf('An app for our garden plot rota'), /M12 15v2m-6 4h12/, 'one in no project wears the lock for its tile');
+  assert.match(rowOf('An app for our garden plot rota'), />Only you</, 'and Only you for its project');
 });
 
 test('the column from 768px: one thread, or a new chat, alone under its own head; a page the panel holds gives the lists back when it closes', () => {
@@ -1758,8 +1804,10 @@ test('the column from 768px: one thread, or a new chat, alone under its own head
   // A thread asked for: the panel gives the column back, a new chat goes.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
   assert.match(src, /const showAt = \(next: BotAt\) => \{\s+if \(!next\.threadRootId\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(next\.threadRootId !== detail\?\.ref\.rootId\) putAway\(\);\s+\}\s+setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
-  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
-  assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
+  // Mobile 04: openPage says whether the column took the page, so Reply can
+  // hand its message to the column's own document.
+  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\)/);
+  assert.match(src, /const took = openPublic\(href, app, title\);\s+if \(took\) underPanel\(\);\s+return took;/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
   assert.match(src, /const underPanel = \(\) => \{\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+\};/);
   // The panel takes a page beside this page from 768px too.
@@ -1804,7 +1852,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   // #6153: a request filed from a private thread opens that thread first.
   assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
-  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/, 'and Needs you');
+  assert.match(src, /if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
   assert.equal(isTopicHref('#app/garden/dev/issues/12'), true);
   assert.equal(isTopicHref('#app/garden/dev/changes/12'), true);
@@ -2006,7 +2054,13 @@ test('the column is held inside the window, and the panel takes its place at its
   // room is the page's usable box, the window less the rail and the Duo's
   // column, declared once on body (1 Nov 2026; tests/usable-box.test.js pins
   // how it is made).
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: var\(--list-pane-w\);\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);\s+--ai-main-w: max\(320px, min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: var\(--list-pane-w\);\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);\s+--ai-main-w: max\(var\(--ai-main-floor, 320px\), min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  // 24 Nov 2026: the thread takes the spare room. Beside the lists the
+  // column is never narrower than the room less the list's 42rem, so the
+  // list never floats between two empty bands; a preview's columns, the
+  // frame's looks and a phone keep the column's own 320px.
+  assert.match(css, /@media \(min-width: 768px\) \{\s+body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-preview\]\):not\(\[data-frame-list\]\)\) \{\s+--ai-list-max: 42rem;\s+--ai-main-floor: max\(320px, calc\(var\(--ai-room\) - var\(--ai-list-max\)\)\);\s+\}\s+\}/,
+    'the column is floored at the room less the list\'s own measure, beside the lists only');
   // 9 Nov 2026 (#6495): the bot tab's list is the Messages inbox's list while
   // something is open beside it, so the two pages share one measure and the
   // open column gets the room the list lets go. Defined once, read by both.
@@ -2014,8 +2068,11 @@ test('the column is held inside the window, and the panel takes its place at its
   // to the page's own 672px and centred in it, rather than staying the
   // inbox's 22rem against the rail with bare background beside it.
   assert.match(css, /:root \{ --list-pane-w: 22rem; \}/, 'one list width, defined once');
-  assert.match(css, /\.messages-list-pane \{\s+flex: 0 0 var\(--list-pane-w\);\s+width: var\(--list-pane-w\);/, 'the inbox reads it');
-  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: 42rem;\s+margin-inline: auto;\s+\}/,
+  // Desktop polish 09 (24 Nov 2026): Messages' list can be dragged to a width
+  // of its own, `--messages-list-chosen-w`; with none chosen it reads this
+  // measure, and the bot tab's list is not touched.
+  assert.match(css, /\.messages-list-pane \{\s+position: relative;\s+flex: 0 0 var\(--messages-list-chosen-w, var\(--list-pane-w\)\);\s+width: var\(--messages-list-chosen-w, var\(--list-pane-w\)\);/, 'the inbox reads it');
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: var\(--ai-list-max, 42rem\);\s+margin-inline: auto;\s+\}/,
     'and the bot tab\'s list fills the room beside the open column, up to 672px, centred in it');
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards
@@ -2039,8 +2096,9 @@ test('the column is held inside the window, and the panel takes its place at its
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   // A thread alone in the column has its own head, which pads by the Duo's column (1 Nov 2026).
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="alone"\] \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
-    'a thread\'s title stops beside the column, not under the clock');
+  // Phone review #70 (23 Nov 2026): and New chat's head, whose ✕ sat under the Wi-Fi ring held sideways.
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="alone"\],\n[^\n]*\n[^\n]*\n#ai-screen \.ai-main-pane \[data-bot-new-thread-pane\] > \.messages-thread-header \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
+    'a thread\'s title and New chat\'s ✕ stop beside the column, not under the clock');
   assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{alone \? 'alone' : undefined\}>/);
   assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-inline-end: var\(--ai-edge/, 'the chat runs under the column, below its head');
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-inline-end: var\(--ai-edge, 0px\);/);
@@ -2074,7 +2132,7 @@ test('the column is held inside the window, and the panel takes its place at its
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeFits \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
     'and the edge is the way the list hides and comes back (#6963)');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
@@ -2097,16 +2155,25 @@ test('a preview beside the thread: both edges drag, each the width of the column
   // gutter is the gap you see, so the handle is centred in it. That media
   // block is the one edge that adds 8px; every other edge stays on its pane's
   // hairline.
-  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
+  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-list-closed\]\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
   assert.match(css, mobileGutter, 'below 1024px the handle sits halfway across the gap');
   assert.doesNotMatch(css.replace(mobileGutter, ''), /--divider-at:[^;]*\+ 8px/,
     'no other edge sits in the gutter any more');
   // The preview's own divider, not drawn where the preview is the whole screen.
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
-  assert.match(src, /const threeUp = detailHere && layout === 'three';/);
+  // The thread's edge keeps the three columns' width, bound and preview while
+  // they fit, the list shown or put away (24 Nov 2026).
+  assert.match(src, /const threeFits = detailHere && fits === 'three';/);
+  assert.match(src, /const fits = detailLayout\('bot', \{ phone, wide: three \}\);/);
   assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
-  assert.match(src, /neighbourMin: \(probe\.neighbourMin \?\? 0\) \+ Math\.max\(0, roomEnd - endAt\), endAt/,
+  assert.match(src, /neighbourMin: listMin \+ Math\.max\(0, roomEnd - endAt\), endAt/,
     'and its bound keeps the preview as it is drawn, the room app.css leaves the thread');
+  // That room keeps app.css's 480px list beside the preview, not the 22rem
+  // `--ai-list-min` the probe reads: the handle stops where the thread is
+  // drawn to stop, and the snap is measured from there.
+  assert.match(src, /const THREE_LIST_MIN = 480;/);
+  assert.match(src, /const listMin = Math\.max\(probe\.neighbourMin \?\? 0, THREE_LIST_MIN\);/);
+  assert.match(css, /calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)/, 'the 480px app.css holds the list to');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
     'read again when the preview is resized');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
@@ -2133,7 +2200,7 @@ test('a plan opened from a request in the side panel is a third column, not a sh
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ panelEdgeStore \} from '\.\.\/side-panel\/edge-store';/);
   assert.match(src, /const pageInColumn = column\?\.at === 'page';/);
-  assert.match(src, /slot: visible && threeUp && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
+  assert.match(src, /slot: visible && threeFits && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
   // The panel reads it, and falls back to its own defaults with no slot.
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
   assert.match(panel, /const edges = useStoreState\(panelEdgeStore\);\s+const edge = edges\.slot;/);
@@ -2333,10 +2400,19 @@ test('one column state: where each row goes, the row it lights and its address',
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
   // 5 Nov 2026: the column's address carries the filter the chips set
   // (./filter-address.ts), and the chips write it back in place: two writers,
-  // the column's and the filter's, besides its definition.
-  assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
+  // the column's and the filter's, besides its definition. 24 Nov 2026
+  // (#7103): Waiting on you writes its own address when it opens and the
+  // bare tab's when All threads closes it. 25 Nov 2026 (#7157): In progress
+  // is its sibling and does the same, one resting state a list.
+  assert.match(src, /const base = href !== BOT_TAB \? href/);
+  assert.match(src, /: waitingOpen \? waitingAddress\(\)/);
+  assert.match(src, /: progressOpen \? progressAddress\(\)/);
+  assert.match(src, /showAddress\(withFilter\(base, \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
   assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
-  assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
+  assert.match(src, /showAddress\(waitingAddress\(picked\)\);/);
+  assert.match(src, /showAddress\(progressAddress\(picked\)\);/);
+  assert.match(src, /showAddress\(withFilter\('#homeroom-bot', \{ projects: picked \}\)\);/);
+  assert.equal((src.match(/showAddress\(/g) || []).length, 7, 'the column\'s writer, the filter\'s, and Waiting on you\'s and In progress\'s open and close, besides its definition');
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });
@@ -2464,8 +2540,8 @@ test('#6398: the search narrows every list by title, number or project, and says
   const byTitle = html({ query: 'migration' });
   assert.match(byTitle, /make the migration job cheaper/);
   assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
-  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
-  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
+  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress has no match, so its card is gone');
+  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Done');
   assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
   assert.match(byTitle, /Needs you · 1/, 'the Needs you count over its rows is its matches');
 
@@ -2483,11 +2559,11 @@ test('#6398: the search narrows every list by title, number or project, and says
   assert.match(byProject, /Ship the seed/);
   assert.doesNotMatch(byProject, /make the migration|reuse image scan/);
 
-  // A match past a project's first few is drawn, not folded: with no search
+  // A match past a band's first few is drawn, not folded: with no search
   // the seventh row waits behind Show more, and with one it is on the page.
   const many = Array.from({ length: 7 }, (_, i) => need(`need:proposal:${i + 1}`, `Release note ${i + 1}`, app, 500 + i));
   const folded = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7 });
-  assert.match(folded, /data-ai-group-rest=""/, 'the rest of a project folds away with no search');
+  assert.match(folded, /data-ai-group-rest=""/, 'the rest of a band folds away with no search');
   const matched = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7, query: 'release note' });
   assert.doesNotMatch(matched, /data-ai-group-rest=""/, 'every match shows, with no fold over it');
   assert.match(matched, /Release note 7/);
@@ -2504,18 +2580,31 @@ test('#6398: the search narrows every list by title, number or project, and says
   assert.match(loading, /data-ai-loading=""/);
   assert.doesNotMatch(loading, /data-ai-search-empty/);
 
-  // The button and the box (index.tsx): the search button sits beside New
-  // chat, with the app's magnifying glass, and the box's text is what the
-  // lists narrow to.
+  // The box (index.tsx; 24 Nov 2026, the three bands): always on the head
+  // card's tools line, with the app's magnifying glass; what it says is what
+  // the bands narrow to. The look's list keeps its own button, so there the
+  // box counts only while open.
   const src = read('frontend/src/features/ai/index.tsx');
-  const toggle = src.indexOf('data-ai-search-toggle=""');
-  assert.ok(toggle > 0 && toggle < src.indexOf('<NewChatButton'), 'the search button is beside New chat, before it');
-  const button = src.slice(src.lastIndexOf('<button', toggle), src.indexOf('</button>', toggle));
-  assert.match(button, /aria-label=\{t\('messages:ai\.search\.open'\)\}/, 'it is named for what it does');
-  assert.match(button, /<SearchIcon aria-hidden="true" \/>/);
-  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'a round button, the height of New chat beside it');
-  assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
-  assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
+  assert.doesNotMatch(src, /data-ai-search-toggle/, 'no button opens it: it is there');
+  assert.match(src, /const asked = frame \? \(searchOpen \? query : ''\) : query;/);
+  assert.match(src, /search=\{searchField\}\s+query=\{asked\}/, 'the box\'s text is passed to the bands');
+  const box = src.slice(src.indexOf('const searchField = ('), src.indexOf('</label>', src.indexOf('const searchField = (')));
+  assert.match(box, /<SearchIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>/);
+  assert.match(box, /placeholder=\{t\('messages:ai\.search\.placeholder'\)\}\s+aria-label=\{t\('messages:ai\.search\.label'\)\}/, 'named for what it does');
+  assert.match(box, /data-ai-search=""/);
+  assert.equal(message('messages:ai.search.placeholder'), 'Search threads…');
+  // On a computer it names Ctrl+K (⌘K on a Mac), which puts the cursor in it
+  // while the tab is showing (./search-shortcut.ts); never in the prerender.
+  assert.match(box, /searchHint === 'none' \? null : \(\s+<kbd className="ai-search-key /);
+  const key = loadTsx('frontend/src/features/ai/search-shortcut.ts');
+  assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true }, { showing: true, dialog: false, commentMode: false }), 'focus');
+  assert.equal(key.botSearchAnswer({ key: 'k', metaKey: true }, { showing: true, dialog: false, commentMode: false }), 'focus');
+  assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true }, { showing: false, dialog: false, commentMode: false }), null, 'only while the tab shows');
+  assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true }, { showing: true, dialog: true, commentMode: false }), null, 'not over a dialog');
+  assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true, shiftKey: true }, { showing: true, dialog: false, commentMode: false }), null);
+  assert.equal(key.botSearchAnswer({ key: 'k' }, { showing: true, dialog: false, commentMode: false }), null, 'a plain k is typing');
+  assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true, defaultPrevented: true }, { showing: true, dialog: false, commentMode: false }), null);
+  assert.match(src, /installBotSearchShortcut\(\(\) => \(visible \? searchRef\.current : null\)\)/);
   assert.equal(message('messages:ai.search.open'), 'Search threads and messages');
   assert.equal(message('messages:ai.search.label'), 'Search threads and messages');
   assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'Nothing in your threads or messages matches “releases”');
@@ -2557,7 +2646,7 @@ test('the search lists the messages that match under the threads, each a link to
   assert.ok(both.indexOf('data-ai-list="busy"') > 0 && both.indexOf('data-ai-list="busy"') < both.indexOf('data-ai-list="found"'), 'the messages come after the matching threads');
   assert.equal(message('messages:ai.search.messages', { count: 2 }), 'In your messages · 2');
   const card = both.slice(both.indexOf('data-ai-sheet="found"'));
-  assert.match(card, /<h2 class="[^"]*\buppercase\b[^"]*">In your messages · 2<\/h2>/, 'the small caps section label the other cards wear');
+  assert.match(card, /<h3 [^>]*>[\s\S]*?In your messages[\s\S]*?<span class="sr-only">In your messages · 2<\/span><\/h3>/, 'a band\'s strip, as the other cards wear (24 Nov 2026)');
   const rows = [...card.matchAll(/<a href="([^"]+)" class="([^"]*)" title="([^"]*)" aria-label="([^"]*)" data-ai-found="(chat|thread)">(.*?)<\/a>/g)];
   assert.equal(rows.length, 2, 'one row a message, each a real link');
   const [chat, inThread] = rows;
@@ -2583,10 +2672,10 @@ test('the search lists the messages that match under the threads, each a link to
   assert.equal(chat[4], `You: I want to improve my app. · Your chat with Homeroom bot · ${day}`);
   assert.equal(inThread[4], `Homeroom bot: …so we could improve it later · A calendar for the garden · ${day}`);
   assert.equal(chat[3], chat[4], 'the tooltip says the same');
-  // The row is the list's own quiet row, not a new one.
+  // The row is the list's own quiet one-line row, with a tap's height.
   const src = read(LISTS);
-  assert.match(src, /function FoundRow[\s\S]*?className=\{LIVE_ROW\}/, 'the quiet row Live this week and History draw');
-  assert.ok(chat[2].includes('min-h-[40px]') && chat[2].includes('md:min-h-[32px]'));
+  assert.match(src, /function FoundRow[\s\S]*?className=\{FOUND_ROW\}/);
+  assert.ok(chat[2].includes('min-h-[44px]') && chat[2].includes('md:min-h-[36px]'));
   assert.doesNotMatch(card, /data-ai-found-more/, 'nothing about more matches when these are all');
 
   // Only messages match: no thread card, no "nothing matches" note.
@@ -2627,7 +2716,7 @@ test('the search lists the messages that match under the threads, each a link to
 
   // The page (index.tsx) asks only for what the open box says, and hands both faces the answer.
   const page = read('frontend/src/features/ai/index.tsx');
-  assert.match(page, /const search = useBotSearch\(searchOpen \? query : '', \{/);
+  assert.match(page, /const search = useBotSearch\(asked, \{/);
   assert.equal((page.match(/found=\{search\.found\}/g) || []).length, 2, 'the standard list and the look\'s');
   assert.equal((page.match(/onFoundRetry=\{search\.retry\}/g) || []).length, 2);
 });
@@ -2679,7 +2768,7 @@ test('#6738: the words a result was opened by stay marked in the message it open
   // The page clears the mark when the box is closed, emptied or says
   // something else; the box is not in the address, so nothing outlives it.
   assert.match(read('frontend/src/features/ai/index.tsx'),
-    /const marked = cleanQuery\(searchOpen \? query : ''\);\s*useEffect\(\(\) => \{\s*const mark = currentSearchMark\(\);\s*if \(mark && mark\.q !== marked\) clearSearchMark\(\);\s*\}, \[marked\]\);/);
+    /const marked = cleanQuery\(asked\);\s*useEffect\(\(\) => \{\s*const mark = currentSearchMark\(\);\s*if \(mark && mark\.q !== marked\) clearSearchMark\(\);\s*\}, \[marked\]\);/);
 
   // The row reads the mark by its own id, so only the opened message is
   // marked, and hands it to its words and their translation.
@@ -2808,23 +2897,25 @@ test('#6714: the AI tab\'s address from a project\'s page is narrowed to that pr
 // list itself, so the label widened the list and `overflow-y: auto` gave it a
 // sideways scroll. The badge now holds its own label, and the list clips
 // sideways overflow as a guard. The chip rail keeps its own sideways scroll.
-test('#6838: the list scrolls up and down only, and the chip rail keeps its own sideways scroll', () => {
+test('#6838: the list scrolls up and down only; a row never pushes past its band', () => {
   const lists = read('frontend/src/features/ai/lists.tsx');
-  const badge = lists.slice(lists.indexOf('function FreshBadge'));
-  const outer = badge.slice(0, badge.indexOf('>'));
-  assert.match(outer, /className=\{`relative inline-flex /, 'the badge is positioned, so its spoken label is clipped with it');
-  assert.match(badge, /<span className="sr-only">\{t\('messages:ai\.filter\.fresh', \{ count \}\)\}<\/span>/, 'the count is still spoken');
   const css = read('public/css/app.css');
   const rule = css.slice(css.indexOf('.ai-drawer-list {'));
   const block = rule.slice(0, rule.indexOf('}'));
   assert.match(block, /overflow-x: hidden;/, 'the phone list can never be dragged sideways');
   assert.match(block, /overflow-y: auto;/, 'it still scrolls up and down');
   assert.match(block, /touch-action: pan-y;/, 'a sideways swipe is not a pan');
-  assert.match(lists, /className=\{`mx-1\.5 flex gap-2 overflow-x-auto /, 'the chips still scroll sideways inside their rail');
+  // 24 Nov 2026 (the three bands): no chip rail; a row's title truncates (or
+  // takes two lines where the list is narrow) and its pill never wraps.
+  assert.doesNotMatch(lists, /overflow-x-auto/, 'nothing of the list\'s own scrolls sideways');
+  assert.match(lists, /const PILL = 'inline-flex h-6 shrink-0 items-center whitespace-nowrap /);
+  assert.match(lists, /className=\{`ai-row-title block truncate /);
+  assert.match(css, /#ai-screen \.ai-lists \.ai-row-title \{\n  display: -webkit-box;\n  -webkit-box-orient: vertical;\n  -webkit-line-clamp: 2;/);
+  assert.match(lists, /<KindRail role="group"/, 'Done\'s kind chips ride the shared rail, which scrolls inside itself');
 });
 
 // T2.10 (19 Nov 2026): a hand-back's pill says what it waits on, from the
-// cause the server stored (services/bot-stop-cause.js), never "Needs Reply"
+// cause the server stored (services/bot-stop-cause.js), never "Needs reply"
 // to a requester whose decision it is not.
 test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
   const { needsYou } = loadTsx(MODEL);
@@ -2835,7 +2926,7 @@ test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
       decide(5, 'wrong_project'), decide(6, 'close'), decide(7, 'operator_work')],
   });
   assert.deepEqual(rows.map((r) => message(r.pill.id)), [
-    'Needs Reply', 'See who decides', 'Move it', 'Move it', 'Close it', 'Close it', 'Take a look',
+    'Needs reply', 'See who decides', 'Move it', 'Move it', 'Close it', 'Close it', 'Take a look',
   ]);
   const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
   assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: 'decide', cause: 'others' }).cause, 'others', 'the client keeps the cause');
@@ -2870,7 +2961,8 @@ test('the list hidden: one store, this device\'s, and only the bot page\'s colum
   assert.equal(read2(showsListButton), false);
   setDocked(true);
   assert.equal(read2(showsListButton), true, 'the bot page\'s column offers it');
-  // A phone, or a preview beside the thread, publishes itself as not docked.
+  // A phone, or a preview in a window too narrow for three columns, publishes
+  // itself as not docked.
   setDocked(false);
   assert.equal(read2(showsListButton), false);
   assert.equal(read2(isListClosed), true, 'the choice is kept for when it is docked again');
@@ -2881,13 +2973,48 @@ test('the list hidden: one store, this device\'s, and only the bot page\'s colum
   delete globalThis.window;
 });
 
-test('the page is one pane only while it is docked, open, and with no preview beside the thread', () => {
+test('the list put away beside a preview (24 Nov 2026): halves where three columns fit, nothing else changes', () => {
+  const { listLayout } = loadTsx('frontend/src/features/ai/list-closed.ts');
+  const at = (o) => listLayout({ closed: false, open: true, preview: false, fits: 'three', phone: false, ...o });
+  // No preview: as it was. The bar snaps, and the choice is one pane.
+  assert.deepEqual(at({}), { snaps: true, oneUp: false, layout: 'three' });
+  assert.deepEqual(at({ closed: true }), { snaps: true, oneUp: true, layout: 'three' });
+  assert.deepEqual(at({ closed: true, fits: 'halves' }), { snaps: true, oneUp: true, layout: 'halves' },
+    'a narrower window with no preview hides the list as it did');
+  // A preview where three columns fit: the bar snaps there too, and the list
+  // put away leaves the thread and the preview in halves.
+  assert.deepEqual(at({ preview: true }), { snaps: true, oneUp: false, layout: 'three' });
+  assert.deepEqual(at({ preview: true, closed: true }), { snaps: true, oneUp: true, layout: 'halves' },
+    'list, thread and preview become thread and preview');
+  // A window whose width already makes halves: no list to hide or restore.
+  assert.deepEqual(at({ preview: true, fits: 'halves' }), { snaps: false, oneUp: false, layout: 'halves' });
+  assert.deepEqual(at({ preview: true, fits: 'halves', closed: true }), { snaps: false, oneUp: false, layout: 'halves' },
+    'the choice is kept and changes nothing there');
+  // A phone and a closed column are untouched by the choice.
+  assert.deepEqual(at({ preview: true, closed: true, fits: 'full', phone: true }), { snaps: false, oneUp: false, layout: 'full' });
+  assert.deepEqual(at({ closed: true, phone: true, fits: 'full' }), { snaps: true, oneUp: false, layout: 'full' });
+  assert.deepEqual(at({ closed: true, open: false }), { snaps: true, oneUp: false, layout: 'three' });
+
+  // The thread's edge stays drawn on the pane's own edge while the list is
+  // put away, and the side panel's does as the column beside a page.
+  const css = read('public/css/app.css');
+  assert.match(css, /#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\] \.ai-main-pane > \.side-panel-divider \{ display: block; \}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) #side-panel-divider \{ display: block; \}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\] #ai-main-divider,\nbody:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) #side-panel-divider \{\n  --divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  // A narrower window's halves still draws neither.
+  assert.match(css, /#ai-screen:not\(\[data-ai-preview="three"\]\)\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
+  // The frame looks, which draw no thread edge at all, keep theirs: the rule
+  // that shows it does not outrank theirs.
+  assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/);
+});
+
+test('the list put away: one pane, or beside a preview the thread and the preview in halves, where three columns fit', () => {
   const index = read('frontend/src/features/ai/index.tsx');
-  assert.match(index, /import \{ setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
-  assert.match(index, /const listClosed = useListClosed\(\);\s+const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
-    'a phone, a closed column or a preview keeps today\'s layout');
-  assert.match(index, /const snaps = !threeUp && !detailHere;/);
-  assert.match(index, /setDocked\(docked && !detailHere && !phone\)/, 'the button is offered only where the split is');
+  assert.match(index, /import \{ listLayout, setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
+  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: detailHere, fits, phone \}\);/,
+    'one reading of the choice, the column and the window');
+  assert.match(index, /setDocked\(docked && snaps && !phone\)/, 'the button is offered wherever the list\'s bar snaps');
   assert.match(index, /data-ai-list-closed=\{oneUp \? '' : undefined\}/);
   assert.match(index, /onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}/);
   assert.match(index, /onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}/);
@@ -2927,14 +3054,29 @@ test('the way back to the list: a round head button first in a thread\'s head an
 
 test('the one-pane rule: the list is not drawn and the pane takes the whole room', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
-    'the pane and its edge reach the rail, as `--ai-main-w` is what both read');
+  // 24 Nov 2026: the pane stops 16px short of the rail (the list's own card
+  // margin, folded away), so the thread's card sits 28px from the rail and
+  // the bar has a gap to sit in.
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\) - 16px\);\n\}/,
+    'the pane and its edge stop 16px after the rail, as `--ai-main-w` is what both read');
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \.ai-screen-body \{ display: none; \}/,
     'and the list is out of the page');
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]\[data-ai-list-closed\] \{ --ai-main-w: calc\(var\(--platform-usable-w\) - var\(--ai-edge, 0px\)\); \}/,
     'the frame looks honour it too');
-  assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
-    'a page in Main\'s place, which reads the width from body, takes the room too');
+  assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\) - 16px\);\n\}/,
+    'a page in Main\'s place, which reads the width from body, takes the room too and leaves the same gap');
+  // Beside a preview (halves) the thread gives up the same 16px, and the
+  // preview at its widest stops 16px sooner so the thread keeps its 320px.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 16px - 320px\)\)\);\n  --ai-col-w: calc\(var\(--ai-room\) - 16px - var\(--ai-preview-w\)\);\n\}/,
+    'halves with the list put away leave the gap too');
+  // The bar sits in the middle of that 28px gap, (16px - 12px) / 2 off the
+  // pane's edge towards the rail, at every width (unindented: no media block)
+  // and in every look, Main's and the side panel's alike; #6447's 8px
+  // towards the list is the list's.
+  assert.match(css, /\nbody:has\(#ai-screen\[data-ai-list-closed\]:not\(\.hidden\)\) :is\(#ai-main-divider, #side-panel-divider\) \{\n  inset-inline-end: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2 \+ \(16px - 12px\) \/ 2\);\n\}/,
+    'the bar in the folded list\'s gap');
+  const placed = css.indexOf('\nbody:has(#ai-screen[data-ai-list-closed]:not(.hidden)) :is(#ai-main-divider, #side-panel-divider) {');
+  assert.ok(placed > css.indexOf('THE BOT TAB\'S OTHER TWO GRIPS'), 'after the grips placed in their gaps, which it does not touch');
 });
 
 test('a page in the column hands the panel\'s own edge the one-pane wiring (#6973)', () => {
@@ -2944,14 +3086,39 @@ test('a page in the column hands the panel\'s own edge the one-pane wiring (#697
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index,
     /panelEdgeStore\.set\(\{\s+snap: visible && pageInColumn && snaps && !phone\s+\? \{ collapsed: oneUp, onCollapse: \(\) => setListClosed\(true\), onRestore: \(\) => setListClosed\(false\) \}\s+: null,\s+\}\);/,
-    'a page, no preview, not a phone; and it never writes the slot');
+    'a page, not a phone, and no preview unless three columns fit; and it never writes the slot');
   assert.match(index, /return \(\) => \{ panelEdgeStore\.set\(\{ snap: null \}\); \};/,
     'cleared when the page is not the column');
-  assert.match(index, /const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
-    'the same one-pane state the thread column uses');
+  assert.match(index, /const \{ snaps, oneUp, layout \} = listLayout\(/,
+    'the same choice the thread column uses');
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().snap, null, 'the prerender has no wiring');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'),
     /collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}/,
     'its own divider reads it');
+});
+
+test('phone review #5 and #11: leaving the page holds the thread\'s detail, and a layout switch keeps the thread', () => {
+  const page = read('frontend/src/features/ai/index.tsx');
+  // #5: a request's or a change's page draws whatever the detail store holds,
+  // so the artifact a thread showed is held for it when the page is left.
+  assert.match(page, /if \(!visible\) \{\s+ownerWas\.current = null;\s+const entry = detailEntry\(\);\s+if \(!entry\?\.owner \|\| entry\.kind === 'preview'\) return;/);
+  assert.match(page, /if \(entry\.owner === was \|\| ofThisChat\) holdDetail\(entry\.owner\);/);
+  // #11: one reading of both widths, so the drawer and the docked column swap
+  // in one render and never both mount a chat …
+  assert.match(page, /function useWidths\(\): \{ phone: boolean; wide: boolean \}/);
+  assert.match(page, /const \{ phone, wide \} = useWidths\(\);/);
+  assert.doesNotMatch(page, /usePhone\(\)/);
+  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /export const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
+  // … and the thread open before the switch is asked for again in the layout
+  // arrived at, slid in on a phone, the lists kept where they were scrolled.
+  assert.match(page, /if \(openRoot\) \{\s+const next = \{ threadRootId: openRoot, focusMessageId: null \};\s+setAt\(next\);\s+embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(layoutNow === 'phone'\) setLevel\(1\);/);
+  assert.match(page, /const scroller = layoutNow === 'phone' \? screen\.querySelector<HTMLElement>\('\.ai-drawer-list'\) : screen;/);
+});
+
+test('phone review #117: the drawer\'s thread has no edge line and its head clears the top bar', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/\n\.ai-drawer-thread \{[^}]*\}/)[0];
+  assert.doesNotMatch(rule, /border-inline-start/);
+  assert.match(css, /\.ai-drawer-pane \{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: 14px; \}/);
 });

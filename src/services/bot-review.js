@@ -528,7 +528,8 @@ function fixPrompt({
  * never throws.
  */
 async function callReviewer({
-  pool, config = {}, userId, model, system, content, appId = null, sessionId = null, timeoutMs = null, deps = {},
+  pool, config = {}, userId, model, system, content, appId = null, sessionId = null, timeoutMs = null,
+  maxTokens = null, component = null, deps = {},
 }) {
   const started = Date.now();
   const ms = () => Date.now() - started;
@@ -564,8 +565,10 @@ async function callReviewer({
     const result = await client.streamChat({
       chatMessages: [{ role: 'user', content }],
       systemPrompt: system,
-      maxTokens: REVIEW_MAX_TOKENS,
-      telemetryContext: { pool, appId, sessionId, backend: 'helper', component: TELEMETRY_COMPONENT },
+      // 24 Nov 2026: a live draft's look at its picture (preview-look.js
+      // askAboutPicture) asks with a short answer and a component of its own.
+      maxTokens: Number(maxTokens) > 0 ? Math.min(Number(maxTokens), REVIEW_MAX_TOKENS) : REVIEW_MAX_TOKENS,
+      telemetryContext: { pool, appId, sessionId, backend: 'helper', component: component || TELEMETRY_COMPONENT },
     });
     const costUsd = Number(client.estimateCostCents(result.usage)) / 100;
     return { ok: true, text: result.text || '', costUsd: Number.isFinite(costUsd) ? costUsd : null, ms: ms() };

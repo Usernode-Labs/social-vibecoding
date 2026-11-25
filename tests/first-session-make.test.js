@@ -518,7 +518,9 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // the scroller with Make it under it when they fit. The scroller is what
   // the surface reveals in; the bar is above it, outside it.
   assert.match(src, /import \{ revealScrollTop, useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
-  assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
+  // (Phone review #9: from Create the ✕ floats over the scroller's head, so
+  // the reveal counts that head as covered.)
+  assert.match(src, /const head = underHeader && !\(isFrameSkin\(look\) && fromCreate\) \? MAKE_HEAD : 0;\s*useKeyboardSurface\(scrollerRef, \{ head \}\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
   // #4597: the caret goes in from code only where the sign-in sheet would
   // put one (a desktop, or keys already up), so on a phone the screen opens
@@ -530,7 +532,9 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // stops below it.
   // (`relative`: from Create, its ✕ sits at the bar's leading edge.)
   // (#4195: from Create under the platform header, the bar is only the ✕.)
-  assert.match(src, /<div className=\{underHeader \? `relative h-12 shrink-0 \$\{motion\}` : `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // (Phone review #9, 23 Nov 2026: and it takes no room there. The ✕ floats
+  // over the scroller's head, which app.css pads and fades.)
+  assert.match(src, /<div className=\{underHeader \? `relative z-10 h-0 shrink-0 \$\{motion\}` : `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
@@ -641,7 +645,11 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(pressed(tree), ['tier'], 'the same words are not their own');
   brief(tree).props.onChange({ target: { value: `${brief(tree).props.value} And a map of them.` } });
   tree = draw();
-  assert.deepEqual(pressed(tree), ['idea'], 'their own words: Your own idea, which takes the fourth tile');
+  // Phone review S7 (23 Nov 2026): their own words let go of the template,
+  // but nothing was chosen, so the fourth tile keeps its name ("Something
+  // else…") and no tile is ringed.
+  assert.deepEqual(pressed(tree), [], 'their own words: the template lets go, and no tile is picked for them');
+  assert.equal(tiles(tree)[3].props['data-first-session-example'], 'more', 'Something else keeps its name');
   assert.equal(nameField(tree).props.value, 'Trail Talk', 'the name stays theirs');
 
   // The game starts on Your own, with a box for the rest and nothing to write out.
@@ -696,7 +704,7 @@ test('the game\'s box reads as a field to type in, and the tiles are two by two'
   // A field, plainly: white, ringed in the accent while it is empty, with a
   // label above it. The blank's words are tinted; the box is not.
   assert.match(src, /\{t\('onboarding:firstSession\.make\.finishLabel'\)\}/);
-  assert.equal(message('onboarding:firstSession.make.finishLabel'), 'Finish it in your own words');
+  assert.equal(message('onboarding:firstSession.make.finishLabel'), 'Finish the sentence');
   assert.match(src, /className=\{`\$\{WORDS_BOX\} \$\{words\.trim\(\) \? WORDS_FILLED : WORDS_EMPTY\}`\}/);
   assert.match(src, /const WORDS_EMPTY = 'shadow-\[inset_0_0_0_2px_var\(--accent\),/);
   // The box's example is one whole message, "For example, …".
@@ -761,7 +769,7 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(src, /\{t\('onboarding:firstSession\.invite\.noteHint'\)\}/);
-  assert.match(sheet, /When you share, your note also goes in the group chat as your first message\./);
+  assert.match(sheet, /Your note goes with the link\. When you share or copy it, it also goes in the group chat as your first message\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);
@@ -775,8 +783,9 @@ test('Make it stays reachable: a pick brings it into view, and pressing it holds
   // draws of a fixed box (innerHeight).
   assert.match(src, /if \(picks\.current\+\+ === 0\) return undefined;/, 'not on opening');
   assert.match(src, /if \(!scroller \|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\) return;/, 'the keyboard surface reveals with the keys up');
-  assert.match(src, /viewBottom: Math\.min\(view\.bottom, window\.innerHeight\),/);
-  assert.match(src, /\}, \[picked, choice, written\]\);/);
+  assert.match(src, /revealField\(scroller, card, button, head, window\.innerHeight\);/);
+  assert.match(src, /viewBottom: viewBottom == null \? view\.bottom : Math\.min\(view\.bottom, viewBottom\),/);
+  assert.match(src, /\}, \[picked, choice, written, head\]\);/);
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(html, /<div data-make-brief="" class="mt-4 overflow-hidden rounded-2xl /);
   assert.match(html, /<button type="submit" data-make-submit=""/);
@@ -1102,7 +1111,11 @@ test('Make it says whether it is instant or custom: the rule, the exact copy, an
   // waitlist answer in the plain box. Muted zinc, 14px, no colour of its own.
   const base = { who: 'Jordan', onMade() {}, onLookAround() {} };
   const plain = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base);
-  assert.doesNotMatch(plain, /data-make-speed/);
+  assert.doesNotMatch(plain, /data-make-speed="/);
+  // Phone review S7: its room is kept before there is a line, so Make it
+  // does not move when one arrives. Both lines stand in one cell, unseen.
+  assert.match(plain, /<div data-make-speed-slot="" class="mt-3 grid">/);
+  assert.equal((plain.match(/<p aria-hidden="true" class="col-start-1 row-start-1 [^"]* invisible">/g) || []).length, 2, 'both lines hold the room, hidden');
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea: 'A tracker for my run club, so we can see who keeps up' });
   const line = /<p data-make-speed="custom" class="([^"]*)">(.*?)<\/p>/.exec(html);
   assert.ok(line, 'the line is drawn');
@@ -1117,7 +1130,7 @@ test('Make it says whether it is instant or custom: the rule, the exact copy, an
   // Above Who can change it, under the name.
   const src = read(`${DIR}/make.tsx`);
   const nameHint = src.indexOf("{missing === 'name' ? <p id=\"first-session-name-hint\"");
-  const speedAt = src.indexOf('<p data-make-speed={speed}');
+  const speedAt = src.indexOf('data-make-speed={speed === key ? key : undefined}');
   const ruleAt = src.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
   assert.ok(nameHint > 0 && nameHint < speedAt && speedAt < ruleAt, 'under the name, just above Who can change it');
   assert.ok(html.indexOf('data-make-speed') < html.indexOf('data-make-rule='), 'drawn above the rule line');
@@ -1289,4 +1302,37 @@ test('#6784: a thread\'s plan comes along, and the thread is sent with the brief
   // The foot hands it in, from the thread the person is in.
   assert.match(read('frontend/src/features/messages/private-thread-bar.tsx'),
     /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience, threadRootId: rootId \}\)/);
+});
+
+// Phone review, 23 Nov 2026 (iPhone 17 and iPhone Duo), the New project page.
+test('phone review: the page stops at the Duo\'s column, scrolls under the ✕ with a fade, and the keys shorten it at any width', () => {
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf('/* THE NEW PROJECT PAGE ON A PHONE'));
+  // #9: the page pads itself by the system's column, a side of the hardware.
+  assert.match(block, /\/\* direction: physical[^*]*\*\/\nhtml\[data-side-strip="right"\] \[data-first-session-make\] \{\n  padding-right: var\(--platform-strip-w, 0px\);\n\}\nhtml\[data-side-strip="left"\] \[data-first-session-make\] \{\n  padding-left: var\(--platform-strip-w, 0px\);\n\}\n\/\* direction: logical \*\//);
+  // #9: from Create the scroller's head is the ✕'s, 3rem, and fades there
+  // (not under a frame look, whose page draws its own head).
+  assert.match(block, /\[data-first-session-make\]\.platform-under-header:not\(\[data-make-kit\]\) > \[data-first-session-make-scroll\] \{\n  padding-top: 3rem;\n  -webkit-mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n  mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n\}/);
+  const make = loadTsx(`${DIR}/make.tsx`, { stubs: { '../../lib/i18n/react': ENGLISH_HOOK } });
+  assert.equal(make.MAKE_HEAD, 48, 'the same 3rem, in px, for the reveals');
+  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', underHeader: true, onMade() {}, onClose() {} });
+  assert.match(create, /<div class="relative z-10 h-0 shrink-0 [^"]*"><button type="button" data-make-close=""[^>]*class="absolute start-3 [^"]* top-2"/, 'the ✕ floats, taking no room');
+  // #16: wherever the phone's class is not on (the Duo unfolded is 951pt
+  // wide), the kit's inset ends the page at the keys.
+  assert.match(block, /html\.un-kb:not\(\.platform-kb-open\) \[data-first-session-make\] \{\n  padding-bottom: var\(--un-kb-inset, 0px\);\n\}/);
+  // #16: a fold or a turn with a field focused shows that field again.
+  const src = read(`${DIR}/make.tsx`);
+  assert.match(src, /if \(window\.innerWidth === width\) return;/, 'a change of width, never the keys');
+  assert.match(src, /revealField\(scroller, field, scroller\.querySelector\('\[data-make-submit\]'\), head\);\s*\}, TURN_SETTLE_MS\);/);
+  // S7: Make it, Import it and the rule sheet's Done take the page's face.
+  assert.match(block, /html:not\(\[data-skin\]\) :is\(\[data-first-session-make\] button\[type="submit"\], \[data-make-rule-done\]\) \{\n  font-family: inherit;\n\}/);
+});
+
+test('phone review: "Who can change it?" has no "Now" badge, and its two rows start their words on one edge (#122)', () => {
+  const rule = read('frontend/src/features/who-decides/make-rule.tsx');
+  assert.match(rule, /<PresetTiles picked=\{picked\} now=\{null\} viewer=\{viewer\} onPick=\{setPicked\} labelId="make-rule-sheet-title" \/>/);
+  const parts = read('frontend/src/features/who-decides/parts.tsx');
+  assert.match(parts, /export const PLAYS_LEAD = 32;/);
+  assert.match(parts, /const GROUP_TILE = <IconTile size="xs">/, 'the group\'s tile is xs, 32px');
+  assert.match(parts, /leading=\{<Face name=\{[^}]*\} size=\{PLAYS_LEAD\} \/>\}/);
 });

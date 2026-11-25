@@ -18,6 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { asTransition } = require('./lib/as-transition');
+const { standInForMaking } = require('./lib/app-making');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -44,7 +45,9 @@ test('a studio run\'s shared plans against the full PostgreSQL schema', { timeou
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 6 });
+  let making;
   t.after(async () => {
+    await making?.stop();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -58,23 +61,7 @@ test('a studio run\'s shared plans against the full PostgreSQL schema', { timeou
   const bot = require('../src/services/homeroom-bot');
 
   const { rows: [evan] } = await pool.query("INSERT INTO users (username, password, is_admin) VALUES ('evan', 'x', TRUE) RETURNING id");
-  // A project's making (src/workflow/app-creation/), stood in for: its
-  // insert starts it (a Started event), and its repository arrives a moment
-  // later.
-  const created = [];
-  let seenEvent = 0;
-  const making = setInterval(async () => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT id, app_id FROM wf_events WHERE machine = 'app-creation' AND type = 'Started' AND id > $1 ORDER BY id`, [seenEvent]);
-      for (const r of rows) {
-        seenEvent = Math.max(seenEvent, Number(r.id));
-        created.push(r.app_id);
-        await pool.query("UPDATE apps SET repo_url = 'https://github.com/usernode-bot/' || slug, status = 'running' WHERE id = $1", [r.app_id]);
-      }
-    } catch { /* the pool closing at the end */ }
-  }, 20);
-  t.after(() => clearInterval(making));
+  making = standInForMaking(pool);
   const deps = {};
 
   const config = async (key, tweaks) => {
@@ -98,7 +85,7 @@ test('a studio run\'s shared plans against the full PostgreSQL schema', { timeou
     assert.match(refused.error, new RegExp(`${lean} and ${plain} would not plan alike \\(lean_plan\\)`));
     const badFlag = await studio.launch(pool, {}, { briefs: [{ ref: 'bread' }], models: [lean], capUsd: 10, sharedPlans: 'yes' }, { actorId: evan.id, deps });
     assert.match(badFlag.error, /sharedPlans is true or false/);
-    assert.equal(created.length, 0, 'nothing was made for a refused launch');
+    assert.deepEqual(await making.started(), [], 'nothing was made for a refused launch');
 
     const launched = await studio.launch(pool, {}, {
       briefs: [{ ref: 'bread' }], models: [lean, roomy], repeats: 2, capUsd: 20, sharedPlans: true,

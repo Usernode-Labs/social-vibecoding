@@ -20,7 +20,7 @@ import type { EventAuthorizer, EventOutcome, Logger, Pool, Push, Queryable, Work
 
 export { NONE, WORK_EVENTS, WorkflowInputError, defineMachine, ok, reject, canonicalHash } from './machine.ts';
 export type { Machine, WorkResultPayload } from './machine.ts';
-export { LeaseLost } from './services.ts';
+export { HandedBack, LeaseLost } from './services.ts';
 export { StepsStopped, isStopped, plain, steps } from './steps.ts';
 export type { Steps } from './steps.ts';
 // An event appended in a caller's own transaction needs no runtime in the
@@ -195,7 +195,7 @@ export function createRuntime(opts: RuntimeOptions) {
       const claimed = await claim(service, kind, room);
       if (claimed.full) full.set(kind, Date.now() + Math.min(Math.max(claimed.freeInMs ?? FULL_RECHECK_MS, 1000), FULL_RECHECK_MS));
       for (const w of claimed.items) {
-        const run = execute(service, w, stopping.signal)
+        const run = execute(service, w, stopping.signal, () => quiesced || stopping.signal.aborted)
           .catch((err) => log.error('workflow', 'work execution failed', { kind, workId: w.id, message: err?.message }))
           .finally(() => { set.delete(run); full.delete(kind); signals.wake('wf_work', kind); });
         set.add(run);

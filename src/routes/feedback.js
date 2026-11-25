@@ -14,6 +14,7 @@ const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const { SELF_APP_SQL: MY_FEEDBACK_SELF_APP_SQL, repoMatches } = require('../services/topochain/feedback-links');
 const repoRef = require('../services/repo-ref');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
@@ -464,24 +465,13 @@ const MY_FEEDBACK_SQL = `
 `;
 
 // Platform feedback files into the platform repo, which is the self-hosted
-// app's own repository, so its requests live on that app's board. Read once
-// per request, and used only when its repo is the one the report went to.
-const MY_FEEDBACK_SELF_APP_SQL = `
-  SELECT slug, name, repo_url
-    FROM apps
-   WHERE self_hosted = TRUE
-   ORDER BY id ASC
-   LIMIT 1
-`;
+// app's own repository, so its requests live on that app's board. The read
+// itself lives in services/topochain/feedback-links.js, shared with the
+// challenge page's itemized report list.
 
-// Pure (exported for tests): whether `repoUrl` is <owner>/<repo>'s address,
-// with the case and `.git` tolerance findAppByRepo applies.
-function repoMatches(repoUrl, owner, repo) {
-  const { owner: o, repo: r } = repoRef.ownerRepo(repoUrl) || {};
-  if (!o || !r || !owner || !repo) return false;
-  const norm = (s) => String(s).replace(/\.git$/, '').toLowerCase();
-  return norm(o) === norm(owner) && norm(r) === norm(repo);
-}
+// Pure (exported for tests): whether `repoUrl` is <owner>/<repo>'s address.
+// `repoMatches` is imported from services/topochain/feedback-links.js above
+// and re-exported below for tests/feedback-mine.test.js.
 
 // Pure (exported for tests): the rows → the response body.
 function shapeMyFeedback(rows, selfApp) {

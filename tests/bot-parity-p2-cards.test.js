@@ -280,6 +280,88 @@ test('a card reads back in the model\'s history: what it offered, and what they 
   assert.equal(history[1].content, 'A few ways to do it:\n[Homeroom: under this reply you offered options for "Reminders": A. Push (A ping); B. Email. They picked B.]');
 });
 
+// ── A past offer, read back ──────────────────────────────────────────────
+
+test('#7125: a past offer reads back as its lead, its heading and what happened to its card', async () => {
+  const draft = (title) => [
+    'Here is the request I\'d file on Garden club.',
+    '',
+    `**Garden club** · new request: ${title}`,
+    '',
+    'It reminds everyone on the group when it is their turn to water the beds.',
+    '',
+    'Where: the Garden club app',
+    'Done when: everyone gets one reminder a week.',
+  ].join('\n');
+  const offer = (id, actionId) => ({
+    id,
+    sender_id: 2,
+    content: draft(id === 29 ? 'Plant swap board' : id === 27 ? 'Watering rota' : id === 25 ? 'Seed library' : 'Tool shed keys'),
+    metadata: { homeroomBot: { kind: 'confirm', actionId, appName: 'Garden club', answers: ['File it', 'Not now'] } },
+  });
+  // Newest first, as the query reads them.
+  const rows = [
+    { id: 30, sender_id: 9, content: 'And one more: keys for the tool shed.', metadata: null },
+    offer(29, 501),
+    { id: 28, sender_id: 9, content: 'Could you ask for a watering rota?', metadata: null },
+    offer(27, 502),
+    { id: 26, sender_id: 9, content: 'What about a seed library?', metadata: null },
+    offer(25, 503),
+    { id: 24, sender_id: 9, content: 'One more, for the tool shed?', metadata: null },
+    offer(23, 504),
+  ];
+  const cards = [
+    { id: 501, message_id: 29, kind: 'file_request', status: 'done', title: 'Plant swap board', issue_number: 7121, source_issue_number: null, expires_at: new Date(Date.now() + 86400000), retired_reason: null, app_name: 'Garden club', app_slug: 'garden-club' },
+    { id: 502, message_id: 27, kind: 'file_request', status: 'open', title: 'Watering rota', issue_number: null, source_issue_number: null, expires_at: new Date(Date.now() + 86400000), retired_reason: null, app_name: 'Garden club', app_slug: 'garden-club' },
+    { id: 503, message_id: 25, kind: 'file_request', status: 'declined', title: 'Seed library', issue_number: null, source_issue_number: null, expires_at: new Date(Date.now() + 86400000), retired_reason: null, app_name: 'Garden club', app_slug: 'garden-club' },
+  ];
+  const asked = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM conversation_messages/.test(s)) return { rows: rows.map((r) => ({ ...r })) };
+      if (/FROM bot_cards c LEFT JOIN apps/.test(s)) { asked.push(params[0]); return { rows: cards }; }
+      return { rows: [] };
+    },
+  };
+  const history = await mayor.historyMessages(pool, { conversationId: 41, botId: 2, upToId: 30 });
+  assert.deepEqual(asked, [[504, 503, 502, 501]], 'one read for the whole history');
+  assert.deepEqual(history.map((m) => m.role), ['assistant', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user']);
+  assert.equal(history[0].content, offer(23, 504).content, 'no card: read as it is today');
+  assert.equal(history[2].content, 'Here is the request I\'d file on Garden club.\n\n**Garden club** · new request: Seed library\n'
+    + '[Homeroom: under this reply, offer_request put a File it card for "Seed library" on Garden club. They tapped Not now.]');
+  assert.equal(history[4].content, 'Here is the request I\'d file on Garden club.\n\n**Garden club** · new request: Watering rota\n'
+    + '[Homeroom: under this reply, offer_request put a File it card for "Watering rota" on Garden club. It is still waiting for their answer.]');
+  assert.equal(history[6].content, 'Here is the request I\'d file on Garden club.\n\n**Garden club** · new request: Plant swap board\n'
+    + '[Homeroom: under this reply, offer_request put a File it card for "Plant swap board" on Garden club. They tapped File it, and it was filed as #7121.]');
+  for (const i of [2, 4, 6]) {
+    assert.doesNotMatch(history[i].content, /Done when|Where:|water the beds/, 'the draft is not read back as its own words');
+    assert.doesNotMatch(history[i].content, /posted this automatically/);
+  }
+});
+
+test('#7125: an offer\'s card words, outcomes and lead, as pure helpers', () => {
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'move_request', status: 'done', title: 'Watering rota', issueNumber: 7122, name: 'Garden club', words: ['Move it to Homeroom', 'Keep it here'] }),
+    '[Homeroom: under this reply, offer_move_request put a Move it to Homeroom card for "Watering rota" on Garden club. They tapped Move it to Homeroom, and it was moved, now request #7122.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'file_request', status: 'failed', title: 'Seed library', name: 'Garden club', words: ['File it', 'Not now'] }),
+    '[Homeroom: under this reply, offer_request put a File it card for "Seed library" on Garden club. They tapped File it, but it did not go through.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'file_request', status: 'retired', title: 'Seed library', name: 'Garden club', words: ['File it', 'Not now'] }),
+    '[Homeroom: under this reply, offer_request put a File it card for "Seed library" on Garden club. Its buttons went: what it was about moved on.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'file_request', status: 'expired', title: 'Seed library', name: 'Garden club', words: ['File it', 'Not now'] }),
+    '[Homeroom: under this reply, offer_request put a File it card for "Seed library" on Garden club. Its buttons went after 14 days with no answer.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'file_request', status: 'open', expired: true, title: 'Seed library', name: 'Garden club', words: ['File it', 'Not now'] }),
+    '[Homeroom: under this reply, offer_request put a File it card for "Seed library" on Garden club. Its buttons went after 14 days with no answer.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'post_reply', status: 'open', title: 'dm_answer', name: 'Garden club', words: ['Post it', 'Keep private'] }),
+    '[Homeroom: under this reply, you put a Post it card on Garden club. It is still waiting for their answer.]');
+  assert.equal(cardTaps.offerHistoryLine({ kind: 'file_request', status: 'something_new' }), null);
+  assert.equal(cardTaps.offerHistoryLine({}), null);
+
+  assert.equal(cardTaps.offerHistoryText('Here it is.\n\n**Garden club** · new request: Seed library\n\nDetails.\n\nWhere: here'),
+    'Here it is.\n\n**Garden club** · new request: Seed library');
+  assert.equal(cardTaps.offerHistoryText('Just one paragraph.\n\nAnd another.'), 'Just one paragraph.');
+  assert.equal(cardTaps.offerHistoryText(''), null);
+});
+
 // ── A turn that puts a card under its reply ──────────────────────────────
 
 const callOf = (id, name, args = {}) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
@@ -417,13 +499,18 @@ test('the table card: headings, rows 15 over 13, one tag a row, a request\'s row
   shared(html);
   assert.match(html, />Your requests</);
   assert.match(html, /<div class="-mx-4 mt-1 overflow-x-auto px-4"><table/, 'a wide table scrolls inside the card');
-  assert.match(html, /<th scope="col" class="py-1\.5 pe-3 align-bottom text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  assert.match(html, /<th scope="col" class="py-1\.5 pe-3 text-start align-bottom text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  // Phone review #28 (23 Nov 2026): no floor of its own on a phone, where it
+  // was 280px in a card 257px inside and the last column was cut; and a row's
+  // name starts at the line's start (a <th> is centred by default).
+  assert.match(html, /<table class="w-full border-collapse text-start sm:min-w-\[280px\]">/);
+  assert.match(html, /<th scope="row" class="py-2 pe-3 text-start /);
   // 2 Nov 2026: headings wrap and words break whole, never mid-word at a phone's width.
   assert.doesNotMatch(html, /whitespace-nowrap py-1\.5|overflow-wrap:anywhere/);
   assert.equal((html.match(/ break-words /g) || []).length, 8, 'every cell wraps at a word');
   assert.match(html, /<a href="#app\/gym-3f2a1c\/dev\/issues\/12"[^>]*data-bot-table-request="gym-3f2a1c#12"[^>]*>Dark mode<\/a>/);
   assert.match(html, /title="Open Gym Tracker request #12"/);
-  assert.match(html, /<th scope="row" class="py-2 pe-3 text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pe-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
+  assert.match(html, /<th scope="row" class="py-2 pe-3 text-start text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pe-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
   assert.match(html, /rounded-full px-1\.5 py-0\.5[^"]* bg-violet-500\/10 text-violet-700[^"]*" data-bot-table-tag="ready">Ready</, 'ready in the blue accent');
   assert.match(html, /bg-amber-500\/10 text-amber-800[^"]*" data-bot-table-tag="question">Question</);
   assert.match(html, /bg-zinc-500\/10 text-zinc-600[^"]*" data-bot-table-tag="done">Done</);

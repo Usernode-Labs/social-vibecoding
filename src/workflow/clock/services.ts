@@ -444,6 +444,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/openrouter-credit').sweep(pool, config),
   },
   {
+    // Homeroom bot's automatic switch to verified accounts only: the two
+    // figures read, and the switch made once either reaches its threshold
+    // (services/homeroom-bot-verified-auto.js).
+    name: 'bot-verified-auto',
+    everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/homeroom-bot-verified-auto').sweep(pool, config),
+  },
+  {
     // The unexpected-events digest and the hourly pile-up alert.
     name: 'incident-alerts', everyMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/platform-incident-alerts').sweep(pool),
@@ -667,6 +675,20 @@ export const JOBS: readonly Job[] = Object.freeze([
     }),
   },
   {
+    // When each linked GitHub and X account was made on its provider, for
+    // the accounts linked before it was recorded at link time (Homeroom
+    // bot's github_x_age signal, services/social-account-age.js): every X
+    // account it can date from its snowflake id, and a page of GitHub ones
+    // from GitHub's public user API, inside the hourly share background
+    // reads keep to and only while the budget allows. Nothing once all are dated.
+    name: 'social-account-age', everyMs: 10 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/social-account-age').backfill(pool, {
+      previous: (ctx.input.previous ?? null) as any,
+      // 20 a run: 120 an hour, a fifth of GITHUB_READS_PER_HOUR.
+      githubLimit: 20,
+    }),
+  },
+  {
     // The ready-made originals (services/originals.js): one project per
     // starter directory with ready-made entries, made through the normal
     // create path when it is missing, and the platform's approvers kept in
@@ -878,7 +900,9 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // Each native proposal up for a vote: one merged by hand on GitHub is
-    // recorded.
+    // recorded. The GitHub webhook (routes/github-webhook.js) is the fast
+    // path, running the same look the moment the delivery arrives; this
+    // six-hourly run is the fallback for a delivery that never came.
     name: 'merged-by-hand', everyMs: 6 * HOUR,
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {

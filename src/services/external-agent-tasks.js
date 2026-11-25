@@ -1481,7 +1481,8 @@ function buildWorkOrder({
       '   same screen are one declared change. Text, counts, loading,',
       '   error and status changes are visible even when existing markup and',
       '   styles are reused. A state a fresh staging copy lacks is seeded in this',
-      '   change: the seed reaches the after copy, the side a new state needs. One',
+      '   change: it reaches both copies when main\'s schema can hold it, and a seed',
+      '   that needs a table or column main lacks reaches the after copy only. One',
       '   that can be neither reached nor seeded is a blocker to report, not a',
       '   reason to call a visible change non-visual.',
       ...copyLimitsLines({ width: 78, indent: '   ', rule: false }),
@@ -1684,7 +1685,10 @@ function buildWorkOrder({
       ...handIn,
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
       ...lands,
-      '   proposal — give that link to the user and tell them it is up for the',
+      // Which link: the result carries the pull request's GitHub address
+      // beside it, and an agent used to pull requests reaches for that one.
+      '   proposal — give that link (`link`, its page on Homeroom, never `prUrl`,',
+      '   the GitHub pull request) to the user and tell them it is up for the',
       '   group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows
@@ -1724,8 +1728,9 @@ function buildWorkOrder({
       '   visible even when existing markup and styles are reused. If a fresh',
       '   staging copy lacks the state a change shows, seed it in this change,',
       '   idempotent and obviously fake ("Who the before & after shots see" in',
-      '   the conventions): the seed reaches the after copy, the side a new state',
-      '   needs. If a state can be neither reached nor seeded,',
+      '   the conventions): it reaches both copies when main\'s schema can hold it,',
+      '   and a seed that needs a table or column main lacks reaches the after copy',
+      '   only. If a state can be neither reached nor seeded,',
       '   report that blocker; do not label a visible change "none" because it',
       '   is hard to reach.',
       ...copyLimitsLines({ width: 78, indent: '   ', rule: false }),

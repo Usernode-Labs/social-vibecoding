@@ -203,7 +203,10 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   // on no list (services/cli-api-policy.js is fail-closed).
   //
   //   GET /api/conversations/homeroom-bot/actions/:actionId/draft
-  //   → 200 { title, details, status, app: { slug, name }, footer } | 404
+  //   → 200 { title, details, status, app: { slug, name }, footer, extras } | 404
+  //
+  // `extras` is what the draft carries besides its words, for the pane to
+  // list beside them: { undecided, doneWhen, related, where }.
   router.get('/api/conversations/homeroom-bot/actions/:actionId/draft', sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
@@ -214,7 +217,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (isDemo(req)) return res.status(404).json({ error: 'No such draft' });
       const out = await require('../services/homeroom-bot-mayor').readDraft(pool, { user: req.user, actionId });
       if (!out.ok) return res.status(404).json({ error: 'No such draft' });
-      return res.json({ title: out.title, details: out.details, status: out.status, app: out.app, footer: out.footer });
+      return res.json({ title: out.title, details: out.details, status: out.status, app: out.app, footer: out.footer, extras: out.extras });
     } catch (err) {
       log.error('conversations', 'reading a request draft failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });

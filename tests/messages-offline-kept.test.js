@@ -496,7 +496,9 @@ test('the bot tab says why Needs you is empty, with Try again, instead of an emp
   const failed = renderComponent(LISTS, 'AiLists', props({ failed: 'failed' }));
   assert.ok(failed.includes(message('messages:ai.work.failed')));
   const nothing = renderComponent(LISTS, 'AiLists', props({ ready: true, failed: null }));
-  assert.ok(nothing.includes(message('messages:ai.work.empty')), 'read, and empty: nothing needs you');
+  // 24 Nov 2026 (the three bands): read, and empty: the band says nothing needs you.
+  assert.match(nothing, /data-ai-empty=""[\s\S]*?<strong[^>]*>Nothing needs you\.<\/strong>/, 'read, and empty: nothing needs you');
+  assert.match(nothing, new RegExp(message('messages:ai.band.allDone')), 'its strip says all done');
   assert.doesNotMatch(nothing, /data-ai-failed/);
   // Still said over rows that did arrive (the other list's).
   const some = renderComponent(LISTS, 'AiLists', props({

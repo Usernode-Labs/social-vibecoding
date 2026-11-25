@@ -63,7 +63,7 @@ test('For you: the vote owed in blue, the Workshop\'s door, and Discussion #gene
   const you = html.slice(at, html.indexOf('<h2 class="fr-cap">Topics<'));
   assert.ok(at > 0);
   assert.match(you, /<button type="button" class="fr-row"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Needs you<\/span><span class="fr-s">Email templates: keep translations<\/span><\/span><span class="fr-pill fr-act" data-kind="act">1 to vote<\/span><svg[^>]*fr-go[^>]*>.*?<\/svg><\/button>/s);
-  assert.match(you, /<span class="fr-t">Workshop<\/span><span class="fr-s">What happened, and every item<\/span>/);
+  assert.match(you, /<span class="fr-t">Workshop<\/span><span class="fr-s">Make and vote on changes<\/span>/);
   assert.doesNotMatch(you, /Your work/, 'your work is the Workshop tab\'s card, not the Hub\'s');
   assert.match(you, /<span class="fr-t">Discussion <span class="fr-mut">#general<\/span><\/span><span class="fr-s"><span class="fr-cut">@evan: Thank you @kempis!<\/span><span class="fr-aft"> · 18h ago<\/span><\/span>/, 'the product\'s own words; the message is cut short, never the time');
   assert.equal((you.match(/data-kind="act"/g) || []).length, 1);
@@ -183,6 +183,9 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   assert.match(hub, /data-ws-first-version=\{line\}/);
   assert.match(hub, /data-ws-update=\{kind\}/);
+  // The update's date is the Share it card's grey line, in the card that stays
+  // under the kit's Hub, so it shows under a look too.
+  assert.match(hub, /<section className="dev-ws-strip dev-ws-share dev-ws-update" data-ws-update=\{kind\}>[\s\S]*?className="dev-ws-share-sent" data-ws-update-sent=""/);
   assert.match(read('frontend/src/features/dev-board/workshop/community-card.tsx'), /data-ws-share=""/);
   assert.match(hand, /html\[data-skin\] \.dev-ws:not\(\[data-ws-tab="needs"\]\) > \[data-project-frame\] ~ \.dev-ws-tabbody > \* \{ max-width: 720px; margin-inline: 0; \}/, 'an undrawn place sits in the kit\'s content column');
   assert.match(hand, /html\[data-skin\] #dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > \[data-project-frame\] \{ max-width: none; margin-inline: 0; \}/, 'the kit\'s head is not held to the review stage\'s 760px');

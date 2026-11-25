@@ -475,6 +475,14 @@
     "text": "Live this week",
     "description": "Chip above All items showing that only the changes that went live this week are shown, set by tapping that figure on the Workshop. Pressing the chip removes the filter."
   },
+  "board.filterChip.stageAsked": {
+    "text": "Asked",
+    "description": "Chip above All items showing that only the open requests nobody is building and that are not up for a vote are shown, set by pressing the Asked stop of the path on a project's Workshop. Pressing the chip removes the filter."
+  },
+  "board.filterChip.stageVotes": {
+    "text": "Up for a vote",
+    "description": "Chip above All items showing that only the changes and group decisions up for a vote are shown, set by pressing the Up for a vote stop of the path on a project's Workshop. Pressing the chip removes the filter."
+  },
   "board.filterChip.priorityLow": {
     "text": "Low priority",
     "description": "Chip above the Workshop board showing that only cards the group marked as low priority are shown. Pressing it removes the filter."
@@ -4067,6 +4075,22 @@
     "text": "Waiting for a checks slot ({{count}} ahead)",
     "description": "Status of a proposal's automated checks, shown as the heading of its checks note and on its card: the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line."
   },
+  "checks.phase.queued.sentence": {
+    "text": "Waiting for a checks slot.",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the preview is built and the run waits its turn for a free slot, because only a few proposals' checks run at once. \"slot\" is a free place to run. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceNext": {
+    "text": "Waiting for a checks slot (next in line).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot and no other run is ahead of it. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceAhead_one": {
+    "text": "Waiting for a checks slot ({{count}} ahead).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceAhead_other": {
+    "text": "Waiting for a checks slot ({{count}} ahead).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line. A whole sentence, ending with its own full stop."
+  },
   "checks.trigger.proposalOpen": {
     "text": "Triggered by this proposal being opened.",
     "description": "Small print in the checks note on a proposal's page saying why the run of checks now in progress began: the proposal was opened (created)."
@@ -4923,6 +4947,14 @@
     "text": "Ask the group to close this request. If they approve, it's closed",
     "description": "Tooltip of the \"Propose to close\" row in a request's ⋯ menu."
   },
+  "issue.menu.copyLink": {
+    "text": "Copy link",
+    "description": "Row in the ⋯ menu of a request's card and page: copies the address of the request's page to the clipboard."
+  },
+  "issue.menu.copyLinkDone": {
+    "text": "Link copied",
+    "description": "Brief notice after pressing Copy link in a request's ⋯ menu: the link is on the clipboard."
+  },
   "issue.menu.share": {
     "text": "Share to…",
     "description": "Row in the ⋯ menu of a request's card: opens the picker of chats and discussions to send a link to this request to. \"Share\" is a verb. Keep the ellipsis."
@@ -5366,6 +5398,10 @@
   "badge.reason.shots.retryingGithubDetail": {
     "text": "GitHub didn’t answer. Trying again in a few minutes.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
+  },
+  "badge.reason.shots.retryingBusyDetail": {
+    "text": "Homeroom was too busy to take these screenshots. It tries again on its own shortly.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after screenshots of the current proposal commit.",
@@ -5855,6 +5891,14 @@
     "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
+  "shots.state.retryingBusy.detail": {
+    "text": "Homeroom was too busy to take them. It tries again on its own shortly.",
+    "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. \"Them\" are the screenshots. Homeroom is the product's name."
+  },
+  "shots.state.busy.detail": {
+    "text": "Homeroom was too busy to take them. Take them again in a few minutes.",
+    "description": "Sentence under \"Couldn’t take the screenshots\" on a proposal's screenshots card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom will not try again by itself. \"Them\" are the screenshots. Homeroom is the product's name."
+  },
   "shots.state.couldNot.label": {
     "text": "Couldn’t take the screenshots",
     "description": "Heading of the screenshots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
@@ -5970,6 +6014,14 @@
   "shots.sentence.githubDown": {
     "text": "Couldn’t take the screenshots: GitHub didn’t answer. Take them again in a few minutes.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom does not try again by itself. \"GitHub\" is the code host's name."
+  },
+  "shots.sentence.retryingBusy": {
+    "text": "Couldn’t take the screenshots: Homeroom was too busy to take them. It tries again on its own shortly.",
+    "description": "Line on a change's page, under \"What changes for you\", and the matching tooltip on its card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. Homeroom is the product's name."
+  },
+  "shots.sentence.busy": {
+    "text": "Couldn’t take the screenshots: Homeroom was too busy to take them. Take them again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", and the matching tooltip on its card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom does not try again by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the screenshots. The screenshot agent could not take the before & after screenshots.",
@@ -7587,6 +7639,10 @@
     "text": "Your vote did not go through. Check your connection and try again.",
     "description": "Brief notice when a vote on a proposal could not reach the server."
   },
+  "vote.toast.notSentRetry": {
+    "text": "Vote not sent. Try again.",
+    "description": "Brief notice when a vote on a request or a decision was never sent because its line box did not open."
+  },
   "vote.toast.queued": {
     "text": "You're offline. Your vote will be sent when you're back online.",
     "description": "Brief notice when a vote on a proposal could not reach the server and is kept on the device, to be sent once the connection is back."
@@ -7683,6 +7739,14 @@
     "text": "Nobody had opened this preview for a while, so it was asleep. Waking it up now, with nothing rebuilt. This usually takes 10 to 30 seconds.",
     "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen when the preview was asleep (stopped to save resources, everything else kept) and is being started again rather than rebuilt."
   },
+  "frame.loader.starting": {
+    "text": "Starting the preview",
+    "description": "Title of the loading screen of a live draft's preview (an app being changed live with Homeroom bot) while that preview is still starting. It opens by itself once it is up."
+  },
+  "frame.loader.startingSub": {
+    "text": "This takes a minute or two the first time. It shows here by itself as soon as it is up.",
+    "description": "Text under \"Starting the preview\" on the loading screen of a live draft's preview: how long it takes, and that nothing needs to be pressed."
+  },
   "frame.loader.slow": {
     "text": "This is taking longer than expected",
     "description": "Title of the preview's loading screen when building or loading the preview has run well past the usual time."
@@ -7690,6 +7754,10 @@
   "frame.loader.slowRebuild": {
     "text": "The rebuild is still running on the server. Close this and click Preview again in a moment.",
     "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when a rebuild has not finished after several minutes. \"Preview\" is the label of the button that opens the preview."
+  },
+  "frame.loader.slowStart": {
+    "text": "The preview is still starting. It shows here by itself when it is up. If it does not, ask Homeroom bot to open it again.",
+    "description": "Text under \"This is taking longer than expected\" on the loading screen of a live draft's preview (an app being changed live with Homeroom bot) when it has not started after several minutes."
   },
   "frame.loader.slowLoadFailed": {
     "text": "The preview didn’t finish loading. Close this and click Preview again in a moment.",
@@ -8496,20 +8564,20 @@
     "description": "One sentence of the line under the figure on the Votes card of a change's page when applying the approved change to the running app failed."
   },
   "page.votes.note.anyApprover_one": {
-    "text": "Any of the {{count}} approver can give it.",
-    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes, on a project where only invited approvers' votes count. \"It\" is the Yes vote the figure above asks for; {{count}} is how many approvers there are."
+    "text": "The approver can approve it.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes, on a project where only invited approvers' votes count: who can give the approval it needs. \"It\" is the change; {{count}} is how many approvers there are (the one-approver form names no number)."
   },
   "page.votes.note.anyApprover_other": {
-    "text": "Any of the {{count}} approvers can give it.",
-    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes, on a project where only invited approvers' votes count. \"It\" is the Yes vote the figure above asks for; {{count}} is how many approvers there are."
+    "text": "Any of the {{count}} approvers can approve it.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes, on a project where only invited approvers' votes count: who can give the approval it needs. \"It\" is the change; {{count}} is how many approvers there are (the one-approver form names no number)."
   },
   "page.votes.note.anyMember_one": {
-    "text": "Any of the {{count}} members can give it.",
-    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes. \"It\" is the Yes vote the figure above asks for; {{count}} is how many active members the project has (always more than one)."
+    "text": "Any of the {{count}} members can vote yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes: who can give the Yes it needs. {{count}} is how many active members the project has (always more than one)."
   },
   "page.votes.note.anyMember_other": {
-    "text": "Any of the {{count}} members can give it.",
-    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes. \"It\" is the Yes vote the figure above asks for; {{count}} is how many active members the project has (always more than one)."
+    "text": "Any of the {{count}} members can vote yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes: who can give the Yes it needs. {{count}} is how many active members the project has (always more than one)."
   },
   "page.votes.facts.yes_one": {
     "text": "{{count}} yes",

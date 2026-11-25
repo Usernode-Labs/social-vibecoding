@@ -82,6 +82,28 @@ test('closing animation keeps its decoration until the surface hides', () => {
   assert.equal(h.callbacks.size, 0); h.detach();
 });
 
+test('the paint layer marks itself data-painting exactly while it paints (app.css "…BUT NOT UNDER A SCRIM")', () => {
+  const h = harness({}, ({ paint }) => { paint.dataset = {}; });
+  assert.equal('painting' in h.paint.dataset, false, 'a closed pane is not painting');
+  h.style.visibility = 'visible';
+  h.surface.getAnimations = () => [{ playState: 'running' }];
+  h.observers[0].fn(); h.frame();
+  assert.equal(h.paint.style.visibility, 'visible');
+  assert.equal(h.paint.dataset.painting, '', 'marked while the dim paints');
+  // Through the close's fade the dim still paints, so the mark stays...
+  h.surface.getAnimations = () => [];
+  h.frame();
+  assert.equal(h.paint.dataset.painting, '');
+  // ...and goes with it.
+  h.style.visibility = 'hidden'; h.observers[0].fn(); h.frame();
+  assert.equal(h.paint.style.visibility, 'hidden');
+  assert.equal('painting' in h.paint.dataset, false, 'unmarked once the dim has gone');
+  h.style.visibility = 'visible'; h.observers[0].fn(); h.frame();
+  assert.equal(h.paint.dataset.painting, '');
+  h.detach();
+  assert.equal('painting' in h.paint.dataset, false, 'and unmarked when the pane detaches');
+});
+
 test('the dim reaches the foot of the layout viewport when iOS collapses innerHeight (#2765)', () => {
   // A phone with the on-screen keyboard up: innerHeight has collapsed to the
   // 441px visual viewport while the fixed paint layer still spans the 844px

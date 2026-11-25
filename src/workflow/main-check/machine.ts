@@ -25,6 +25,10 @@
 //     most maxRechecks times (the instance's deadline).
 //   - A newer commit while a run is under way: its own first run starts, and
 //     the older run's verdict is recorded as superseded and changes nothing.
+//     An older run whose verdict nobody would read (a recheck, or one a
+//     newer run's green already outdates) is stopped by its own process and
+//     reports 'superseded', which is recorded nowhere (main-watch.js
+//     watchVerdict).
 //
 // Everything a run needs between its steps (the first red and its excerpts,
 // whether merges were paused when it started) is the instance's, and the

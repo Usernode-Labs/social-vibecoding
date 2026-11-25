@@ -161,7 +161,7 @@ test('Friends is a tab: the search, who asked and your friends in one group, sen
 
 test('the tab is the store\'s, the address says it, and under a look Friends opens the tab, not the card', () => {
   const tabs = read(`${DIR}/you-tabs.ts`);
-  assert.match(tabs, /export const YOU_TABS = \['overview', 'changes', 'requests', 'votes', 'friends'\] as const;/);
+  assert.match(tabs, /export const YOU_TABS = \['overview', 'changes', 'requests', 'votes', 'activity', 'friends'\] as const;/);
   assert.match(tabs, /return tab === 'overview' \? '#profile' : `#profile\?tab=\$\{tab\}`;/);
   const js = read('frontend/src/features/profile/profile.js');
   assert.match(js, /showFriends\(\) \{\n\s+\/\/ Under a look Friends is a tab of You[^\n]*\n\s+if \(isFrameSkin\(currentSkin\(\)\)\) \{ Profile\.showTab\('friends'\); return; \}/);
@@ -172,7 +172,7 @@ test('the tab is the store\'s, the address says it, and under a look Friends ope
 
 test('the profile draws the kit\'s page under a look, from its own view, with its sheets', () => {
   const src = read('frontend/src/features/profile/profile-view.tsx');
-  assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
+  assert.match(src, /const frame = isFrameSkin\(skin\);/);
   assert.match(src, /\{frame \? <YouInFrame view=\{view\} tab=\{\(state\.tab \|\| 'overview'\) as YouTab\} friendsPending=\{state\.friendsPending \?\? null\} friendsStatus=\{state\.friendsStatus \|\| ''\} \/> : \(/);
   assert.match(src, /onEdit: \(\) => Profile\.showEditSheet\(\),\n\s+onFeedback: \(\) => Profile\.showFeedback\(\),/);
   assert.match(src, /useFramePage\(here \? \[tc\('core:tabs\.me'\), here\] : \[tc\('core:tabs\.me'\)\], here \? toOverview : null\);/, 'the bar says You, then the tab, with the way back');

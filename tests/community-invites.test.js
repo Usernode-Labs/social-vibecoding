@@ -212,6 +212,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.post('/api/apps/:slug/invite-links', drainGuard, inviteLinkCreateLimiter,",
     "router.get('/api/apps/:slug/invite-links',",
     "router.delete('/api/invite-links/:id', drainGuard,",
+    "router.post('/api/invite-links/:id/note', drainGuard, sameOriginBrowserOnly,",
     "router.get('/api/public/invites/:token', invitePreviewLimiter,",
     "router.get('/api/invite-links/by-token/:token', invitePreviewLimiter,",
     "router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter,",
@@ -420,7 +421,7 @@ test('the words: the landing card, the invite pane', async () => {
   assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?void ctx\.openInvite\?\.\(\);/);
   assert.match(hubCard, /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
   assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
-  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>/);
+  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} titled=\{false\} \/>/);
   assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
 });
 

@@ -864,7 +864,7 @@
     "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
   "group.row.botSkipped": {
-    "text": "Homeroom bot doesn't answer this message; @ it in your own words to ask it.",
+    "text": "Homeroom bot doesn't answer this message. @ it yourself to ask.",
     "description": "Small grey line under a message a person's coding agent posted for them on a request's, a change's or a reply thread's discussion, when Homeroom bot will not answer it (so an agent and the bot cannot talk to each other forever, or its voice is off there). One line, no icon, not a button."
   },
   "group.row.unreadMention": {
@@ -902,6 +902,10 @@
   "group.voteCard.unnamed": {
     "text": "A change",
     "description": "What the small vote card under a chat line about a change calls the change while neither its number nor its title is known yet."
+  },
+  "group.voteCard.seeChange": {
+    "text": "See the change",
+    "description": "Button on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, once that change is live and its vote is over: scrolls to that change’s section on the page. See is a verb."
   },
   "group.voteCard.seeVote": {
     "text": "See the vote",
@@ -1420,8 +1424,16 @@
     "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the offer behind them no longer exists."
   },
   "group.botOffer.goneClose": {
-    "text": "This offer is no longer available. You can still propose closing it from the request’s ⋯ menu.",
-    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists; the request's ⋯ menu still has its own Propose to close."
+    "text": "This offer is no longer available. You can still propose closing this request.",
+    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists. A Propose to close button sits under this line."
+  },
+  "group.botOffer.proposeClose": {
+    "text": "Propose to close",
+    "description": "Button under the line that says a close offer has gone or expired: opens the close-request dialog with the bot's reason already in its reason box."
+  },
+  "group.botOffer.closeFailed": {
+    "text": "Couldn’t open the close form. Reload and try again.",
+    "description": "Brief message at the bottom of the screen when pressing Propose to close could not open the close-request dialog because the app's scripts did not load."
   },
   "group.botOffer.expired": {
     "text": "This offer has expired.",

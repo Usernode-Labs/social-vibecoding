@@ -75,19 +75,24 @@ test('B25: on the Duo held sideways a thread in the bot tab\'s column stops at t
 
 test('B13: the bot list\'s heading keeps its line where the list is narrow', () => {
   assert.match(rule('#ai-screen [data-ai-hero]'), /container-type: inline-size;/);
-  assert.match(APP_CSS, /@container \(max-width: 340px\) \{\n  #ai-screen \[data-ai-hero\] > img \{ display: none; \}\n\}/);
+  // 24 Nov 2026 (the three bands): the line is the mark, the counts and New
+  // chat's round plus, so the mark keeps its place at the 352px list beside
+  // a thread and steps aside only at the 280px floor.
+  assert.match(APP_CSS, /@container \(max-width: 299\.98px\) \{\n  #ai-screen \[data-ai-hero\] > img \{ display: none; \}\n\}/);
   assert.match(APP_CSS, /@container \(max-width: 260px\) \{\n  #ai-screen \[data-ai-hero\] h1 \{ font-size: 1\.25rem; \}\n\}/);
-  // The hero is still marked so for the rule to find it.
-  assert.match(read('frontend/src/features/ai/index.tsx'), /<section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">\n\s+<img src=\{BOT_AVATAR\}/);
+  // The hero is still marked so for the rule to find it (the list's head card draws it).
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /<section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">\n\s+<img src=\{BOT_AVATAR\}/);
 });
 
 test('L06: the bot\'s Needs you card shows its rows\' shape until the lists are read', () => {
   const src = read('frontend/src/features/ai/lists.tsx');
   // A project picked from a link that has nothing of yours says so (the
   // filter in the address, 5 Nov 2026); with no project picked it is the
-  // card's own line, as before.
-  assert.match(src, /empty=\{ready \? \(\n\s+<p [^>]*data-ai-empty=\{nothingHere \? 'project' : ''\}>\n\s+\{nothingHere && onlyApp \? t\('messages:ai\.filter\.emptyProject'[^\n]*: t\('messages:ai\.work\.empty'\)\}\n\s+<\/p>\n\s+\) : \(/);
-  assert.match(src, /<SkeletonGroup label=\{t\('messages:ai\.work\.loading'\)\}[^>]*data-ai-loading="">/);
+  // band's own line (24 Nov 2026: Nothing needs you, and what is in progress).
+  assert.match(src, /<p className="[^"]*" data-ai-empty="project">\n\s+\{t\('messages:ai\.filter\.emptyProject', \{ project: onlyApp\.name \|\| onlyApp\.slug \}\)\}/);
+  assert.match(src, /id=\{progressCount \? 'messages:ai\.band\.clear' : 'messages:ai\.band\.clearAlone'\}/);
+  assert.match(src, /failed \? null : <LoadingLines label=\{t\('messages:ai\.work\.loading'\)\} data-ai-loading="" \/>/);
+  assert.match(src, /<SkeletonGroup label=\{label\} className="flex flex-col gap-8 px-3 py-4" \{\.\.\.props\}>\n\s+<Skeleton className="w-1\/2" \/>\n\s+<Skeleton className="w-2\/5" \/>\n\s+<\/SkeletonGroup>/, 'two bars and no more');
   const catalog = JSON.parse(read('frontend/locales/en/messages.json'));
   assert.equal(catalog['ai.work.loading'].text, 'Loading what needs you');
 });
@@ -134,9 +139,10 @@ test('U03: the header\'s title is on the left from 640px, as on phones and the i
   assert.match(read('frontend/src/features/header/use-header-layout.ts'), /const CENTER_MIN_WIDTH_PX = 640;/, 'the hook never centres below it');
 });
 
-test('U02: the Duo strip\'s ✕ is pressed as 32px, and no word is drawn to overflow a pill', () => {
-  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x::after \{\n    content: "";\n    position: absolute;\n    inset: -6px;\n  \}/);
-  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x \{[^}]*width: 20px;\n    height: 20px;/, 'drawn as before: 20 + 6 + 6');
+test('U02: the Duo strip\'s ✕ is pressed as 44px, and no word is drawn to overflow a pill', () => {
+  // A 20px badge on the disc's corner, pressed as 44px (phone review #136).
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x::after \{\n    content: "";\n    position: absolute;\n    inset: -12px;\n  \}/);
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x \{[^}]*top: 0;\n    right: 0;[^}]*width: 20px;\n    height: 20px;[^}]*background: var\(--text-muted\);/, 'drawn as a 20px badge inside the disc\'s corner: 20 + 12 + 12');
   // The strip's tabs are icons only now (18 Nov 2026): the label that ran
   // past its pill is clipped to nothing, so it has no size of its own.
   assert.doesNotMatch(APP_CSS, /html\[data-side-strip\] #platform-tab-workshop \.platform-tab-label \{/);

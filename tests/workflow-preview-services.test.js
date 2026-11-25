@@ -381,8 +381,9 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
 });
 
-test('required batch mode cannot launch speculative early suites even with the legacy switch enabled', async (t) => {
+test('required batch mode launches an early suite only with a reservation for the exact attempt', async (t) => {
   const k8s = require('../src/services/kubernetes');
+  const queue = require('../src/services/checks-queue');
   const prior = process.env.EARLY_UNIT_SUITE;
   process.env.EARLY_UNIT_SUITE = '1';
   t.after(() => {
@@ -390,13 +391,26 @@ test('required batch mode cannot launch speculative early suites even with the l
     else process.env.EARLY_UNIT_SUITE = prior;
   });
   t.mock.method(k8s, 'countRunningUnitSuiteJobs', async () => assert.fail('count-then-launch must not decide admission'));
-  const workers = previewServices({ config: { workerRuntime: 'kubernetes',
+  t.mock.method(k8s, 'findCheckJobs', async () => ({ unitSuites: [] }));
+  let grant = false;
+  const reserve = t.mock.method(queue, 'reserveEarlyUnitSlot', async () => grant);
+  const workers = previewServices({ config: { captureRuntime: 'kubernetes', workerRuntime: 'kubernetes',
     kubernetes: { checkNodePoolRequired: true } }, pool });
+  suites.preparing = true;
+  t.after(() => { suites.preparing = false; });
   suites.launched.length = 0;
   const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
     workers[WORK.unitEarly].run(ctx({ sessionId: 5 + i, appId: 2, n: 3, head }))));
-  assert.ok(results.every((r) => r.started === false && r.why === 'off'));
+  assert.ok(results.every((r) => r.started === false && r.why === 'no_spare_slot'));
   assert.equal(suites.launched.length, 0, 'unit suites run later inside the admitted checks run');
+  grant = true;
+  const input = { sessionId: 5, appId: 2, n: 3, head };
+  const result = await workers[WORK.unitEarly].run(ctx(input));
+  assert.equal(result.started, true);
+  assert.deepEqual(reserve.mock.calls[10].arguments[2], {
+    runId: result.runId, sessionId: 5, appId: 2, attempt: 3, commitSha: head,
+  });
+  assert.equal(suites.launched[0].previewRunId, result.runId);
 });
 
 // services/unit-suite-reuse.js: a head whose suite already passed under the
@@ -463,4 +477,41 @@ test('#6157 a preview that does not wake in time is the platform\'s fault, never
   // 'error' its error lane runs again, with the platform's own allowance.
   const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/preview/machine.ts'), 'utf8');
   assert.match(machine, /const platformFault = state === 'error' && \(!!r\?\.platformFault/);
+});
+
+// 23 Nov 2026: a checks run whose process drains (a release replaced it) and
+// that could not get a database connection on its small pools is handed
+// back, not settled: the next process's claim collects what its Jobs wrote,
+// or runs it again in the place in line it had (above). Where it cannot be
+// handed back it is the platform's error it would have been.
+test('a checks run that could not get a connection while its process drains is handed back, not settled', async (t) => {
+  const { HandedBack } = require('../src/workflow/kernel/index.ts');
+  const visuals = require('../src/services/visuals');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = visuals.captureForSession;
+  t.after(() => { visuals.captureForSession = saved; });
+  const timeout = new Error('timeout exceeded when trying to connect');
+  visuals.captureForSession = async () => { throw timeout; };
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-11', trigger: 'commit-push',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.next = null;
+
+  t.mock.method(lifecycle, 'isShuttingDown', () => true);
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => {
+    assert.ok(error instanceof HandedBack);
+    assert.equal(error.cause, timeout);
+    assert.deepEqual(error.otherwise, visuals.databaseBusyResult(), 'otherwise the platform\'s error, in words');
+    assert.equal(error.otherwise.platformFault, true);
+    return true;
+  });
+
+  // Not draining: the handler rethrows what it met, for the kernel's retry.
+  lifecycle.isShuttingDown.mock.mockImplementation(() => false);
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => error === timeout);
+
+  // Any other error while draining is the run's, as before.
+  lifecycle.isShuttingDown.mock.mockImplementation(() => true);
+  const other = new Error('Image pull failed');
+  visuals.captureForSession = async () => { throw other; };
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => error === other);
 });

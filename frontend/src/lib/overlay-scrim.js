@@ -126,6 +126,21 @@ function paintBox(paint) {
 // the one underneath the way the paint layer, stacked at the new surface's
 // own level, does. That case keeps the paint layer as it was.
 export const BACKDROP_DIM_CLASS = 'platform-backdrop-dim';
+
+// THE PAINT LAYER SAYS WHEN IT IS PAINTING, as `data-painting` on itself, for
+// the stylesheet (app.css "…BUT NOT UNDER A SCRIM", which turns Home's bar
+// layer off under the dim for Firefox). A rule reading the inline style
+// instead (`[style*="visibility: visible"]`) inside a `body:has()` made every
+// inline-style write anywhere re-match it: style recalcs ran about a hundred
+// times slower and the Dev board's checks timed out. An attribute of its own
+// changes only here. Skipped where the node has no dataset (the unit tests'
+// stand-ins).
+function markPainting(paint, on) {
+  const data = paint && paint.dataset;
+  if (!data) return;
+  if (on) data.painting = '';
+  else delete data.painting;
+}
 const KIT_SURFACES = ['un-sheet', 'un-panel', 'un-modal', 'un-action-sheet', 'un-alert'];
 
 export function drawsBackdropFilter(style) {
@@ -217,6 +232,7 @@ export function attachOverlayScrim(surface, backdrop, paint) {
       for (const key of ['background', 'opacity', 'zIndex', 'visibility']) {
         if (next[key] !== undefined && next[key] !== last[key]) paint.style[key] = next[key];
       }
+      if (next.visibility !== last.visibility) markPainting(paint, next.visibility === 'visible');
       last = next;
     },
   };
@@ -265,5 +281,6 @@ export function attachOverlayScrim(surface, backdrop, paint) {
     window.visualViewport?.removeEventListener('resize', updateVisible);
     window.visualViewport?.removeEventListener('scroll', updateVisible);
     paint.style.visibility = 'hidden';
+    markPainting(paint, false);
   };
 }

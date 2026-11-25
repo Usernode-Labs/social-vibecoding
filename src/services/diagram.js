@@ -335,10 +335,15 @@ function parseDiagram(value, { impact = null } = {}) {
 /** Whether a stored value is a record this version can draw (no throw). */
 function storedDiagram(value) {
   if (!value || typeof value !== 'object') return null;
+  // A hosted build's diagram keeps the revision it was declared on beside the
+  // record (`head`, services/proposal-diagram.js storeDeclared); it is not
+  // part of the diagram.
+  const record = { ...value };
+  delete record.head;
   try {
     // A stored Mermaid record was accepted under its own submission's
     // impact; reading it back does not re-ask that question.
-    return parseDiagram(value, { impact: 'none' });
+    return parseDiagram(record, { impact: 'none' });
   } catch {
     return null;
   }

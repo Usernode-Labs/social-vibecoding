@@ -122,7 +122,21 @@ const controller = () => (window as any).TopochainLeaderboard;
 const ALIGN: Record<ColumnKey, string> = {
   rank: 'text-start',
   user: 'text-start',
-  points: 'text-end whitespace-nowrap',
+  points: 'text-end',
+};
+
+/**
+ * The points heading may wrap; its figures never do (FIGURE below carries
+ * `whitespace-nowrap`). Held to one line, "Season points" set the column's
+ * width at about 130px over figures half that wide, so the name beside it
+ * was cut at 136pt with 100pt of blank before the points (phone review #100).
+ * Now the column is as wide as its widest figure or heading word, and the
+ * name takes the rest.
+ */
+const HEAD_WRAP: Record<ColumnKey, string> = {
+  rank: 'whitespace-nowrap',
+  user: 'whitespace-nowrap',
+  points: 'w-px',
 };
 
 const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
@@ -292,7 +306,7 @@ function StandingsTable(
         <thead className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
           <tr>
             {view.columns.map((c) => (
-              <th key={c} className={`px-4 pt-3 pb-2 font-medium ${ALIGN[c]}`}>{view.headers[c]}</th>
+              <th key={c} className={`px-4 pt-3 pb-2 font-medium ${ALIGN[c]} ${HEAD_WRAP[c]}`}>{view.headers[c]}</th>
             ))}
           </tr>
         </thead>
@@ -519,10 +533,10 @@ function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
         <tbody>
           {view.rows.map((e, i) => (
             <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
-              <td className="py-1 font-mono">{e.epoch}</td>
-              <td className="py-1 font-mono text-end">{e.wonSlots}</td>
-              <td className="py-1 font-mono text-end">{e.produced}</td>
-              <td className="py-1 font-mono text-end">{`${e.successRate}%`}</td>
+              <td className="py-1 tabular-nums">{e.epoch}</td>
+              <td className="py-1 tabular-nums text-end">{e.wonSlots}</td>
+              <td className="py-1 tabular-nums text-end">{e.produced}</td>
+              <td className="py-1 tabular-nums text-end">{`${e.successRate}%`}</td>
             </tr>
           ))}
         </tbody>
@@ -535,7 +549,8 @@ function ProfileStat({ label, value }: { label: string; value: string }): ReactN
   return (
     <div>
       <span className="text-zinc-500 dark:text-zinc-400">{label}</span>
-      <div className="font-mono">{value}</div>
+      {/* The page's face with even figures, not a monospace one (#100). */}
+      <div className="tabular-nums">{value}</div>
     </div>
   );
 }

@@ -47,7 +47,7 @@ function xFetch({ scope = 'tweet.read users.read', user = { id: '98765', usernam
       if (call.url.endsWith('/2/oauth2/token')) {
         return new Response(JSON.stringify({ access_token: 'x-once', scope }), { status: 200 });
       }
-      if (call.url.endsWith('/2/users/me')) {
+      if (call.url.endsWith('/2/users/me?user.fields=created_at')) {
         return new Response(JSON.stringify({ data: user }), { status: 200 });
       }
       if (call.url.endsWith('/2/oauth2/revoke')) return new Response(null, { status: 200 });
@@ -64,17 +64,38 @@ test('exchange reads immutable id + username once and revokes the token', async 
     const result = await xLink.exchangeCode(dedicated, {
       code: 'one-time', redirectUri: 'https://example.test/api/me/x/callback', verifier,
     });
-    assert.deepEqual(result, { provider: 'x', subject: '98765', handle: 'x_user' });
+    assert.deepEqual(result, { provider: 'x', subject: '98765', handle: 'x_user', accountCreatedAt: null });
     const token = mock.calls.find((call) => call.url.endsWith('/2/oauth2/token'));
     const form = new URLSearchParams(token.init.body);
     assert.equal(form.get('code_verifier'), verifier);
     assert.match(token.init.headers.authorization, /^Basic /);
-    const me = mock.calls.find((call) => call.url.endsWith('/2/users/me'));
+    const me = mock.calls.find((call) => call.url.endsWith('/2/users/me?user.fields=created_at'));
     assert.equal(me.init.headers.authorization, 'Bearer x-once');
     const revoke = mock.calls.find((call) => call.url.endsWith('/2/oauth2/revoke'));
     assert.ok(revoke);
     assert.equal(new URLSearchParams(revoke.init.body).get('token'), 'x-once');
     assert.equal(JSON.stringify(result).includes('x-once'), false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('exchange asks X for created_at in the same /users/me call, before the token is revoked', async () => {
+  const originalFetch = global.fetch;
+  // X's v2 user object: user.fields=created_at adds an ISO 8601 created_at.
+  const mock = xFetch({ user: { id: '2244994945', username: 'XDevelopers', created_at: '2013-12-14T04:35:55.000Z' } });
+  global.fetch = mock.fn;
+  try {
+    const result = await xLink.exchangeCode(dedicated, {
+      code: 'one-time', redirectUri: 'https://example.test/api/me/x/callback', verifier,
+    });
+    assert.deepEqual(result, {
+      provider: 'x', subject: '2244994945', handle: 'XDevelopers', accountCreatedAt: '2013-12-14T04:35:55.000Z',
+    });
+    const me = mock.calls.findIndex((call) => call.url.includes('/2/users/me'));
+    const revoke = mock.calls.findIndex((call) => call.url.endsWith('/2/oauth2/revoke'));
+    assert.equal(new URL(mock.calls[me].url).searchParams.get('user.fields'), 'created_at');
+    assert.ok(me < revoke, 'read before the token is revoked');
   } finally {
     global.fetch = originalFetch;
   }

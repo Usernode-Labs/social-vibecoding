@@ -157,10 +157,15 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
   const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
   assert.equal((fn.match(/<VotePicker\b/g) || []).length, 1, 'one VotePicker element');
   assert.equal((fn.match(/\{picker\}/g) || []).length, 2, 'rendered into the popover and into the sheet');
-  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label=\{heading\}\s+data-side=\{side\}/,
+  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label=\{heading\}\s+data-side=\{side\}\s+data-vote-look=\{voteLook\}/,
     'desktop: the anchored popover, a dialog now that it holds a form');
-  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label=\{heading\} data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
+  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label=\{heading\} data-vote-sheet="" data-side=\{side\} data-vote-look=\{voteLook\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
     'touch: the same panel inside the kit sheet\'s content element');
+  // #7065: the All items board's portaled picker is marked so the board's own
+  // colours can reach it; the thread page's marker is checked first.
+  assert.match(fn, /const threadLook = !!btnRef\.current\?\.closest\('#dev-topic-thread'\);/);
+  assert.match(fn, /const boardLook = !threadLook && !!btnRef\.current\?\.closest\('\.dev-ws\[data-ws-tab="all"\] #dev-kanban'\);/);
+  assert.match(fn, /const voteLook = threadLook \? 'thread' : \(boardLook \? 'board' : undefined\);/);
   // #3977: both homes are named by the picker's own header, which is "Your
   // approval" on a solo change whose Yes is the one it needs.
   assert.match(fn, /const heading = approve \? t\('project:card\.vote\.dialog\.approval'\) : t\('project:card\.vote\.dialog\.vote'\);/);

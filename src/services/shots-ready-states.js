@@ -78,6 +78,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-bot-laid-out-reply-v1', 'your chat with Homeroom bot, ending in a laid-out reply with a heading, list and table',
     ['member']],
+  ['shots-demo-member-bot-live-draft-v1', 'your thread with Homeroom bot holding a live draft up for a vote, in the column',
+    ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
   ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
@@ -264,15 +266,16 @@ const SEED_RULE = 'A seed is idempotent and obviously fake: rows for the shots\'
   + 'is the member) and fake people, never a signal the code reads to decide something.';
 
 // Which side a seed reaches, and so which proposal it belongs in.
-const SEED_SIDES = 'A seed this proposal adds reaches only the after copy, which is the side a state new in this '
-  + 'proposal needs: seed such a state in this proposal. A change to a state that already existed needs it on both '
-  + 'copies, so its seed merges first, in its own proposal. '
+const SEED_SIDES = 'A seed this proposal adds reaches the after copy, which is the side a state new in this '
+  + 'proposal needs: seed such a state in this proposal. For Homeroom itself it also reaches the before copy when '
+  + 'main\'s schema can hold it, so a change to a state that already existed can be seeded in its own proposal too; '
+  + 'for another app such a change needs it on both copies, so its seed merges first, in its own proposal. '
   // 18 Nov 2026 (#6822): said outright, because the bot declared PR #6819's
   // change for a state the copies had no data for though this answer had
   // said where data comes from.
   + 'A claim about a screen that already exists (a story whose baseState is "present") therefore needs a '
-  + 'ready-made state these copies already hold, from availableStates: declare it against one, and a seed in this '
-  + 'proposal cannot stand in for it.';
+  + 'ready-made state these copies already hold, from availableStates, or (for Homeroom itself) a seed in this '
+  + 'proposal that both copies can hold: declare it against one.';
 
 /** Pure: a declared change's own words, as one line. */
 function wordsOf(story) {

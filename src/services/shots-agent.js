@@ -199,6 +199,13 @@ there. The brief keeps to a size you can read whole, so its
 reference lists hold the best first: declaredChecksLeftOut, a changedFiles
 that is not complete and a truncated diff say some of a list was left out.
 
+If the brief has changeSeeds, the change's own demo data reached the before
+copy only where that copy could hold it. Each seed listed under leftOut is
+on the after copy only. When a declared change's before side lacks data one
+of those seeds writes, call skip_change for it at once with the reason
+"the before copy can't hold the demo data this change adds (seed name)", and
+do not try other browsers.
+
 Homeroom's home screen is not on these addresses. When the brief has
 homeTile, each address also serves the app's tile on that screen (its icon
 and name, drawn from that side's own dapp.json) at homeTile.path, and

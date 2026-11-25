@@ -211,7 +211,10 @@ test('the view carries what the open card needs, and reads ?cards=open per build
 test('the board unfolds nothing in place: ?cards=open draws the fold’s open sheet, and the Workshop draws rows', () => {
   // #4486: a tap on a row opens the item's page, so the column keeps no
   // open-row state; `?cards=open` hands every card to the fold, open.
-  assert.ok(!/useState/.test(KANBAN), 'no open row to remember');
+  // The one useState is the stage strip's fade (which ends of its tabs run
+  // past it, phone review #89), never a row's.
+  assert.equal((KANBAN.match(/\buseState[<(]/g) || []).length, 1, 'no open row to remember');
+  assert.match(KANBAN, /const \[more, setMore\] = useState<\{ start: boolean; end: boolean \}>\(\{ start: false, end: false \}\);/);
   assert.match(KANBAN, /open: true,\s*onToggle: \(\) => \{\},/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
@@ -1807,7 +1810,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // says what earned each challenge's points, when each was credited and why,
   // and how points work: its own route, which no existing check opens. 704
   // leaves 176 slots.
-  checkCap.assertPinned(DAPP.tests.length, 704);
+  // 704 → 705: +1 (private communities' page): the signed-out page at
+  // `/communities` is a pathname of its own, which no check of the landing
+  // loads, so nothing could take it in a :has(); the landing's own door to
+  // it rides the existing "one filled button in its bar" check. 705 leaves
+  // 175 slots.
+  // 705 → 706: +1 (request 7103) the Homeroom bot tab's Needs you count opens
+  // Waiting on you, a list at `#homeroom-bot/waiting`: its own route, which no
+  // check opens, so nothing could take it in a :has(). The count's new link
+  // rides the #6019 check on the tab's own route. 706 leaves 174 slots.
+  // 706 → 707: +1 (request 6988) a request whose Homeroom bot close offer has
+  // gone still offers Propose to close in its thread, which opens the close
+  // dialog with the bot's reason filled in; no existing check opens that
+  // seeded request's page or that state. 707 leaves 173 slots.
+  // 707 → 709: +2 (request 7134) the profile's section row is real tabs: one
+  // check opens `#profile?tab=changes` and reads the history column in the
+  // profile, the other opens `#profile?tab=activity` and reads the activity
+  // column there. Two routes no existing check opens. 709 leaves 171 slots.
+  checkCap.assertPinned(DAPP.tests.length, 709);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

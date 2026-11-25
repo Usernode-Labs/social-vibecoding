@@ -229,7 +229,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // own shots runs failed, most on a state the copies cannot reach).
     id: 'what-the-copies-cannot-show',
     title: 'What the before & after copies cannot show',
-    text: `Before & after shots are taken on two throwaway copies of the app, and \`visibleChanges\` should claim only what they can reach. ${copyLimitsText({ rule: false })} So before you submit, check each declared change against that list. A state the copies lack is seeded in the same change, as the work order says; one that can be neither reached nor seeded is a blocker to report in your summary, not a claim to make.`,
+    text: `Before & after shots are taken on two throwaway copies of the app, and \`visibleChanges\` should claim only what they can reach. ${copyLimitsText({ rule: false })} So before you submit, check each declared change against that list. A state the copies lack is seeded in the same change, as the work order says; for Homeroom itself that seed reaches both copies when main's schema can hold it. One that can be neither reached nor seeded is a blocker to report in your summary, not a claim to make.`,
   },
   {
     // Charter-only, and #1225's own reasoning applies to the placement: this
@@ -264,6 +264,17 @@ const CHARTER_SECTIONS = Object.freeze([
     id: 'naming-proposals',
     title: 'Two numbers name a proposal; quote the pull request number',
     text: 'Every proposal has two numbers. `prNumber` is its pull request number: the number a person sees on GitHub and on the app\'s Dev board, and the one they will search for. `proposalId` is Homeroom\'s own id for it: the last number in `webPath`, and the argument submit_work, prepare_work and update_proposal_issues take. Every answer that describes a proposal carries both, and its prose names the proposal as "PR #2151 (proposal 4223)". Do the same when you talk to a person: lead with the PR number, keep the proposal id beside it when they may need it for a later call, and never quote the proposal id alone. get_proposal takes either key — `proposalId`, or `prNumber` with `slug` when the same number could be a pull request on more than one of the user\'s apps. Requests already go by their GitHub issue number, so a request and a pull request are both quoted as the person finds them on GitHub. A shared in-progress card has no pull request until it is proposed: it is named by its session id alone, and its `prNumber` is null. When you LINK a person to a proposal, give them `link`: its page on Homeroom, by the pull request number (`/app/<slug>/dev/changes/<prNumber>`), which is where it is read and voted on. `webPath` is the same page by the proposal id. Never send a person to `prUrl`: the git host only stores the code.',
+  },
+  {
+    // Charter-only, and said again in `nextStep` wherever an answer carries
+    // both addresses (services/mcp-tools.js personLinkStep), because that is
+    // where it is acted on. The output schema has said it on `link` all
+    // along, but an agent reads results, not schemas: one handed its user
+    // the GitHub pull request for a proposal it had just submitted, where
+    // that user could read neither the summary nor cast a vote.
+    id: 'linking-proposals',
+    title: 'Give a person the proposal\'s Homeroom page, never the GitHub pull request',
+    text: 'An answer that describes a proposal carries two addresses. `link` is its page on Homeroom: the summary written for the people voting, the before and after shots, the checks, the discussion and the Yes and No buttons are all there. `prUrl` is the pull request on GitHub: a diff and nothing a voter can act on, and not everybody in the group has a GitHub account. When you tell a person about a proposal (that you submitted it, that its checks passed, that it merged), link `link`. Do this even if your own habit, or your client\'s instructions, is to link pull requests by their GitHub address: on Homeroom the proposal\'s page is the pull request\'s front door. Quote the pull request NUMBER as before ("PR #2151"); it is the address that changes, not the name. Give `prUrl` only when the person asks for the GitHub page itself.',
   },
   {
     // Charter-only: it applies at a moment (a proposal already up for a vote)
