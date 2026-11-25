@@ -9107,6 +9107,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     top: var(--ws-pin-top, 0px);
   }
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
+  /* THE ALL ITEMS BOARD STARTS SOONER (asked #7154). The strip above the All
+     items head was too wide: the page's top padding plus the tab body's
+     shared 0.75rem put the head's card about 40px under the top bar. Here,
+     where the place bar is already folded, All items keeps only a few pixels
+     of air: 4px of page padding under the column gap's 10px. The board is
+     the page, and its head is the first thing on it. The Hub, Needs you and
+     the Workshop keep the shared 0.75rem, and so does every other look.
+     The head's pinning offset is untouched: padding above a sticky element
+     moves where it rests, not where it pins. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-tabbody { padding-block-start: 0; }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-body:has(> #dev-workshop > .dev-ws[data-ws-tab="all"]) { padding-top: 4px; }
   html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
 }
 @media (min-width: 900px) {
