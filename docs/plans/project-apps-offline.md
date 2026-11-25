@@ -605,38 +605,6 @@ address) and a new stylesheet:
 | First open after the change | old | old, then new (one reload) | new |
 | Reopen | old | new | new |
 
-#### Then Firefox: a reload that kept the old stylesheet
-
-The same private project stayed wrong in Firefox after both fixes were live,
-while a fresh browser showed it right. Headless Firefox 160 showed why. The
-check ran and put the new `screens.css` in Firefox's disk cache (the next
-check sent the new version's ETag). But the frame's reload drew the old
-styling, and so did every open after it, without requesting the stylesheet
-at all. Firefox reuses a stylesheet it has already parsed, from memory, for
-as long as that frame's process lives. It does so on a plain
-`location.reload()` and on `location.replace()` to the same page, at the
-cacheable address and in a frame opened the old way alike. A hard refresh of
-Homeroom's page does not reach the project's frame either: it is another
-site, in another process.
-
-Every reload the bridge's offline block makes now sets its address with
-`history.replaceState` and calls `location.reload(true)`. That covers the
-check's reload and the refresh's on a new build. `true` is Firefox's
-`forceGet`: it reloads past every cache, memory included. Other browsers
-ignore the argument and reload as before.
-
-Measured with the same stuck state:
-
-| | Plain reload (before) | `reload(true)` |
-|---|---|---|
-| Firefox 160, frame opened the old way | old, then old again; stays old | old, then new; stays new |
-| Firefox 160, cacheable address | old, then old again; stays old | old, then new; stays new |
-| Chrome, both ways | old, then new | old, then new; still opens with the app unreachable |
-
-A Firefox that is already stuck may hold the new file on disk and the old
-one in memory, so its check finds nothing to replace. Quitting Firefox
-clears that.
-
 Still to do, outside this proposal:
 
 1. After the release: the simulator and emulator pass against real apps
