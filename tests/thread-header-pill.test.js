@@ -88,6 +88,32 @@ test('a request\'s bar is the same head, its name kept beside its category for t
   assert.match(html, /<span class="dev-thread-exits" data-thread-exits="">/);
 });
 
+test('while a vote to close is open the bar reads "Close: " before the title (#7120)', () => {
+  const r = {
+    number: 9107, title: 'Staging demo: a request', category: 'Project workflows', menuKey: null,
+    status: { closed: false, stage: 'asked' },
+  };
+  const close = { tier: 2, key: 'close', label: 'Vote to close', tone: 'neutral', yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  const html = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: close, threadMenu: true })));
+  const closing = message('project:topic.request.bar.closeTitle', { title: 'Staging demo: a request' });
+  assert.ok(closing.startsWith('Close: '), 'the prefix is "Close:" and one space');
+  assert.ok(html.includes(`dev-request-bar-title">${closing}</div>`), 'the bar\'s title carries the prefix');
+  // The pill stays where it was.
+  assert.match(html, /data-request-status="close"/);
+  // A translated title is wrapped in the same prefix.
+  const translated = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: close, title: 'Demo de staging : une demande' })));
+  assert.ok(translated.includes(`dev-request-bar-title">${message('project:topic.request.bar.closeTitle', { title: 'Demo de staging : une demande' })}</div>`));
+  // A close vote competing with a change ('choosing'), and every other pill
+  // (no pill at all), keep the plain title.
+  for (const pill of [{ ...close, key: 'choosing', label: 'Choosing' }, null]) {
+    const plain = withProject(() => renderToHtml(createElement(RequestBar, { r, pill, threadMenu: true })));
+    assert.ok(plain.includes('dev-request-bar-title">Staging demo: a request</div>'), `plain title for ${pill ? pill.key : 'no pill'}`);
+    assert.ok(!plain.includes('Close: '), 'no prefix');
+  }
+  // Under a frame look the head the kit draws gets the same prefixed title.
+  assert.match(read(REQUEST), /if \(frame\) return <TopicFrameHead title=\{shown\} /);
+});
+
 test('the discs do what the panel they are in offers: the Workshop\'s own actions, or the top window\'s panel', () => {
   const { act } = EXITS;
   const ws = EXITS;

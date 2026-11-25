@@ -35,6 +35,13 @@ export interface PanelHead {
   /** The key the page's ⋯ carries in AppView's card menus, or null when it has none. */
   menuKey: string | null;
   /**
+   * #7120: the title the page's bar draws in place of its plain one (a
+   * request's "Close: …" while a vote to close is open), or null when it
+   * draws the plain one. The column's heading draws it in place of the
+   * title it would otherwise read.
+   */
+  title: string | null;
+  /**
    * #6608: the route the page was DRAWN for, not the route at publish time.
    * The panel's document reports the head under a route only when this one is
    * that page, so a bar still mounted from the page the viewer left cannot
@@ -43,8 +50,11 @@ export interface PanelHead {
   route: string | null;
 }
 
-/** What a page's bar publishes: the store adds `route` from its own context. */
-export type PanelHeadInput = Omit<PanelHead, 'route'>;
+/**
+ * What a page's bar publishes: the store adds `route` from its own context.
+ * `title` is optional there: a page that draws its plain title publishes none.
+ */
+export type PanelHeadInput = Omit<PanelHead, 'route' | 'title'> & { title?: string | null };
 
 /** Null until a page publishes one; the panel document's alone. */
 export const panelHeadStore = createStore<PanelHead | null>(null);
@@ -62,12 +72,13 @@ export function usePanelHead(head: PanelHeadInput): void {
   const pill = head.pill;
   // #6608: the route this page was drawn for, carried with its head.
   const { route } = useContext(TopicPageContext);
+  const title = head.title ?? null;
   useEffect(() => {
     if (!isEmbeddedPanel()) return undefined;
-    panelHeadStore.set({ kind: head.kind, pill, menuKey: head.menuKey, route: route || null });
+    panelHeadStore.set({ kind: head.kind, pill, menuKey: head.menuKey, title, route: route || null });
     return () => { panelHeadStore.set(null); };
   }, [
-    head.kind, head.menuKey, route,
+    head.kind, head.menuKey, title, route,
     pill?.key, pill?.label, pill?.tone,
     pill?.yes, pill?.no, pill?.fill,
   ]);
