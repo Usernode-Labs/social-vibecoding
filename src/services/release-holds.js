@@ -30,7 +30,10 @@
 // them (20 Nov 2026). And `unread`, a change too large to read whole
 // or whose diff could not be loaded. It used to hold, and nearly every time
 // the reason was a rebuilt bundle committed beside a few lines of source, so
-// an admin was put in front of changes that carried nothing. The admins are
+// an admin was put in front of changes that carried nothing. (25 Nov 2026:
+// such a bundle's minified lines are now cut to their start as the diff is
+// read, services/diff-long-lines.js, so it no longer makes a change unread.)
+// The admins are
 // still told, once for each version, by the same bell row and mail, which
 // say it is not held;
 // the change goes live on its votes and checks like any other. Such a change
@@ -423,7 +426,10 @@ async function evaluate({
       let unread = false;
       let failed = false;
       try {
-        const d = await github.getProposalDiff(repoOwner, repoName, `${baseRef}...${commitHash}`, DIFF_CHAR_BUDGET);
+        // Minified lines are cut to their start, so a bundle committed
+        // beside the source does not use the budget before the source is
+        // reached and the change is not called unread for it.
+        const d = await github.getProposalDiff(repoOwner, repoName, `${baseRef}...${commitHash}`, DIFF_CHAR_BUDGET, { clipLongLines: true });
         diff = String(d?.diff || '');
         // Cut off at the budget, or a file list the compare did not finish:
         // what was read still counts, and the admins are told about the rest.
