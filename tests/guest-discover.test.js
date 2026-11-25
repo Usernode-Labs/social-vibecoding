@@ -1176,7 +1176,7 @@ test('the project card\'s picture: the still first, a loop only after mount and 
   assert.match(src, /setCanPlay\(!!src && previewsAllowed\(\) && !previewFailed\(src\)\)/);
   assert.match(src, /onError=\{\(\) => \{ markPreviewFailed\(src\); setCanPlay\(false\); \}\}/);
   assert.match(src, /aria-label=\{paused \? t\('auth:guest\.project\.card\.play'\) : t\('auth:guest\.project\.card\.pause'\)\}/);
-  assert.equal(message('auth:guest.project.card.previewLabel'), 'Preview of the real app');
+  assert.equal(message('auth:guest.project.card.previewLabel'), 'Preview');
   // Buttons on a phone are 50px; 52px from 768px.
   assert.match(src, /export const CARD_OPEN_BTN = 'flex h-\[50px\][^']* md:h-\[52px\]/);
 });
