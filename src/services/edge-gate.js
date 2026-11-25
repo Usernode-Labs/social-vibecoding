@@ -105,6 +105,17 @@ const { readSessionCookie } = require('./browser-session-cookies');
 // platform's sign-up or sign-in, which brings them back through the
 // authorize hop, signed in.
 //
+// ── A member's own assistant (personal access tokens) ───────────────────
+//
+// A request with no browser behind it (an MCP client, a script) can carry a
+// member's personal access token as `Authorization: Bearer hrat_…`
+// (services/app-access-tokens.js). The gate checks it on every request and
+// lets it through as that member only on a path the app declared in
+// dapp.json (`agentPaths`), at the production address, while the token is
+// live and its owner is still a member who may see the app. So a private
+// app stays closed to everybody else, and the app itself never meets a
+// caller Homeroom has not vouched for. Any refusal is one bare 401.
+//
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
 // identity from the cookie, no guests, the chromeless view for a direct visit
 // to a private app) while keeping everything else.
@@ -150,6 +161,8 @@ const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
 const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
+const accessTokens = require('./app-access-tokens');
+const communities = require('./communities');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
 const { appHostIsIsolated } = require('./browser-site-isolation');
@@ -949,6 +962,40 @@ async function handleAccess(pool, req, res) {
     return redirect(isProduction ? chromelessUrl(slug, appReturnPath(next)) : `https://${USERNODE_DOMAIN}/`);
   }
 
+  // ── A member's personal access token (services/app-access-tokens.js) ──
+  //
+  // `Authorization: Bearer hrat_…` is Homeroom's to check, on a public app
+  // and a private one alike, and it is checked on every request: the path
+  // is one the app declared, this is the app's production address (a
+  // preview runs unmerged code), the token is live and is this app's, and
+  // its owner is still a member who may see the app. Then the request goes
+  // on as that member, with the identity a signed-in visit carries. Every
+  // refusal is the same bare 401, so a caller learns nothing from it: not
+  // whether the app exists as an agent endpoint, nor what was wrong.
+  const agentPath = isProduction && accessTokens.onAgentPath(vis.agentPaths, uriPath(uri));
+  const refuseAgent = () => {
+    res.set('WWW-Authenticate', 'Bearer');
+    return res.status(401).type('text/plain').send('Unauthorized');
+  };
+  const bearer = accessTokens.bearerOf(header(req.headers, 'authorization'));
+  if (bearer) {
+    if (!agentPath || ws) return refuseAgent();
+    const held = await accessTokens.resolve(pool, bearer);
+    if (!held || held.appId !== vis.appId) return refuseAgent();
+    const member = await communities.isMember(pool, vis.appId, held.userId)
+      && await appAccess.isViewMember(pool, vis.appId, held.userId);
+    if (!member) {
+      await accessTokens.revokeAllFor(pool, { appId: vis.appId, userId: held.userId });
+      log.warn('edge-gate', 'Access token refused', { host, reason: 'not_a_member' });
+      return refuseAgent();
+    }
+    // No identity, no entry: a token never opens the app anonymously.
+    const identity = await mintIdentity(pool, vis.appId, held.userId, { publicApp: !vis.viewPrivate });
+    if (!identity) return refuseAgent();
+    accessTokens.touch(pool, held.id);
+    return allow({ identityFor: held.userId, cacheApp: false });
+  }
+
   const ownToken = header(req.headers, 'x-usernode-token');
   const queryToken = query.get('token') || '';
 
@@ -1046,7 +1093,11 @@ async function handleAccess(pool, req, res) {
     // A cookie whose platform session has ended opens nothing.
   }
 
-  // 4. Nothing valid. A visit that already went round the hop (the loop
+  // 4. Nothing valid. An agent's call to a declared path is told so in a
+  // way a client can act on (it has no browser to send round the hop).
+  if (agentPath && !topNav && !crossSiteFrame && !browserRequest(req.headers)) return refuseAgent();
+
+  // A visit that already went round the hop (the loop
   // marker) goes where an unsigned visitor goes rather than round again.
   if (topNav && isProduction) {
     return signin && query.get(RETRY_MARKER) !== '1'
