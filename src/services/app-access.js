@@ -514,21 +514,36 @@ async function getHostVisibility(pool, slug) {
 //     frames it with the token in its address until it deploys again, where
 //     the bridge's refresh never runs, so a kept file would outlive the
 //     next change.
-const offlineOptOutById = new Map(); // appId -> { at, off }
-async function offlineCacheOff(pool, appId) {
+//
+// The same read names the app's live build (`build`: apps.main_sha, which a
+// deploy writes once it has succeeded) and whether it is self-hosted: the
+// gate versions the addresses of a page's files by that build
+// (offlineCache.versionAssetUrls), so a copy a browser kept of an older
+// build's file is never asked for again.
+const offlineOptOutById = new Map(); // appId -> { at, off, build, selfHosted }
+async function offlineCacheFacts(pool, appId) {
   const now = Date.now();
   const hit = offlineOptOutById.get(appId);
-  if (hit && now - hit.at < VIS_CACHE_TTL_MS) return hit.off;
+  if (hit && now - hit.at < VIS_CACHE_TTL_MS) return hit;
   const { rows } = await pool.query(
     `SELECT (manifest_snapshot -> 'offline') = 'false'::jsonb AS off,
-            (offline_cache_off_sha IS NOT NULL AND lower(offline_cache_off_sha) = lower(main_sha)) AS refused
+            (offline_cache_off_sha IS NOT NULL AND lower(offline_cache_off_sha) = lower(main_sha)) AS refused,
+            main_sha, self_hosted
        FROM apps WHERE id = $1`,
     [appId]
   );
-  const off = rows[0]?.off === true || rows[0]?.refused === true;
+  const facts = {
+    at: now,
+    off: rows[0]?.off === true || rows[0]?.refused === true,
+    build: typeof rows[0]?.main_sha === 'string' ? rows[0].main_sha : null,
+    selfHosted: rows[0]?.self_hosted === true,
+  };
   if (offlineOptOutById.size >= 5000) offlineOptOutById.clear();
-  offlineOptOutById.set(appId, { at: now, off });
-  return off;
+  offlineOptOutById.set(appId, facts);
+  return facts;
+}
+async function offlineCacheOff(pool, appId) {
+  return (await offlineCacheFacts(pool, appId)).off;
 }
 function resetOfflineOptOutsForTest() { offlineOptOutById.clear(); }
 
@@ -548,6 +563,7 @@ async function isViewMember(pool, appId, userId) {
 
 module.exports = {
   offlineCacheOff,
+  offlineCacheFacts,
   resetOfflineOptOutsForTest,
   ACCESS_COLUMNS,
   SECRET_APP_COLUMNS,

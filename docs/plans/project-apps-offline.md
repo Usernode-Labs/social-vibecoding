@@ -605,6 +605,61 @@ address) and a new stylesheet:
 | First open after the change | old | old, then new (one reload) | new |
 | Reopen | old | new | new |
 
+#### Then Firefox, which the check could not see: each build's files at their own addresses
+
+A Firefox kept drawing a private project's old styling after both fixes.
+Headless Firefox 160 showed why. Firefox keeps a page's own `<link>` and
+`<script>` loads apart from the bridge's `fetch()` copies of the same
+addresses, even across a restart. So the check compared its own copies,
+which were current, saw no change, and the page drew the old CSS and JS
+forever. A forced reload (`location.reload(true)`) drew the new files, but
+shipped, it crashed every project's frame in a real Firefox and was
+reverted the same evening (#7171, #7173).
+
+The fix moves the version into the address, so no browser can draw a kept
+copy of an older build's file:
+
+- **The access answer names the live build.** For a production app while
+  offline apps are on, `X-Usernode-Asset-Version` carries the first 12
+  characters of `apps.main_sha`. A deploy writes that once it has
+  succeeded, so the version changes when the new build serves. Private and
+  opted-out apps get it too (a version is harmless where nothing is kept
+  long, and heals a copy kept before). Previews, self-hosted apps and apps
+  not deployed yet get none. It is gate-only: a visitor's or an app's copy
+  is discarded.
+- **The gate rewrites the app's pages.** On a `GET` answered 200 with
+  `text/html` it adds `un-v=<build>` to every same-site
+  `<link rel="stylesheet|preload|modulepreload">` and `<script src>`. It
+  leaves alone the platform's shared `/usernode-*` files (versioned by
+  platform releases and kept stale-while-revalidate), `/api/`, `/__` paths,
+  `data:`, `blob:` and other sites, and the text inside comments,
+  `<script>` and `<style>`. Everything else is byte for byte as the app
+  sent it (`offlineCache.versionAssetUrls`, a pure function).
+- **Pages are asked for whole.** For a page request the gate drops
+  `If-None-Match` and `If-Modified-Since`, so a 304 never brings back a
+  kept page holding the old addresses. It asks for identity encoding and
+  unpacks gzip, deflate or br when an app sends it anyway. A page over
+  2 MB, or in an encoding it cannot unpack, goes out as the app sent it.
+  The rewritten page drops the app's `ETag` and `Last-Modified`.
+- **The 30-day lifetime is unchanged.** A versioned address is a new
+  address for each build, so a long lifetime can no longer pin an old file.
+
+Measured through the real gate (`createGate`), with the old CSS and JS
+kept 30 days at their plain addresses before the fix:
+
+| Headless browser | Next open after the change | Reopen | Gate and app unreachable |
+|---|---|---|---|
+| Chrome, token address | new CSS and JS, one load | new | |
+| Chrome, cacheable address | new, one load | new, no requests | new |
+| Firefox 160, token address | new, one load | new | |
+| Firefox 160, cacheable address | new, one load | new, no requests | new |
+
+What it does not version: files a script or a stylesheet loads by itself
+(dynamic `import()`, `fetch`, fonts and images named in CSS). The bridge's
+check still covers those in Chrome. While a new build is rolling out the
+answer still names the old one, so the switch lands when the deploy is
+recorded.
+
 Still to do, outside this proposal:
 
 1. After the release: the simulator and emulator pass against real apps
