@@ -101,6 +101,13 @@
       "preview": "sql"
     },
     {
+      "source": "src/db/staging-seed-outcome.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "982d9e3eb996f559e633",
+      "count": 2,
+      "preview": "text"
+    },
+    {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
       "fingerprint": "ef2f0b9d89189bbc7836",

@@ -402,6 +402,7 @@ const COPY_CONNECTIONS = Object.freeze({
   dbadmin: 'run',     // services/db-manager.js, its per-database client
   'shots-seeds': 'run',      // db/seed-other-copy.js, one seed's transaction at a time
   'shots-seeds-read': 'run', // db/seed-other-copy.js, committed media rows only
+  'shots-seeds-report': 'run', // services/shots-environment.js, the after copy's seed report
   // Never against a copy's ceiling, with the reason.
   'schema-observer': 'boot only, while the migration runs and before the bus, locks and workflow pool open',
   census: 'the preview server\'s maintenance database',
