@@ -11235,34 +11235,7 @@ html:not([data-skin]) #public-profile-card h2 {
   font-weight: 460;
   line-height: 1.15;
 }
-/* A real editor and preferences beside work, as in the profile reference. */
-html:not([data-skin]) #profile-root .profile-details-card {
-  padding: var(--ed-pad);
-  border: 1px solid var(--ed-line);
-  border-radius: var(--ed-radius);
-  background: var(--ed-paper);
-  margin-bottom: var(--ed-gap);
-}
-html:not([data-skin]) #profile-details h2 {
-  font-family: var(--ed-serif);
-  font-size: var(--ed-head-size);
-  font-weight: 460;
-  line-height: 1.2;
-}
-html:not([data-skin]) #profile-details > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
-html:not([data-skin]) #profile-details label { display: block; margin: 0.75rem 0 0.25rem; }
-html:not([data-skin]) #profile-details :is(input, textarea) {
-  border: 1px solid var(--ed-line);
-  background: var(--ed-well);
-  border-radius: 0.625rem;
-  box-shadow: none;
-}
-html:not([data-skin]) #profile-details input[readonly] { color: var(--ed-sky-ink-soft); }
-html:not([data-skin]) #profile-details-handle-note { display: block; margin-top: 0.25rem; font-size: 0.75rem; text-decoration: underline; }
-html:not([data-skin]) #profile-details .profile-details-count { display: block; text-align: end; font-size: 0.75rem; margin-top: 0.25rem; }
-html:not([data-skin]) #profile-details .profile-details-actions { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; }
-html:not([data-skin]) #profile-details button[type="submit"] { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); border: 1px solid var(--wip-btn-1-line); }
-html:not([data-skin]) #profile-details [role="alert"] { color: var(--state-blocked); font-size: 0.8125rem; }
+/* Preferences and the rest sit beside work, as in the profile reference. */
 html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 1.25rem; }
 html:not([data-skin]) #profile-root #profile-work { margin-top: 0; }
 html:not([data-skin]) #profile-root #profile-account { margin-top: 0; }
@@ -11347,7 +11320,47 @@ html:not([data-skin]) #profile-identity-card .profile-id-avatar { border-radius:
 html:not([data-skin]) #profile-identity-card .profile-id-handle { margin-top: 0.2rem; font-size: 1.125rem; font-weight: 600; }
 html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 33rem; margin-top: 0.5rem; line-height: 1.5; }
 html:not([data-skin]) #profile-identity-card .profile-id-about { margin-top: 0.625rem; color: var(--ed-muted); font-size: 0.8125rem; }
-html:not([data-skin]) :is(#profile-identity-card #profile-edit-btn, .profile-details-actions button[type="submit"]) {
+/* #7156: your name and your bio are edited where they are shown. The pencil
+   is quieter than Edit profile, and the box each opens is drawn like
+   Settings' own name and bio form. */
+html:not([data-skin]) #profile-identity-card #profile-name-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--ed-line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ed-sky-ink);
+}
+html:not([data-skin]) #profile-identity-card #profile-name-edit svg { width: 1.125rem; height: 1.125rem; }
+html:not([data-skin]) #profile-identity-card #profile-bio-edit {
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ed-sky-ink-soft);
+  font-size: 0.8125rem;
+  text-decoration: underline;
+}
+html:not([data-skin]) #profile-identity-card :is(#profile-name-edit, #profile-bio-edit):focus-visible { outline: 2px solid var(--ed-sky-ink); outline-offset: 2px; }
+html:not([data-skin]) #profile-identity-card .profile-inline-form { display: flex; flex-direction: column; gap: 0.25rem; width: min(33rem, 100%); margin-top: 0.5rem; }
+html:not([data-skin]) #profile-identity-card .profile-inline-form label { font-size: 0.8125rem; font-weight: 500; color: var(--ed-sky-ink); }
+html:not([data-skin]) #profile-identity-card .profile-inline-form :is(input, textarea) {
+  border: 1px solid var(--ed-line);
+  border-radius: 0.625rem;
+  background: var(--ed-well);
+  color: var(--ed-ink);
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-identity-card .profile-inline-form .profile-inline-count { text-align: end; font-size: 0.75rem; color: var(--ed-muted); }
+html:not([data-skin]) #profile-identity-card .profile-inline-form [role="alert"] { color: var(--state-blocked); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-identity-card .profile-inline-actions { display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; }
+html:not([data-skin]) #profile-identity-card .profile-inline-actions button[type="button"] { padding-inline: 0.5rem; border: 0; background: none; box-shadow: none; color: var(--ed-muted); font-weight: 400; }
+html:not([data-skin]) :is(#profile-identity-card #profile-edit-btn, .profile-inline-form button[type="submit"], .profile-details-actions button[type="submit"]) {
   border: 1px solid var(--ed-button-line);
   border-radius: 0.875rem;
   background: var(--ed-sun);
@@ -11361,7 +11374,6 @@ html:not([data-skin]) :is(#profile-identity-card #profile-edit-btn, .profile-det
 html:not([data-skin]) #profile-root #profile-stats > [data-profile-stat] > :first-child { font-family: var(--wip-font); font-weight: 650; }
 html:not([data-skin]) #profile-root #profile-stats > [data-profile-stat] > :last-child { color: var(--ed-muted); }
 html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 0; column-gap: 2rem; }
-html:not([data-skin]) #profile-root .profile-details-card,
 html:not([data-skin]) #profile-root .profile-preferences-card {
   padding: 1rem 1.25rem;
   background: var(--ed-paper);

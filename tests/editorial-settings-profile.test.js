@@ -184,7 +184,7 @@ test('project cards show every project with a live change, in the order given', 
 });
 
 
-test('the shared profile forms keep separate labels, ids and real account values', () => {
+test('Settings keeps the one profile form, and the profile screen edits in its hero', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const user = { username: 'builder', displayName: 'A <builder>', bio: 'Making things together' };
   const { ProfileDetailsCard } = loadTsx('frontend/src/features/profile/profile-details-card.tsx', {
@@ -193,23 +193,79 @@ test('the shared profile forms keep separate labels, ids and real account values
       '../../lib/i18n/react': { useMessages: () => (id) => id },
     },
   });
-  const html = renderToHtml(createElement('div', null,
-    createElement(ProfileDetailsCard, { user }),
-    createElement(ProfileDetailsCard, { user, id: 'settings-profile-details', embedded: true }),
-  ));
+  // #7156: the profile screen no longer mounts it, so Settings is its only
+  // page and it brings no heading of its own there.
+  const html = renderToHtml(createElement(ProfileDetailsCard, { user, id: 'settings-profile-details', embedded: true }));
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
-  assert.equal(new Set(ids).size, ids.length, 'both mounted pages have unique ids');
-  for (const prefix of ['profile-details', 'settings-profile-details']) {
-    for (const field of ['name', 'handle', 'bio']) {
-      assert.ok(html.includes(`for="${prefix}-${field}"`));
-      assert.ok(ids.includes(`${prefix}-${field}`));
-    }
+  for (const field of ['name', 'handle', 'bio']) {
+    assert.ok(html.includes(`for="settings-profile-details-${field}"`));
+    assert.ok(ids.includes(`settings-profile-details-${field}`));
   }
   assert.match(html, /A &lt;builder&gt;/);
   assert.match(html, /maxLength="40"/);
   assert.match(html, /maxLength="280"/);
-  assert.equal((html.match(/<form/g) || []).length, 2);
-  assert.equal((html.match(/<h2/g) || []).length, 1, 'Settings uses its existing heading');
+  assert.equal((html.match(/<form/g) || []).length, 1);
+  assert.equal((html.match(/<h2/g) || []).length, 0, 'the retired heading is gone');
+  const view = read('frontend', 'src', 'features', 'profile', 'profile-view.tsx');
+  assert.doesNotMatch(view, /ProfileDetailsCard/, 'the profile screen no longer mounts the card');
+  assert.match(view, /<InlineNameEdit/, 'the hero keeps the pencil');
+  assert.match(view, /<InlineBioEdit/, 'and the bio with its link');
+});
+
+test('the name and the bio are edited where they are shown', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { InlineBioEdit, InlineNameEdit } = loadTsx('frontend/src/features/profile/identity-inline-edit.tsx', {
+    stubs: {
+      './profile.js': { Profile: { MAX_BIO: 280 } },
+      '../../lib/i18n/react': { useMessages: () => (id) => id },
+    },
+  });
+  const user = { displayName: 'A <builder>', bio: 'Building <small> tools' };
+  const closed = renderToHtml(createElement('div', null,
+    createElement(InlineNameEdit, { user, open: false, onOpen() {}, onClose() {} }),
+    createElement(InlineBioEdit, { user, open: false, onOpen() {}, onClose() {} }),
+  ));
+  assert.match(closed, /id="profile-name-edit"/, 'a pencil beside the name');
+  assert.match(closed, /profile:identity\.editName/, 'announced as Edit name');
+  assert.match(closed, /id="profile-bio-edit"/);
+  assert.match(closed, /profile:identity\.editBio/);
+  assert.match(closed, /Building &lt;small&gt; tools/, 'the bio is a text child, escaped');
+  assert.match(closed, /class="profile-id-bio[^"]*"/, 'and keeps the hook the block draws');
+  assert.doesNotMatch(closed, /<form/, 'nothing is open');
+
+  const noBio = renderToHtml(createElement(InlineBioEdit, { user: { displayName: 'x' }, open: false, onOpen() {}, onClose() {} }));
+  assert.match(noBio, /profile:identity\.addBio/);
+  assert.doesNotMatch(noBio, /profile-id-bio/, 'no empty bio line');
+
+  const open = renderToHtml(createElement('div', null,
+    createElement(InlineNameEdit, { user, open: true, onOpen() {}, onClose() {} }),
+    createElement(InlineBioEdit, { user, open: true, onOpen() {}, onClose() {} }),
+  ));
+  assert.equal((open.match(/<form class="profile-inline-form">/g) || []).length, 2);
+  assert.match(open, /for="profile-name-input"/);
+  assert.match(open, /id="profile-name-input"/);
+  assert.match(open, /for="profile-bio-input"/);
+  assert.match(open, /id="profile-bio-input"/);
+  assert.match(open, /maxLength="40"/, 'the name keeps its limit');
+  assert.match(open, /maxLength="280"/, 'and the bio its own');
+  assert.match(open, /A &lt;builder&gt;/, 'the box starts on what is stored');
+  assert.match(open, /Building &lt;small&gt; tools/);
+  assert.match(open, /profile-inline-count/, 'the bio counts its characters');
+  assert.match(open, /profile:details\.save/);
+  assert.match(open, /core:common\.cancel/);
+  assert.doesNotMatch(open, /profile-name-edit|profile-bio-edit/, 'the link gives way to the box');
+});
+
+test('the editorial block draws the inline editors and no profile details card', () => {
+  const b = block();
+  assert.doesNotMatch(b, /#profile-details\b/, 'the in-page card is gone from the standard profile');
+  assert.doesNotMatch(b, /#profile-root \.profile-details-card/);
+  assert.match(b, /#profile-identity-card #profile-name-edit \{/, 'the pencil');
+  assert.match(b, /#profile-identity-card #profile-bio-edit \{/, 'the bio link');
+  assert.match(b, /#profile-identity-card \.profile-inline-form \{/, 'the box both open');
+  assert.match(b, /\.profile-inline-form button\[type="submit"\]/, 'Save changes wears the sun');
+  assert.ok(b.includes('var(--ed-well)') && b.includes('var(--ed-muted)') && b.includes('var(--state-blocked)'),
+    'its box, its counter and its alerts are the block\'s tokens');
 });
 
 
