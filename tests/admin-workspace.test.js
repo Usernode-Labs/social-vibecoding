@@ -155,7 +155,7 @@ test('the sidebar has the reference destinations, grouped tools, Search and envi
   const bar = method(consoleJs, '  _topBarHtml() {');
   for (const label of ['Dashboard', 'Users', 'Content', 'Moderation', 'Analytics', 'Settings']) assert.ok(bar.includes(label));
   assert.match(bar, /admin-sidebar-group-toggle/);
-  assert.match(bar, /data-admin-section="\$\{s\.key\}"/);
+  assert.match(bar, /data-admin-section="\$\{key\}"/);
   assert.match(bar, /data-admin-search-open=""/);
   assert.match(bar, /_envLabelHtml\(\)/);
   assert.match(bar, /_groupedSections\(\)/, 'grouped by the helper the phone menu uses');

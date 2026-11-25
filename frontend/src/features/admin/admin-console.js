@@ -1137,9 +1137,8 @@ const AdminConsole = {
     catch { return false; }
   },
 
-  // The bar. Home, then a menu button per group (the group of the section on
-  // screen marked aria-current), then the environment and Search. A group's
-  // menu lists its sections; Overview is Home and sits in no menu.
+  // The dedicated Admin rail. The six main destinations mirror the reviewed
+  // dashboard; the collapsible groups retain a route to every existing tool.
   _topBarHtml() {
     const active = AdminConsole._section;
     const visible = AdminConsole._visibleSections();
@@ -1168,7 +1167,7 @@ const AdminConsole = {
     </nav>`;
   },
 
-  // The strip under the bar: Home, then a tab per opened section, oldest
+  // The strip above the content: Home, then a tab per opened section, oldest
   // first. Tabs WRAP onto another line rather than scroll sideways: nothing
   // in the console scrolls horizontally (#860), and a long label truncates.
   _tabStripHtml() {

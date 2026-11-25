@@ -449,6 +449,7 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'admin-open-tabs': 'The Admin console’s open-section tabs, hosted separately from its desktop sidebar so the dashboard keeps its workspace layout.',
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // features/header/connection-status.tsx: the header's word on the
   // connection ("Connecting…", "No internet", "Updated 12:41"), a pill

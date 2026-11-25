@@ -12,13 +12,13 @@
  *
  * This component owns the CHASSIS MARKUP that ./admin-console.js used to write
  * into #admin-root with innerHTML on every open, every section switch and every
- * viewport crossing: the md:flex column pair, the desktop nav host, the
+ * viewport crossing: the responsive workspace, the desktop Admin rail and tab hosts, the
  * view-only banner, #admin-section-content, and the temporary-password dialog.
  * The nineteen sections' contents are still the modules' — that boundary is not
  * a staging post, it is the shape the screen has to keep:
  *
- *  - #admin-nav-desktop is an innerHTML host, filled by
- *    AdminConsole._topBarHtml() and _tabStripHtml() on every repaint (#6456). It ships EMPTY (React
+ *  - #admin-nav-desktop and #admin-open-tabs are innerHTML hosts, filled by
+ *    AdminConsole._topBarHtml() and _tabStripHtml() on every repaint. They ship EMPTY (React
  *    hydrates an empty host and never looks inside it again), exactly the seam
  *    #settings-nav-desktop uses. Rendering the nav from React would mean
  *    reconciling over markup the module also writes.
@@ -199,8 +199,8 @@ export function AdminScreen() {
         </div>
         <div className="admin-console-layout md:grid md:grid-cols-[236px_minmax(0,1fr)] md:items-start md:gap-6">
           {/*
-              Desktop top bar and open-section tabs (#6456), stacked above
-              the content; it was a 16rem sidebar beside it. Below md there
+              Desktop Admin rail and open-section tabs, beside the dashboard.
+              Below md there
               is no nav here at all: phones get the two-level hierarchy
               instead (the level-1 menu renders INTO #admin-section-content).
               Empty on arrival — AdminConsole._renderShell() fills it, with a

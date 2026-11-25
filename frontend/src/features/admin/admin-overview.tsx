@@ -51,6 +51,8 @@ interface OverviewData {
 }
 interface AnalyticsData { users?: { total?: number }; appsTotal?: number; prs?: { promoted_all_time?: number }; wau?: number }
 interface ModerationCase { id: number; target_type: string; target_label?: string; report_count: number; reasons?: string[]; created_at: string }
+interface RecentUser { id: number; username: string; is_admin: boolean; created_at: string }
+interface RecentApp { slug: string; name: string; creator?: string | null; users?: number; members?: number; status?: string; lastActiveAt?: string | null }
 
 const TILE = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
 const TILE_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
@@ -62,6 +64,11 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [cases, setCases] = useState<ModerationCase[] | null>(null);
+  const [users, setUsers] = useState<RecentUser[] | null>(null);
+  const [apps, setApps] = useState<RecentApp[] | null>(null);
+  const [growth, setGrowth] = useState<Array<{ wk: string; new_users: number }> | null>(null);
+  const [caseCount, setCaseCount] = useState<number | null>(null);
+  const [caseOverflow, setCaseOverflow] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -79,10 +86,18 @@ function OverviewSection({ compact }: { compact?: boolean }) {
     Promise.all([
       (window as any).AdminConsole.fetchJson('/api/admin/analytics/overview'),
       (window as any).AdminConsole.fetchJson('/api/admin/moderation?status=new'),
-    ]).then(([a, m]) => {
+      (window as any).AdminConsole.fetchJson('/api/admin/users'),
+      (window as any).AdminConsole.fetchJson('/api/admin/apps-usage?days=30'),
+      (window as any).AdminConsole.fetchJson('/api/admin/analytics/growth'),
+    ]).then(([a, m, u, c, g]) => {
       if (!live) return;
       if (a?.data) setAnalytics(a.data);
       if (m?.data?.cases) setCases(m.data.cases.slice(0, 3));
+      if (Array.isArray(m?.data?.cases)) { setCaseCount(m.data.next ? 50 : m.data.cases.length); setCaseOverflow(!!m.data.next); }
+      if (Array.isArray(u?.data)) setUsers(u.data.slice(-3).reverse());
+      if (Array.isArray(c?.data?.apps)) setApps(c.data.apps.slice().sort((left: RecentApp, right: RecentApp) =>
+        Date.parse(right.lastActiveAt || '') - Date.parse(left.lastActiveAt || '')).slice(0, 3));
+      if (Array.isArray(g?.data?.weeks)) setGrowth(g.data.weeks.slice(-8));
       const count = m?.data?.cases?.length || 0;
       const badge = document.querySelector<HTMLElement>('[data-admin-moderation-count]');
       if (badge) { badge.textContent = String(count); badge.hidden = count === 0; }
@@ -181,7 +196,7 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   ];
   const moderation = <section className="admin-dashboard-panel admin-moderation-panel">
     <div className="admin-dashboard-section-head"><h2>Moderation queue</h2><button type="button" data-admin-section="reports" onClick={() => (window as any).AdminConsole?.goTo?.('reports')}>View all →</button></div>
-    {cases === null ? <p className="admin-dashboard-muted">Loading reports…</p> : cases.length ? <div className="admin-queue-rows">
+    {cases === null ? <p className={AdminUI.loading}>Loading reports…</p> : cases.length ? <div className="admin-queue-rows">
       {cases.map((item) => <button type="button" className="admin-queue-row" key={item.id} onClick={() => { location.hash = `#admin/reports/${item.id}`; }}>
         <span className="admin-queue-mark">{item.target_type === 'user' ? '♙' : item.target_type === 'app' ? '◇' : '▱'}</span>
         <span className="admin-queue-copy"><strong>{item.target_label || `${item.target_type.replace('_', ' ')} report`}</strong><small>{(item.reasons || []).join(', ').replaceAll('_', ' ') || 'Needs review'} · {item.report_count} {item.report_count === 1 ? 'report' : 'reports'}</small></span>
@@ -189,6 +204,21 @@ function OverviewSection({ compact }: { compact?: boolean }) {
       </button>)}
     </div> : <p className="admin-dashboard-muted">No new reports to review.</p>}
   </section>;
+  const chartValues = (growth || []).map((item) => Number(item.new_users) || 0);
+  const chartMax = Math.max(1, ...chartValues);
+  const chartPoints = chartValues.map((value, index) => `${chartValues.length < 2 ? 0 : index * 100 / (chartValues.length - 1)},${36 - (value / chartMax) * 31}`).join(' ');
+  const recentTables = <div className="admin-records-grid">
+    <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Users</h2><p>Recent community members</p></div><button type="button" onClick={() => (window as any).AdminConsole?.goTo?.('users')}>View all →</button></div>
+      <div className="admin-record-table"><div className="admin-record-head"><span>User</span><span>Joined</span><span>Role</span></div>
+        {users === null ? <p className="admin-dashboard-muted">Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{new Date(u.created_at).toLocaleDateString()}</span><span><em className={u.is_admin ? 'admin-role-admin' : 'admin-role-member'}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">No users to show.</p>}
+      </div>
+    </section>
+    <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Content</h2><p>Recently active projects</p></div><button type="button" onClick={() => (window as any).AdminConsole?.goTo?.('apps')}>View all →</button></div>
+      <div className="admin-record-table"><div className="admin-record-head"><span>Project</span><span>Creator</span><span>Status</span></div>
+        {apps === null ? <p className="admin-dashboard-muted">Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><i>◇</i><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className="admin-role-published">{app.status || 'Active'}</em></span></div>) : <p className="admin-dashboard-muted">No projects to show.</p>}
+      </div>
+    </section>
+  </div>;
   const dashboard = <div id="admin-dashboard">
     <header className="admin-dashboard-heading"><div><h1>Admin Dashboard</h1><p>Manage users, content, and community health on Homeroom.</p></div>
       <label className="admin-dashboard-period">◷ <select aria-label="Analytics period" defaultValue="30"><option value="30">Last 30 days</option><option value="7">Last 7 days</option></select></label>
@@ -197,19 +227,19 @@ function OverviewSection({ compact }: { compact?: boolean }) {
     <section className="admin-metric-grid" aria-label="Admin overview">
       {[
         ['Users', analytics?.users?.total, 'users', 'sky'], ['Projects', analytics?.appsTotal, 'apps', 'green'],
-        ['New reports', cases?.length, 'reports', 'yellow'], ['Active this week', analytics?.wau, 'analytics', 'sky'],
+        ['Cases to review', caseCount, 'reports', 'yellow'], ['Active this week', analytics?.wau, 'analytics', 'sky'],
       ].map(([label, value, key, tone]) => <button type="button" className={`admin-metric-card ${tone}`} data-admin-section={key} onClick={() => (window as any).AdminConsole?.goTo?.(key)} key={label as string}>
         <span className="admin-metric-icon" aria-hidden="true">{label === 'Users' ? '♧' : label === 'Projects' ? '◇' : label === 'New reports' ? '◯' : '⌁'}</span>
         <span><strong>{value == null ? '—' : Number(value).toLocaleString()}</strong><small>{label}</small></span>
       </button>)}
     </section>
-    <div className="admin-dashboard-columns">{moderation}<section className="admin-dashboard-panel admin-health-panel"><div className="admin-dashboard-section-head"><h2>Community health</h2><button type="button" data-admin-section="analytics" onClick={() => (window as any).AdminConsole?.goTo?.('analytics')}>View analytics →</button></div>
+    <div className="admin-dashboard-columns">{moderation}<section className="admin-dashboard-panel admin-health-panel"><div className="admin-dashboard-section-head"><h2>Community analytics</h2><button type="button" data-admin-section="analytics" onClick={() => (window as any).AdminConsole?.goTo?.('analytics')}>View details →</button></div>
+      <div className="admin-analytics-chart" role="img" aria-label="New users by week for the last eight weeks"><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polygon points={`0,40 ${chartPoints} 100,40`} /><polyline points={chartPoints} /></svg><div><span>8 weeks ago</span><span>This week</span></div></div>
       <div className="admin-health-stat"><span>Weekly active users</span><strong>{analytics?.wau == null ? '—' : Number(analytics.wau).toLocaleString()}</strong></div>
-      <div className="admin-health-stat"><span>Stuck projects</span><strong>{data ? stuck.length : '—'}</strong></div>
-      <div className="admin-health-stat"><span>Orphan workers</span><strong>{data ? orphans.length : '—'}</strong></div>
-      <button type="button" className="admin-health-refresh" onClick={load}>Refresh operations</button>
+      <button type="button" className="admin-health-refresh" onClick={load}>Refresh overview</button>
     </section></div>
-    <section className="admin-quick-actions"><h2>Quick actions</h2><div><button type="button" data-admin-section="reports" onClick={() => (window as any).AdminConsole?.goTo?.('reports')}>⚑ <span>Review queue{cases?.length ? ` (${cases.length})` : ''}</span>›</button><button type="button" data-admin-section="users" onClick={() => (window as any).AdminConsole?.goTo?.('users')}>♧ <span>Manage users</span>›</button><button type="button" data-admin-section="apps" onClick={() => (window as any).AdminConsole?.goTo?.('apps')}>◇ <span>Manage content</span>›</button><button type="button" data-admin-section="settings" onClick={() => (window as any).AdminConsole?.goTo?.('settings')}>⚙ <span>Admin settings</span>›</button></div></section>
+    {recentTables}
+    <section className="admin-quick-actions"><h2>Quick actions</h2><div><button type="button" data-admin-section="reports" onClick={() => (window as any).AdminConsole?.goTo?.('reports')}>⚑ <span>Review queue{caseCount ? ` (${caseCount}${caseOverflow ? '+' : ''})` : ''}</span>›</button><button type="button" data-admin-section="users" onClick={() => (window as any).AdminConsole?.goTo?.('users')}>♧ <span>Manage users</span>›</button><button type="button" data-admin-section="apps" onClick={() => (window as any).AdminConsole?.goTo?.('apps')}>◇ <span>Manage content</span>›</button><button type="button" data-admin-section="settings" onClick={() => (window as any).AdminConsole?.goTo?.('settings')}>⚙ <span>Admin settings</span>›</button></div></section>
   </div>;
 
   if (compact) return <div className="admin-mobile-dashboard">{dashboard}</div>;
