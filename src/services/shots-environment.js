@@ -438,6 +438,11 @@ async function preparePair(config, {
         }),
       ]);
     if (typeof onImages === 'function') await onImages({ base: baseImage, head: headImage });
+    // The head checkout is removed before a later reset, so record here
+    // whether this revision can run its seeds against the before copy.
+    const hasBeforeSeedRunner = await fs.access(
+      path.join(headCheckout.dir, 'scripts/shots-before-seeds.js')
+    ).then(() => true, () => false);
     const kind = applicationRuntime.mode(config);
     return {
       runId: run.id,
@@ -462,6 +467,7 @@ async function preparePair(config, {
           sha: headSha, checkout: headCheckout.dir, env: headEnv,
           dbName: dbManager.shotsDbName(app.slug, run.id, 'head'),
           runtimeName: runtimeName(run.id, 'head', kind), ...headImage,
+          hasBeforeSeedRunner,
         },
       },
       deployments: null,
@@ -474,12 +480,20 @@ async function preparePair(config, {
 }
 
 function runtimeRef(config, pair, side) {
+  if (side === 'seeds') {
+    return {
+      runtimeKind: applicationRuntime.mode(config),
+      runtimeName: pair.seedsDeployment.runtimeName,
+    };
+  }
   return { runtimeKind: applicationRuntime.mode(config), runtimeName: pair.sides[side].runtimeName };
 }
 
 async function stopPair(config, pair, { strict = false } = {}) {
-  const results = await Promise.allSettled(['base', 'head'].map((side) => removeRuntime(
-    config, runtimeRef(config, pair, side), { stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC }
+  const refs = ['base', 'head'].map((side) => runtimeRef(config, pair, side));
+  if (pair.seedsDeployment) refs.push(runtimeRef(config, pair, 'seeds'));
+  const results = await Promise.allSettled(refs.map((ref) => removeRuntime(
+    config, ref, { stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC }
   )));
   const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
   for (const err of errors) {
@@ -488,6 +502,7 @@ async function stopPair(config, pair, { strict = false } = {}) {
     });
   }
   pair.deployments = null;
+  pair.seedsDeployment = null;
   if (strict && errors.length) {
     throw new ShotsEnvironmentError(
       'shots_runtime_reset_failed',
@@ -496,6 +511,129 @@ async function stopPair(config, pair, { strict = false } = {}) {
     );
   }
   return { stopped: errors.length === 0, errors };
+}
+
+// How long the change's own seeds may run against the before copy. Past it,
+// what was written stays and the run carries on.
+const SEEDS_TIMEOUT_MS = 180_000;
+const SEEDS_MAX_ENTRIES = 300;
+const SEEDS_NAME_RE = /^[A-Za-z][A-Za-z0-9]{2,79}$/;
+
+// A seed name and why it could not be written: `schema` (a table, column or
+// constraint the before copy lacks) or `media` (a file only the after copy
+// holds). Anything else is unreadable, and the run says nothing was applied.
+function validSeedsResult(value) {
+  if (!value || value.version !== 1 || !Array.isArray(value.applied) || !Array.isArray(value.leftOut)) return null;
+  if (value.applied.length + value.leftOut.length > SEEDS_MAX_ENTRIES) return null;
+  if (!value.applied.every((name) => typeof name === 'string' && SEEDS_NAME_RE.test(name))) return null;
+  const leftOut = [];
+  for (const entry of value.leftOut) {
+    if (!entry || !SEEDS_NAME_RE.test(String(entry.name || ''))) return null;
+    if (!['schema', 'media'].includes(entry.why)) return null;
+    leftOut.push({ name: entry.name, why: entry.why });
+  }
+  return { ran: true, applied: value.applied, leftOut };
+}
+
+// `/result` is pending (202, "pending") until the runner has an answer. Docker
+// reaches it as its own health probe does, from inside the container; on
+// Kubernetes the platform reaches the service in the app namespace.
+async function readSeedsResult(config, deployment) {
+  if (applicationRuntime.mode(config) === 'docker') {
+    const { stdout } = await docker.execFileAsync('docker', [
+      'exec', deployment.runtimeName, 'wget', '-qO-', '--timeout=3',
+      'http://127.0.0.1:3000/result',
+    ], { timeout: 5_000 });
+    return String(stdout || '').trim();
+  }
+  const origin = applicationRuntime.appOrigin(config, deployment);
+  if (!origin) return '';
+  const response = await fetch(`${origin}/result`, {
+    signal: AbortSignal.timeout(5_000), redirect: 'error',
+  });
+  const text = await response.text();
+  return response.status === 200 ? text.trim() : '';
+}
+
+// A label of what the change's seeds did on the before copy, so a replay
+// reset whose outcome differs is a fixture mismatch rather than a quietly
+// different pair.
+function changeSeedsProfile(beforeSeeds) {
+  const names = (beforeSeeds.leftOut || []).map((entry) => entry.name).sort();
+  const digest = crypto.createHash('sha256')
+    .update(`${beforeSeeds.ran}\n${names.join('\n')}`).digest('hex').slice(0, 12);
+  return `change-seeds:${digest}`;
+}
+
+// Run the change's own staging seeds against the before copy, from the head
+// image, so both sides hold the demo data the change adds when the before
+// copy's schema can hold it. Never throws: a failure here leaves the run as
+// it was and is only logged.
+async function applyChangeSeedsToBefore(config, pair, cloneBySide) {
+  if (!pair.sides.head.hasBeforeSeedRunner) return { ran: false, reason: 'no_runner' };
+  const name = `${pair.sides.head.runtimeName}-seeds`;
+  const beforeUrl = dbManager.connectionUrl(
+    pair.sides.base.dbName, cloneBySide.base.password, { server: cloneBySide.base.server }
+  );
+  const previewPolicy = require('./platform-preview-data-policy');
+  try {
+    const deployed = await deployShotsRuntime(config, {
+      app: pair.app,
+      environment: 'staging',
+      sessionId: pair.sessionId,
+      imageRef: pair.sides.head.imageRef,
+      dockerName: name,
+      runtimeName: name,
+      internalOnly: true,
+      command: ['node', 'scripts/shots-before-seeds.js'],
+      env: {
+        ...pair.sides.head.env,
+        DATABASE_URL: beforeUrl,
+        SHOTS_SEED_SLUG: pair.app.slug,
+        SHOTS_SEED_RUN_ID: pair.runId,
+      },
+      port: 3000,
+      memory: docker.STAGING_MEMORY,
+      cpus: docker.STAGING_CPUS,
+      labels: {
+        [SHOTS_LABEL]: pair.runId,
+        [SHOTS_SIDE_LABEL]: 'seeds',
+        'social.usernode.io/app-id': String(pair.app.id),
+        ...previewPolicy.runtimeLabels(cloneBySide.base),
+        [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint({
+          ...pair.sides.head.env, SHOTS_SEED_RUN_ID: pair.runId,
+        }),
+      },
+    });
+    pair.seedsDeployment = deployed;
+    const deadline = Date.now() + SEEDS_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      let text = '';
+      try { text = await readSeedsResult(config, deployed); } catch (_) { text = ''; }
+      if (text.startsWith('{')) {
+        let value = null;
+        try { value = validSeedsResult(JSON.parse(text)); } catch (_) { value = null; }
+        if (value) return value;
+        log.warn('shots', 'The before-copy seed runner answered an unreadable result', { runId: pair.runId });
+        return { ran: false, reason: 'unreadable' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    log.warn('shots', 'The before-copy seed runner did not finish in time', { runId: pair.runId });
+    return { ran: 'partial', leftOut: [] };
+  } catch (error) {
+    log.warn('shots', 'The before-copy seed runner could not run', {
+      runId: pair.runId, error: error?.message || String(error),
+    });
+    return { ran: false, reason: 'unreadable' };
+  } finally {
+    if (pair.seedsDeployment) {
+      await removeRuntime(config, runtimeRef(config, pair, 'seeds'), {
+        stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
+      }).catch(() => {});
+      pair.seedsDeployment = null;
+    }
+  }
 }
 
 async function resetPair(config, pair, { onProgress = null } = {}) {
@@ -558,8 +696,15 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
     pair.deployments = Object.fromEntries(deployments);
     let fixtureProfile = null;
     let availableFixtures = [];
+    let beforeSeeds = null;
     if (pair.app.slug === config.selfAppSlug) {
-      const fixtureProfiles = [];
+      // The change's own staging seeds, written into the before copy too. A
+      // seed whose tables the before copy lacks is rolled back there and
+      // named, so the shots agent can say why a claim was skipped.
+      onProgress?.({ stage: 'seed_before_copy' });
+      beforeSeeds = await applyChangeSeedsToBefore(config, pair, cloneBySide);
+      pair.beforeSeeds = beforeSeeds;
+      const fixtureProfiles = [changeSeedsProfile(beforeSeeds)];
       // One moment for every row written below, on both sides: read once
       // here, never by either side's own clock (shots-fixtures.pairMoment).
       const at = shotsFixtures.pairMoment();
@@ -639,6 +784,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       headSha: pair.sides.head.sha,
       fixtureFingerprint: pair.fixtureFingerprint,
       availableFixtures,
+      beforeSeeds,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
       // For the shots agent's brief only (shots-orchestrator.js shotsBrief),

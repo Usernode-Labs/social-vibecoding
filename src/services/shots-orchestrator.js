@@ -585,6 +585,25 @@ function fitBrief(brief, budget = BRIEF_BUDGET) {
   };
 }
 
+// What the change's own staging seeds could not put on the before copy, for
+// the shots agent: a claim whose before side needs one of those rows is
+// skipped with a plain reason rather than reported as a vague capture
+// failure.
+function changeSeedsBrief(beforeSeeds) {
+  const leftOut = (beforeSeeds.leftOut || []).map(({ name, why }) => ({ seed: name, why }));
+  const beforeCopy = beforeSeeds.ran === true ? 'applied'
+    : beforeSeeds.ran === 'partial' ? 'partial' : 'not_run';
+  return {
+    beforeCopy,
+    leftOut,
+    note: 'Every seed named here is on the after copy only. If a declared change\'s before side lacks data one of'
+      + ' them writes, call skip_change for it at once with the reason "the before copy can\'t hold the demo data'
+      + ' this change adds (seed name)", and do not try other browsers.'
+      + (beforeSeeds.ran === 'partial' ? ' The seed step did not finish in time, so other seeds may be missing too.' : '')
+      + (beforeSeeds.ran === false ? ' The seed step did not run, so none of the change\'s own seeds are on the before copy.' : ''),
+  };
+}
+
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
   childApp = false, afterOnly = false, declaredChecks = null,
@@ -657,6 +676,12 @@ function shotsBrief({
     },
     declaredChecks: declaredChecks || declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // Only Homeroom's own pair runs the change's seeds against the before
+    // copy (shots-environment.applyChangeSeedsToBefore). When any were left
+    // out, or the step did not fully run, say so and name them.
+    ...(selfApp && deployment.beforeSeeds
+      && (deployment.beforeSeeds.ran !== true || (deployment.beforeSeeds.leftOut || []).length)
+      ? { changeSeeds: changeSeedsBrief(deployment.beforeSeeds) } : {}),
     // The only files upload_file can choose where a page asks for one, the
     // same on both copies (worker/shots-samples.js).
     sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),

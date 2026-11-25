@@ -5876,6 +5876,15 @@ const AppView = {
   _openDraftThread(threadRootId) {
     const root = Number(threadRootId);
     if (!Number.isInteger(root) || root <= 0) return false;
+    // #7140: in the side panel's framed document there is no bot page to
+    // draw — its list belongs to the top window, and drawing it here put a
+    // second, narrower copy beside the real one. Hand the thread up instead,
+    // which replaces the top's entry with it and drops this frame with the
+    // panel. Nothing here moves or reveals a screen.
+    if (typeof App !== 'undefined' && App.embeddedPanel) {
+      window.UsernodeReact?.sidePanelEmbed?.handTop?.('homeroom-bot/thread/' + root);
+      return true;
+    }
     try {
       history.replaceState(null, '', `#homeroom-bot/thread/${root}`);
     } catch (err) { /* opaque origin: the page still opens below */ }

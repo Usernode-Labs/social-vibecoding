@@ -131,16 +131,18 @@ test('the pane’s buttons make the card’s own tap, close on a yes, and say wh
 test('what a draft carries besides its words: read with anything malformed left out, and listed only when there is something', () => {
   const { draftExtras } = loadTsx('frontend/src/features/messages/api.ts');
   const { draftHasExtras } = loadTsx('frontend/src/features/messages/request-draft-pane.tsx');
-  const none = { undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } };
+  const none = { files: [], undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } };
   assert.deepEqual(draftExtras(undefined), none);
   assert.deepEqual(draftExtras({ undecided: 'no', related: [{ number: 0, title: 'x' }, 'y'], where: { request: { number: 'x' } } }), none);
   const read = draftExtras({
+    files: [{ name: ' site.zip ', size: 4300800 }, { name: '', size: 3 }, null],
     undecided: [' Same window or a new one ', '', 7],
     doneWhen: ['The bar has the button'],
     related: [{ number: 6230, title: 'One column', relation: 'build_together', why: 'the same column' }, { number: 4, title: 'Other', relation: 'made_up' }],
     where: { request: { number: 15, name: 'Homeroom', slug: 'homeroom' }, saw: 'the draft bar' },
   });
   assert.deepEqual(read, {
+    files: [{ name: 'site.zip', size: 4300800 }],
     undecided: ['Same window or a new one'],
     doneWhen: ['The bar has the button'],
     related: [
@@ -153,6 +155,8 @@ test('what a draft carries besides its words: read with anything malformed left 
   assert.equal(draftHasExtras(none), false, 'nothing to list: the words keep the whole pane');
   assert.equal(draftHasExtras({ ...none, undecided: ['One'] }), true);
   assert.equal(draftHasExtras({ ...none, where: { request: null, saw: 'the draft bar' } }), true);
+  // #7136: a file it carries is enough to draw the list beside the words.
+  assert.equal(draftHasExtras({ ...none, files: [{ name: 'site.zip', size: 9 }] }), true);
   // Each relation the server can send has its own whole message.
   for (const id of ['same', 'partOf', 'dependsOn', 'buildTogether']) assert.ok(message(`messages:draft.pane.relation.${id}`));
 });
@@ -173,4 +177,21 @@ test('the head card keeps a pane’s words for the open they were said for', () 
   assert.match(card, /const label = said\.seq === seq \? said\.label : null;/);
   // `say` is new with each open, so the pane says its words again for it.
   assert.match(card, /\}, \[seq\]\);\n  const label = said\.seq === seq/);
+});
+
+test('#7136: the pane lists the files a draft carries, first in the rail, with their sizes', () => {
+  const pane = read('frontend/src/features/messages/request-draft-pane.tsx');
+  // One more panel, drawn before the others: what it carries onto the request
+  // is the first thing a person checks before filing a zip.
+  assert.match(pane, /<Panel kind="files" label=\{t\('messages:draft\.pane\.files'\)\} note=\{t\('messages:draft\.pane\.filesNote'\)\}>/);
+  assert.ok(pane.indexOf('data-draft-panel="files"') === -1, 'the panel is the primitive, not hand-written markup');
+  assert.ok(pane.indexOf('kind="files"') < pane.indexOf('kind="undecided"'), 'before Still undecided');
+  assert.match(pane, /\{file\.name\}\n\s*<small>\{fileSize\(file\.size\)\}<\/small>/);
+  // It says what happens to them, in a line under the list.
+  assert.match(pane, /\{note \? <p className="request-draft-note">\{note\}<\/p> : null\}/);
+  // Every word is a catalog entry with a description, never a literal.
+  assert.ok(message('messages:draft.pane.files') === 'Files it carries');
+  assert.match(message('messages:draft.pane.filesNote'), /anyone who can see it sees their names, and its build can open them/);
+  // The note's own size and colour come from the shell's tokens.
+  assert.match(read('public/css/app.css'), /\.request-draft-panel \.request-draft-note \{ margin: 6px 2px 0; font-size: 12px; line-height: 17px; color: var\(--text-muted\); \}/);
 });
