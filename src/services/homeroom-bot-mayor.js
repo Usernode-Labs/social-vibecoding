@@ -3080,6 +3080,36 @@ async function historyMessages(pool, {
       log.warn('homeroom-bot-mayor', 'Could not read the activity cards for the history', { conversationId, err: err.message });
     }
   }
+  // #7125: what each of the bot's past offers was, by message. An offer's
+  // message is the whole draft, and its card is a bot_cards row its
+  // metadata's `actionId` names (homeroom-bot-dm.js sendDm). Read back as
+  // its own words at full length, the model learned to write the draft with
+  // no card after an offer or two; each is rebuilt below as its lead, its
+  // heading and what became of the card. One query for the whole history,
+  // and never a reason the history is not read.
+  const offerCards = new Map();
+  const offers = rows
+    .filter((m) => Number(m.sender_id) === Number(botId) && m.metadata?.homeroomBot?.kind === 'confirm')
+    .map((m) => ({ id: Number(m.metadata.homeroomBot.actionId), messageId: Number(m.id) }))
+    .filter((o) => Number.isInteger(o.id) && o.id > 0);
+  if (offers.length) {
+    try {
+      const { rows: cards } = await pool.query(
+        `SELECT c.id, c.message_id, c.kind, c.status, c.title, c.issue_number,
+                c.source_issue_number, c.expires_at, c.retired_reason,
+                a.name AS app_name, a.slug AS app_slug
+           FROM bot_cards c LEFT JOIN apps a ON a.id = c.app_id
+          WHERE c.id = ANY($1::int[])`,
+        [offers.map((o) => o.id)],
+      );
+      const byId = new Map(offers.map((o) => [o.id, o.messageId]));
+      for (const card of cards) {
+        if (byId.get(Number(card.id)) === Number(card.message_id)) offerCards.set(Number(card.message_id), card);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not read the offer cards for the history', { conversationId, err: err.message });
+    }
+  }
   // What they attached as cards, read through their own access.
   const sharedLines = await sharedItemLines(pool, { viewer, botId, messageIds: theirs });
   const shown = new Map();
@@ -3121,17 +3151,41 @@ async function historyMessages(pool, {
     // and what they picked or answered.
     const richCard = fromBot ? require('./homeroom-bot-cards').historyLine(meta?.card) : null;
     if (richCard) lines.push(richCard);
+    // #7125: an offer reads back as its lead, its heading and Homeroom's
+    // note on the card it drew, never as the whole draft in the bot's own
+    // words. A message whose card is missing, or cannot be worded, is read
+    // as it is stored.
+    const offerCard = offerCards.get(Number(m.id)) || null;
+    let offerText = null;
+    if (offerCard) {
+      const offerLine = require('./homeroom-bot-cards').offerHistoryLine({
+        kind: offerCard.kind,
+        status: offerCard.status,
+        title: offerCard.title,
+        issueNumber: offerCard.issue_number,
+        expired: offerCard.status === 'open' && !!offerCard.expires_at
+          && new Date(offerCard.expires_at).getTime() <= Date.now(),
+        name: offerCard.app_name || offerCard.app_slug || meta?.appName || '',
+        words: Array.isArray(meta?.answers) && meta.answers.length === 2 && meta.answers.every((a) => typeof a === 'string')
+          ? meta.answers : answersFor(offerCard),
+      });
+      const text = offerLine ? require('./homeroom-bot-cards').offerHistoryText(m.content) : null;
+      if (text) {
+        offerText = text;
+        lines.push(offerLine);
+      }
+    }
     if (!fromBot && !m.moderation_hidden_at) lines.push(...(sharedLines.get(Number(m.id)) || []));
     // Step 6: a comment pinned on a design's preview is read with its pin
     // (the version, the point and the element under it: design-bot.js
     // personLine), as the designer once read it.
     // 20 Nov 2026 (live-draft review, J): and one pinned on a live draft's
     // preview, with its place in the app (live-drafts.js pinLine).
-    const said = !fromBot && m.metadata?.designPin
+    const said = offerText || (!fromBot && m.metadata?.designPin
       ? require('./design-bot').personLine({ content: clip(m.content, 2000), metadata: m.metadata })
       : !fromBot && m.metadata?.previewPin
         ? require('./live-drafts').pinLine({ content: clip(m.content, 2000), pin: m.metadata.previewPin })
-        : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000);
+        : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000));
     // P1: its own long answers are read back whole.
     const text = [`${about}${said}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
