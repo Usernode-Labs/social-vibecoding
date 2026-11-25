@@ -520,8 +520,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ArrowUpIcon there. The other composers draw both only once a
     // conversation or a dev chat is open. (#6019 follow-up: the AI tab's
     // Ask Homeroom bot bar draws MicrophoneIcon in the static document
-    // again, so only ArrowUpIcon is behind state.)
-    'M12 19V5M5 12l7-7 7 7',
+    // again. One look, 25 Nov 2026: and ArrowUpIcon too, its quiet send, so
+    // neither is behind state any more.)
     // ── #6035: the channel composer's formatting row ───────────────────
     //
     // Bold (two paths), Italic, Underline, Heading, Quote and Bulleted list

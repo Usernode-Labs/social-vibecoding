@@ -38993,6 +38993,266 @@ html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor
 /* ── END ONE LOOK · SHARED PARTS ── */
 
 /* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
+/* The Homeroom bot tab (features/ai/lists.tsx and index.tsx) and New chat
+   (features/messages/new-thread.tsx), drawn with the shared parts above:
+   the head card kept (the mark, the counts with Needs you as a text action,
+   the sun + as the fab, the search field and the All projects menu chip),
+   today's tinted Needs you band at the top of its card, rows on the ramp
+   with their project tiles and a tag at their end, and on a phone the list
+   running on under the Ask box to the tab bar. New chat: the five starts as
+   flat white chips, About and With as menu chips, the message box with the
+   sun send; on a phone the bar names it (features/ai/new-chat-bar.ts). */
+
+/* ── The cards: white, 20px, one hairline; 10px between them. ── */
+html:not([data-skin]) #ai-screen .ai-lists { gap: 10px; }
+html:not([data-skin]) #ai-screen .ai-lists > [data-ai-sheet],
+html:not([data-skin]) #ai-screen .ai-lists > :is([data-ai-search-empty], [data-ai-search-failed]) {
+  background: var(--one-surface);
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+
+/* ── The head card: the mark, the counts and the +; then search and the menu chip. ── */
+html:not([data-skin]) #ai-screen [data-ai-sheet="head"] { display: grid; gap: 10px; padding: 12px; }
+html:not([data-skin]) #ai-screen [data-ai-sheet="head"] > :is([data-ai-hero], [data-ai-tools]) { padding: 0; }
+html:not([data-skin]) #ai-screen [data-ai-hero] { gap: 10px; }
+html:not([data-skin]) #ai-screen [data-ai-hero] > img { width: 40px; height: 40px; border-radius: 10px; }
+/* The mark keeps its place down to a 250px line (the 320px card beside a thread), as the design review drew it. */
+@container (max-width: 299.98px) {
+  html:not([data-skin]) #ai-screen [data-ai-hero] > img { display: block; }
+}
+@container (max-width: 249.98px) {
+  html:not([data-skin]) #ai-screen [data-ai-hero] > img { display: none; }
+}
+html:not([data-skin]) #ai-screen [data-ai-hero-sub] { font-size: 14px; line-height: 20px; color: var(--one-ink-2); }
+/* "Needs you: 25": what asks for you, in the ink, as a text action (underlined in the blue). */
+html:not([data-skin]) #ai-screen [data-ai-hero-sub] > :is(button, strong) {
+  font-size: 16px; font-weight: 650; color: var(--one-ink);
+}
+html:not([data-skin]) #ai-screen [data-ai-hero-sub] > button {
+  text-decoration: underline; text-decoration-color: #3090e1; text-decoration-thickness: 1.5px; text-underline-offset: 4px;
+}
+html:not([data-skin]) #ai-screen [data-ai-hero-sub] > button:hover { color: var(--one-ink); text-decoration-thickness: 2px; }
+/* The + is the page's main action: the shared fab, at its size whatever the button's own variant says. */
+html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab { min-width: 40px; color: #121a0e; }
+html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab:hover { background: var(--one-sun); filter: brightness(.97); }
+html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab > svg { width: 21px; height: 21px; stroke-width: 2.1; }
+html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html:not([data-skin]) #ai-screen [data-ai-tools] { gap: 10px; }
+/* The search field: a white pill with the field's hairline. */
+html:not([data-skin]) #ai-screen [data-ai-search-box] {
+  flex: 1 1 8rem; min-width: 7rem; height: 40px; gap: 8px; padding-inline: 12px 14px;
+  border-radius: 9999px; background: var(--one-surface); color: var(--one-ink-3);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+html:not([data-skin]) #ai-screen [data-ai-search-box]:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+html:not([data-skin]) #ai-screen [data-ai-search-box] > svg:first-child { width: 19px; height: 19px; }
+html:not([data-skin]) #ai-screen [data-ai-search-box] > input { font-size: 16px; color: var(--one-ink); }
+html:not([data-skin]) #ai-screen [data-ai-search-box] > input::placeholder { color: var(--one-ink-3); }
+/* All projects: the shared menu chip. It says what it shows, so no filter glyph before it; a picked project keeps its tile. */
+html:not([data-skin]) #ai-screen [data-ai-project-more].one-chip { max-width: 100%; }
+html:not([data-skin]) #ai-screen [data-ai-project-more].one-chip:hover:not(:disabled) { background: var(--one-surface); }
+html:not([data-skin]) #ai-screen [data-ai-project-more].one-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html:not([data-skin]) #ai-screen [data-ai-project-more].one-chip:disabled { color: var(--one-ink-3); }
+html:not([data-skin]) #ai-screen [data-ai-project-more] > .ai-filter-glyph { display: none; }
+html:not([data-skin]) #ai-screen [data-ai-project-more] > svg:last-child { width: 15px; height: 15px; stroke-width: 2; color: var(--one-ink); }
+
+/* ── A band's strip, as today: Needs you tinted in the sky, the others quiet. ── */
+html:not([data-skin]) #ai-screen [data-ai-band] { min-height: 42px; gap: 8px; padding: 0 12px; border-radius: 14px; background: var(--one-quiet); color: var(--one-ink); }
+html:not([data-skin]) #ai-screen :is([data-ai-list="work"], [data-ai-list="waiting"]) > [data-ai-band] { background: var(--one-sky-tint); color: var(--one-sky-ink); }
+html:not([data-skin]) #ai-screen [data-ai-band] > h3 { gap: 8px; font-size: 16px; font-weight: 650; line-height: 20px; }
+html:not([data-skin]) #ai-screen [data-ai-band] > h3 > span:first-child > svg { width: 19px; height: 19px; }
+html:not([data-skin]) #ai-screen [data-ai-band-count] {
+  height: auto; min-width: 0; padding: 4px 8px; border-radius: 9999px;
+  background: var(--one-surface); font-size: 13px; font-weight: 700; line-height: 1; color: var(--one-ink-2);
+}
+html:not([data-skin]) #ai-screen :is([data-ai-list="work"], [data-ai-list="waiting"]) [data-ai-band-count] { color: var(--one-sky-ink); }
+html:not([data-skin]) #ai-screen [data-ai-band] [data-ai-band-aside] { color: inherit; opacity: .8; }
+
+/* ── The rows: the project's tile, the title over its second line (16/14, 15/13 from 768px), a tag at the end, one line between. ── */
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-row] { position: relative; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-row] + [data-ai-row]::before,
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-row] + [data-ai-group-rest] > div > [data-ai-row]:first-child::before,
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-row], [data-ai-group-rest]) + :is([data-ai-group-more], [data-ai-history-more])::before {
+  content: ""; position: absolute; top: 0; inset-inline-start: 52px; inset-inline-end: -6px; height: 1px;
+  background: var(--one-line); pointer-events: none;
+}
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-row] > div > [data-ai-line] { min-height: 44px; gap: 12px; padding: 10px 8px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > [data-ai-dot] { inset-inline-start: -2px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > :is(.app-icon-tile, .ai-row-tile) { width: 32px; height: 32px; border-radius: 9px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > .ai-row-tile { background: var(--one-quiet); color: var(--one-ink-2); }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > .ai-row-tile > svg { width: 16px; height: 16px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > .app-icon-tile[data-icon="emoji"] { background-color: var(--one-surface); border-color: var(--one-line); }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > .app-icon-tile[data-icon="emoji"] > span { font-size: 18px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] > .app-icon-tile[data-icon="letter"] { font-size: 14px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line-title] { font-size: 16px; line-height: 21px; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line]:not([data-ai-fresh]) [data-ai-line-title] { font-weight: 600; }
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-line-why], [data-ai-line-where]) { margin-top: 2px; font-size: 14px; line-height: 19px; color: var(--one-ink-2); }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line]:not([data-ai-lit]) [data-ai-line-title] { color: var(--one-ink); }
+/* The tag at the end is a label, never a button: no ring on the row's hover or press. */
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line] .one-tag { box-shadow: none; }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-line]:active .one-tag:not(.one-tag-quiet) { background: var(--one-tag-bg); }
+/* Dismiss keeps its own 44px target beside Reply; it is drawn as a quiet tag. */
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-dismiss] {
+  position: relative; isolation: isolate; margin-inline-start: 2px; padding-inline: 9px;
+  background: transparent; color: var(--one-ink-2); font-size: 13px; font-weight: 600;
+}
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-dismiss]::before {
+  content: ""; position: absolute; z-index: -1; inset-inline: 0; top: 50%; height: 24px; margin-top: -12px;
+  border-radius: 9999px; background: var(--one-quiet);
+}
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-dismiss]:hover { background: transparent; color: var(--one-ink); }
+html:not([data-skin]) #ai-screen .ai-lists [data-ai-dismiss]:last-of-type { margin-inline-end: 8px; }
+/* Show N more: a text action, the ink underlined in the blue. */
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-group-more], [data-ai-history-more]) {
+  position: relative; font-size: 15px; font-weight: 600; color: var(--one-ink);
+}
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-group-more], [data-ai-history-more]) {
+  text-decoration: underline; text-decoration-color: #3090e1; text-decoration-thickness: 1.5px; text-underline-offset: 4px;
+}
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-group-more], [data-ai-history-more]):hover { background: transparent; color: var(--one-ink); text-decoration-thickness: 2px; }
+html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-group-more], [data-ai-history-more]) > svg { color: var(--one-ink-2); }
+@media (min-width: 768px) {
+  html:not([data-skin]) #ai-screen [data-ai-sheet="head"] { padding: 12px 14px; }
+  html:not([data-skin]) #ai-screen [data-ai-hero-sub] { font-size: 13px; }
+  html:not([data-skin]) #ai-screen [data-ai-hero-sub] > :is(button, strong) { font-size: 15px; }
+  html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab { width: 36px; height: 36px; min-width: 36px; }
+  html:not([data-skin]) #ai-screen [data-ai-search-box] { height: 36px; }
+  html:not([data-skin]) #ai-screen [data-ai-search-box] > input { font-size: 15px; }
+  html:not([data-skin]) #ai-screen [data-ai-search-box] > svg:first-child { width: 17px; height: 17px; }
+  html:not([data-skin]) #ai-screen [data-ai-project-more].one-chip { height: 30px; font-size: 13px; padding-inline: 12px 9px; }
+  html:not([data-skin]) #ai-screen .ai-lists [data-ai-row] > div > [data-ai-line] { min-height: 40px; padding-block: 8px; }
+  html:not([data-skin]) #ai-screen .ai-lists [data-ai-line-title] { font-size: 15px; line-height: 20px; }
+  html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-line-why], [data-ai-line-where]) { margin-top: 0; font-size: 13px; line-height: 18px; }
+  html:not([data-skin]) #ai-screen .ai-lists :is([data-ai-group-more], [data-ai-history-more]) { font-size: 14px; }
+}
+/* With the room for its words (the list dragged past 520px) the + is a sun pill with them, as New chat was. */
+@container ai-list (min-width: 520px) {
+  html:not([data-skin]) #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab { display: inline-flex; gap: 6px; width: auto; padding-inline: 14px 16px; }
+}
+/* The wide row's project column (the list dragged past 520px) on the same ramp. */
+@container ai-list (min-width: 520px) {
+  html:not([data-skin]) #ai-screen .ai-lists [data-ai-row-project] > :first-child { font-size: 14px; line-height: 19px; color: var(--one-ink); }
+  html:not([data-skin]) #ai-screen .ai-lists [data-ai-row-project] > [data-ai-line-number] { font-size: 13px; line-height: 18px; color: var(--one-ink-2); }
+}
+
+/* ── The Ask box on a phone: the message box it opens (+, words, mic, the quiet send), floating over the list. ── */
+html[data-skin] #ai-screen :is(.ai-askbar-add, .ai-askbar-send) { display: none; }
+html:not([data-skin]) #ai-screen .ai-askbar { padding: 8px 12px; }
+html:not([data-skin]) #ai-screen .ai-askbar-card {
+  min-height: 48px; gap: 4px; padding: 0 6px; border-radius: 9999px; background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line), 0 6px 18px -10px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]) #ai-screen .ai-askbar-card:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent), 0 6px 18px -10px rgb(18 26 14 / 0.35); }
+html:not([data-skin]) #ai-screen .ai-askbar-text { padding: 0 4px; font-size: 16px; line-height: 20px; color: var(--one-ink-3); }
+html:not([data-skin]) #ai-screen .ai-askbar-card > .messages-composer-action { width: 36px; height: 36px; color: var(--one-ink-2); }
+html:not([data-skin]) #ai-screen .ai-askbar-send {
+  display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 9999px;
+  background: var(--one-quiet); color: var(--one-ink-3);
+}
+html:not([data-skin]) #ai-screen .ai-askbar-send > svg { width: 19px; height: 19px; stroke-width: 2.2; }
+/* THE LIST RUNS ON UNDER THE BOX TO THE TAB BAR. On the phone's drawer the
+   box is sticky at the list's foot (the earlier rule, ON THE TAB BAR, NOT
+   UNDER IT); here it lays its height and the tab bar's over the list's end
+   rather than after it, and the last card reaches to the screen's foot with
+   room inside it for its last row to scroll clear of the box. A short list's
+   last card runs on to the foot as well. */
+html:not([data-skin]) #ai-screen .ai-drawer-list { --one-ask-h: 64px; display: flex; flex-direction: column; }
+html:not([data-skin]) #ai-screen .ai-drawer-list > .ai-screen-body { display: flex; flex-direction: column; flex: 1 0 auto; width: 100%; padding-bottom: 0; }
+html:not([data-skin]) #ai-screen .ai-drawer-list .ai-lists { flex: 1 0 auto; padding-top: 20px; }
+html:not([data-skin]) #ai-screen .ai-drawer-list .ai-lists > :last-child {
+  flex-grow: 1;
+  padding-bottom: calc(var(--one-ask-h) + var(--platform-tabs-h, 0px) + 12px);
+}
+html:not([data-skin]) #ai-screen .ai-drawer-list .ai-askbar {
+  flex: none;
+  margin-top: calc(-1 * (var(--one-ask-h) + var(--platform-tabs-h, 0px)));
+}
+
+/* ── New chat: the bot's mark and question, the five starts as flat chips, About and With, the message box. ── */
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts { gap: 10px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts-hello { gap: 8px; margin-bottom: 18px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts-hello > img { width: 46px; height: 46px; margin-bottom: 0; border-radius: 12px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts-title { font-size: 22px; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em; color: var(--one-ink); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts-sub { font-size: 14px; line-height: 1.35; color: var(--one-ink-2); }
+/* Each start its own width, the stack centred. */
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-starts-list { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-start {
+  min-height: 44px; gap: 10px; padding-block: 0; padding-inline: 14px 18px;
+  background: var(--one-surface); color: var(--one-ink);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  font-size: 16px; line-height: 20px; font-weight: 400;
+}
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-start > svg { width: 19px; height: 19px; color: var(--one-ink); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-start:hover { background: color-mix(in srgb, var(--one-ink) 4%, var(--one-surface)); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-start[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--one-field-line), 0 0 0 2px var(--accent); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-start-more { color: var(--one-ink-3); }
+/* About and With: the shared menu chips, over the box. */
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-row { gap: 8px; padding-bottom: 6px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip { min-width: 0; max-width: 100%; transition: none; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip:has(> .messages-project-chip-tile) { padding-inline-start: 6px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip:hover { background: var(--one-surface); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip .one-chip-lead { font-weight: 400; color: var(--one-ink-2); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip .messages-project-chip-chev { width: 15px; height: 15px; stroke-width: 2; color: var(--one-ink); }
+/* The message box: a white pill with the field's hairline, lifted a little. */
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-card {
+  min-height: 48px; padding-block: 6px; padding-inline: 6px 6px; border-radius: 24px; background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line), 0 6px 18px -10px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-card:focus-within {
+  box-shadow: inset 0 0 0 2px var(--accent), 0 6px 18px -10px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-row { align-items: center; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-input { font-size: 16px; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-input::placeholder { color: var(--one-ink-3); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-action { color: var(--one-ink-2); }
+/* Send: the sun disc once there is something to send (flat, no edge), a quiet grey disc until then. */
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-send {
+  width: 36px; height: 36px; background: var(--one-sun); color: #121a0e; box-shadow: none; opacity: 1;
+}
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-send:hover:not(:disabled) { background: var(--one-sun); filter: brightness(.96); }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-send svg { width: 19px; height: 19px; stroke-width: 2.2; }
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-card .messages-send:disabled,
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not(.messages-send-open) {
+  background: var(--one-quiet); color: var(--one-ink-3); opacity: 1;
+}
+html:not([data-skin]) [data-bot-new-thread-pane] .messages-send.messages-send-open { width: auto; }
+@media (min-width: 768px) {
+  html:not([data-skin]) [data-bot-new-thread-pane] .messages-start { font-size: 16px; }
+  html:not([data-skin]) [data-bot-new-thread-pane] .messages-project-chip.one-chip { height: 30px; font-size: 13px; }
+  html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-card { min-height: 44px; padding-block: 4px; }
+  html:not([data-skin]) [data-bot-new-thread-pane] .messages-composer-input { font-size: 15px; }
+}
+
+/* On a phone, in the bot tab's drawer: a page of its own on the wash, named by the bar (features/ai/new-chat-bar.ts), so no head of its own; the mark starts near the top. */
+html:not([data-skin]) #ai-screen .ai-drawer-thread:has(> .ai-drawer-pane [data-bot-new-thread-pane]) { background: var(--home-washes, var(--home-ground)); }
+html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] { background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header { display: none; }
+html:not([data-skin]) #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-starts { margin-block: 0 auto; padding: 26px 16px 12px; }
+/* The bar's back disc while New chat is up: the plain white disc, its chevron in the ink. */
+html:not([data-skin]) body:has(#ai-screen:not(.hidden) .ai-drawer [data-bot-new-thread-pane]) #platform-header .nav-drawer-back {
+  width: 36px; height: 36px; border: 0; background: #ffffff; color: #121a0e;
+}
+
+/* From 768px, docked beside the list: New chat is ONE card, its head inside it over a hairline. */
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-card: var(--one-surface);
+  --thread-card-solid: var(--one-surface);
+  --thread-card-edge: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked]::before { grid-row: 1 / -1; margin-top: 0; }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header {
+  margin-inline: var(--thread-gutter); padding-block: 12px; padding-inline: 14px calc(14px + var(--ai-edge, 0px));
+  border-radius: var(--thread-card-r) var(--thread-card-r) 0 0; background: none; box-shadow: inset 0 -1px 0 var(--one-hair);
+}
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header .messages-thread-name { font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header .messages-thread-sub { font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--one-ink-2); }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > :is(.messages-thread-scroll, .messages-builder-setup) { margin-top: 0; }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-starts { gap: 14px; }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-starts-hello { margin-bottom: 0; }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-composer { margin-bottom: 8px; padding-inline: max(14px, calc((100% - 720px) / 2 - var(--thread-gutter))); }
+html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-composer-card { margin-bottom: 14px; }
 /* ── END ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
 
 /* ── ONE LOOK · MESSAGES AND THREADS ── */

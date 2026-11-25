@@ -34,6 +34,14 @@ export interface MessagesDrawerState {
   title: string;
   /** Who it is with, under its name. */
   sub: string;
+  /**
+   * One look (25 Nov 2026): the list's own name, when the drawer is another
+   * tab's (the Homeroom bot tab's New chat, ../ai/new-chat-bar.ts); unset,
+   * "Messages".
+   */
+  list?: string;
+  /** And its arrow's name, when it goes back to that list; unset, back to your messages. */
+  back?: string;
 }
 
 export const messagesDrawerStore = createStore<MessagesDrawerState>({ on: false, level: 0, title: '', sub: '' });
@@ -78,8 +86,12 @@ export function messagesBack(): void {
 
 export function publishMessagesDrawer(next: MessagesDrawerState): void {
   const was = messagesDrawerStore.get();
-  if (was.on === next.on && was.level === next.level && was.title === next.title && was.sub === next.sub) return;
-  messagesDrawerStore.set(next);
+  // The store merges what it is handed, so a publish that names no list says so.
+  const list = next.list || '';
+  const back = next.back || '';
+  if (was.on === next.on && was.level === next.level && was.title === next.title && was.sub === next.sub
+    && (was.list || '') === list && (was.back || '') === back) return;
+  messagesDrawerStore.set({ ...next, list, back });
 }
 
 /**

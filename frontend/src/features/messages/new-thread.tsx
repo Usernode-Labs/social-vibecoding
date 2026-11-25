@@ -57,6 +57,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 import { ChatComposerBar } from '@/components/ui/chat';
 import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
+import { NewChatInBar, publishNewChatWords } from '../ai/new-chat-bar';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -313,6 +315,20 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const ownName = own ? BUILDER_NAME[own] : '';
   // Its connector is known to be missing: the steps take the thread's place.
   const setup = !!own && links.phase === 'ready' && !links.connected[own];
+  // ONE LOOK (25 Nov 2026): in the Homeroom bot tab's drawer on a phone the
+  // bar names the new chat, with its back disc (../ai/new-chat-bar.ts), and
+  // app.css draws no head here: its words go up to the bar instead.
+  const inBar = useContext(NewChatInBar);
+  const barTitle = setup ? t('messages:newThread.builder.setup.title', { builder: ownName }) : t('messages:newThread.title');
+  const barSub = setup
+    ? t('messages:newThread.builder.setup.sub')
+    : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.barSub');
+  useIsomorphicLayoutEffect(() => {
+    if (!inBar) return undefined;
+    publishNewChatWords({ title: barTitle, sub: barSub });
+    return undefined;
+  }, [inBar, barTitle, barSub]);
+  useEffect(() => (inBar ? () => publishNewChatWords(null) : undefined), [inBar]);
   // The kit's keyboard avoidance, as a thread's own scroller has it.
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);

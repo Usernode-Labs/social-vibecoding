@@ -117,8 +117,10 @@ const PILL_STATE = `${PILL} bg-zinc-900/[0.05] font-medium text-zinc-600 dark:bg
 function RowEnd({ line }: { line: Line }): ReactNode {
   const end = line.end;
   if (!end || !end.text) return null;
-  if (end.kind === 'act') return <span className={PILL_ACT} data-ai-row-end="act">{end.text}</span>;
-  if (end.kind === 'state') return <span className={PILL_STATE} data-ai-row-end="state">{end.text}</span>;
+  // One look (25 Nov 2026): the row is what you tap, so its pill is a tag,
+  // the shared part (app.css, ONE LOOK · SHARED PARTS): flat, no edge.
+  if (end.kind === 'act') return <span className={`${PILL_ACT} one-tag`} data-ai-row-end="act">{end.text}</span>;
+  if (end.kind === 'state') return <span className={`${PILL_STATE} one-tag one-tag-quiet`} data-ai-row-end="state">{end.text}</span>;
   if (end.kind === 'tick') {
     // A finished thing gets no fill: the tick alone, its word for a screen reader.
     return (
@@ -135,7 +137,7 @@ function RowEnd({ line }: { line: Line }): ReactNode {
 function RowTile({ app }: { app: AiApp | null }): ReactNode {
   if (app) return <SmallTile app={app} size="band" />;
   return (
-    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-zinc-900/[0.06] text-zinc-500 dark:bg-white/[0.1] dark:text-zinc-400" aria-hidden="true">
+    <span className="ai-row-tile flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-zinc-900/[0.06] text-zinc-500 dark:bg-white/[0.1] dark:text-zinc-400" aria-hidden="true">
       <LockIcon className="h-3.5 w-3.5" />
     </span>
   );
@@ -751,7 +753,8 @@ export function AiLists({
           {search}
           <button
             type="button"
-            className={`inline-flex h-9 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-900/[0.04] active:bg-zinc-900/[0.07] disabled:text-zinc-400 dark:text-zinc-100 dark:hover:bg-white/[0.06] dark:active:bg-white/[0.1] dark:disabled:text-zinc-500 ${FOCUS}`}
+            // One look: a menu chip, the shared part (white, the small sticker edge).
+            className={`inline-flex h-9 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-900/[0.04] active:bg-zinc-900/[0.07] disabled:text-zinc-400 dark:text-zinc-100 dark:hover:bg-white/[0.06] dark:active:bg-white/[0.1] dark:disabled:text-zinc-500 ${FOCUS} one-chip`}
             aria-haspopup="dialog"
             aria-expanded={!!more}
             aria-label={t('messages:ai.filter.button', { shown: filterWords })}
@@ -760,7 +763,7 @@ export function AiLists({
             data-ai-project-more=""
             data-ai-picked={picked.length ? picked.join(' ') : undefined}
           >
-            {onlyPicked ? <SmallTile app={onlyPicked} /> : <FilterIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+            {onlyPicked ? <SmallTile app={onlyPicked} /> : <FilterIcon className="ai-filter-glyph h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
             <span className="min-w-0 truncate">{filterWords}</span>
             <ChevronDownIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
           </button>
