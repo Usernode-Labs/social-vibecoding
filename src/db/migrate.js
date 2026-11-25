@@ -533,6 +533,8 @@ const STAGING_SEEDS = Object.freeze([
   // After it: the First challenges hang off its season-type event.
   stagingSeed('seedStagingFirstChallenges', async (pool, config) => { await seedStagingFirstChallenges(pool); }),
   stagingSeed('seedStagingCountedCredit', async (pool, config) => { await seedStagingCountedCredit(pool, config); }),
+  // #7152: the feedback challenge whose itemized report list the shots show.
+  stagingSeed('seedStagingChallengeItems', async (pool, config) => { await seedStagingChallengeItems(pool); }),
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -17433,8 +17435,159 @@ async function seedStagingCountedCredit(pool, config) {
         [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}`, via: 'request' })]
       );
     }
+    // #7152: the challenge page's proposal list lists only changes that went
+    // through a promote, as the scorer's own proposals did; the fixture's
+    // sessions were merged directly, so give them the promote time they
+    // never had. Their merged/live times move with the credit's own
+    // activity_at above: the season event's window is refreshed to "now" on
+    // every boot, and a fixture left behind it would drop out of the list.
+    // Fixture rows only: a row the proposal or merge-followups machine holds
+    // is the machine's, and this seed leaves it alone.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET promoted_at = COALESCE(promoted_at, merged_at, created_at),
+              merged_at = NOW(), live_at = NOW()
+        WHERE app_id = $1 AND branch_name LIKE 'staging-fixture/counted-credit%'
+          AND NOT wf_holds('proposal', 'session:' || id)
+          AND NOT wf_holds('merge-followups', 'session:' || id)`,
+      [apps[0].id]
+    );
+    await pool.query(
+      `UPDATE events e
+          SET created_at = NOW()
+         FROM chat_sessions cs
+        WHERE cs.id = e.session_id AND e.event_type = 'pr_merged'
+          AND cs.app_id = $1 AND cs.branch_name LIKE 'staging-fixture/counted-credit%'`,
+      [apps[0].id]
+    );
   } catch (err) {
     log.warn('db', 'Staging counted credit seed skipped', { message: err.message });
+  }
+}
+
+// #7152: the itemized report list on the Send useful feedback challenge's
+// page. A fresh staging copy has no USEFUL_FEEDBACK challenge at all (the
+// seeded "Report a reproducible bug" one has no scoring rule), so the list
+// could not draw. This seeds a weekly challenge with its rule and three
+// reports for the shots' member (usernode-capture), one already paid by the
+// ledger, one still grading, and one too short to act on.
+//
+// DATA ONLY, NO SIGNAL: the ledger row is the visible "Counted" state, not a
+// signal the code reads to decide something. Fixed ids clear of the ranges
+// the other challenge fixtures use, and idempotent throughout.
+async function seedStagingChallengeItems(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, illustration, created_at, updated_at)
+       VALUES (900513, 'WEEKLY', 'Send useful feedback (staging demo)',
+               'Send a report about Homeroom or a project somebody else made.',
+               '250 pts a report', 'Weekly feedback challenge fixture for the itemized list.',
+               'useful-feedback', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, schedule_start, schedule_end,
+          enabled, display_order, completed, created_at, updated_at)
+       VALUES (900731, $1, 900513, NOW() - INTERVAL '45 days', NOW() + INTERVAL '45 days',
+               TRUE, 6, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    await pool.query(
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, interval_minutes, last_scored_at, enabled, notes, created_at, updated_at)
+       VALUES (900902, 'Staging demo: send four useful reports',
+               'USEFUL_FEEDBACK', NULL, 900731, 4, 1000, 10,
+               NOW() - INTERVAL '4 minutes', TRUE,
+               'Staging demo: backs the feedback challenge''s itemized list.',
+               NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         challenge_id = EXCLUDED.challenge_id, measure = EXCLUDED.measure,
+         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE,
+         interval_minutes = COALESCE(challenge_scoring_rules.interval_minutes, EXCLUDED.interval_minutes),
+         last_scored_at = COALESCE(challenge_scoring_rules.last_scored_at, EXCLUDED.last_scored_at)`
+    );
+    const { rows: viewerRows } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'");
+    if (!viewerRows.length) return;
+    const VIEWER = viewerRows[0].id;
+    // Somebody else's public project, so every report is about a project the
+    // member did not make.
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps
+        WHERE created_by IS NOT NULL AND created_by <> $1
+          AND view_visibility = 'public'
+        ORDER BY id ASC LIMIT 1`, [VIEWER]);
+    if (!appRows.length) return;
+    const APP = appRows[0].id;
+
+    const reports = [
+      {
+        title: '[Staging demo] The map will not zoom on a phone',
+        description: 'Opening the map on a phone leaves it stuck at one zoom level, and pinching does nothing.',
+        hours: 3,
+      },
+      {
+        title: '[Staging demo] Search skips accented names',
+        description: 'Searching for “café” finds nothing while “cafe” finds the place, so accented names are missed.',
+        hours: 2,
+      },
+      {
+        title: '[Staging demo] Add dark mode',
+        description: 'test',
+        hours: 1,
+      },
+    ];
+    const ids = [];
+    for (const report of reports) {
+      await pool.query(
+        `INSERT INTO feedback_reports
+           (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, created_at)
+         SELECT $1, 'app', $2, NULL, NULL, 9100 + $4, $3::text, $5,
+                GREATEST(NOW() - ($6::int * INTERVAL '1 hour'), date_trunc('week', NOW()))
+          WHERE NOT EXISTS (
+            SELECT 1 FROM feedback_reports WHERE user_id = $1 AND title = $3::text)`,
+        [VIEWER, APP, report.title, reports.indexOf(report), report.description, report.hours]
+      );
+      const { rows: found } = await pool.query(
+        'SELECT id FROM feedback_reports WHERE user_id = $1 AND title = $2 LIMIT 1',
+        [VIEWER, report.title]);
+      if (found[0]) {
+        ids.push(found[0].id);
+        // The week moves with every boot, so a preview rebooted after Monday
+        // keeps its reports inside the count's week.
+        await pool.query(
+          `UPDATE feedback_reports
+              SET description = $3,
+                  created_at = GREATEST(NOW() - ($4::int * INTERVAL '1 hour'), date_trunc('week', NOW()))
+            WHERE id = $1 AND user_id = $2`,
+          [found[0].id, VIEWER, report.description, report.hours]
+        );
+      }
+    }
+    if (!ids.length) return;
+    // The counted one: the ledger row is what the list reads as Counted.
+    await pool.query(
+      `INSERT INTO user_activities
+         (user_id, season_event_id, activity_type, points, description, metadata, activity_at,
+          challenge_id, created_at, updated_at)
+       VALUES ($1, $2, 'WEEKLY', 210, 'Feedback on a project', $3::jsonb, NOW(),
+               900731, NOW(), NOW())
+       ON CONFLICT (challenge_id, user_id, (metadata->>'source_key'))
+         WHERE metadata->>'source_key' IS NOT NULL
+       DO UPDATE SET activity_at = NOW(), points = EXCLUDED.points`,
+      [VIEWER, EVENT_SEASON_ID, JSON.stringify({
+        source_key: `feedback:${ids[0]}`,
+        grade: { score: 210, reason: 'says what happened and where' },
+      })]
+    );
+  } catch (err) {
+    log.warn('db', 'Staging challenge items seed skipped', { message: err.message });
   }
 }
 
