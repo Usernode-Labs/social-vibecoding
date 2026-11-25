@@ -791,7 +791,7 @@ async function handleAccess(pool, req, res) {
       if (named) require('./preview-sleep').touchActivity(pool, named.sessionId, { slug: named.slug }).catch(() => {});
     }
     if (identityFor != null) {
-      const token = await mintIdentity(pool, vis.appId, identityFor, { agent, publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
+      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG, agent });
       if (token) res.set('X-Usernode-Identity', token);
     } else if (guest) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));
