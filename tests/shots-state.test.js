@@ -267,3 +267,18 @@ test('a run the proposal\'s busy agent stopped reads in plain words, not the wor
   assert.equal(state.runSummary({ ...row, failure_code: 'shots_capture_incomplete', failure_reason: 'No shot saved.' })
     .failureReason, 'No shot saved.');
 });
+
+// #7160: a declaration records WHO made it, so a checks-fix turn replacing
+// a feature's "ui" declaration with "none" is traceable from get_change.
+test('recordIntent records the declaration\'s author as the event actor', async (t) => {
+  const appended = [];
+  state._setWorkflowForTests({
+    shotsDeclared: async (d) => { appended.push(d); return { status: 'accepted', reply: {} }; },
+  });
+  t.after(() => state._setWorkflowForTests(null));
+  const pool = { async query() { return { rows: [{ app_id: 7 }] }; } };
+  await state.recordIntent(pool, 42, intent(), { by: 'turn:build' });
+  assert.equal(appended[0].actor, 'turn:build');
+  await state.recordIntent(pool, 42, intent(), {});
+  assert.equal(appended[1].actor, null, 'no author is recorded as none, never a guessed one');
+});

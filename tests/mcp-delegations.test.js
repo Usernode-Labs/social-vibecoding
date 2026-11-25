@@ -291,7 +291,8 @@ test('each kind reaches only its own routes, never the external list or the CLI 
   // external list already carries.
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/apps'), true);
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/sessions/50/status'), true);
-  assert.equal(policy.AGENT_MAYOR_ALLOWED_ROUTES.length, 12);
+  // #7160: plus the single-request read a closed request needs.
+  assert.equal(policy.AGENT_MAYOR_ALLOWED_ROUTES.length, 13);
   for (const route of policy.AGENT_MAYOR_ALLOWED_ROUTES) {
     assert.equal(route.method, 'GET', `${route.pattern} is a read`);
     const target = route.pattern.replace(/:[a-z]+/g, '5');

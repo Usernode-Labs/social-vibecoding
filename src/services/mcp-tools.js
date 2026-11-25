@@ -913,6 +913,29 @@ function shapeInProgress(inProgress) {
   };
 }
 
+// How a closed request closed, from the single-request route's own fields:
+// the change that linked it, the close vote (or admin) whose audit row
+// applied, or a person closing it by hand.
+function shapeClosing(issue) {
+  const addressed = issue.addressed_by && typeof issue.addressed_by === 'object' ? issue.addressed_by : null;
+  const by = issue.closed_by_username || null;
+  const via = issue.closed_via === 'vote' || issue.closed_via === 'admin' ? issue.closed_via : null;
+  const how = addressed && addressed.state === 'merged' ? 'merged_change'
+    : via || (by ? 'by_hand' : null);
+  return {
+    at: issue.closedAt || issue.closed_at || null,
+    how,
+    by,
+    reason: issue.state_reason || null,
+    change: addressed && addressed.state === 'merged'
+      ? {
+        proposalId: Number(addressed.sessionId) || null,
+        prNumber: Number(addressed.prNumber) > 0 ? Number(addressed.prNumber) : null,
+      }
+      : null,
+  };
+}
+
 // ── Paging a request list (#1217) ──────────────────────────────────────
 
 // The query matches the NUMBER, the title and the body, case-insensitively.
@@ -931,8 +954,8 @@ function matchesRequestQuery(issue, needle) {
 // against a different slug, query or detail it is REFUSED rather than
 // silently applied — an offset into a list that is no longer the same list
 // returns the wrong requests while looking exactly like the right ones.
-function requestPageKey(slug, detail, query) {
-  return [slug, detail, query].join('|');
+function requestPageKey(slug, detail, query, state = 'open') {
+  return [slug, detail, query, state].join('|');
 }
 
 function encodeRequestCursor(offset, key) {
@@ -967,7 +990,7 @@ function pageRequests(issues, { query = '', detail = 'titles', offset = 0, limit
   const page = matched.slice(start, start + size);
   const end = start + page.length;
   return {
-    requests: page.map((i) => shapeRequest(i, { withBody: mode === 'full' })),
+    requests: page.map((i) => ({ ...shapeRequest(i, { withBody: mode === 'full' }), closedAt: i.closedAt || null })),
     matched: matched.length,
     totalOpen: all.length,
     nextOffset: end < matched.length ? end : null,
@@ -1885,6 +1908,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     build: 'It is built when a coding turn runs on it.',
     fixTests: 'They are fixed by revising the change. Re-running the checks from its page is only for a failure that came from outside this change.',
     fixBuild: 'The build is fixed by revising the change; checks gate merge.',
+    fixConflict: 'It needs a revision that resolves it.',
     deferred: 'Homeroom resolves the conflict on its own, then runs its checks and asks for the vote; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
@@ -1896,6 +1920,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     build: 'This turn is where it gets built.',
     fixTests: 'Fix the failing tests in this turn; the checks run again after your push.',
     fixBuild: 'Fix the build in this turn; the checks run again after your push.',
+    fixConflict: 'Merge main in and resolve the conflict in this turn.',
     deferred: 'Homeroom resolves the conflict on its own, then runs its checks; nothing needs doing in this turn.',
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and a clean sync with main keeps its votes.',
@@ -1907,6 +1932,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     build: 'It is built on Homeroom: its owner asks Homeroom bot for it from the change\'s own page.',
     fixTests: 'A new revision fixes them: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
     fixBuild: 'A new revision fixes the build: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page; checks gate merge.',
+    fixConflict: 'A new revision that resolves it is needed: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page.',
     deferred: 'Homeroom resolves the conflict on its own, then runs its checks and asks for the vote; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page on Homeroom.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
@@ -1915,6 +1941,142 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     recheckLater: 'recheck_change re-runs the checks once the cause has cleared.',
   },
 });
+
+// Who may approve a change's vote, and which of the recorded votes are the
+// ones the rule counts. The route computes the qualified tally for the
+// promoted, merging and merged rows (`GET /api/sessions/:id`), so this only
+// shapes it; null before then, when no rule has been worked out yet.
+function shapeApproval(session) {
+  if (typeof session.qualified_yes_count !== 'number') return null;
+  const yes = Number(session.yes_count) || 0;
+  const no = Number(session.no_count) || 0;
+  const approverYes = Number(session.qualified_yes_count) || 0;
+  const approverNo = Number(session.qualified_no_count) || 0;
+  const rules = session.approval_mode === 'rules';
+  return {
+    approverYes,
+    approverNo,
+    required: typeof session.votes_required === 'number' ? session.votes_required : null,
+    // The change page derives the advisory surplus the same way (raw minus
+    // counted), floored at 0.
+    advisoryYes: Math.max(0, yes - approverYes),
+    advisoryNo: Math.max(0, no - approverNo),
+    whoMayApprove: session.app_locked ? 'admins'
+      : rules ? 'groups'
+        : session.approval_policy === 'invited' ? 'approvers'
+          : 'everyone',
+    groups: rules && Array.isArray(session.approval_groups)
+      ? [...new Set(session.approval_groups.map(String))]
+      : [],
+  };
+}
+
+function whoMayApproveWords(approval) {
+  switch (approval && approval.whoMayApprove) {
+    case 'admins': return 'admins can approve';
+    case 'groups': return approval.groups && approval.groups.length
+      ? `the groups ${approval.groups.join(', ')} can approve`
+      : 'the project\'s named groups can approve';
+    case 'approvers': return 'the project\'s approvers can approve';
+    default: return 'everyone can approve';
+  }
+}
+
+// The merge queue's own account of why a conflicted change's checks are held
+// back: the lane's reasons, what the last sync with main did, the back-off
+// before the next try, and the files that conflict. Read-only, from the same
+// row and workflow instance the queue itself reads.
+function shapeMergeLane(session) {
+  const reasons = Array.isArray(session.integration_block_reasons)
+    ? session.integration_block_reasons.map(String)
+    : [];
+  const lane = session.proposal_lane && typeof session.proposal_lane === 'object'
+    ? session.proposal_lane : null;
+  const lastSyncRaw = lane && lane.last_sync && typeof lane.last_sync === 'object' ? lane.last_sync : null;
+  const conflictFiles = Array.isArray(session.integration_conflict_paths) && session.integration_conflict_paths.length
+    ? session.integration_conflict_paths
+    : (lastSyncRaw && Array.isArray(lastSyncRaw.conflict_files) ? lastSyncRaw.conflict_files : []);
+  // The same test merge-queue/facts.ts makes: a resolution recorded in the
+  // epoch being voted on means this head's one free resolution is spent.
+  // Null when the row carries neither epoch at all.
+  const epochsAbsent = session.integration_resolved_epoch === undefined && session.approval_epoch === undefined;
+  return {
+    reasons,
+    conflictFiles: conflictFiles.map(String).slice(0, MAX_LIST_ITEMS),
+    freeResolutionSpent: epochsAbsent ? null
+      : session.integration_resolved_epoch != null
+        && Number(session.integration_resolved_epoch) === Number(session.approval_epoch || 0),
+    lastSync: lastSyncRaw ? {
+      reason: lastSyncRaw.reason ? String(lastSyncRaw.reason) : null,
+      outcome: lastSyncRaw.outcome ? String(lastSyncRaw.outcome) : null,
+      message: lastSyncRaw.message ? untrusted(String(lastSyncRaw.message), MAX_FAILURE_REASON_CHARS) : null,
+      at: lastSyncRaw.at || null,
+    } : null,
+    backoff: lane && lane.backoff && lane.backoff.until ? {
+      until: lane.backoff.until,
+      failures: Number(lane.backoff.failures) || 0,
+    } : null,
+  };
+}
+
+// When the change's current shots declaration was made, and by whom, from
+// the shots machine's `shots_declared` block (`GET /api/sessions/:id`: the
+// newest accepted Declared event). A checks-fix turn replacing a feature's
+// "ui" declaration with "none" is the case this exists for (#7146): the
+// cause is then visible from the tool rather than only in wf_events.
+function shapeDeclaration(declared) {
+  if (!declared || typeof declared !== 'object' || !declared.by) return null;
+  const raw = String(declared.by);
+  if (raw === 'turn') return { at: declared.at || null, by: { kind: 'turn', name: null } };
+  const m = /^([a-z_]+):(.*)$/.exec(raw);
+  const kind = m ? ({ turn: 'turn', user: 'person', homeroom: 'homeroom' }[m[1]] || null) : null;
+  return {
+    at: declared.at || null,
+    by: { kind, name: m ? (m[2] || null) : raw },
+  };
+}
+
+// What a checks-deferred change waits for, said in words that match what
+// Homeroom will actually do. It used to point at a "sync with main" button
+// on the change's page, which does not exist (request #7160, and #7158's
+// conflict lane): Homeroom resolves the conflict itself, or waits for the one
+// act that will unblock it.
+function deferredStep(session, lane, live, words) {
+  const reasons = (lane && Array.isArray(lane.reasons)) ? lane.reasons : [];
+  if (live && live.syncing) {
+    return 'Homeroom is resolving the conflict now; call get_change again once that finishes.';
+  }
+  if (reasons.includes('fork_head')) {
+    return 'Its head is on the author\'s fork, so only the author can update it: merge main into that branch '
+      + 'and push it.';
+  }
+  if (lane && lane.backoff && lane.backoff.until) {
+    const until = new Date(lane.backoff.until).getTime();
+    if (Number.isFinite(until) && until > Date.now()) {
+      const why = lane.lastSync && lane.lastSync.message
+        ? ` (${untrusted(String(lane.lastSync.message), MAX_FAILURE_REASON_CHARS)})` : '';
+      return `Homeroom's last try to resolve it did not finish${why}; it tries again on its own after `
+        + `${lane.backoff.until}.`;
+    }
+  }
+  if (reasons.includes('unresolvable')) {
+    return `Homeroom could not resolve the conflict on its own. ${words.fixConflict}`;
+  }
+  if (reasons.includes('checks_failing') || reasons.includes('checks_error')) {
+    return `Its checks still fail, so the conflict is resolved after they are fixed. ${words.fixTests}`;
+  }
+  if (reasons.includes('awaiting_approval')) {
+    const approval = shapeApproval(session);
+    const tally = approval
+      ? ` It has ${approval.approverYes} of ${approval.required} yes votes from the people who can approve`
+        + (approval.advisoryYes > 0 ? `; ${approval.advisoryYes} more yes votes are advisory.` : '.')
+      : '';
+    return `Its free resolution before the vote is spent, so Homeroom resolves the conflict once the group `
+      + `approves it.${tally}`;
+  }
+  return 'Homeroom resolves the conflict on its own; its votes stand as long as the resolution stays inside '
+    + 'the files that conflicted. Call get_change again.';
+}
 
 function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   const words = CHANGE_NEXT_STEP_WORDS[kind] || CHANGE_NEXT_STEP_WORDS.external;
@@ -1963,7 +2125,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
         + `Call get_change again for the verdict.${paused}`;
     }
     return checks.phase === 'deferred'
-      ? `Checks on ${ref} are held back because it conflicts with main. ${words.deferred}${paused}`
+      ? `Checks on ${ref} are held back because it conflicts with main. ${deferredStep(session, shapeMergeLane(session), live, words)}${paused}`
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
   }
   if (rolloutRetry(session)) {
@@ -2005,9 +2167,14 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     ? ' The verdict is for an older commit, so a fresh run should follow on its own.'
     : '';
   if (status === 'promoted') {
-    const tally = typeof session.votes_required === 'number'
-      ? ` It has ${countedYes(session) ?? 0} of ${session.votes_required} yes votes.`
-      : '';
+    const approval = shapeApproval(session);
+    const tally = approval
+      ? ` It has ${approval.approverYes} of ${approval.required} yes votes from the people who can approve `
+        + `(${whoMayApproveWords(approval)})`
+        + (approval.advisoryYes > 0 ? `; ${approval.advisoryYes} more yes votes are advisory.` : '.')
+      : (typeof session.votes_required === 'number'
+        ? ` It has ${countedYes(session) ?? 0} of ${session.votes_required} yes votes.`
+        : '');
     const behind = typeof session.behind_main === 'number' && session.behind_main > 0
       ? ` It is ${session.behind_main} commit(s) behind main; ${words.behind}`
       : '';
@@ -2066,11 +2233,24 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     stagingUrl: session.staging_url || null,
     checks,
     // The public shots view the change page reads. Null means this change
-    // predates shots, or shots are not configured.
-    shots: (session.shots && typeof session.shots === 'object') ? session.shots : null,
-    yesVotes: countedYes(session),
+    // predates shots, or shots are not configured. `declaration` says when
+    // the standing declaration was made and by whom, so a "none" that
+    // replaced a real one is traceable from here.
+    shots: (session.shots && typeof session.shots === 'object')
+      ? { ...session.shots, declaration: shapeDeclaration(session.shots_declared) }
+      : null,
+    // The raw tallies stay raw here; the rule's own count is in `approval`
+    // (get_change's docs promise that split, and get_proposal is the tool
+    // that reports the counted yes as yesVotes).
+    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
+    // The approvers' votes beside what the rule needs, with the advisory
+    // votes apart from them (null until the rule has been worked out).
+    approval: shapeApproval(session),
+    // Why the merge queue holds it: the conflict lane's reasons, the last
+    // sync with main, its back-off, and the files that conflict.
+    mergeLane: shapeMergeLane(session),
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
     mergeability: session.mergeability || null,
     // An outside agent reports a change to its user from this answer as
@@ -2750,6 +2930,18 @@ function registerTools(server, ctx) {
     })),
     baseSha: z.string().nullable(),
     headSha: z.string().nullable(),
+    // When the standing declaration was made, and by which turn, person or
+    // Homeroom itself. Null when nothing is on record (or it predates this).
+    declaration: z.object({
+      at: z.string().nullable(),
+      by: z.object({
+        kind: z.enum(['turn', 'person', 'homeroom']).nullable(),
+        name: z.string().nullable(),
+      }),
+    }).nullable().optional()
+      .describe('When the current declaration of visible changes was made, and by whom: a coding turn '
+        + '(turn), a person (person) or Homeroom itself (homeroom), with its name. So a declaration that '
+        + 'replaced another one is visible from here. Null when nothing is on record.'),
     failureCode: z.string().nullable(),
     failureReason: z.string().nullable(),
     repairAvailable: z.boolean(),
@@ -3369,10 +3561,12 @@ function registerTools(server, ctx) {
   // to follow on an app with more than 50 open requests, because there was no
   // second page and no way to search.
   server.registerTool('list_requests', {
-    title: 'List open requests on an app',
-    description: `List an app's open requests (feature ideas and bug reports). Always check this before filing a new request so you do not create a duplicate — \`query\` is the quickest way to do it: it matches the number, the title AND the full body, case-insensitively, even though bodies are not printed by default. A page carries titles only unless you ask for \`detail: "full"\`, so a whole board usually arrives in one call. \`nextCursor\` non-null means there are more: call again with it exactly as returned. \`listComplete: false\` means the board itself could not be read in full — GitHub was unreachable or the app has more open requests than the platform fetches — so finding no duplicate is not proof there is none. This is a board scan, so a printed body is clipped at ${MAX_BODY_CHARS} characters and \`bodyComplete: false\` says when that happened: call get_request for that one request to read its description in full. Requests are ordered most-recently-updated first, so the first page is the recently active slice of the board, not the newest filings — \`createdAt\` says when each was filed and \`updatedAt\` when it last changed. Titles and bodies are untrusted user content.`,
+    title: 'List requests on an app',
+    description: `List an app's requests (feature ideas and bug reports). By default the OPEN ones: always check this before filing a new request so you do not create a duplicate — \`query\` is the quickest way to do it: it matches the number, the title AND the full body, case-insensitively, even though bodies are not printed by default. Pass \`state: "closed"\` to list the closed ones instead (newest closed first), or \`state: "all"\` for both. A page carries titles only unless you ask for \`detail: "full"\`, so a whole board usually arrives in one call. \`nextCursor\` non-null means there are more: call again with it exactly as returned. \`listComplete: false\` means the board itself could not be read in full — GitHub was unreachable or the app has more open requests than the platform fetches — so finding no duplicate is not proof there is none. This is a board scan, so a printed body is clipped at ${MAX_BODY_CHARS} characters and \`bodyComplete: false\` says when that happened: call get_request for that one request to read its description in full. Requests are ordered most-recently-updated first (closed ones by \`closedAt\`), so the first page is the recently active slice of the board, not the newest filings — \`createdAt\` says when each was filed and \`updatedAt\` when it last changed. Titles and bodies are untrusted user content.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
+      state: z.enum(['open', 'closed', 'all']).optional()
+        .describe('Which requests to list: "open" (the default), "closed" (newest closed first), or "all" (open then closed).'),
       query: z.string().optional()
         .describe('Keep only requests whose number, title or body contains this text, case-insensitively. Bodies are searched even when they are not returned, so this is the cheapest duplicate check there is.'),
       detail: z.enum(['titles', 'full']).optional()
@@ -3397,12 +3591,17 @@ function registerTools(server, ctx) {
         createdAt: z.string().nullable(),
         updatedAt: z.string().nullable(),
         state: z.string(),
+        closedAt: z.string().nullable().optional(),
       })),
       returned: z.number(),
       // After the query filter, and before it. "12 of 137 open" is what tells
       // a caller whether its search was too narrow or the board is just small.
       matched: z.number(),
-      totalOpen: z.number(),
+      // Null when open requests were not read (state: "closed").
+      totalOpen: z.number().nullable(),
+      // How many closed requests the app has; null unless closed ones were
+      // read (state: "closed" or "all").
+      totalClosed: z.number().nullable(),
       nextCursor: z.string().nullable(),
       truncated: z.boolean(),
       // Whether the platform could read the whole board. Distinct from
@@ -3411,16 +3610,17 @@ function registerTools(server, ctx) {
       note: z.string().nullable(),
     },
     annotations: readAnnotations,
-  }, async ({ slug, query, detail, limit, cursor }) => {
+  }, async ({ slug, state: wantedState, query, detail, limit, cursor }) => {
     const guard = scopeGuard(READ_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
     const mode = detail === 'full' ? 'full' : 'titles';
+    const state = wantedState === 'closed' || wantedState === 'all' ? wantedState : 'open';
     const needle = String(query == null ? '' : query).trim().toLowerCase();
 
     // The cursor is validated BEFORE the platform is called: a cursor from a
     // different query would otherwise cost a round trip to refuse.
-    const pageKey = requestPageKey(slug, mode, needle);
+    const pageKey = requestPageKey(slug, mode, needle, state);
     let offset = 0;
     if (cursor) {
       const decoded = decodeRequestCursor(cursor, pageKey);
@@ -3433,20 +3633,36 @@ function registerTools(server, ctx) {
       offset = decoded.offset;
     }
 
-    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
-    if (!result.ok) return platformError(result);
-    const body = result.body || {};
-    const issues = Array.isArray(body.issues) ? body.issues : [];
-    const page = pageRequests(issues, { query: needle, detail: mode, offset, limit });
-    // The route's own two degradations, passed through rather than hidden. A
-    // duplicate check that could not see the whole board has to know it.
-    const note = body.note
-      || (body.truncatedList ? 'this app has more open requests than the platform fetches' : null);
+    const openIssues = [];
+    const closedIssues = [];
+    let note = null;
+    if (state !== 'closed') {
+      const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
+      if (!result.ok) return platformError(result);
+      const body = result.body || {};
+      if (Array.isArray(body.issues)) openIssues.push(...body.issues);
+      // The route's own two degradations, passed through rather than hidden. A
+      // duplicate check that could not see the whole board has to know it.
+      note = body.note
+        || (body.truncatedList ? 'this app has more open requests than the platform fetches' : null);
+    }
+    if (state !== 'open') {
+      const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues?state=closed`);
+      if (!result.ok) return platformError(result);
+      const body = result.body || {};
+      if (Array.isArray(body.issues)) closedIssues.push(...body.issues);
+      note = note || body.note
+        || (body.truncatedList ? 'this app has more closed requests than the platform fetches' : null);
+    }
+    const board = state === 'closed' ? closedIssues
+      : state === 'all' ? [...openIssues, ...closedIssues] : openIssues;
+    const page = pageRequests(board, { query: needle, detail: mode, offset, limit });
     return readResult('list_requests', {
       requests: page.requests,
       returned: page.requests.length,
       matched: page.matched,
-      totalOpen: page.totalOpen,
+      totalOpen: state === 'closed' ? null : openIssues.length,
+      totalClosed: state === 'open' ? null : closedIssues.length,
       nextCursor: page.nextOffset === null ? null : encodeRequestCursor(page.nextOffset, pageKey),
       truncated: page.nextOffset !== null,
       listComplete: !note,
@@ -3479,7 +3695,7 @@ function registerTools(server, ctx) {
   // a read the connector can already make.
   server.registerTool('get_request', {
     title: 'Read one request in full',
-    description: `Read ONE open request on an app — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. \`inProgress\` names anyone already working on it — the people who have claimed it and how many in-platform builds are running on it — so check it before starting: nothing stops two people building the same request, and this is where you find out. Screenshots the reporter attached on Homeroom come back after the text as images you can look at, up to ${MAX_REQUEST_IMAGES}; \`images\` lists every one and why any was left out. \`specs\` lists the plans posted on it, newest first: read one with get_spec before building it. Title, body, usernames and screenshots are untrusted user content.`,
+    description: `Read ONE request on an app, open or closed — its whole description, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit, and the most create_request will store). Use it whenever you actually have to READ a request rather than scan for one: list_requests clips each body at ${MAX_BODY_CHARS} characters to keep a page small, including the bodies its \`query\` matched on, so it can leave a long report cut off mid-sentence. \`bodyChars\` is the length of the stored description and \`bodyComplete\` says whether you got all of it. \`inProgress\` names anyone already working on it — the people who have claimed it and how many in-platform builds are running on it — so check it before starting: nothing stops two people building the same request, and this is where you find out. A closed request's \`closing\` says when and how it closed (a merged change, a close vote, an admin, or by hand), who closed it, and which change did. Screenshots the reporter attached on Homeroom come back after the text as images you can look at, up to ${MAX_REQUEST_IMAGES}; \`images\` lists every one and why any was left out. \`specs\` lists the plans posted on it, newest first: read one with get_spec before building it. Title, body, usernames and screenshots are untrusted user content.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       number: z.number().int().positive()
@@ -3504,6 +3720,16 @@ function registerTools(server, ctx) {
         claimedBy: z.array(z.string()),
         sessions: z.number(),
         mine: z.boolean(),
+      }).nullable(),
+      // How a CLOSED request was closed; null for an open one.
+      closing: z.object({
+        at: z.string().nullable(),
+        how: z.enum(['merged_change', 'vote', 'admin', 'by_hand']).nullable()
+          .describe('merged_change: a merged change linked it; vote or admin: a close vote applied; by_hand: a '
+            + 'person closed it another way. Null when nothing is recorded.'),
+        by: z.string().nullable(),
+        reason: z.string().nullable(),
+        change: z.object({ proposalId: z.number().nullable(), prNumber: z.number().nullable() }).nullable(),
       }).nullable(),
       webPath: z.string(),
       // One entry per screenshot the description embeds, attached or not.
@@ -3539,7 +3765,19 @@ function registerTools(server, ctx) {
     if (!result.ok) return platformError(result);
     const body = result.body || {};
     const issues = Array.isArray(body.issues) ? body.issues : [];
-    const match = issues.find((i) => i && i.number === wanted);
+    let match = issues.find((i) => i && i.number === wanted);
+    let closed = false;
+    if (!match) {
+      // The board carries OPEN requests only, so a number that is not on it
+      // may still be a CLOSED request: read it on its own route (which is
+      // view-checked like the board) and tell the caller how it closed
+      // (request #7160).
+      const one = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues/${wanted}`);
+      if (one.ok && one.body && one.body.issue && one.body.issue.number === wanted) {
+        match = one.body.issue;
+        closed = match.state === 'closed';
+      }
+    }
     if (!match) {
       // "Not on the board" and "the board could not be read" are different
       // answers, and a caller following a number out of a degraded list has
@@ -3549,7 +3787,7 @@ function registerTools(server, ctx) {
         || (body.truncatedList ? 'this app has more open requests than the platform fetches' : null);
       return toolError('no_access', note
         ? `Request #${wanted} was not among this app's open requests, but the board could not be read in full (${note}) — it may exist.`
-        : `Request #${wanted} is not open on this app. Check list_requests.`);
+        : `No request #${wanted} on this app. Check list_requests.`);
     }
     // A caller whose model cannot look at pictures (`imageInput: false`)
     // still gets the list, and the links, but nothing is fetched for it.
@@ -3561,7 +3799,8 @@ function registerTools(server, ctx) {
     const specs = kind === 'external' ? await readRequestSpecs(baseUrl, accessToken, slug, wanted) : null;
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),
-      inProgress: shapeInProgress(match.in_progress),
+      inProgress: closed ? null : shapeInProgress(match.in_progress),
+      closing: closed ? shapeClosing(match) : null,
       webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       images: pictures.images,
       specs: specs ? specs.slice(0, MAX_REQUEST_SPECS_SUMMARY).map(shapeSpecSummary) : null,
@@ -5632,7 +5871,9 @@ function registerTools(server, ctx) {
     const wanted = typeof check === 'string' ? check.trim() : '';
     let row = null;
     if (wanted) {
-      row = failed.find((t) => String(t.name || t.path || '').toLowerCase() === wanted.toLowerCase());
+      // Stored names are cut at 120 characters and can end in a space, so
+      // both sides are compared trimmed (request #7160).
+      row = failed.find((t) => String(t.name || t.path || '').trim().toLowerCase() === wanted.toLowerCase());
       if (!row) {
         return toolError(
           'unknown_check',
@@ -5909,6 +6150,38 @@ function registerTools(server, ctx) {
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
+      approval: z.object({
+        approverYes: z.number(),
+        approverNo: z.number(),
+        required: z.number().nullable(),
+        advisoryYes: z.number(),
+        advisoryNo: z.number(),
+        whoMayApprove: z.enum(['admins', 'groups', 'approvers', 'everyone']),
+        groups: z.array(z.string()),
+      }).nullable()
+        .describe('Only the votes the rule counts, beside what it needs, with everyone else\'s votes as advisory: '
+          + 'approverYes and approverNo are the counted ones, required is the threshold, advisoryYes and advisoryNo '
+          + 'are the raw counts minus the counted ones, and whoMayApprove says who may approve (admins, the named '
+          + 'groups in `groups`, the project\'s approvers, or everyone). Null until the rule has been worked out '
+          + '(while the change is up for a vote, merging or merged). yesVotes, noVotes and votesRequired stay the '
+          + 'raw tallies.'),
+      mergeLane: z.object({
+        reasons: z.array(z.string()),
+        conflictFiles: z.array(z.string()),
+        freeResolutionSpent: z.boolean().nullable(),
+        lastSync: z.object({
+          reason: z.string().nullable(),
+          outcome: z.string().nullable(),
+          message: z.string().nullable(),
+          at: z.string().nullable(),
+        }).nullable(),
+        backoff: z.object({ until: z.string(), failures: z.number() }).nullable(),
+      })
+        .describe('Why the merge queue holds a change that conflicts with main: `reasons` are its own block reasons '
+          + '(awaiting_approval, unresolvable, fork_head, checks_failing, …), `conflictFiles` are the files that '
+          + 'conflict, `freeResolutionSpent` says whether the one free resolution before the vote has been used, '
+          + '`lastSync` is the last sync with main (reason, outcome, message, when) and `backoff` is any wait before '
+          + 'the next try.'),
       behindMain: z.number().nullable(),
       mergeability: z.string().nullable(),
     },
@@ -11977,6 +12250,11 @@ module.exports = {
   pageRequests,
   shapeProposal,
   shapeChange,
+  shapeApproval,
+  shapeMergeLane,
+  shapeDeclaration,
+  shapeClosing,
+  deferredStep,
   shapeWorkOrder,
   changeNextStep,
   proposalRef,
