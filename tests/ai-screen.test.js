@@ -152,7 +152,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
   // 24 Nov 2026 (mobile 04): a thread somebody named you in opens at the
   // message that named you (group-chat.js revealInThread), on the same page.
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}[\s\S]*?const messageId = row\.named\?\.messageId;\s+const slug = row\.app\?\.slug;\s+if \(messageId && slug\) \(window as any\)\.GroupChat\?\.revealInThread\?\.\(slug, messageId\);\s+if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/,
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+seeOpened\(openedNeed\(row\)\);\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}[\s\S]*?const messageId = row\.named\?\.messageId;\s+const slug = row\.app\?\.slug;\s+if \(messageId && slug\) \(window as any\)\.GroupChat\?\.revealInThread\?\.\(slug, messageId\);\s+if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/,
     'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -1814,7 +1814,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   assert.match(src, /const BOT_PAGE = BOT_TAB;/);
   assert.equal(loadTsx('frontend/src/features/ai/door.ts').BOT_TAB, '#homeroom-bot');
   // #6153: a request filed from a private thread opens that thread first.
-  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
+  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+seeOpened\(openedThread\(th\)\);\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
   assert.match(src, /if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
@@ -1825,7 +1825,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
   assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,160}showAt\(next\);\s+\};/);
-  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
+  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+seeOpened\(openedNeed\(row\)\);\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   // 18 Nov 2026: only there; it no longer stands beside a running app.

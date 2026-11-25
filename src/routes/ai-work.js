@@ -337,6 +337,10 @@ function aiWorkRoutes(config = {}) {
   // POST /api/ai/visit/seen { visit, seen, left? } — what the list has in
   // view now, while it is up or (`left`) as it leaves. → { ok: true }; 400
   // when `seen` is not one.
+  // POST /api/ai/visit/opened { visit, band, identity, standing } — a row
+  // was opened, so the last visit's record learns it was seen and its dot
+  // goes for the rest of the visit (24 Nov 2026, #7121). → { ok: true }; 400
+  // when the token, band, identity or standing is not one.
   //
   // `?demo=1` on staging answers a last visit 70 minutes ago that saw every
   // demo row but three (ai-visits.js demoVisit), whatever the fixture account
@@ -375,6 +379,23 @@ function aiWorkRoutes(config = {}) {
       return res.json(noted);
     } catch (err) {
       log.error('ai-work', 'Failed to note a visit to the Homeroom bot list', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/ai/visit/opened', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true });
+      const body = req.body || {};
+      const noted = await aiVisits.noteOpened(pool, {
+        userId: req.user.id, token: body.visit, band: body.band, identity: body.identity, standing: body.standing,
+      });
+      if (!noted) return res.status(400).json({ error: 'A visit token, band, identity and standing are required' });
+      return res.json(noted);
+    } catch (err) {
+      log.error('ai-work', 'Failed to note a row opened in the Homeroom bot list', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
