@@ -528,6 +528,48 @@ rules for `usernode-app-gate` since 23 Oct). Outside the chart (a local or
 standalone run) both stay off unless set. Either goes off again with a value
 and a sync (`docs/kubernetes-operations.md`).
 
+### 25 Nov 2026: a refresh that missed a file stayed for 30 days
+
+On a project with four merges in 40 minutes, one browser showed the new
+page with a new control drawn unstyled: the page was new, its
+`screens.css` was the copy kept from before the change, and reloading never
+replaced it. Another browser showed it right. The refresh on a new build
+was the only thing that replaced a file, and it can miss one two ways:
+
+- It fetches the files the bridge **remembered** from earlier loads. A
+  file it never recorded keeps its old copy.
+- What it fetches while a new build is **replacing** the old one can be the
+  old build's, and that copy is then kept fresh as the new one.
+
+Either way the device counts as up to date, so nothing asks again until the
+next build, and a plain reload uses the fresh copy without a request.
+
+The fix, in the bridge and the gate's rule:
+
+- **The bridge checks the files each load ran on.** Online, two seconds
+  after `load`, it reads each of the app's own files from the cache and asks
+  the app for it again with that copy's validator (`cache: "no-cache"`). An
+  unchanged file is a 304 with no body. A validator that moved means the
+  answer has just put the app's current copy in the cache, and the frame
+  reloads onto it once, marked `un-checked` so that reload checks nothing.
+  The files are this load's own (Resource Timing, without fetch/XHR data
+  reads and without the platform's shared `/usernode-*` files, which bring
+  themselves up to date stale-while-revalidate), at most 60. A check runs at
+  most once per address in 10 minutes; each build's page has its own
+  address, so a new build is checked on its first load. Never offline; a
+  file with no ETag or Last-Modified, or a check that fails, counts as
+  unchanged.
+- **The gate's rule keeps a 304's lifetime.** A browser takes a 304's
+  `Cache-Control` onto the copy it kept. Express answers 304 with
+  `public, max-age=0`, so a check left alone would have ended each copy's
+  30 days and broken the next open with no connection. The rule now gives a
+  304 what it gives a 200.
+
+A device stuck today heals on its first online open after this is live.
+What it costs: one conditional request per file, per app, per device, at
+most every 10 minutes, after the app has loaded. That is what every load
+cost before the cache was turned on.
+
 Still to do, outside this proposal:
 
 1. After the release: the simulator and emulator pass against real apps

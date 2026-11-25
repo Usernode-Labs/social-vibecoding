@@ -43,6 +43,14 @@
   //   4. It tells the shell it opened: `{ __usernode_offline_cache: 'open',
   //      fresh }`, fresh being whether this copy is of the live build. The
   //      shell frames the app the old way if it never hears this.
+  //   5. Online, once the app has loaded, the files it ran on are checked
+  //      against the app (checkFiles below), and the frame reloads once
+  //      onto any that changed. Step 3 alone could leave a device on a new
+  //      page with an old file for 30 days: it fetches only the files it
+  //      remembered, and what it fetches while a new build is replacing the
+  //      old one may be the old build's. Seen on 25 Nov 2026: a new page
+  //      drew a new control with no styling over the screens.css it kept,
+  //      and no reload replaced it.
   (function () {
     try {
       if (!(window.parent && window.parent !== window)) return;
@@ -107,7 +115,91 @@
       try { window.parent.postMessage({ __usernode_offline_cache: "open", fresh: !!fresh }, "*"); } catch (_) { /* parent gone */ }
     }
 
-    if (!refresh) { say(true); return; }
+    // ── 5. The files this load ran on, checked against the app ──────────
+    //
+    // Each file is read from the cache as the page got it, then asked for
+    // again with that copy's validator (`cache: "no-cache"`: a conditional
+    // request, answered 304 with no body when nothing changed, and the gate
+    // keeps a 304's 30-day lifetime). A validator that moved means the app
+    // now serves another copy, which that answer has just put in the cache:
+    // the frame reloads once onto it, marked `un-checked` so the reload
+    // itself checks nothing. At most once per address in CHECK_EVERY_MS
+    // (each build's page has its own address, so a new build is checked at
+    // once), never offline, and a file with no validator, or a check that
+    // fails, counts as unchanged.
+    var CHECKED_KEY = "usernode:offline-checked";
+    var CHECK_EVERY_MS = 10 * 60 * 1000;
+    var CHECK_AFTER_LOAD_MS = 2000;
+    var MAX_CHECKED = 60;
+    // Data an app reads with fetch or XHR is not a file it runs on.
+    var NOT_FILES = { fetch: 1, xmlhttprequest: 1, beacon: 1 };
+    // The platform's shared files (this one among them) are kept
+    // stale-while-revalidate, so they bring themselves up to date behind
+    // every load; a platform release must not reload every open app.
+    var SHARED_RE = /^\/usernode-(?:bridge|native|tailwind)\//;
+
+    function ranOn() {
+      var names = [];
+      try {
+        var entries = performance.getEntriesByType("resource");
+        for (var i = 0; i < entries.length; i++) {
+          if (!NOT_FILES[entries[i].initiatorType]) names.push(entries[i].name);
+        }
+      } catch (_) { names = readFiles(); }
+      var out = [];
+      for (var j = 0; j < names.length && out.length < MAX_CHECKED; j++) {
+        var k = keepable(names[j]);
+        if (!k || out.indexOf(k) !== -1) continue;
+        try { if (SHARED_RE.test(new URL(k).pathname)) continue; } catch (_) { continue; }
+        out.push(k);
+      }
+      return out;
+    }
+    function validatorOf(res) {
+      try {
+        if (!res || !res.ok || !res.headers) return null;
+        return res.headers.get("etag") || res.headers.get("last-modified") || null;
+      } catch (_) { return null; }
+    }
+    function moved(u) {
+      return fetch(u, { cache: "force-cache", credentials: "same-origin" }).then(function (kept) {
+        var before = validatorOf(kept);
+        if (!before) return false;
+        return fetch(u, { cache: "no-cache", credentials: "same-origin" }).then(function (now) {
+          var after = validatorOf(now);
+          return !!after && after !== before;
+        });
+      }).catch(function () { return false; });
+    }
+    function checkedRecently() {
+      try {
+        var last = JSON.parse(localStorage.getItem(CHECKED_KEY));
+        return !!last && last.page === page && typeof last.at === "number"
+          && Date.now() - last.at < CHECK_EVERY_MS;
+      } catch (_) { return false; }
+    }
+    function checkFiles() {
+      try { if (navigator.onLine === false) return; } catch (_) { /* no navigator: try */ }
+      if (checkedRecently()) return;
+      try { localStorage.setItem(CHECKED_KEY, JSON.stringify({ page: page, at: Date.now() })); } catch (_) { /* unbounded: the flag below still stops a second reload */ }
+      var files = ranOn();
+      if (!files.length) return;
+      Promise.all(files.map(moved)).then(function (changed) {
+        if (!changed.some(Boolean)) return;
+        own.delete("un-refresh");
+        own.set("un-checked", "1");
+        try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* gone */ }
+        location.replace(page + "#" + own.toString());
+      });
+    }
+    function checkAfterLoad() {
+      if (own.get("un-checked") === "1") return;
+      try {
+        window.addEventListener("load", function () { setTimeout(checkFiles, CHECK_AFTER_LOAD_MS); }, { once: true });
+      } catch (_) { /* no events: unchecked, as before */ }
+    }
+
+    if (!refresh) { say(true); checkAfterLoad(); return; }
     say(false);
     try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* no document yet */ }
     var files = readFiles();
