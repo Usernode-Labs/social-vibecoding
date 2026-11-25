@@ -118,7 +118,7 @@ import {
 } from './door';
 // The old Main Chat addresses, and a message named without its thread: the
 // router hands them to this module's doors (window.UsernodeReact.ai.openOld).
-import './where';
+import { oldAddressPending } from './where';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiFrameList } from './frame-list';
@@ -242,6 +242,10 @@ function go(href: string | null): void {
 let steppingBack = false;
 function showAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#(homeroom-bot|ai)(\/|\?|$)/.test(window.location.hash)) return;
+  // An address from before is still being resolved (./where.ts): the bar is
+  // the server's to rewrite until it says where the address lands, and the
+  // column's resting place (the bare tab) must not take it away first.
+  if (oldAddressPending()) return;
   // A step back is on its way (history.back() lands a task later): the
   // address is about to be the tab's, and a second write now would step
   // back twice, off the tab.
