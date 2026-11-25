@@ -46,6 +46,27 @@ export const PHONE_QUERY = '(max-width: 767px)';
 
 export type Placement = 'full' | 'column' | 'panel';
 
+/**
+ * The layout the address remembers beside the preview (`preview-at`, Nov
+ * 2026): where it stood, and whether the person had made it Full window. It
+ * rides in the preview's own query so a refresh — or a later visit to the
+ * same link — comes back in the same layout.
+ */
+export type PreviewLayout = 'full' | 'column' | 'panel' | 'column-full' | 'panel-full';
+
+/** Pure: a remembered layout, or null for anything not one of them. */
+export function parseLayout(value: unknown): PreviewLayout | null {
+  return value === 'full' || value === 'column' || value === 'panel'
+    || value === 'column-full' || value === 'panel-full' ? value : null;
+}
+
+/** Pure: the layout a placement and its Full window flag name in the address. */
+export function layoutOf(s: { placement: Placement; expanded: boolean }): PreviewLayout {
+  if (s.placement === 'column') return s.expanded ? 'column-full' : 'column';
+  if (s.placement === 'panel') return s.expanded ? 'panel-full' : 'panel';
+  return 'full';
+}
+
 export interface PlacementFacts {
   /** A phone-width window. */
   phone: boolean;
@@ -161,6 +182,14 @@ export interface PlaceInput {
    * before it keeps the whole window.
    */
   settle?: boolean;
+  /**
+   * The layout the address remembered (`preview-at`), read back on a reload.
+   * A phone and a change declared for large screens still win. Otherwise
+   * `full` keeps the whole window without opening a column, `panel` prefers
+   * the side panel, and `column` waits for the page's column instead of
+   * giving up on its first narrow measurement.
+   */
+  layout?: string | null;
 }
 
 /** How long a preview reopened from its address waits for the page's column. */
@@ -178,9 +207,21 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
   const phone = typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
   const open = panelOpen();
   const besideApp = open && !isBesideAi();
+  const addressed = parseLayout(input.layout);
+  // A phone and a change declared for large screens win over the address.
+  const remembered = phone || wide ? null : addressed;
+  const rememberedColumn = remembered === 'column' || remembered === 'column-full';
+  const rememberedPanel = remembered === 'panel' || remembered === 'panel-full';
+  // A link can ask for the whole window on purpose: no column is drawn then.
+  const fullOnPurpose = remembered === 'full';
+  // `column-full` / `panel-full` stand Full window over the spot they dock to.
+  const fullFrame = (rememberedColumn || rememberedPanel) && !!remembered && remembered.endsWith('-full');
 
   let columnWidth: number | null = null;
-  if (!phone && !wide && !besideApp) {
+  // A panel already open is its own spot; otherwise the column is measured
+  // as it always is, unless the address asked for the whole window.
+  const drawColumn = !phone && !wide && !besideApp && !fullOnPurpose && !(rememberedPanel && open);
+  if (drawColumn) {
     openDetail({
       kind: 'preview',
       ref: { sessionId: Number(input.sessionId) || undefined },
@@ -193,12 +234,19 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
     columnWidth = rect ? rect.width : null;
   }
 
-  const placement = choosePlacement({ phone, wide, besideApp, panelOpen: open, columnWidth });
-  // Reopened from its address with no column drawn yet: it stands where the
-  // rules put it meanwhile (the panel's place, or the whole window) and
-  // moves into the column once the page draws it.
-  const waitForColumn = !!input.settle && columnWidth == null
-    && !phone && !wide && !besideApp && detailEntry()?.kind === 'preview';
+  let placement: Placement;
+  if (fullOnPurpose) placement = 'full';
+  else if (rememberedPanel && open) placement = 'panel';
+  else if (rememberedColumn && columnWidth != null && columnWidth >= MIN_COLUMN) placement = 'column';
+  else placement = choosePlacement({ phone, wide, besideApp, panelOpen: open, columnWidth });
+
+  // A remembered column is waited for even after a narrow first measurement:
+  // on a cold load the page may still be laying it out, and giving up early
+  // is what dropped a refreshed preview into the whole window. A fresh press
+  // (no layout) waits exactly as it always has.
+  const waitForColumn = placement !== 'column' && !phone && !wide && !besideApp
+    && detailEntry()?.kind === 'preview'
+    && (rememberedColumn || (!!input.settle && columnWidth == null));
   if (placement !== 'column' && !waitForColumn && detailEntry()?.kind === 'preview') closeColumn();
 
   const target = placement === 'column' ? slotEl : placement === 'panel' ? panelEl : null;
@@ -210,13 +258,25 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
     wide: wide && !phone,
     beside,
     liveSpot: beside ? liveSpot() : null,
-    expanded: false,
+    // While a remembered column is still being waited for, the preview stands
+    // in the whole window or the panel's place as it always would; it is
+    // expanded only once it reaches the spot the address named.
+    expanded: !waitForColumn && fullFrame && !!rect && (placement === 'column' || placement === 'panel'),
     // G, J (20 Nov 2026): which change this is, for a live draft's own controls.
     sessionId: Number(input.sessionId) || null,
   });
   if (target && rect) watch(target, placement);
-  if (waitForColumn) settleIntoColumn(mine);
+  if (waitForColumn) settleIntoColumn(mine, { keepNarrowSlot: rememberedColumn, fullFrame });
+  // A phone always fills the screen; an address that remembered another
+  // layout keeps it, so a later visit on a wide window still comes back to
+  // the column it was in.
+  else if (!phone || !addressed) publishLayout();
   return rect ? placement : 'full';
+}
+
+/** Write the layout the preview is now in beside its address. */
+function publishLayout(): void {
+  stagingHandlers.onLayout?.(layoutOf(stagingStore.get()));
 }
 
 /**
@@ -224,8 +284,12 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
  * column is still being drawn (a cold load): it moves into the column once
  * the column is there and wide enough, and keeps the whole window if none
  * comes within SETTLE_MS, or the column's entry is closed meanwhile.
+ *
+ * A layout remembered from the address (`keepNarrowSlot`) keeps waiting for a
+ * narrow slot until the deadline, because on a cold load a column measured
+ * before it is laid out is not the column the person had.
  */
-function settleIntoColumn(mine: number): void {
+function settleIntoColumn(mine: number, { keepNarrowSlot = false, fullFrame = false } = {}): void {
   const deadline = Date.now() + SETTLE_MS;
   const tick = () => {
     if (mine !== generation) return;
@@ -236,12 +300,16 @@ function settleIntoColumn(mine: number): void {
       for (const undo of cleanup.splice(0)) {
         try { undo(); } catch { /* a watcher that is already gone */ }
       }
-      stagingStore.set({ placement: 'column', rect, beside: null, liveSpot: null, expanded: false });
+      stagingStore.set({ placement: 'column', rect, beside: null, liveSpot: null, expanded: fullFrame });
       watch(slotEl, 'column');
+      publishLayout();
       return;
     }
-    if (rect || Date.now() >= deadline) {
+    if (Date.now() >= deadline || (!keepNarrowSlot && rect)) {
       closeColumn();
+      // Today's rules had already chosen where it stands; the address now
+      // names that, so a later refresh asks for what it got.
+      publishLayout();
       return;
     }
     setTimeout(tick, 150);
@@ -274,5 +342,8 @@ export function togglePreviewSize(): boolean {
   const s = stagingStore.get();
   if (s.placement === 'full') return false;
   stagingStore.set({ expanded: !s.expanded });
+  // The address follows, so a refresh keeps the Dock or Full window the
+  // person just chose.
+  publishLayout();
   return !s.expanded;
 }

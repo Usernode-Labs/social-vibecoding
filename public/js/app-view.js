@@ -30528,15 +30528,33 @@ const AppView = {
     // whole window) while the server is asked.
     staging.open();
     AppView._stagingHeader(sessionId, app, opts);
-    // The preview's own address (?preview=<slug>/<id>), written in place, so
-    // a reload or a copied link reopens it (restorePreviewFromAddress).
-    AppView._writePreviewAddress(slug, sessionId);
+    // The preview's own address (?preview=<slug>/<id>) and the layout it was
+    // in (?preview-at=...), written in place, so a reload or a copied link
+    // reopens it (restorePreviewFromAddress).
+    AppView._writePreviewAddress(slug, sessionId, opts && opts.layout);
     // A preview reopened from its address waits a moment for the page's
     // column, which may not be drawn yet.
     // With its project and whether it is read only, so the thread it stands
     // beside can ask for it again when it is come back to (detail.ts).
+    staging.setHandlers({
+      onBack: () => AppView.closeStagingOverlay(),
+      // Where the preview stands, kept beside it in the address so a refresh
+      // comes back in the same layout. Only the preview that is open writes.
+      onLayout: (layout) => {
+        const pv = AppView._stagingPreview;
+        if (!pv || Number(pv.sessionId) !== Number(sessionId)) return;
+        AppView._writePreviewAddress(pv.slug || slug, sessionId, layout);
+      },
+    });
     if (typeof staging.place === 'function') {
-      staging.place({ sessionId, wide: false, settle: !!(opts && opts.settle), slug: slug || null, readOnly });
+      staging.place({
+        sessionId,
+        wide: false,
+        settle: !!(opts && opts.settle),
+        slug: slug || null,
+        readOnly,
+        layout: (opts && opts.layout) || null,
+      });
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
@@ -30554,7 +30572,6 @@ const AppView = {
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.opening'), sub: '' });
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     // #3413: every terminal failure below covers the page with the loader, so
     // the card's own "Retry preview" (swapToStagingForSession → this function)
     // sits unreachable under it. Offer the same action inside the loader: re-
@@ -31803,42 +31820,62 @@ const AppView = {
    * address's query, `?preview=<slug>/<session id>`, beside whatever page it
    * stands over, so a reload, a copied link or Back onto the entry reopens
    * it, on the same change and in the place that page gives it
-   * (features/staging/placement.ts). Written in place: opening a preview is
-   * not a step for Back. The router keeps every query parameter as it goes
-   * (App._routeSearch), so the name stays while the preview is up and goes
-   * when it closes. Never in the side panel's framed copy (the top window
-   * draws the preview) or on a shot route.
+   * (features/staging/placement.ts). Since the preview's layout is remembered
+   * too (`preview-at`), a refresh comes back where the preview stood: beside
+   * the thread, in the side panel, or covering the window, docked or not.
+   * Written in place: opening a preview is not a step for Back. The router
+   * keeps every query parameter as it goes (App._routeSearch), so the name
+   * stays while the preview is up and goes when it closes. Never in the side
+   * panel's framed copy (the top window draws the preview) or on a shot route.
    */
   PREVIEW_PARAM: 'preview',
+  PREVIEW_LAYOUT_PARAM: 'preview-at',
+  // Where the preview stands, as placement.ts names it; anything else is
+  // ignored as if the address carried no layout at all.
+  PREVIEW_LAYOUTS: ['full', 'column', 'panel', 'column-full', 'panel-full'],
 
-  // Pure: the preview a query names ({ slug, sessionId }), or null.
+  // Pure: a remembered preview layout, or null for anything else.
+  _previewLayoutAt(value) {
+    const v = String(value == null ? '' : value);
+    return AppView.PREVIEW_LAYOUTS.includes(v) ? v : null;
+  },
+
+  // Pure: the preview a query names ({ slug, sessionId }, and its `layout`
+  // when the address remembers one), or null.
   _previewAddressAt(search) {
-    let value = null;
-    try { value = new URLSearchParams(String(search || '')).get(AppView.PREVIEW_PARAM); } catch (_) { value = null; }
+    let params = null;
+    try { params = new URLSearchParams(String(search || '')); } catch (_) { params = null; }
+    const value = params ? params.get(AppView.PREVIEW_PARAM) : null;
     const match = /^([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})$/.exec(String(value || ''));
     if (!match) return null;
     const sessionId = Number(match[2]);
-    return sessionId > 0 ? { slug: match[1], sessionId } : null;
+    if (!(sessionId > 0)) return null;
+    const layout = params ? AppView._previewLayoutAt(params.get(AppView.PREVIEW_LAYOUT_PARAM)) : null;
+    return layout ? { slug: match[1], sessionId, layout } : { slug: match[1], sessionId };
   },
 
   // Pure: `search` with the preview named (or, with no slug, not named),
-  // every other parameter kept byte for byte.
-  _previewSearch(search, slug, sessionId) {
+  // every other parameter kept byte for byte. Its layout rides beside it.
+  _previewSearch(search, slug, sessionId, layout) {
     const raw = String(search || '').replace(/^\?/, '');
+    const dropped = [AppView.PREVIEW_PARAM, AppView.PREVIEW_LAYOUT_PARAM];
     const kept = raw ? raw.split('&').filter((part) => {
       if (!part) return false;
       const key = part.split('=', 1)[0].replace(/\+/g, ' ');
-      try { return decodeURIComponent(key) !== AppView.PREVIEW_PARAM; } catch (_) { return true; }
+      try { return !dropped.includes(decodeURIComponent(key)); } catch (_) { return true; }
     }) : [];
     const id = Number(sessionId);
     if (slug && /^[a-z0-9][a-z0-9-]{0,254}$/.test(String(slug)) && Number.isInteger(id) && id > 0) {
       kept.push(`${AppView.PREVIEW_PARAM}=${slug}/${id}`);
+      const at = AppView._previewLayoutAt(layout);
+      if (at) kept.push(`${AppView.PREVIEW_LAYOUT_PARAM}=${at}`);
     }
     return kept.length ? `?${kept.join('&')}` : '';
   },
 
-  // Name the open preview in the address, or (no slug) stop naming it.
-  _writePreviewAddress(slug, sessionId) {
+  // Name the open preview in the address, and the layout it is in, or (no
+  // slug) stop naming it.
+  _writePreviewAddress(slug, sessionId, layout) {
     if (typeof window === 'undefined' || !window.history || !window.location) return false;
     if (typeof App !== 'undefined' && App && App.embeddedPanel) return false;
     const loc = window.location;
@@ -31846,7 +31883,7 @@ const AppView = {
       try { if (new URLSearchParams(loc.search || '').get('shot')) return false; } catch (_) { return false; }
     }
     const here = AppView._hereAddress();
-    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId)}${loc.hash || ''}`;
+    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId, layout)}${loc.hash || ''}`;
     if (to === here) return true;
     try {
       window.history.replaceState(window.history.state, '', to);
@@ -31876,6 +31913,8 @@ const AppView = {
     AppView.ensureStaging(at.sessionId, null, (AppView._sessionTesting || {})[at.sessionId] || null, {
       app: sameApp ? AppView.appData : { slug: at.slug },
       settle: true,
+      // The layout it was in when the address was written, if any.
+      layout: at.layout || null,
       ...(sameApp ? {} : { lookOnlyIfRefused: true }),
     });
     return true;
