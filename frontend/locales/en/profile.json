@@ -7,6 +7,18 @@
     "text": "Edit profile",
     "description": "Button on the viewer's own profile screen: opens the sheet where they change their photo, name and bio."
   },
+  "identity.editName": {
+    "text": "Edit name",
+    "description": "Name of the small pencil button beside the viewer's name on their own profile. Opens a box there to change the name other people see."
+  },
+  "identity.editBio": {
+    "text": "Edit bio",
+    "description": "Small link under the viewer's bio on their own profile. Opens a box there to change the bio."
+  },
+  "identity.addBio": {
+    "text": "Add a bio",
+    "description": "Small link on the viewer's own profile, where the bio would be, when they have not written one. Opens a box there to write it."
+  },
   "identity.buildingSince": {
     "text": "Building since {{date}}",
     "description": "Under the viewer's name on their profile: when they joined. {{date}} is a month and year, such as \"March 2026\". \"Building\" means making things on Homeroom."
@@ -1058,14 +1070,6 @@
   "frame.allProjects": {
     "text": "All projects",
     "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: the first choice in the list of projects, which shows finished work from every project."
-  },
-  "details.title": {
-    "text": "Your profile",
-    "description": "Heading of the in-page profile editor on the standard profile page."
-  },
-  "details.intro": {
-    "text": "Keep your info up to date and let the community know what you’re building.",
-    "description": "Introduction to the in-page profile editor."
   },
   "details.handleNote": {
     "text": "Change your handle in Settings",

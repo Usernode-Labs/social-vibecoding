@@ -82,6 +82,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
+  ['shots-demo-guest-project-open-v1', 'a signed-out visitor\'s public project page whose app opens for a guest (Open <name>)',
+    ['guest']],
   ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
     ['member', 'read_only_admin']],
   ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live, with its row in your bell',
@@ -214,6 +216,15 @@ const NEEDS = Object.freeze([
   // The listed invited member is on the platform waitlist, joined by email.
   { needs: 'an account on the waitlist', test: /\bwait[- ]?list(?:ed)?\b/i,
     states: ['platform-invited-member-listed-v1'] },
+  {
+    // #7137: a signed-out visitor's project page whose app a guest can open,
+    // and the Open button it draws there. The page is the visitor's own, so
+    // the ready-made project is the guest's (#7128's staging fixture is a
+    // project, not a persona's state).
+    needs: 'a public project a signed-out visitor can open',
+    test: /\b(?:signed[- ]out|logged[- ]out|anonymous)\b[^.]{0,160}\b(?:open(?:s|ing)? (?:the )?app|open button|guest[- ]ready)\b|\b(?:open(?:s|ing)? (?:the )?app|open button|guest[- ]ready)\b[^.]{0,160}\b(?:signed[- ]out|logged[- ]out|anonymous|visitor|guest)\b/i,
+    states: ['shots-demo-guest-project-open-v1'],
+  },
   {
     // Words that make the bot answer, not ones that describe what it already
     // said: "ask the Homeroom bot to close it" and "the bot replies", never
