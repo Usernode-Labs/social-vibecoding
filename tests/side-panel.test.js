@@ -1770,7 +1770,7 @@ test('beside the bot page the column\'s heading carries the page\'s own status p
   // document: the full page and the Workshop's side panel are the top
   // document, where the page keeps its own bar and publishes nothing.
   assert.match(HEAD, /if \(!isEmbeddedPanel\(\)\) return undefined;/);
-  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey, route: route \|\| null \}\);/);
+  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey, title, route: route \|\| null \}\);/);
   assert.match(HEAD, /return \(\) => \{ panelHeadStore\.set\(null\); \};/, 'and takes it back when the page goes');
   // The heading draws the page's own pill, only while it is THAT page's.
   assert.match(SRC, /const pill = head && head\.pill && samePage\(head\.route, route\) \? head\.pill : null;/);
@@ -1806,6 +1806,34 @@ test('beside the bot page the column\'s heading carries the page\'s own status p
   api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
   assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/,
     'one page\'s pill never shows on the next');
+  api._resetForTests();
+});
+
+test('beside the bot page the heading draws the title the page published, and only while it is that page\'s (#7120)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // The page's head carries the title its own bar draws; the heading takes it
+  // only for a request's head on THIS page, and falls back to what it drew
+  // before otherwise.
+  assert.match(SRC, /const title = \(head && head\.kind === 'request' && head\.title && samePage\(head\.route, route\) \? head\.title : null\)/);
+
+  besideBot('app/x/dev/issues/6431', {
+    kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431', title: 'Close: Fix the panel',
+  });
+  let html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /side-panel-place-title truncate">Close: Fix the panel</);
+
+  // A page that draws its plain title publishes none, and the column reads
+  // the title it always did.
+  api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /side-panel-place-title truncate">Request</);
+
+  // A head from another page never titles this one.
+  api.embeddedApi.head('app/x/dev/changes/6430', {
+    kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430', title: 'Close: Some other page',
+  });
+  html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /side-panel-place-title truncate">Request</);
   api._resetForTests();
 });
 

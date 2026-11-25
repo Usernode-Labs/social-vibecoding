@@ -187,14 +187,21 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
   const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
-  usePanelHead({ kind: 'request', pill, menuKey });
+  // #7120: while a vote to close the request is open, the bar says so before
+  // the title, so the page's head reads what the vote is about. The column
+  // beside Homeroom bot's lists draws its title from this same report, since
+  // app.css hides the bar's there.
+  const base = title || r.title;
+  const closing = pill?.key === 'close';
+  const shown = closing ? t('project:topic.request.bar.closeTitle', { title: base }) : base;
+  usePanelHead({ kind: 'request', pill, menuKey, title: closing ? shown : null });
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
   // s32): what it is in a small line over its full title, with this menu.
   // The topic it is filed under rides that line, as it sits under the
   // standard bar's title. The bar above it carries the trail and the way
   // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
+  if (frame) return <TopicFrameHead title={shown} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   // 18 Nov 2026: the bar is the thread's head (app.css), as a change's is
   // (./change-head.tsx ChangeBar). 19 Nov 2026: a card that leads with the
   // request's title; the project, the topic, the number and the status are
@@ -212,7 +219,7 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
           <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
         </div>
       ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
-      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>}
+      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{shown}</div>}
       sub={r.category
         ? <div className="messages-thread-sub" data-request-category="">{where}</div>
         : where ? <div className="messages-thread-sub">{where}</div> : null}
