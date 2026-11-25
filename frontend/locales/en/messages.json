@@ -5603,6 +5603,38 @@
     "text": "<0>Nothing needs you</0>",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty and nothing is in progress either. <0></0> is drawn in the stronger weight."
   },
+  "ai.waiting.title": {
+    "text": "Waiting on you",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab: one row for every thing that needs the person, each with its action and a way straight to it. This is the list's heading."
+  },
+  "ai.waiting.titleCount_one": {
+    "text": "Waiting on you · {{count}}",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab. What a screen reader says for its heading: its name and how many things need the person ({{count}}, here 1)."
+  },
+  "ai.waiting.titleCount_other": {
+    "text": "Waiting on you · {{count}}",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab. What a screen reader says for its heading: its name and how many things need the person ({{count}})."
+  },
+  "ai.waiting.open_one": {
+    "text": "Show the {{count}} thing waiting on you",
+    "description": "The Homeroom bot tab's Needs you count, which is now a button: its name for a screen reader. Pressing it opens Waiting on you, the list of everything that needs the person. {{count}} is how many things need them, here 1."
+  },
+  "ai.waiting.open_other": {
+    "text": "Show the {{count}} things waiting on you",
+    "description": "The Homeroom bot tab's Needs you count, which is now a button: its name for a screen reader. Pressing it opens Waiting on you, the list of everything that needs the person. {{count}} is how many things need them."
+  },
+  "ai.waiting.all": {
+    "text": "All threads",
+    "description": "The button at the end of the Waiting on you list's heading, which goes back to the Homeroom bot tab's full list: Needs you, In progress and Done. A ‹ is drawn before it in code."
+  },
+  "ai.waiting.empty": {
+    "text": "Nothing is waiting on you",
+    "description": "The Homeroom bot tab's Waiting on you list when it holds nothing: every decision and answer is done, with a check beside it."
+  },
+  "ai.waiting.loading": {
+    "text": "Loading what is waiting on you",
+    "description": "Accessible name, read by a screen reader, of the placeholder bars in the Homeroom bot tab's Waiting on you list while its rows load."
+  },
   "ai.band.progress": {
     "text": "In progress",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Heading of the second band: the person's threads being built, checked, or waiting on somebody else's move. Nothing to do on them now."
@@ -6466,6 +6498,10 @@
   "liveDraft.proposing": {
     "text": "Proposing…",
     "description": "The Propose button's words on a thread's live draft bar while the draft is being put up for a vote."
+  },
+  "liveDraft.openChange": {
+    "text": "Open change",
+    "description": "Button in the header of a live draft's preview, beside Propose: closes the preview and opens the change page the draft belongs to, the one the header names."
   },
   "liveDraft.close": {
     "text": "Discard draft",

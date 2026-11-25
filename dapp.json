@@ -4887,8 +4887,14 @@
     {
       "name": "#6019: the AI tab opens on its own page: Needs you, one band with no project or day headings, with a plan waiting for you to review it and a request Homeroom bot handed back for a person to say what's next, another project's build that stopped (Restart build), and a private idea, each ending in what you do; over it, one project filter (24 Nov 2026, the three bands)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]):not(:has([data-ai-group], [data-ai-project-head], [data-ai-day])) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-line=\"private\"] [data-ai-row-end=\"act\"]):has([data-ai-line=\"plan\"]) [data-ai-line=\"decide\"]",
+      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]):has([data-ai-sheet=head] [data-ai-hero-sub] button[data-ai-waiting-open]):not(:has([data-ai-group], [data-ai-project-head], [data-ai-day])) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-line=\"private\"] [data-ai-row-end=\"act\"]):has([data-ai-line=\"plan\"]) [data-ai-line=\"decide\"]",
       "expectText": "Restart build"
+    },
+    {
+      "name": "Homeroom bot's Needs you count opens Waiting on you (#7103): one card of every pending item with its action, no Show more, and All threads back to the three bands",
+      "path": "/?demo=1#homeroom-bot/waiting",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"waiting\"] [data-ai-list=\"waiting\"]:has([data-ai-row-end=\"act\"]):not(:has([data-ai-group-more])) [data-ai-waiting-close]",
+      "expectText": "Waiting on you"
     },
     {
       "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state; mobile polish 05: with how many are new since your last visit in its heading and a line under the new ones",
