@@ -202,11 +202,63 @@ test('the bands as drawn: the dot, the new rows first, the line, the pill; none 
   assert.match(busy, /data-ai-dot=""/, 'a new row still carries its dot');
 });
 
+test('a row opened stops being new: its dot, its count and its place above the line go; the line keeps its time', () => {
+  const v = loadTsx(VISIT);
+  // Pure: a first visit marks nothing; a visit's record learns the row.
+  assert.equal(v.withOpened(null, 'needs', 'need:proposal:2', ''), null);
+  const last = visitOf({ needs: { 'need:proposal:1': '' } });
+  const after = v.withOpened(last, 'needs', 'need:proposal:2', '');
+  assert.equal(after.since, last.since, 'the line keeps its time');
+  assert.deepEqual(after.seen.needs, { 'need:proposal:1': '', 'need:proposal:2': '' });
+  assert.deepEqual(last.seen.needs, { 'need:proposal:1': '' }, 'the visit it came from is not changed');
+  assert.equal(v.arrivedInNeeds(after, { key: 'need:proposal:2', rootId: null, threadId: 42 }), false);
+
+  // The entry each kind of row adds, by the identity its band is keyed by.
+  assert.deepEqual(v.openedNeed({ key: 'need:proposal:5', rootId: null, threadId: 9 }), ['needs', 'need:proposal:5', '']);
+  assert.deepEqual(v.openedNeed({ key: 'private:4', rootId: 4, threadId: null }), ['needs', 'root:4', '']);
+  assert.deepEqual(v.openedThread(thread(20, 'next', 'building')), ['busy', 'thread:20', 'next:building']);
+  assert.deepEqual(v.openedThread(thread(21, 'waiting', 'checking')), ['busy', 'thread:21', 'waiting:checking']);
+  assert.deepEqual(v.openedThread(thread(30, 'live', 'live')), ['done', 'thread:30', '']);
+  assert.deepEqual(v.openedHistory({ rootId: 4, threadId: null }), ['done', 'root:4', '']);
+  assert.deepEqual(v.openedHistory({ rootId: null, threadId: 7 }), ['done', 'thread:7', '']);
+
+  // Three rows new, one opened: two dots become one, the count drops with
+  // it, and the opened row joins what was seen below the line.
+  const props = (rows, visit) => ({
+    ready: true, owed: rows.length, rows, lit: null, progress: [], waiting: [], live: [],
+    openRow() {}, openThread() {}, visit,
+  });
+  const rows = [need(1, 'Seen vote'), need(2, 'Opened vote'), need(3, 'Still new vote')];
+  const opened = v.withOpened(last, ...v.openedNeed(rows[1]));
+  const html = renderComponent(LISTS, 'AiLists', props(rows, opened));
+  const needs = html.slice(html.indexOf('data-ai-list="work"'), html.indexOf('data-ai-sheet="busy"'));
+  assert.equal((needs.match(/data-ai-new=""/g) || []).length, 1, 'only the row that was not opened is new');
+  assert.equal((needs.match(/data-ai-dot=""/g) || []).length, 1);
+  assert.match(needs, /data-ai-band-new="">1 new</, 'the band says one fewer');
+  assert.ok(needs.indexOf('Still new vote') < needs.indexOf('data-ai-new-line'), 'the row not opened stays above the line');
+  assert.ok(needs.indexOf('data-ai-new-line') < needs.indexOf('Opened vote'), 'the opened row sits below it');
+  const beforeHtml = renderComponent(LISTS, 'AiLists', props(rows, last));
+  const lineOf = (s) => (s.match(/aria-label="New since [^"]+"/) || [])[0];
+  const beforeNeeds = beforeHtml.slice(beforeHtml.indexOf('data-ai-list="work"'), beforeHtml.indexOf('data-ai-sheet="busy"'));
+  assert.ok(lineOf(needs), 'the line is drawn while rows are still new');
+  assert.equal(lineOf(needs), lineOf(beforeNeeds), 'the line names the same time after a row is opened');
+
+  // In progress: an opened row is new again when it moves stage; a Done
+  // row clears by its done identity, this week's or History's.
+  const busyOpened = v.withOpened(visitOf({}), ...v.openedThread(thread(20, 'next', 'building')));
+  assert.equal(v.movedInProgress(busyOpened, thread(20, 'next', 'building')), false);
+  assert.equal(v.movedInProgress(busyOpened, thread(20, 'waiting', 'checking')), true, 'a move after opening is new again');
+  const doneOpened = v.withOpened(visitOf({}), ...v.openedHistory({ rootId: null, threadId: 7 }));
+  assert.equal(v.arrivedInDone(doneOpened, 'thread:7', '2026-11-10T10:00:00Z', false), false);
+});
+
 test('the page\'s visit: read in an effect, a leave said before the next one opens, a reload the same visit', () => {
   const hook = read('frontend/src/features/ai/use-visit.ts');
   // Nothing in the first render: the visit is state, set from an effect's answer.
   assert.match(hook, /const \[visit, setVisit\] = useState<LastVisit \| null>\(null\);/);
-  assert.equal((hook.match(/fetch\(/g) || []).length, 2, 'one open, one word');
+  assert.equal((hook.match(/fetch\(/g) || []).length, 3, 'one open, one word, one row opened');
+  assert.match(hook, /export function noteOpened\(band: keyof VisitSeen, identity: string, standing: string, demo = ''\): void/);
+  assert.match(hook, /if \(!token\) return;[\s\S]*fetch\(`\/api\/ai\/visit\/opened\$\{demo\}`/, 'a row opened is said with this tab\'s token');
   assert.match(hook, /fetch\(`\/api\/ai\/visit\$\{demo\}`/);
   assert.match(hook, /fetch\(`\/api\/ai\/visit\/seen\$\{demo\}`[\s\S]*keepalive: left,/, 'a leave outlives the page');
   // The next visit waits for the last one's leave.
@@ -222,7 +274,15 @@ test('the page\'s visit: read in an effect, a leave said before the next one ope
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index, /const listSeen = useMemo\(\(\) => visitSeen\(rows, progress, waiting, live\), \[rows, progress, waiting, live\]\);/);
   assert.match(index, /const lastVisit = useListVisit\(\{ visible, session, ready: !!work && !!needs, seen: listSeen, demo: demoQuery\(\) \}\);/);
-  assert.equal((index.match(/visit=\{lastVisit\}/g) || []).length, 1, 'the look\'s list draws no marks');
+  // The page patches its copy of the visit when a row opens, and says so to
+  // the server; the standard list draws the patched copy (the look's does not).
+  assert.match(index, /const \[shownVisit, setShownVisit\] = useState\(lastVisit\);/);
+  assert.match(index, /useEffect\(\(\) => \{ setShownVisit\(lastVisit\); \}, \[lastVisit\]\);/);
+  assert.match(index, /setShownVisit\(\(now\) => withOpened\(now \?\? lastVisit, \.\.\.entry\)\);/);
+  assert.equal((index.match(/seeOpened\(openedNeed\(row\)\);/g) || []).length, 1, 'a Needs you row opened');
+  assert.equal((index.match(/seeOpened\(openedThread\(th\)\);/g) || []).length, 1, 'a thread opened');
+  assert.equal((index.match(/seeOpened\(openedHistory\(row\)\);/g) || []).length, 1, 'a History row opened');
+  assert.equal((index.match(/visit=\{shownVisit\}/g) || []).length, 1, 'the look\'s list draws no marks');
 });
 
 test('the page and the server name the rows alike: the staging demo marks the rows it means to', () => {

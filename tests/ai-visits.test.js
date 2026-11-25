@@ -82,6 +82,34 @@ test('opening the list: keep, carry on after a reload, or measure from the visit
     { tabAAAAAAAA: now - 60000 });
 });
 
+test('a row opened: refused whole unless the token, band, identity and standing are ones a visit keeps', async () => {
+  // Nothing is written for a refused row: the pool would throw if it were.
+  const pool = { query: () => { throw new Error('a refused row writes nothing'); } };
+  for (const bad of [
+    { token: 'short', band: 'needs', identity: 'thread:1', standing: '' },
+    { token: 'tabAAAAAAAA', band: 'later', identity: 'thread:1', standing: '' },
+    { token: 'tabAAAAAAAA', band: 'needs', identity: 'a b', standing: '' },
+    { token: 'tabAAAAAAAA', band: 'busy', identity: 'thread:1', standing: 'next building' },
+    { token: 'tabAAAAAAAA', band: 'done', identity: 'thread:1', standing: 3 },
+  ]) {
+    assert.equal(await visits.noteOpened(pool, { userId: 1, ...bad }), null, `refused: ${JSON.stringify(bad)}`);
+  }
+  assert.equal(await visits.noteOpened(pool, {}), null, 'nothing named');
+  assert.equal(await visits.noteOpened(pool, { userId: 1, token: 'tabAAAAAAAA', band: 'done', identity: 'thread:1' }), null, 'no standing');
+
+  // The route beside the other two: the same limiter, same-origin only,
+  // never cached, a 401 signed out and a 400 for a row that is not one; on
+  // staging's ?demo=1 it records nothing.
+  const routes = read('src/routes/ai-work.js');
+  const opened = routes.slice(routes.indexOf("router.post('/api/ai/visit/opened',"), routes.indexOf("router.post('/api/apps/:slug/threads/read',"));
+  assert.match(opened, /appChatReadLimiter, sameOriginBrowserOnly/);
+  assert.match(opened, /Cache-Control', 'private, no-store'/);
+  assert.match(opened, /status\(401\)/);
+  assert.match(opened, /aiVisits\.noteOpened\(pool, \{/);
+  assert.match(opened, /if \(!noted\) return res\.status\(400\)/);
+  assert.match(opened, /IS_STAGING && req\.query\.demo === '1'\) return res\.json\(\{ ok: true \}\)/);
+});
+
 test('staging ?demo=1: a last visit 70 minutes ago that saw every demo row but three', () => {
   const now = Date.parse('2026-11-24T10:00:00Z');
   const work = demoWork();

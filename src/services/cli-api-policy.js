@@ -104,6 +104,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  // #7160: one request on its own, so get_request can read a CLOSED one —
+  // a number missing from the open board. View-checked like the board.
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number' },
   // A request's GitHub comments — the other half of its discussion, read by
   // prepare_work so a work order carries the requirements that landed in the
   // replies rather than only the opening line. Read-only, and the route
@@ -398,6 +401,9 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  // #7160: one request on its own, so get_request can read a CLOSED one —
+  // a number missing from the open board. View-checked like the board.
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
   { method: 'GET', pattern: '/api/apps/:slug/promoted' },
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
@@ -421,6 +427,9 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
 const WORKER_READ_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  // #7160: one request on its own, so get_request can read a CLOSED one —
+  // a number missing from the open board. View-checked like the board.
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
   { method: 'GET', pattern: '/api/apps/:slug/promoted' },
   { method: 'GET', pattern: '/api/sessions/:id' },

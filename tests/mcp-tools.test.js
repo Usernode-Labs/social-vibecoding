@@ -597,7 +597,9 @@ test('get_request separates "not on the board" from "could not read the board"',
     const missing = await open.handlers.get('get_request')({ slug: 'recipe-box', number: 9 });
     assert.equal(missing.isError, true);
     assert.equal(missing.structuredContent.code, 'no_access');
-    assert.match(missing.structuredContent.message, /not open on this app/);
+    // #7160: a number missing from the open board is read on its own route
+    // first (it may be closed); only a 404 there answers this.
+    assert.match(missing.structuredContent.message, /no request #9 on this app/i);
 
     // Bad input is refused here, not sent to the platform as a path segment.
     const bad = await open.handlers.get('get_request')({ slug: 'Recipe Box', number: 4 });
@@ -6527,4 +6529,214 @@ test('get_check_output answers no_failing_checks for a green or pending run', as
       assert.match(result.structuredContent.message, new RegExp(state), 'the state is named, not guessed');
     } finally { c.restore(); }
   }
+});
+
+// ── #7160 — the connector's next steps and merge, vote and closing state ──
+
+const deferredSession = (over = {}) => ({
+  id: 1, status: 'promoted', branch_name: 'b', yes_count: 0, no_count: 0,
+  qualified_yes_count: 0, qualified_no_count: 0, votes_required: 1,
+  ...over,
+});
+
+test('a deferred nextStep says what Homeroom does, never a button that does not exist', () => {
+  const checks = { state: 'pending', phase: 'deferred' };
+  // The sync under way pre-empts the deferred sentence in changeNextStep;
+  // deferredStep itself says what is happening.
+  assert.match(
+    tools.deferredStep(deferredSession(), { reasons: [] }, { syncing: true }, {}),
+    /resolving the conflict now/
+  );
+  const cases = [
+    ['fork head', { session: { integration_block_reasons: ['fork_head'] }, live: {}, kind: 'external', expect: /author's fork/ }],
+    ['unresolvable worker', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'worker_read', expect: /Merge main in and resolve the conflict in this turn/ }],
+    ['unresolvable external', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'external', expect: /A new revision that resolves it is needed/ }],
+    ['unresolvable mayor', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'agent_mayor', expect: /It needs a revision that resolves it/ }],
+    ['checks fail', { session: { integration_block_reasons: ['checks_failing'] }, live: {}, kind: 'agent_mayor', expect: /checks still fail/ }],
+    ['awaiting approval', { session: { integration_block_reasons: ['awaiting_approval'], yes_count: 5, approval_policy: 'invited' }, live: {}, kind: 'agent_mayor', expect: /0 of 1 yes votes.*5 more yes votes are advisory/ }],
+    ['default', { session: {}, live: {}, kind: 'agent_mayor', expect: /Homeroom resolves the conflict on its own/ }],
+  ];
+  for (const [label, c] of cases) {
+    const session = deferredSession(c.session);
+    const next = tools.changeNextStep(session, checks, c.live, c.kind);
+    assert.match(next, c.expect, label);
+    assert.doesNotMatch(next, /sync it with main from its page/i, `${label} names no such button`);
+  }
+  // A back-off says when Homeroom tries again, with the last try's words.
+  const backed = tools.changeNextStep(deferredSession({
+    proposal_lane: { backoff: { until: new Date(Date.now() + 3600_000).toISOString(), failures: 1 },
+      last_sync: { message: 'another turn already owns this session' } },
+  }), checks, {}, 'agent_mayor');
+  assert.match(backed, /another turn already owns this session/);
+  assert.match(backed, /tries again on its own after/);
+});
+
+test('approver votes are split from advisory ones beside the rule they answer', () => {
+  const invited = tools.shapeChange(deferredSession({
+    check_state: 'passing', yes_count: 5, qualified_yes_count: 0, qualified_no_count: 0, votes_required: 1,
+    approval_policy: 'invited',
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(invited.approval, {
+    approverYes: 0, approverNo: 0, required: 1, advisoryYes: 5, advisoryNo: 0,
+    whoMayApprove: 'approvers', groups: [],
+  });
+  assert.equal(invited.yesVotes, 5, 'the raw tally is unchanged');
+  assert.match(invited.nextStep, /It has 0 of 1 yes votes from the people who can approve/);
+  assert.match(invited.nextStep, /5 more yes votes are advisory/);
+
+  const rules = tools.shapeChange(deferredSession({
+    yes_count: 2, qualified_yes_count: 2, votes_required: 2, approval_mode: 'rules', approval_groups: ['maintainers', 'leads', 'maintainers'],
+  }), null, ORIGIN, 'agent_mayor');
+  assert.equal(rules.approval.whoMayApprove, 'groups');
+  assert.deepEqual(rules.approval.groups, ['maintainers', 'leads']);
+
+  const locked = tools.shapeChange(deferredSession({ app_locked: true }), null, ORIGIN, 'agent_mayor');
+  assert.equal(locked.approval.whoMayApprove, 'admins');
+
+  // Before the rule is worked out there is nothing to report.
+  const early = tools.shapeChange(deferredSession({ qualified_yes_count: undefined }), null, ORIGIN, 'agent_mayor');
+  assert.equal(early.approval, null);
+});
+
+test('mergeLane reports the lane reasons, the last sync, back-off and conflict files', () => {
+  const shaped = tools.shapeChange(deferredSession({
+    integration_block_reasons: ['awaiting_approval', 'unresolvable'],
+    integration_conflict_paths: ['src/a.js', 'src/b.js'],
+    integration_resolved_epoch: 3,
+    approval_epoch: 3,
+    proposal_lane: {
+      last_sync: { reason: 'conflict', outcome: 'unresolvable', message: 'could not merge', at: '2026-11-18T09:00:00.000Z' },
+      backoff: { until: '2026-11-18T10:00:00.000Z', failures: 2 },
+    },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(shaped.mergeLane.reasons, ['awaiting_approval', 'unresolvable']);
+  assert.deepEqual(shaped.mergeLane.conflictFiles, ['src/a.js', 'src/b.js']);
+  assert.equal(shaped.mergeLane.freeResolutionSpent, true);
+  assert.equal(shaped.mergeLane.lastSync.reason, 'conflict');
+  assert.equal(shaped.mergeLane.lastSync.outcome, 'unresolvable');
+  assert.match(shaped.mergeLane.lastSync.message, /could not merge/);
+  assert.equal(shaped.mergeLane.lastSync.at, '2026-11-18T09:00:00.000Z');
+  assert.deepEqual(shaped.mergeLane.backoff, { until: '2026-11-18T10:00:00.000Z', failures: 2 });
+
+  // Not spent when the resolution was for an older epoch; null when nothing
+  // is recorded at all.
+  const older = tools.shapeMergeLane({ integration_resolved_epoch: 2, approval_epoch: 3 });
+  assert.equal(older.freeResolutionSpent, false);
+  assert.equal(tools.shapeMergeLane({}).freeResolutionSpent, null);
+  // Conflict files fall back to the last sync's own list.
+  const fromSync = tools.shapeMergeLane({ proposal_lane: { last_sync: { conflict_files: ['x/y.js'] } } });
+  assert.deepEqual(fromSync.conflictFiles, ['x/y.js']);
+});
+
+test('a change says when and by whom its shots declaration was made', () => {
+  const shots = {
+    state: 'not_required', required: false, impact: 'none', rationale: null, claims: [],
+    baseSha: null, headSha: null, failureCode: null, failureReason: null, repairAvailable: false,
+    planHash: null, verifiedReason: null, overriddenBy: null, overriddenAt: null, overrideReason: null,
+  };
+  const turn = tools.shapeChange(deferredSession({
+    shots, shots_declared: { at: '2026-11-24T12:00:00.000Z', by: 'turn:homeroom_bot_follow_up' },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(turn.shots.declaration, {
+    at: '2026-11-24T12:00:00.000Z', by: { kind: 'turn', name: 'homeroom_bot_follow_up' },
+  });
+
+  const person = tools.shapeChange(deferredSession({
+    shots, shots_declared: { at: '2026-11-24T12:00:00.000Z', by: 'user:ada' },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(person.shots.declaration.by, { kind: 'person', name: 'ada' });
+
+  const homeroom = tools.shapeDeclaration({ at: 'x', by: 'homeroom:spec' });
+  assert.deepEqual(homeroom.by, { kind: 'homeroom', name: 'spec' });
+  assert.equal(tools.shapeDeclaration(null), null);
+});
+
+test('get_check_output finds a stored name that ends in a space, given it with or without', async () => {
+  for (const check of ['Board shows the snap toggle', 'Board shows the snap toggle ']) {
+    const c = checkOutputConnector([
+      { name: 'Board shows the snap toggle ', path: '/dev', status: 'fail', failureReason: 'not found' },
+    ]);
+    try {
+      const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check });
+      assert.equal(result.isError, undefined, `"${check}" finds the stored name`);
+      assert.match(result.structuredContent.check.name, /Board shows the snap toggle/);
+    } finally { c.restore(); }
+  }
+});
+
+test('get_request reads a closed request and says how it closed', async () => {
+  const results = {
+    merged: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: null, closed_via: null, state_reason: 'completed',
+        addressed_by: { state: 'merged', sessionId: 12, prNumber: 5 } },
+    },
+    vote: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: null, closed_via: 'vote', state_reason: 'not_planned', addressed_by: null },
+    },
+    hand: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: 'ada', closed_via: null, state_reason: 'not_planned', addressed_by: null },
+    },
+  };
+  for (const [label, body] of Object.entries(results)) {
+    const c = connector((method, pathname) => {
+      if (pathname === '/api/apps/recipe-box/github-issues') return { issues: [] };
+      if (pathname === '/api/apps/recipe-box/github-issues/9') return body;
+      throw new Error(`unexpected ${pathname}`);
+    });
+    try {
+      const res = await c.handlers.get('get_request')({ slug: 'recipe-box', number: 9, includeImages: false });
+      const out = res.structuredContent;
+      assert.equal(out.state, 'closed', label);
+      assert.equal(out.inProgress, null, `${label}: nobody is working on a closed request`);
+      assert.equal(out.closing.at, '2026-11-10T09:00:00.000Z', label);
+      if (label === 'merged') {
+        assert.equal(out.closing.how, 'merged_change');
+        assert.deepEqual(out.closing.change, { proposalId: 12, prNumber: 5 });
+      } else if (label === 'vote') {
+        assert.equal(out.closing.how, 'vote');
+        assert.equal(out.closing.change, null);
+      } else {
+        assert.equal(out.closing.how, 'by_hand');
+        assert.equal(out.closing.by, 'ada');
+      }
+    } finally { c.restore(); }
+  }
+});
+
+test('list_requests takes closed ones on request, and a cursor stays tied to its state', async () => {
+  const c = connector((method, pathname) => {
+    if (pathname === '/api/apps/recipe-box/github-issues?state=closed') {
+      return { issues: [
+        { number: 3, title: 'Closed one', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z' },
+      ], truncatedList: false };
+    }
+    if (pathname === '/api/apps/recipe-box/github-issues') {
+      return { issues: [{ number: 4, title: 'Open one', state: 'open' }], truncatedList: false };
+    }
+    throw new Error(`unexpected ${pathname}`);
+  });
+  try {
+    const closed = (await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'closed' })).structuredContent;
+    assert.equal(closed.returned, 1);
+    assert.equal(closed.totalOpen, null);
+    assert.equal(closed.totalClosed, 1);
+    assert.equal(closed.requests[0].closedAt, '2026-11-10T09:00:00.000Z');
+
+    const all = (await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'all' })).structuredContent;
+    assert.equal(all.returned, 2);
+    assert.equal(all.totalOpen, 1);
+    assert.equal(all.totalClosed, 1);
+    assert.equal(all.requests[1].state, 'closed');
+
+    const open = (await c.handlers.get('list_requests')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(open.totalClosed, null, 'the default stays open only');
+
+    const cursor = tools.encodeRequestCursor(0, tools.requestPageKey('recipe-box', 'titles', '', 'open'));
+    const mismatch = await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'closed', cursor });
+    assert.equal(mismatch.isError, true);
+    assert.equal(mismatch.structuredContent.code, 'invalid_request');
+  } finally { c.restore(); }
 });

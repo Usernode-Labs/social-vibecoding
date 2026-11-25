@@ -5,8 +5,9 @@
  *
  *   Shown     each time the tab is shown, the page opens a visit
  *             (POST /api/ai/visit) and draws its marks against the last one
- *             for as long as it is up. Acting on a row or opening one
- *             changes nothing about the others.
+ *             for as long as it is up. Opening a row says so
+ *             (noteOpened, ./index.tsx), and its own mark goes at once.
+ *             Acting on a row changes nothing about the others.
  *   Up        once its lists are read, and every two minutes while the page
  *             is in front, it says what they hold (POST /api/ai/visit/seen),
  *             so a phone that closes the page without a word still leaves a
@@ -39,6 +40,24 @@ function writeToken(token: string | null): void {
     if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
     else window.sessionStorage.removeItem(TOKEN_KEY);
   } catch { /* storage may be off: a reload is then the next visit */ }
+}
+
+/**
+ * A row was opened: the last visit's record learns it, so it stops counting
+ * as new and a reload in the same visit agrees (POST /api/ai/visit/opened).
+ * The page patches its own copy at once (./visit.ts withOpened); this is the
+ * server's. Nothing without a visit's token, and never awaited.
+ */
+export function noteOpened(band: keyof VisitSeen, identity: string, standing: string, demo = ''): void {
+  if (typeof window === 'undefined') return;
+  const token = readToken();
+  if (!token) return;
+  void fetch(`/api/ai/visit/opened${demo}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ visit: token, band, identity, standing }),
+  }).catch(() => { /* the next open of the visit reads what the server has */ });
 }
 
 /**

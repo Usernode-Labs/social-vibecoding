@@ -109,7 +109,8 @@ const BOOT_ORDER = [
   'seedStagingBotConfigs', 'seedStagingUnreadableReply', 'seedStagingPlatformEnv',
   'seedStagingTopochain', 'seedStagingInviteChallengeStatuses', 'seedStagingFirstChallenges',
   'seedStagingCountedCredit', 'seedStagingChallengeItems', 'seedStagingProfileCustomization', 'seedStagingProfileProjects',
-  'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingPinnedCommunities', 'seedStagingFeedback',
+  'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingPinnedCommunities',
+  'seedStagingEmojiThreadRequest', 'seedStagingFeedback',
 ];
 
 test('the extracted list is exactly the boot order main ran, seed for seed', () => {

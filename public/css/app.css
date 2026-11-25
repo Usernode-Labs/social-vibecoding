@@ -33578,7 +33578,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [da
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section] { max-width: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content .ui-secblurb { margin: 0 0 8px; line-height: 1.45; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content :is(.ui-secblurb, .ui-note) + .ui-cap { margin-top: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
 /* A part's own blocks were ruled off from one another (`mt-6 pt-6
    border-t`): the kit stacks them, no hairline. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-6 { margin-top: 24px; padding-top: 0; border-top: 0; }
@@ -35240,7 +35240,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
   background: var(--thread-card-solid, var(--dc-sheet-solid));
   box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line));
 }
-.dev-thread-bar-tile { flex: none; width: 48px; height: 48px; border-radius: 14px; font-size: 22px; overflow: hidden; }
+.dev-thread-bar-tile { flex: none; width: 48px; height: 48px; border-radius: 14px; font-size: 22px; overflow: hidden; display: grid; place-items: center; line-height: 1; }
 /* The small line, then the title: one grid, so the nodes keep their order
    (the project and topic after the title, which the checks select on) and
    the kicker and its status pill are cells of the line, not a row. */
@@ -36445,7 +36445,12 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-card > :first-child:not(.min-w-0) { display: none; }
 .dev-thread-card .messages-message-head { display: none; }
 .dev-thread-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text-secondary); overflow-wrap: anywhere; }
-.dev-thread-kicker-tile { flex: none; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; overflow: hidden; }
+.dev-thread-kicker-tile { flex: none; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; overflow: hidden; display: grid; place-items: center; line-height: 1; }
+/* #7170: the project's emoji or letter sits in the middle of the tile at the
+   tile's own size, as the Workshop's other tiles do. The emoji arrives as a
+   30px span; inherit makes it the tile's font size. A picture still fills the
+   tile, and .app-icon-wait is positioned, so it is not a grid item. */
+.app-icon-tile:is(.dev-thread-bar-tile, .dev-thread-kicker-tile) > span:not(.app-icon-wait) { font-size: inherit; line-height: 1; }
 /* The sheet's header keeps the category and ⋯; the card says the rest. */
 .dev-request:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-kicker, .messages-thread-name, [data-request-status], [data-change-status]) { display: none; }
 .dev-thread-card .dev-request-title { font-size: 22px; line-height: 28px; letter-spacing: -0.01em; text-wrap: balance; }

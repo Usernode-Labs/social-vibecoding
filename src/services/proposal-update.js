@@ -742,7 +742,12 @@ async function applyShotsRevision({
       pool,
       Number(session.id),
       intent,
-      shotsState.validSha(headSha) ? { headSha, pin, from } : {}
+      {
+        ...(shotsState.validSha(headSha) ? { headSha, pin, from } : {}),
+        // #7160: the revision's submitter declared it. Only a proposal's
+        // author can advance its head, so the row's owner is that person.
+        by: session.user_id ? `user:${session.user_id}` : null,
+      }
     );
     session.shots_state = result.state;
     session.shots_detail = result.detail;

@@ -2477,6 +2477,20 @@ function issueRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
+      // #7160: the closed board, a plain list of closed requests (newest
+      // closed first). None of the open board's composition — bounties, bot
+      // work, standing — applies to a request that is closed.
+      if (String(req.query.state || '') === 'closed') {
+        if (!requestsOn() || !parsed) {
+          if (!IS_STAGING) return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
+          return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+        }
+        const closed = await github.fetchClosedIssues(parsed.owner, parsed.repo);
+        if (IS_STAGING && (!Array.isArray(closed.issues) || closed.issues.length === 0)) {
+          return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+        }
+        return res.json(closed);
+      }
       const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
       let result;
       if (!requestsOn() || !parsed) {
@@ -3190,6 +3204,26 @@ function issueRoutes(config) {
       // written in the background when what it draws on has moved, so this
       // read never waits on it). A staging mock has a made-up one, so the
       // card's summary can be seen on a preview.
+      // #7160: for a CLOSED request the connector needs who closed it and
+      // how the store recorded it. `closed_via` above carries the vote/admin
+      // case; these two carry a person's own close.
+      let closedByUsername = null;
+      let stateReason = issue.state_reason || null;
+      if (issue.state === 'closed') {
+        try {
+          const { rows: closedRows } = await pool.query(
+            `SELECT r.state_reason, u.username
+               FROM requests r LEFT JOIN users u ON u.id = r.closed_by
+              WHERE r.app_id = $1 AND r.number = $2`,
+            [app.id, number]
+          );
+          if (closedRows[0]) {
+            closedByUsername = closedRows[0].username || null;
+            stateReason = closedRows[0].state_reason || stateReason;
+          }
+        } catch { /* the page reads without it */ }
+      }
+
       const askerName = (creatorRows[0] && creatorRows[0].username)
         || creatorFromSourceLine(issue.body)
         || ghLogin;
@@ -3216,6 +3250,8 @@ function issueRoutes(config) {
           myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,
           closed_via: closedVia,
+          closed_by_username: closedByUsername,
+          state_reason: stateReason,
           chatCount: (chat && chat.cnt) || 0,
           lastMessageAt: (chat && chat.last_at) || null,
           title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
