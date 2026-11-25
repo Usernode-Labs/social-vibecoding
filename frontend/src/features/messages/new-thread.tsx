@@ -103,7 +103,8 @@ export const NEW_THREAD_STARTS = [
  * live. Homeroom bot opens a live draft of it beside the chat
  * (homeroom-bot-mayor.js open_app_preview, services/live-drafts.js) and
  * changes it as they talk. Its kind is any: the thread is no particular kind
- * of change.
+ * of change. It writes "I want to make changes to a live preview of" and the
+ * project's name, which the bot reads as the request for that draft.
  */
 export const LIVE_START = {
   key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
@@ -328,7 +329,10 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     platformSlug: platformSlug(),
     isAdmin: typeof window !== 'undefined' && !!(window as any).App?.user?.isAdmin,
   }) ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
-  const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
+  // The name the live start says: the project's own, or its address name
+  // until the communities you are in are read.
+  const appName = (project && scope.info[project]?.name) || project || '';
+  const starts = offered.map((start) => ({ ...start, text: t(start.text, { app: appName }) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
   // What a door carried for the box (a project's Workshop): its words, and
@@ -615,7 +619,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
                 onClick={() => begin(start)}
               >
                 <start.Icon aria-hidden="true" />
-                <span><RichMessage id={start.label} components={[<span className="messages-start-more" />]} /></span>
+                <span><RichMessage id={start.label} values={{ app: appName }} components={[<span className="messages-start-more" />]} /></span>
               </button>
             ))}
           </div>
