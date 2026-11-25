@@ -17,6 +17,8 @@ const ORPHANS = [
   // A feedback screenshot or clip whose modal was cancelled (#683, #3940).
   ['issueScreenshots', 'issue_screenshots', 'issue_number'],
   ['issueVideos', 'issue_videos', 'issue_number'],
+  // #7136: a file attached for Homeroom bot that no request came to carry.
+  ['issueFiles', 'issue_files', 'issue_number'],
   // A group-chat upload never sent (#694).
   ['groupChatAttachments', 'chat_message_attachments', 'message_id'],
   // A conversation upload never sent.

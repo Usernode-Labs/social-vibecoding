@@ -23634,6 +23634,9 @@ body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden))
 .request-draft-panel[data-draft-panel="doneWhen"] li::before { inset-inline-start: 2px; top: 4px; width: 13px; height: 13px; background: none; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
 .request-draft-panel li .messages-markdown.gc-msg-content { font-size: 14px; line-height: 20px; }
 .request-draft-panel li small { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* #7136: one line under a panel saying what happens to its list (the files a
+   draft carries), at the chat's small muted size. */
+.request-draft-panel .request-draft-note { margin: 6px 2px 0; font-size: 12px; line-height: 17px; color: var(--text-muted); }
 .request-draft-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-block: 12px; padding-inline: 20px 14px; border-top: 1px solid var(--app-sheet-line); }
 .request-draft-goes { flex: 1 1 220px; min-width: 0; margin: 0; font-size: 13px; line-height: 19px; color: var(--text-muted); }
 .request-draft-goes b { font-weight: 650; color: var(--text-primary); }

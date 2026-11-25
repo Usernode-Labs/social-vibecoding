@@ -88,6 +88,8 @@ const RULES = Object.freeze({
     '- A picture the change needs (a hero image, an illustration): `usernode-image "<what it shows>" --out',
     '  <path>.png` makes one, paid from this build\'s allowance; `usernode-image --from <link> --out <path>`',
     '  saves one a request links.',
+    '- A file the request carries (usernode-issues <number> lists its files): `usernode-file --from <id> --out',
+    '  <path>` saves it; what to do with it, such as unzipping it, is yours to decide.',
   ].join('\n'),
   bugFirst: [
     '- If the request reports a bug, find where in the code it happens before changing anything. If you cannot',
