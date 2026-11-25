@@ -10154,11 +10154,9 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs .platform-tab:first-child,
   html:not([data-skin]) #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
   html:not([data-skin]) #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
-  /* ONE PILL, NOT TWO (phone review #106, 23 Nov 2026). The lit tab is its own sun fill here, and the sliding marker
-     behind it was drawn as well: a wider 16% white pill that showed as a pale ring round the yellow. The tab's fill
-     is the one drawn, as the side strip and the sidebar already do; the marker is still measured (tab-bar.tsx), so
-     its `data-marker-at` is set as before. */
-  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { display: none; }
+  /* ONE PILL, NOT TWO (phone review #106, 23 Nov 2026): the lit tab was its own sun fill and the sliding marker behind
+     it was drawn as well, a pale ring round the yellow, so #7041 hid the marker, and the slide went with it. The one
+     pill is the marker now, and it slides again: ONE LOOK · SHARED PARTS, at the end of this file. */
 }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-tabs {
@@ -10550,25 +10548,42 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
 }
 /* END OF THE LEFT MENU AND THE TOP BAR. */
-/* ── BUTTONS (20 Nov 2026): the "Sticker" drawing of the element levels
-   sheet, option A, for the standard look and the brand kit's drawing of it
-   (html:not([data-skin])). A button is a pill with a thin dark outline and
-   a hard edge under it; a press pushes it down onto the edge. Its label is
-   in the page's own typeface (phone review S2, 23 Nov 2026: the serif was
-   the only serif on every page it stood on, and New community had already
-   been taken off it on request; the face is set once here, so every
-   button follows). In dark the edge is darker than the ground (S8): a pale
-   one read as a second outline out of register.
-     Level 1, the main action: yellow.        (.bg-violet-600, the kit's .wip-cta)
-     Level 2, the secondary action: white.    (the grey, white and outlined buttons)
-     Destructive: white, in red.              (the red buttons)
-     Level 4, a button written as a link: the ink, underlined in blue.
-     Yes and No on a vote: green and salmon, of equal weight.
+/* ── BUTTONS (20 Nov 2026): the element levels, redrawn on 25 Nov 2026 ("one
+   look"), for the standard look and the brand kit's drawing of it
+   (html:not([data-skin])). Its label is in the page's own typeface (phone
+   review S2, 23 Nov 2026: the face is set once here, so every button
+   follows).
+   THE STICKER EDGE IS THE MAIN ACTION'S ALONE (design review, 25 Nov 2026).
+   It was every button's: a thin dark outline and a hard edge under it, which
+   a press pushed the button down onto. On a page of five buttons that is
+   five things shouting, and the one that mattered stood out no more than
+   Cancel. Now only the page's main action keeps it; everything else is flat:
+     Level 1, the main action: yellow, with the sticker edge (outline and a
+       hard 2px edge), pressed down onto it.   (.bg-violet-600, the kit's .wip-cta)
+     Level 2, the secondary action: FLAT. The sky tint, its words in the sky's
+       ink, no outline, no edge; a press shrinks it a little (97%) and darkens
+       it a touch.                             (the grey, white and outlined buttons)
+     Destructive: flat too, the red tint with red words.   (the red buttons)
+     Level 4, a button written as a link: the ink, underlined in blue. Unchanged.
+     Disabled: at 45%, and never an edge.
+     Yes and No on a vote: green and salmon, of equal weight, with the edge: on
+       the vote screen they are the main action, and so is Next once you have
+       answered; Skip and Previous are flat secondaries, and so is the before
+       and after switch on a change's picture. Resume, the parked app strip's
+       one action, keeps its small edge.
+   In dark the edge is darker than the ground (S8): a pale one read as a
+   second outline out of register. The flat levels read their colours from
+   the shared --one-* values (ONE LOOK · SHARED PARTS, at the end of this
+   file), which carry their own dark ones.
    A button is known by the classes the shell already writes on it (the same
-   way the frame's looks wore them), so no component changes. The rule that
-   gives every level its shape reads them through :where(), so a level's own
-   rule always outranks it. Rows, choices,
-   the menu and the admin console are not these buttons.
+   way the frame's looks wore them), so no component changes; new markup
+   draws with the .one-btn recipes instead, and a control that wears one of
+   the shared recipes (.one-btn, .one-chip, .one-fab, .one-disc, .one-link,
+   .one-tag) is left out of every rule here, whatever other classes it keeps,
+   so the recipe draws it. The rule that gives every level
+   its shape reads them through :where(), so a level's own rule always
+   outranks it. Rows, choices, the menu and the admin console are not these
+   buttons.
    EVERY VALUE IS A TOKEN, --wip-btn-*, declared once here in light and dark. */
 html:not([data-skin]) {
   --wip-btn-font: var(--wip-font);
@@ -10580,7 +10595,6 @@ html:not([data-skin]) {
   --wip-btn-line: #121a0e;                              /* the outline, and the edge under */
   --wip-btn-edge: 2px 2px 0 0 var(--wip-btn-line);
   --wip-btn-edge-small: 1.5px 1.5px 0 0 var(--wip-btn-line);
-  --wip-btn-bad-edge: 2px 2px 0 0 var(--wip-btn-bad-line);
   --wip-btn-press: translate(2px, 2px);
   --wip-btn-off: 0.45;
   --wip-btn-focus: #3090e1;
@@ -10588,14 +10602,22 @@ html:not([data-skin]) {
   --wip-btn-1-ink: #121a0e;
   --wip-btn-1-line: #121a0e;
   --wip-btn-1-hover: #fff59f;
-  --wip-btn-2-bg: #ffffff;
-  --wip-btn-2-ink: #121a0e;
-  --wip-btn-2-line: #121a0e;
-  --wip-btn-2-hover: #fcfab3;
-  --wip-btn-bad-bg: #ffffff;
-  --wip-btn-bad-ink: #a3281a;
-  --wip-btn-bad-line: #a3281a;
-  --wip-btn-bad-hover: #fde9e5;
+  --wip-btn-2-bg: var(--one-sky-tint);                  /* flat: the sky tint, the sky's ink, no outline, no edge */
+  --wip-btn-2-ink: var(--one-sky-ink);
+  --wip-btn-2-hover: #dde7f7;
+  --wip-btn-bad-bg: var(--one-red-tint);                /* flat: the red tint, red words */
+  --wip-btn-bad-ink: var(--one-red);
+  --wip-btn-bad-hover: #f8dcd6;
+  --wip-btn-flat-press: scale(0.97);                    /* a flat button pressed: a little smaller, a touch darker */
+  --wip-btn-disc-bg: var(--one-surface);                /* an icon alone: the flat disc, white with one hairline */
+  --wip-btn-disc-line: var(--one-field-line);
+  --wip-btn-disc-ink: var(--one-ink);
+  --wip-btn-disc-hover: #f4f4ef;
+  --wip-btn-flat-dim: brightness(0.95);
+  --wip-btn-2-solid: #e8effa;                           /* the sky tint where it stands on a picture */
+  --wip-btn-sticker-bg: #ffffff;                        /* the vote pair's white track, which keeps the edge */
+  --wip-btn-sticker-ink: #121a0e;
+  --wip-btn-sticker-line: #121a0e;
   --wip-btn-link-ink: #121a0e;
   --wip-btn-link-line: #3090e1;
   --wip-btn-link-off: #a1a1aa;                           /* a text action that cannot be pressed */
@@ -10607,20 +10629,19 @@ html:not([data-skin]).dark {
   --wip-btn-shade: rgb(0 0 0 / 0.7);
   --wip-btn-edge: 2px 2px 0 0 var(--wip-btn-shade);
   --wip-btn-edge-small: 1.5px 1.5px 0 0 var(--wip-btn-shade);
-  --wip-btn-bad-edge: 2px 2px 0 0 var(--wip-btn-shade);
   --wip-btn-1-line: #ffee6f;
-  --wip-btn-2-bg: #171715;
-  --wip-btn-2-ink: #fffeea;
-  --wip-btn-2-line: #fffeea;
-  --wip-btn-2-hover: #2a2812;
-  --wip-btn-bad-bg: #171715;
-  --wip-btn-bad-ink: #ff9c8a;
-  --wip-btn-bad-line: #ff9c8a;
-  --wip-btn-bad-hover: #2b1512;
+  --wip-btn-2-hover: rgb(122 165 255 / 0.26);
+  --wip-btn-bad-hover: rgb(255 156 138 / 0.24);
+  --wip-btn-flat-dim: brightness(1.15);
+  --wip-btn-disc-hover: #22221f;
+  --wip-btn-2-solid: #29303f;
+  --wip-btn-sticker-bg: #171715;
+  --wip-btn-sticker-ink: #fffeea;
+  --wip-btn-sticker-line: #fffeea;
   --wip-btn-link-ink: #fffeea;
   --wip-btn-link-off: #71717a;
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)) {
   border: 1px solid var(--wip-btn-line);
   border-radius: var(--wip-btn-radius);
   box-shadow: var(--wip-btn-edge);
@@ -10629,45 +10650,66 @@ html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-
   font-weight: var(--wip-btn-weight);
   letter-spacing: var(--wip-btn-track);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):is(.text-xs, .py-1, .py-0\.5, .py-1\.5) {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):is(.text-xs, .py-1, .py-0\.5, .py-1\.5) {
   box-shadow: var(--wip-btn-edge-small);
   font-size: var(--wip-btn-size-small);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):active:not(:disabled, [aria-disabled="true"]) {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):active:not(:disabled, [aria-disabled="true"]) {
   box-shadow: none;
   transform: var(--wip-btn-press);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):focus-visible {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):focus-visible {
   outline: 2px solid var(--wip-btn-focus);
   outline-offset: 2px;
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):is(:disabled, [aria-disabled="true"]) {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):is(:disabled, [aria-disabled="true"]) {
   box-shadow: none;
   cursor: not-allowed;
   opacity: var(--wip-btn-off);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)) {
   border-color: var(--wip-btn-1-line);
   background: var(--wip-btn-1-bg);
   color: var(--wip-btn-1-ink);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-1-hover); filter: none; }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
-  border-color: var(--wip-btn-2-line);
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-1-hover); filter: none; }
+/* Level 2 is flat. A secondary in red words is the destructive level's (below), so it is left out here: this
+   rule's class pair outranks that one's. */
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .text-red-500, .text-red-600, .text-red-700)) {
+  border-color: transparent;
   background: var(--wip-btn-2-bg);
+  box-shadow: none;
   color: var(--wip-btn-2-ink);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-2-hover); }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
-  border-color: var(--wip-btn-bad-line);
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .text-red-500, .text-red-600, .text-red-700)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-2-hover); }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .text-red-500, .text-red-600, .text-red-700)):active:not(:disabled, [aria-disabled="true"]) {
+  box-shadow: none;
+  filter: var(--wip-btn-flat-dim);
+  transform: var(--wip-btn-flat-press);
+}
+/* An icon alone (a sheet's close, a square of the shell's icon sizes) is the flat disc rather than a tinted pill:
+   white, one hairline, the ink. */
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):is(.h-7.w-7, .h-8.w-8, .h-9.w-9, .h-10.w-10, .h-11.w-11, .h-12.w-12):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .text-red-500, .text-red-600, .text-red-700)) {
+  background: var(--wip-btn-disc-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-btn-disc-line);
+  color: var(--wip-btn-disc-ink);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):is(.h-7.w-7, .h-8.w-8, .h-9.w-9, .h-10.w-10, .h-11.w-11, .h-12.w-12):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .text-red-500, .text-red-600, .text-red-700)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-disc-hover); }
+/* Destructive is flat too: the red tint, red words. */
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)) {
+  border-color: transparent;
   background: var(--wip-btn-bad-bg);
-  box-shadow: var(--wip-btn-bad-edge);
+  box-shadow: none;
   color: var(--wip-btn-bad-ink);
 }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-bad-hover); }
-html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):active:not(:disabled, [aria-disabled="true"]) { box-shadow: none; }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-bad-hover); }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag)):active:not(:disabled, [aria-disabled="true"]) {
+  box-shadow: none;
+  filter: var(--wip-btn-flat-dim);
+  transform: var(--wip-btn-flat-press);
+}
 /* Level 4: an action written as text. Underlined, so it does not rest on colour alone. */
-html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]) {
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]) {
   color: var(--wip-btn-link-ink);
   text-decoration: underline;
   text-decoration-color: var(--wip-btn-link-line);
@@ -10676,9 +10718,9 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
 }
 /* Under a pointer only: a tapped link kept the dark underline on a phone, so
    "Add other apps" stood dark beside "Done" in blue (phone review, 23 Nov 2026). */
-@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]):hover { text-decoration-color: currentColor; } }
+@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]):hover { text-decoration-color: currentColor; } }
 /* Disabled: muted, no underline, so it does not look pressable (request 7131). */
-html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):is(:disabled, [aria-disabled="true"]) {
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .one-btn, .one-chip, .one-fab, .one-disc, .one-link, .one-tag, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):is(:disabled, [aria-disabled="true"]) {
   color: var(--wip-btn-link-off);
   text-decoration: none;
   cursor: default;
@@ -10718,17 +10760,18 @@ html:not([data-skin]) .gc-vote-btn.gc-vote-btn-yes { background: var(--wip-btn-y
 html:not([data-skin]) .gc-vote-btn.gc-vote-btn-no { background: var(--wip-btn-no-bg); }
 html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no):active:not(:disabled) { box-shadow: none; transform: var(--wip-btn-press); }
 /* THE VOTE SCREEN (Needs you): Yes and No stay one joined control, with its
-   thumb that slides to the answer, drawn as a level 2 pill; the thumb is
-   the answer's own colour (green for Yes, salmon for No), so the pair keeps
-   its equal weight until one is chosen. Skip is a level 2 button, and Next,
-   which it becomes once you have answered, is the level 1. */
+   thumb that slides to the answer: the screen's main action, so it keeps the
+   sticker edge on its white track; the thumb is the answer's own colour
+   (green for Yes, salmon for No), so the pair keeps its equal weight until
+   one is chosen. Skip and Previous are flat secondaries; Next, which Skip
+   becomes once you have answered, is the level 1, with its edge. */
 html:not([data-skin]) .rf-pair {
-  border: 1px solid var(--wip-btn-2-line);
-  background: var(--wip-btn-2-bg);
+  border: 1px solid var(--wip-btn-sticker-line);
+  background: var(--wip-btn-sticker-bg);
   box-shadow: var(--wip-btn-edge);
 }
 html:not([data-skin]) .rf-pair-btn {
-  color: var(--wip-btn-2-ink);
+  color: var(--wip-btn-sticker-ink);
   font-family: var(--wip-btn-font);
   font-weight: var(--wip-btn-weight);
   letter-spacing: var(--wip-btn-track);
@@ -10736,20 +10779,15 @@ html:not([data-skin]) .rf-pair-btn {
 html:not([data-skin]) .rf-pair-btn[aria-checked="true"] { color: var(--wip-btn-vote-ink); }
 html:not([data-skin]) .rf-pair[data-rf-voted="yes"] .rf-pair-thumb { background: var(--wip-btn-yes-bg); }
 html:not([data-skin]) .rf-pair[data-rf-voted="no"] .rf-pair-thumb { background: var(--wip-btn-no-bg); }
-html:not([data-skin]) .rf-pair-div { background: var(--wip-btn-2-ink); }
+html:not([data-skin]) .rf-pair-div { background: var(--wip-btn-sticker-ink); }
 html:not([data-skin]) .rf-pair-btn:focus-visible,
 html:not([data-skin]) .rf-morph:focus-visible,
 html:not([data-skin]) .rf-prev:focus-visible { outline-color: var(--wip-btn-focus); }
-html:not([data-skin]) .rf-morph {
-  border: 1px solid var(--wip-btn-2-line);
-  background: var(--wip-btn-2-bg);
-  box-shadow: var(--wip-btn-edge);
-  color: var(--wip-btn-2-ink);
-}
+html:not([data-skin]) .rf-morph,
 html:not([data-skin]) .rf-prev {
-  border: 1px solid var(--wip-btn-2-line);
+  border: 1px solid transparent;
   background: var(--wip-btn-2-bg);
-  box-shadow: var(--wip-btn-edge);
+  box-shadow: none;
   color: var(--wip-btn-2-ink);
 }
 html:not([data-skin]) .rf-morph .rf-morph-in {
@@ -10760,10 +10798,12 @@ html:not([data-skin]) .rf-morph .rf-morph-in {
 html:not([data-skin]) .rf-morph[data-rf-morph="next"] {
   border-color: var(--wip-btn-1-line);
   background: var(--wip-btn-1-bg);
+  box-shadow: var(--wip-btn-edge);
   color: var(--wip-btn-1-ink);
 }
-html:not([data-skin]) .rf-morph:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
-html:not([data-skin]) .rf-prev:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
+html:not([data-skin]) .rf-morph:not([data-rf-morph="next"]):active,
+html:not([data-skin]) .rf-prev:active { box-shadow: none; scale: 1; filter: var(--wip-btn-flat-dim); transform: var(--wip-btn-flat-press); }
+html:not([data-skin]) .rf-morph[data-rf-morph="next"]:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
 /* RESUME, in the strip that offers to go back into an app: the strip's one action, a small level 1 pill. */
 html:not([data-skin]) .platform-parked-pill {
   border: 1px solid var(--wip-btn-1-line);
@@ -10775,12 +10815,13 @@ html:not([data-skin]) .platform-parked-pill {
   font-weight: var(--wip-btn-weight);
   letter-spacing: var(--wip-btn-track);
 }
-/* The before and after switch on a change's picture (20 Nov 2026): the Sticker's small control, white with the outline
-   and the small edge, its knob the main action's yellow on either side. */
+/* The before and after switch on a change's picture (20 Nov 2026; flat, 25 Nov 2026): a secondary control, so flat,
+   the sky tint with no outline and no edge, its knob the main action's yellow on either side. It stands on the
+   picture, so its tint is the solid one. */
 html:not([data-skin]) .rf-switch,
-html:not([data-skin]) .rf-switch[data-view="before"] { border: 1px solid var(--wip-btn-2-line); background: var(--wip-btn-2-bg); color: var(--wip-btn-2-ink); box-shadow: var(--wip-btn-edge-small); }
+html:not([data-skin]) .rf-switch[data-view="before"] { border: 1px solid transparent; background: var(--wip-btn-2-solid); color: var(--wip-btn-2-ink); box-shadow: none; }
 html:not([data-skin]) .rf-switch .rf-knob,
-html:not([data-skin]) .rf-switch[data-view="before"] .rf-knob { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); box-shadow: inset 0 0 0 1px var(--wip-btn-1-line); }
+html:not([data-skin]) .rf-switch[data-view="before"] .rf-knob { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); box-shadow: none; }
 /* A finger's size (20 Nov 2026): the switch is 44px tall and 80 wide, where it was 40 by 72, with its knob and its two
    marks moved to suit. */
 html:not([data-skin]) .rf-switch { width: 80px; height: 44px; margin-inline-start: -40px; }
@@ -39048,21 +39089,31 @@ html:not([data-skin]) {
   --one-ink-2: #5b5e55;            /* a row's second line, a time */
   --one-ink-3: #8d9087;            /* a placeholder, a chevron */
   --one-sun: #ffee6f;              /* the main action, and where you are */
+  --one-sun-hover: #fff59f;        /* the main action under a pointer */
   --one-sun-pale: #fff4b3;         /* a lit row inside a page (Settings' open section) */
   --one-sky: #3c7bd8;              /* the bars */
   --one-sky-ink: #1f5fbf;          /* a secondary action's words */
   --one-sky-tint: #e8effa;         /* a secondary action's fill, a tag's fill */
+  --one-sky-tint-hover: #dde7f7;   /* a secondary action under a pointer */
   --one-red: #b4321e;
   --one-red-tint: #fbe7e3;
+  --one-red-tint-hover: #f8dcd6;
+  --one-link-line: #3090e1;        /* the underline of a text action, and the keyboard's focus ring */
   --one-surface: #ffffff;          /* a card */
   --one-hair: rgb(18 26 14 / 0.08);   /* a card's one hairline */
   --one-line: rgb(18 26 14 / 0.10);   /* a separator between rows */
   --one-field-line: rgb(18 26 14 / 0.14); /* a search field's or a chip's hairline */
   --one-quiet: rgb(18 26 14 / 0.06);  /* a quiet fill: a segmented track, a quiet tag */
-  --one-edge-line: var(--wip-btn-line, #121a0e);
-  --one-edge: inset 0 0 0 1px var(--one-edge-line), 2px 2px 0 0 var(--one-edge-line);       /* the sticker edge */
-  --one-edge-sm: inset 0 0 0 1px var(--one-edge-line), 1.5px 1.5px 0 0 var(--one-edge-line);
+  --one-edge-line: var(--wip-btn-line, #121a0e);   /* a sticker's outline */
+  --one-edge-shade: var(--one-edge-line);          /* the hard edge under it: the outline's ink in light, darker than the ground in dark */
+  --one-edge-sun-line: #121a0e;                    /* the outline of a sticker filled with the sun */
+  --one-edge: inset 0 0 0 1px var(--one-edge-line), 2px 2px 0 0 var(--one-edge-shade);       /* the sticker edge */
+  --one-edge-sm: inset 0 0 0 1px var(--one-edge-line), 1.5px 1.5px 0 0 var(--one-edge-shade);
+  --one-edge-sun: inset 0 0 0 1px var(--one-edge-sun-line), 2px 2px 0 0 var(--one-edge-shade); /* the main action's */
+  --one-edge-sun-sm: inset 0 0 0 1px var(--one-edge-sun-line), 1.5px 1.5px 0 0 var(--one-edge-shade);
   --one-press: translate(2px, 2px);  /* a sticker pressed onto its edge */
+  --one-flat-press: scale(0.97);     /* a flat button pressed: a little smaller, a touch darker */
+  --one-flat-dim: brightness(0.95);
   --one-tag-bg: var(--one-sky-tint);
   --one-tag-ink: var(--one-sky-ink);
   --one-tag-strong-bg: #121a0e;      /* a count that asks for you ("1 to vote") */
@@ -39080,13 +39131,24 @@ html:not([data-skin]) {
   --one-tile-g-bg: #e1f1dd; --one-tile-g-ink: #2f7a3b;   /* a discussion, a step done */
   --one-points: #9a3412;             /* a challenge's points */
   --one-progress: #cfe0fa;           /* a challenge's progress fill */
-  --one-row-title: 600 16px/21px var(--wip-font, inherit);
-  --one-row-sub: 400 14px/19px var(--wip-font, inherit);
+  --one-back-bg: #ffffff;            /* the back disc on the phone's blue bar */
+  --one-back-ink: #121a0e;
+  --one-row-title: 600 1rem/1.3125rem var(--wip-font, inherit);      /* rows: 16 over 14 on a phone (rem, so Text size scales them) */
+  --one-row-sub: 400 0.875rem/1.1875rem var(--wip-font, inherit);
+  /* A part's size on a phone; the desktop's density below. */
+  --one-btn-h: 44px; --one-btn-pad: 20px; --one-btn-size: 16px;
+  --one-btn-sm-h: 30px; --one-btn-sm-pad: 12px; --one-btn-sm-size: 14px;
+  --one-chip-h: 34px; --one-chip-size: 14px;
+  --one-fab: 40px;
 }
 @media (min-width: 768px) {
   html:not([data-skin]) {
-    --one-row-title: 600 15px/20px var(--wip-font, inherit);
-    --one-row-sub: 400 13px/18px var(--wip-font, inherit);
+    --one-row-title: 600 0.9375rem/1.25rem var(--wip-font, inherit); /* 15 over 13 from 768px */
+    --one-row-sub: 400 0.8125rem/1.125rem var(--wip-font, inherit);
+    --one-btn-h: 36px; --one-btn-pad: 16px; --one-btn-size: 15px;
+    --one-btn-sm-h: 28px; --one-btn-sm-pad: 11px; --one-btn-sm-size: 13px;
+    --one-chip-h: 30px; --one-chip-size: 13px;
+    --one-fab: 36px;
   }
 }
 html:not([data-skin]).dark {
@@ -39096,13 +39158,20 @@ html:not([data-skin]).dark {
   --one-sun-pale: rgb(255 238 111 / 0.16);
   --one-sky-ink: #a8c4ff;
   --one-sky-tint: rgb(122 165 255 / 0.18);
+  --one-sky-tint-hover: rgb(122 165 255 / 0.26);
   --one-red: #ff9c8a;
   --one-red-tint: rgb(255 156 138 / 0.16);
+  --one-red-tint-hover: rgb(255 156 138 / 0.24);
   --one-surface: var(--wip-card-bg, #171715);
   --one-hair: rgb(255 254 234 / 0.10);
   --one-line: rgb(255 254 234 / 0.12);
   --one-field-line: rgb(255 254 234 / 0.18);
   --one-quiet: rgb(255 254 234 / 0.08);
+  /* S8: in dark the hard edge is darker than the ground (a pale one read as a second outline out of register), and a
+     sun sticker's outline is the sun, as the BUTTONS block draws the main action. */
+  --one-edge-shade: rgb(0 0 0 / 0.7);
+  --one-edge-sun-line: #ffee6f;
+  --one-flat-dim: brightness(1.15);
   --one-tag-strong-bg: #fffeea;
   --one-tag-strong-ink: #121a0e;
   --one-tag-grey-bg: #5c5f57;
@@ -39115,6 +39184,7 @@ html:not([data-skin]).dark {
   --one-tile-g-bg: rgb(159 212 154 / 0.16); --one-tile-g-ink: #9fd49a;
   --one-points: #ffb38a;
   --one-progress: rgb(122 165 255 / 0.30);
+  --one-back-bg: #fffeea;
 }
 /* THE SHARED PARTS, each drawn once. Markup keeps its own ids and classes (the declared checks select on them) and adds
    the part's class; an area's own rules below only place a part, never redraw it. */
@@ -39129,30 +39199,152 @@ html:not([data-skin]) .one-tag.one-tag-quiet { background: var(--one-quiet); col
 html:not([data-skin]) .one-seg { position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: stretch; min-height: 34px; padding: 2px; border: 0; border-radius: 9999px; background: var(--one-seg-track); box-shadow: none; isolation: isolate; }
 html:not([data-skin]) .one-seg > :is(button, a, [role="tab"], [role="radio"]) { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 14px; border: 0; border-radius: 9999px; background: transparent; box-shadow: none; color: var(--one-seg-ink); font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap; transition: color .2s ease, background-color .2s ease; }
 html:not([data-skin]) .one-seg > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: var(--one-seg-thumb); color: var(--one-seg-on-ink); }
-html:not([data-skin]) .one-seg[style*="--one-seg-i"]::before { content: ""; position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--one-seg-n, 2)); border-radius: 9999px; background: var(--one-seg-thumb); transform: translateX(calc(var(--one-seg-i, 0) * 100%)); transition: transform .38s cubic-bezier(.3, 1.3, .5, 1); }
+html:not([data-skin]) .one-seg[style*="--one-seg-i"]::before { content: ""; position: absolute; z-index: 0; top: 2px; bottom: 2px; inset-inline-start: 2px; width: calc((100% - 4px) / var(--one-seg-n, 2)); border-radius: 9999px; background: var(--one-seg-thumb); transform: translateX(calc(var(--one-seg-i, 0) * 100% * var(--rtl-sign, 1))); transition: transform .38s cubic-bezier(.3, 1.3, .5, 1); }
 html:not([data-skin]) .one-seg[style*="--one-seg-i"] > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: transparent; }
+html:not([data-skin]) .one-seg > :is(button, a, [role="tab"], [role="radio"]):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
 /* A menu chip opens a choice that sets what you are working on (All projects, About, With): a white pill with the small
    sticker edge, its label's lead word in the quiet ink. */
-html:not([data-skin]) .one-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 34px; padding: 0 10px 0 13px; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: var(--one-edge-sm); color: var(--one-ink); font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap; }
+html:not([data-skin]) .one-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: var(--one-chip-h); padding: 0 10px 0 13px; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: var(--one-edge-sm); color: var(--one-ink); font-family: var(--wip-btn-font, inherit); font-size: var(--one-chip-size); font-weight: 600; line-height: 1; white-space: nowrap; }
 html:not([data-skin]) .one-chip .one-chip-lead { color: var(--one-ink-2); font-weight: 400; }
+html:not([data-skin]) .one-chip > svg { width: 15px; height: 15px; flex: none; }
 html:not([data-skin]) .one-chip:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
 /* The page's main action as an icon (New chat's +, New message's +): the sun disc with the sticker edge. */
-html:not([data-skin]) .one-fab { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-sun); box-shadow: var(--one-edge); color: #121a0e; }
-html:not([data-skin]) .one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) .one-fab { display: inline-grid; place-items: center; flex: none; width: var(--one-fab); height: var(--one-fab); padding: 0; border: 0; border-radius: 9999px; background: var(--one-sun); box-shadow: var(--one-edge-sun); color: #121a0e; }
+html:not([data-skin]) .one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
+/* With its words beside the icon (one-fab-label: "+ New project"), a pill of the same height; one-fab-sm is the 36px
+   disc at every width (the fab is 36px from 768px on its own). */
+html:not([data-skin]) .one-fab.one-fab-label { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; padding: 0 16px 0 12px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; white-space: nowrap; }
+html:not([data-skin]) .one-fab.one-fab-sm { width: 36px; height: 36px; }
+html:not([data-skin]) .one-fab.one-fab-label.one-fab-sm { width: auto; font-size: var(--one-btn-sm-size); }
+@media (hover: hover) { html:not([data-skin]) .one-fab:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); } }
 /* Every other icon button on a page: a flat disc with one hairline. */
 html:not([data-skin]) .one-disc { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); color: var(--one-ink); }
-/* The three button levels, for markup that is new in this look (the class-matching layer in BUTTONS covers the rest). */
-html:not([data-skin]) .one-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 9999px; font-size: 16px; font-weight: 600; line-height: 1; white-space: nowrap; transition: transform .12s ease, filter .12s ease; }
-html:not([data-skin]) .one-btn.one-btn-sm { height: 30px; padding: 0 12px; font-size: 14px; }
-html:not([data-skin]) .one-btn.one-btn-1 { background: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge); }
-html:not([data-skin]) .one-btn.one-btn-1.one-btn-sm { box-shadow: var(--one-edge-sm); }
-html:not([data-skin]) .one-btn.one-btn-1:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) .one-disc:active:not(:disabled) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
+/* The three button levels, for markup that is new in this look (the class-matching layer in BUTTONS covers the rest):
+   the main action (one-btn-1) the sun with the sticker edge, pressed onto it; a secondary (one-btn-2) and a destructive
+   one (one-btn-d) flat, a press shrinking them a little. 44px on a phone, 36px from 768px (the small one 30 and 28). */
+html:not([data-skin]) .one-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: var(--one-btn-h); padding: 0 var(--one-btn-pad); border: 0; border-radius: 9999px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; letter-spacing: 0; white-space: nowrap; text-decoration: none; transition: transform .12s ease, filter .12s ease; }
+html:not([data-skin]) .one-btn > svg { width: 18px; height: 18px; flex: none; }
+html:not([data-skin]) .one-btn.one-btn-sm { height: var(--one-btn-sm-h); padding: 0 var(--one-btn-sm-pad); font-size: var(--one-btn-sm-size); }
+html:not([data-skin]) .one-btn.one-btn-1 { background: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge-sun); }
+html:not([data-skin]) .one-btn.one-btn-1.one-btn-sm { box-shadow: var(--one-edge-sun-sm); }
+html:not([data-skin]) .one-btn.one-btn-1:active:not(:disabled, [aria-disabled="true"]) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
 html:not([data-skin]) .one-btn.one-btn-2 { background: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none; }
 html:not([data-skin]) .one-btn.one-btn-d { background: var(--one-red-tint); color: var(--one-red); box-shadow: none; }
-html:not([data-skin]) .one-btn:is(.one-btn-2, .one-btn-d):active:not(:disabled) { transform: scale(.97); filter: brightness(.95); }
-html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
+html:not([data-skin]) .one-btn:is(.one-btn-2, .one-btn-d):active:not(:disabled, [aria-disabled="true"]) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
+@media (hover: hover) {
+  html:not([data-skin]) .one-btn.one-btn-1:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); }
+  html:not([data-skin]) .one-btn.one-btn-2:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sky-tint-hover); }
+  html:not([data-skin]) .one-btn.one-btn-d:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-red-tint-hover); }
+}
+html:not([data-skin]) :is(.one-btn, .one-chip, .one-fab, .one-disc, .one-link):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
+html:not([data-skin]) :is(.one-btn, .one-chip, .one-fab, .one-disc):is(:disabled, [aria-disabled="true"]) { opacity: .45; box-shadow: none; transform: none; filter: none; cursor: not-allowed; }
+/* A text action ("Change", "See all", "Edit"): the ink, underlined in blue, so it does not rest on colour alone. */
+html:not([data-skin]) .one-link { display: inline; padding: 0; border: 0; background: none; box-shadow: none; color: var(--one-ink); font: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: pointer; }
+@media (hover: hover) { html:not([data-skin]) .one-link:hover:not(:disabled, [aria-disabled="true"]) { text-decoration-color: currentColor; } }
+html:not([data-skin]) .one-link:is(:disabled, [aria-disabled="true"]) { color: var(--one-ink-3); text-decoration: none; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) :is(.one-seg[style*="--one-seg-i"]::before, .one-btn) { transition: none; }
+  html:not([data-skin]) .one-seg[style*="--one-seg-i"]::before,
+  html:not([data-skin]) .one-seg > :is(button, a, [role="tab"], [role="radio"]),
+  html:not([data-skin]) .one-btn { transition: none; }
+}
+html:not([data-skin]):where([data-motion="reduce"]) .one-seg[style*="--one-seg-i"]::before,
+html:not([data-skin]):where([data-motion="reduce"]) .one-seg > :is(button, a, [role="tab"], [role="radio"]),
+html:not([data-skin]):where([data-motion="reduce"]) .one-btn { transition: none; }
+
+/* THE SUN SLIDES, ON THE PHONE'S BAR AND IN THE SIDEBAR (design review, 25 Nov 2026). Where you are was the lit tab's
+   (the lit row's) own sun fill, which jumped from one to the next; the sliding marker (tab-bar.tsx useTabMarker) had
+   been hidden on the phone since #7041, because both were drawn and the marker showed as a pale ring round the
+   yellow. Now the marker IS the sun and the lit tab or row has no fill of its own, only the lit row's dark ink and
+   its counts (the ink pill with white figures, ringed in the sun). On the phone it takes the lit tab's own box
+   (`--platform-tabs-marker-fit: tab`, tabBoxFor), so the tabs keep their spacing: sized to their labels, a step
+   clear of each other and of the bar's edges. In the sidebar it takes the lit row's box and corner
+   (`--platform-tabs-marker-fit: row`, railLitRow and railBoxFor), Settings, a community's place and its row included,
+   and the rows give up their fill only once it is placed, so before it is measured they are lit as before. A change
+   of tab or row slides it (MARKER_SLIDE, a transform-only FLIP); reduced motion lands it. The offsets it is placed at
+   are the bar's own from its left, in either reading direction. Not the iPhone Duo's side strip, which keeps each
+   tab's own fill and hides the marker. */
+html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { inset: 0 auto auto 0; background: var(--wip-nav-on-bg); box-shadow: none; }
+@media (max-width: 767.98px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs { --platform-tabs-marker-fit: tab; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { border-radius: var(--wip-nav-row-radius); }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab[aria-current="page"] { background: transparent; }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs { --platform-tabs-marker-fit: row; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { display: block; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs:has(> .platform-tabs-marker[data-marker-at]) :is(.platform-tab, .platform-rail-settings, .platform-rail-community, .dev-ws-place, .platform-rail-sub)[aria-current="page"] { background: transparent; }
+  /* On the way to a community's page its places are drawn a beat after its row lights, so the pill waits on the row
+     (railLitRow); the row is drawn at rest, in white, so while no place under it is lit it takes the lit row's ink,
+     and its pin with it, as a lit row's does. */
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs:has(> .platform-tabs-marker[data-marker-at]) .platform-rail-row:has(> .platform-rail-community[data-rail-open][aria-current="page"]):not(:has(+ .platform-rail-nest:not([data-nest="closing"]) :is(.dev-ws-place, .platform-rail-sub)[aria-current="page"])) > .platform-rail-community {
+    color: var(--wip-nav-on-ink);
+    font-weight: 700;
+  }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs:has(> .platform-tabs-marker[data-marker-at]) .platform-rail-row:has(> .platform-rail-community[data-rail-open][aria-current="page"]):not(:has(+ .platform-rail-nest:not([data-nest="closing"]) :is(.dev-ws-place, .platform-rail-sub)[aria-current="page"])) > .platform-rail-pin {
+    color: var(--wip-nav-on-ink);
+    --lit-ink: var(--wip-nav-on-ink);
+    --lit-tint: var(--wip-nav-on-pin-hover);
+    --accent: var(--wip-nav-on-ink);
+  }
+}
+
+/* THE SIDEBAR'S HEADINGS (Recents, Pinned) ARE THE SECTION LABEL (design review, 25 Nov 2026): 12px bold capitals,
+   tracked 0.06em, in the panel's muted white, starting where the rows' glyphs do, as every label over a group is
+   (AGENTS.md, "Type and colour"). They had been set in sentence case at 12.5/600. A community's own sub-headers
+   (Channels, Topics) stay in sentence case: they are a level down. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label) { text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; font-weight: 700; }
+  html:not([data-skin]) #platform-tabs .platform-rail-head { padding-inline: var(--wip-nav-row-pad) 8px; }
+}
+
+/* THE TOP BAR, ONE STYLE ON EVERY PAGE (design review, 25 Nov 2026). On a phone its title was 16/600 on Communities,
+   Homeroom bot, You, Settings, Challenges and a project's page and 17/650 on Messages, a conversation and a request
+   (the drawer's titles, ../nav-drawer/header-drawer.tsx): now every page's is 17/600 in the bar's white, and the line
+   under it (a conversation's "Direct message", a project's place) 12/500 at 82%. Homeroom's logotype on Home is drawn
+   at the mock's 24px. The back disc on the blue bar is a plain white disc with the ink chevron: 36px, no edge, no
+   translucent fill. (Android keeps its bare arrow, overnight audit G01.) The bell and the Homeroom menu stay on every
+   page; nothing here hides them. From 768px the bar stands on the page, so its title is the page's ink at the same
+   17/600, the place under a project's name 12/500 in the quiet ink, and the back is the flat disc (white, one
+   hairline). */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #platform-header :is(#header-title-name, .nav-drawer-title-name) { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  html:not([data-skin]) #platform-header :is(#header-subtitle, .nav-drawer-title-page) { font-size: 12px; font-weight: 500; letter-spacing: 0; color: color-mix(in srgb, currentColor 82%, transparent); }
+  html:not([data-skin]) #platform-header #header-title-name > svg { width: 93px; height: 24px; }
+  html:not([data-skin]):not(.un-android) #platform-header #back-btn,
+  html:not([data-skin]) #platform-header .nav-drawer-back {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    background: var(--one-back-bg);
+    box-shadow: none;
+    color: var(--one-back-ink);
+  }
+  html:not([data-skin]):not(.un-android) #platform-header #back-btn:active,
+  html:not([data-skin]) #platform-header .nav-drawer-back:active { filter: var(--one-flat-dim); }
+  /* Beside the disc the bar steps in as the mock draws it: the disc 8px from the screen's edge (the bar's own 16px
+     less 8) and the title 6px after it (the bar's 16px gap less 10). The drawer measures its titles' slot from the
+     laid-out group, so its names follow. */
+  html:not([data-skin]):not(.un-android) #platform-header .platform-header-left:has(> #back-btn:not(.hidden)),
+  html:not([data-skin]) #platform-header .platform-header-left:has(> .nav-drawer-back) { margin-inline: -8px -10px; }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-header #header-title-name,
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) > #header-title-name { color: var(--one-ink); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  html:not([data-skin]) #platform-header :is(#header-subtitle, .header-place-name) { color: var(--one-ink-2); font-size: 12px; font-weight: 500; letter-spacing: 0; opacity: 1; }
+  /* Homeroom's own place alone, beside the open sidebar, is the bar's title (20/700 before): the same 17/600. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) .header-place-name { color: var(--one-ink); font-size: 17px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; }
+  /* A project's Suggest is a secondary action on the bar: flat, the sky tint with the sky's words. */
+  html:not([data-skin]) #platform-header #header-in-app-suggest { border-color: transparent; background: var(--one-sky-tint); color: var(--one-sky-ink); }
+  html:not([data-skin]) #platform-header #header-in-app-suggest:active { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
+  html:not([data-skin]) #platform-header #back-btn {
+    width: 34px;
+    height: 34px;
+    border: 0;
+    background: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-field-line);
+    color: var(--one-ink);
+  }  html:not([data-skin]) #platform-header .platform-header-left:has(> #back-btn:not(.hidden)) { margin-inline-end: -4px; }
 }
 /* ── END ONE LOOK · SHARED PARTS ── */
 
