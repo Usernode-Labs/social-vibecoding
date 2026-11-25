@@ -120,6 +120,13 @@ async function applyFirstCard(pool, app, manifest, cloneDir) {
   );
   if (!merged.rowCount) return false;
 
+  // Read and fit the two committed files BEFORE the transaction below: they
+  // are what the step might apply, and reading them is filesystem I/O that
+  // must not run while the first-version row is locked, or a slow disk would
+  // hold the lock for every deploy racing this one.
+  const lightImage = cardImageOf(await readCommitted(cloneDir, CARD_LIGHT, app.slug));
+  const darkImage = lightImage ? cardImageOf(await readCommitted(cloneDir, CARD_DARK, app.slug)) : null;
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -147,26 +154,24 @@ async function applyFirstCard(pool, app, manifest, cloneDir) {
       await client.query('COMMIT');
       return false;
     }
-    const light = cardImageOf(await readCommitted(cloneDir, CARD_LIGHT, app.slug));
-    if (!light) {
+    if (!lightImage) {
       // No usable light picture: the card keeps today's look, and this never
       // runs again.
       await mark();
       await client.query('COMMIT');
       return false;
     }
-    const dark = cardImageOf(await readCommitted(cloneDir, CARD_DARK, app.slug));
     const proposals = require('./illustration-proposals');
     const lightId = proposals.newImageId();
-    const darkId = dark ? proposals.newImageId() : null;
+    const darkId = darkImage ? proposals.newImageId() : null;
     await client.query(
       `INSERT INTO app_illustrations (app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (app_id) DO UPDATE SET id = EXCLUDED.id, content_type = EXCLUDED.content_type,
          data = EXCLUDED.data, dark_id = EXCLUDED.dark_id, dark_content_type = EXCLUDED.dark_content_type,
          dark_data = EXCLUDED.dark_data, preview_id = NULL, preview_content_type = NULL, preview_data = NULL`,
-      [app.id, lightId, light.contentType, light.data, darkId,
-        dark ? dark.contentType : null, dark ? dark.data : null],
+      [app.id, lightId, lightImage.contentType, lightImage.data, darkId,
+        darkImage ? darkImage.contentType : null, darkImage ? darkImage.data : null],
     );
     const tone = cardToneFor(manifest?.icon?.color);
     const featured = {
