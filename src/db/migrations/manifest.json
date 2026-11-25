@@ -605,6 +605,11 @@
       "id": "app-agent-grants",
       "sha256": "b0f0c5bc2906374a111bb681ab2608c7eba43b3ac283a8daa61d436cbd27dd12",
       "schemaSha256": "845e68d6f70421fb8b03ddeccfedf52bf2b7695bdc36ca5a5164d2b7724baf62"
+    },
+    {
+      "id": "conflict-resolution-main",
+      "sha256": "2b622537fcdccef8661efb467fae2ff54a558b5803f68c071370c048f42883b4",
+      "schemaSha256": "ce8da66b07bf7426f34ee0867422eeee0bffffd0613de7dc1ef2ddea3b9ff77b"
     }
   ]
 }

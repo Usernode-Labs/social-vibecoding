@@ -51,6 +51,7 @@ const {
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 const { inviteStatuses } = require('../../services/topochain/invite-statuses');
+const { challengeItems } = require('../../services/topochain/challenge-items');
 const { checkAppAccess } = require('../../services/app-access');
 
 const { Router } = require('express');
@@ -1017,6 +1018,27 @@ function topochainMobileRoutes(config) {
     }
   }
 
+  // ── GET /me/challenge-items (#7152) ──────────────────────────────────
+  // Every report or proposal the viewer has for the challenge's current
+  // period, with the status the scorer's own rules give it. Read-only over
+  // the same rule row and records the scorer pays by (./challenge-items.js);
+  // the decision of what each status means lives there, not here.
+  async function meChallengeItemsHandler(req, res) {
+    try {
+      const challengeId = toIntId(req.query.challenge_id);
+      if (challengeId == null) return fail(res, 422, 'challenge_id must be a positive integer.');
+      const data = await challengeItems(pool, {
+        userId: req.user.id,
+        challengeId,
+      });
+      if (!data) return fail(res, 404, 'Not found.');
+      return ok(res, { data });
+    } catch (err) {
+      log.error('topochain-mobile', 'GET me/challenge-items failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  }
+
   // ── GET /me/ranking (SPEC 1769-1820) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > neither (global) —
   // SPEC 1774's "takes precedence over season_id".
@@ -1703,6 +1725,7 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
   router.get('/challenges-api/me/invites', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meInvitesHandler);
+  router.get('/challenges-api/me/challenge-items', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meChallengeItemsHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function

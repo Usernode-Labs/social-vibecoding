@@ -99,6 +99,17 @@ function compare(a: Candidate, b: Candidate): number {
     || (a.waitedSince - b.waitedSince);
 }
 
+// #7158: is the free resolution still the one this main is owed? It is spent
+// for this approval epoch, and the main it ran against has not moved since
+// (or is unknown either way, which is a change the lane may try once).
+// Shared with the proposal machine's syncRefusal, so the queue never asks for
+// a resolution the proposal machine then declines.
+export function resolutionCurrent(resolvedEpoch: number | null, epoch: number,
+  resolvedMain: string | null, integrationMain: string | null): boolean {
+  if (resolvedEpoch == null || resolvedEpoch !== epoch) return false;
+  return integrationMain == null || resolvedMain === integrationMain;
+}
+
 // Rule C: does the conflict lane spend a resolution on this conflicting
 // head now, and if not, what does the card say?
 export function admission(c: Candidate, now: number): { admit: boolean; reason: string } {
@@ -128,7 +139,15 @@ export function admission(c: Candidate, now: number): { admit: boolean; reason: 
   // resolves the conflict, and the new head gets its own full checks run.
   if (c.approved && stale) return { admit: true, reason: 'approved' };
   if (stale) return { admit: false, reason: c.unmergeable! };
-  return { admit: false, reason: c.approved ? (c.unmergeable || 'lock') : 'awaiting_approval' };
+  if (c.approved) return { admit: false, reason: c.unmergeable || 'lock' };
+  // #7158: an unapproved conflicting change is never left waiting for a vote
+  // nobody is asked for: a vote is asked only of a change that merges cleanly
+  // with passing checks, and this one does neither. Main moved since the
+  // resolution ran (a NULL record reads as moved, which releases the changes
+  // stuck before this rule): resolve it again, once per move of main. Against
+  // the very main it was just resolved onto, no resolution can help it.
+  if (c.integrationMain != null && c.resolvedMain !== c.integrationMain) return { admit: true, reason: 'main_moved' };
+  return { admit: false, reason: 'unresolvable' };
 }
 // The paths whose conflict the platform settles mechanically (worker/run-cc.sh
 // takes main's timing file, and scripts/record-schema-migration.js rebuilds
@@ -210,6 +229,7 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
     if (verdict?.admit) admitted.push({ c, reason: verdict.reason });
   }
   if (!data.resolution && directWaiting === 0 && admitted.length) {
+    // A re-resolution after main moved (#7158) ranks with the free one.
     const rank = (r: string) => (r === 'mechanical' ? 2 : r === 'approved' ? 1 : 0);
     admitted.sort((a, b) => (rank(b.reason) - rank(a.reason)) || compare(a.c, b.c));
     const next = admitted.find((x) => free(x.c) && !tried.has(`sync:${triedKey(x.c)}`));

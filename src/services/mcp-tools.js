@@ -1410,7 +1410,8 @@ const MAX_CONFLICT_PATHS_NAMED = 10;
 // can come from either side: the merge queue's conflict lane
 // (the merge-queue machine, src/workflow/merge-queue/, rule C) pushes a resolution itself when it can
 // write the head — at once for an approved proposal or the first conflict of
-// this authored head, otherwise once the group approves it — while a
+// this authored head, then again whenever main moves under it (#7158), never
+// waiting for a vote nobody is asked for — while a
 // fork-hosted head, or one it has already failed to resolve, is the author's
 // to update. Either way the new head gets its own run.
 //
@@ -1747,6 +1748,16 @@ function shotsSkipStep(session, branch) {
 // put in a tool response.
 const MAX_CAPTURE_PATHS_REPORTED = 10;
 
+// #7158: the yes count a project's rule decides by (the gate's qualified
+// tally, routes/sessions.js), which is the raw yes count where no approver
+// roster applies. A change can show "5 of 1" by the raw count and still need
+// an approver's yes: the rule counts approvers, so the connector reports its
+// count.
+function countedYes(session) {
+  if (typeof session.qualified_yes_count === 'number') return session.qualified_yes_count;
+  return typeof session.yes_count === 'number' ? session.yes_count : null;
+}
+
 // `viewerId`, when given, is the caller (#4262): it decides whether an
 // underway session's nextStep names the promote call or says it is not theirs.
 function shapeProposal(session, origin, viewerId = null) {
@@ -1814,7 +1825,7 @@ function shapeProposal(session, origin, viewerId = null) {
       ? session.shots : null,
     // #4490: the author's diagram as stored, or null.
     diagram: diagramContract.storedDiagram(session.pr_diagram),
-    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
+    yesVotes: countedYes(session),
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
@@ -1898,6 +1909,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     fixTests: 'They are fixed by revising the change. Re-running the checks from its page is only for a failure that came from outside this change.',
     fixBuild: 'The build is fixed by revising the change; checks gate merge.',
     fixConflict: 'It needs a revision that resolves it.',
+    deferred: 'Homeroom resolves the conflict on its own, then runs its checks and asks for the vote; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
@@ -1909,6 +1921,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     fixTests: 'Fix the failing tests in this turn; the checks run again after your push.',
     fixBuild: 'Fix the build in this turn; the checks run again after your push.',
     fixConflict: 'Merge main in and resolve the conflict in this turn.',
+    deferred: 'Homeroom resolves the conflict on its own, then runs its checks; nothing needs doing in this turn.',
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and a clean sync with main keeps its votes.',
     closed: 'Further work on it is a new change.',
@@ -1920,6 +1933,7 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     fixTests: 'A new revision fixes them: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
     fixBuild: 'A new revision fixes the build: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page; checks gate merge.',
     fixConflict: 'A new revision that resolves it is needed: from the coding agent that built it, or by asking Homeroom bot on the change\'s own page.',
+    deferred: 'Homeroom resolves the conflict on its own, then runs its checks and asks for the vote; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page on Homeroom.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
@@ -2159,7 +2173,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
         + `(${whoMayApproveWords(approval)})`
         + (approval.advisoryYes > 0 ? `; ${approval.advisoryYes} more yes votes are advisory.` : '.')
       : (typeof session.votes_required === 'number'
-        ? ` It has ${Number(session.yes_count) || 0} of ${session.votes_required} yes votes.`
+        ? ` It has ${countedYes(session) ?? 0} of ${session.votes_required} yes votes.`
         : '');
     const behind = typeof session.behind_main === 'number' && session.behind_main > 0
       ? ` It is ${session.behind_main} commit(s) behind main; ${words.behind}`
@@ -2225,7 +2239,7 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     shots: (session.shots && typeof session.shots === 'object')
       ? { ...session.shots, declaration: shapeDeclaration(session.shots_declared) }
       : null,
-    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
+    yesVotes: countedYes(session),
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     // The approvers' votes beside what the rule needs, with the advisory
