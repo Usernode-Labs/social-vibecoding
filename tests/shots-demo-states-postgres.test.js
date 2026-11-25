@@ -597,6 +597,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     '**Related:**',
     '- #6230 One detail column for plans and designs: build together, it is the same column',
     '',
+    '**Still undecided:**',
+    '- Whether a week starts on Monday or on Sunday',
+    '',
     '**Done when:**',
     '- Insights show week by week, not only as a total',
     '- The same weeks are counted however the list is sorted',
@@ -619,6 +622,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
       .rows.map((r) => r.id),
     related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
     context: { saw: 'the insights page' },
+    undecided: ['Whether a week starts on Monday or on Sunday'],
     doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
     chatHref: '#homeroom-bot',
   });

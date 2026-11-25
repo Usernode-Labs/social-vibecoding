@@ -7366,5 +7366,21 @@
   "topic.details.touches": {
     "text": "What it touches",
     "description": "Sub-heading in the Details sheet of a change, over the picture of which parts of the project the change edits: screens, server, database and tests, with a count of files."
+  },
+  "topic.rail.updated": {
+    "text": "Updated",
+    "description": "Name of a step in the \"How it got here\" timeline on a change's or a request's page (the list of the thread's big events, beside its card): the change was updated after it was first built."
+  },
+  "topic.rail.votesCleared": {
+    "text": "Earlier votes were cleared.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update moved the code, so the votes cast on the earlier version no longer count."
+  },
+  "topic.rail.votesStand": {
+    "text": "Earlier votes still stand.",
+    "description": "Line under an \"Updated\" step in the \"How it got here\" timeline: the update only brought the change up to date with main, so the votes cast on it still count."
+  },
+  "topic.rail.byBot": {
+    "text": "By Homeroom bot.",
+    "description": "Line under a step in the \"How it got here\" timeline: Homeroom bot made the update. Used when the update names no person."
   }
 }

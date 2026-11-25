@@ -67,6 +67,8 @@ test('20 Nov 2026: the sheet is a public thread\'s page, drawn by the public thr
   assert.match(messages, /data-thread-page-host=\{page \? '' : undefined\}/);
   assert.match(css, /#ai-screen \.messages-layout\[data-bot-threads\] > \.messages-reply-pane\[data-thread-page-host\] \{\s+background: transparent;/,
     'the pane draws no sheet: the page lies on the column\'s ground, as a request\'s does');
+  assert.match(css, /:is\(\.dev-ws-side, \.in-side-panel body, \.gc-tab-body:has\(> \.gc-spec-side-panel-open\)\) #dev-topic-thread \.dev-request:has\(\.dev-request-rail:not\(:empty\)\) \.dev-request-sheet \{ background: transparent; \}/,
+    'a public thread\'s page in a panel paints no ground either, as the private pane does');
   assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-replies\] \.messages-message \{ padding: 8px 16px; gap: 12px; \}/,
     'the replies card\'s rows are the flat named rows');
   assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-post\] \.messages-message > :first-child:not\(\.min-w-0\) \{ display: none; \}/,

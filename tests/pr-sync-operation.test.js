@@ -336,6 +336,63 @@ test('a branch with nothing on it is an answer; a host that opened nothing is tr
   await assert.rejects(restore.drain(), /was not opened/, 'thrown, so the machine tries it again');
 });
 
+// 24 Nov 2026: a live app draft is not a change until it is proposed, so no
+// pull request is opened or adopted for its working session and no change is
+// recorded for a conductor.
+test('a live draft opens or adopts no pull request before it is proposed', async (t) => {
+  const { restore } = setup(t, { row: sessionRow({ pr_number: null, pr_url: null, pr_title: null, status: 'paused' }) });
+  const prMetadata = require('../src/services/pr-metadata');
+  const looked = [];
+  t.mock.method(github, 'findOpenPrByBranch', async () => { looked.push('find'); return null; });
+  t.mock.method(github, 'createPR', async () => { looked.push('create'); return { number: 1, html_url: 'x' }; });
+  const realQuery = pool.query;
+  t.mock.method(pool, 'query', async (sql, params) => {
+    if (/FROM live_drafts WHERE session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
+    return realQuery(sql, params);
+  });
+  // create() answers the draft's own words, and nothing is opened or adopted.
+  assert.deepEqual(await prSync.run({ config: {}, pool }, { input: { sessionId: 412, write: 'create', from: 'staging' } }),
+    { ok: false, status: 409, error: 'A live draft gets its change when it is proposed' });
+  assert.deepEqual(await prSync.openMissingPr({
+    config: {}, pool, session: state.row, owner: 'Usernode-Labs', repo: 'social-vibecoding', from: 'staging',
+  }), null);
+  assert.deepEqual(looked, [], 'the branch is never looked up, so an open one is never adopted');
+  assert.deepEqual(restore.queued, []);
+
+  // A Preview click on a draft still rebuilds the preview, and records no change.
+  const workflow = require('../src/services/preview-workflow');
+  t.mock.method(github, 'hasApp', () => true);
+  t.mock.method(github, 'getReadOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { ahead_by: 1, commits: [{ sha: 'c'.repeat(40) }] } }) } } }));
+  t.mock.method(workflow, 'working', async () => false);
+  t.mock.method(workflow, 'held', async () => false);
+  const asked = [];
+  t.mock.method(workflow, 'request', async (args) => { asked.push(args); return { taken: true }; });
+  let applied = 0;
+  t.mock.method(prMetadata, 'applyPrMetadata', async () => { applied += 1; return null; });
+  const { rebuildSessionStaging } = require('../src/services/staging-recovery');
+  assert.equal(await rebuildSessionStaging({ config: {}, pool, session: { ...state.row }, reason: 'preview-click', requesterId: 7 }), 'handed_off');
+  assert.equal(applied, 0, 'no pull request metadata is applied');
+  assert.deepEqual(restore.queued, [], 'nothing queued for a conductor');
+  assert.deepEqual(asked.map((a) => a.reason), ['ensure'], 'its preview is rebuilt all the same');
+});
+
+test('applyPrMetadata opens no pull request for a draft session, even without a number', async (t) => {
+  setup(t, { row: sessionRow({ pr_number: null, pr_url: null, pr_title: null, status: 'paused' }) });
+  const prMetadata = require('../src/services/pr-metadata');
+  const realQuery = pool.query;
+  t.mock.method(pool, 'query', async (sql, params) => {
+    if (/FROM live_drafts WHERE session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
+    return realQuery(sql, params);
+  });
+  let created = 0;
+  t.mock.method(github, 'createPR', async () => { created += 1; return { number: 1, html_url: 'x' }; });
+  const out = await prMetadata.applyPrMetadata({
+    pool, session: { ...state.row }, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', username: 'owner',
+  });
+  assert.equal(out, null);
+  assert.equal(created, 0, 'its own pull request waits for Propose');
+});
+
 
 test('a delayed issue removal leaves a link that the current row has added back', async (t) => {
   const { host } = setup(t);

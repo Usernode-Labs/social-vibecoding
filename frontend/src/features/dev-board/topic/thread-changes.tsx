@@ -873,6 +873,9 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
     // T2.3: the change's stored row, so the request's timeline ends on the
     // words the change's foot says, never "Up for a vote" while it is not.
     work: view.v.work || null,
+    // #7117 discussion: the change's updates, so the request's timeline
+    // shows them too.
+    updates: view.v.updates || null,
   }) : '';
   useEffect(() => { publishLead(thread.page, leadText ? JSON.parse(leadText) : null); }, [leadText, thread.page]);
   useEffect(() => () => publishLead(thread.page, null), [thread.page]);

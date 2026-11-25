@@ -23592,6 +23592,47 @@ body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden))
 .detail-card-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .detail-card-body > .messages-design-pane { flex: 1 1 auto; min-height: 0; border-radius: 0; box-shadow: none; background: none; }
 .detail-card-body .messages-design-stage { padding-top: 16px; }
+/* A REQUEST DRAFT, READ AS A DOCUMENT (25 Nov 2026; features/messages/
+   request-draft-pane.tsx). It was the chat's own type across the whole pane,
+   about 100 characters a line, its first line against the card's top edge.
+   Now: the request's whole title, the words in a reading column, and what
+   the draft carries besides them (Still undecided, Done when, Related,
+   Where) as a list beside the words where the pane is 640px wide or more,
+   under them where it is narrower. A container query, because the pane's
+   width follows the thread beside it and not the window. The foot holds
+   where it will go and the card's own two buttons. */
+.request-draft-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; container-type: inline-size; }
+.request-draft-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px 28px; padding: 22px 20px 24px; }
+@container (min-width: 640px) {
+  .request-draft-grid { padding: 26px 24px; }
+  .request-draft-grid[data-draft-rail] { grid-template-columns: minmax(0, 1fr) 220px; column-gap: 24px; }
+  /* Beside the list the words have less room: a size down keeps the line long enough to read. */
+  .request-draft-grid[data-draft-rail] .request-draft-words .messages-markdown.gc-msg-content { font-size: 15px; line-height: 23px; }
+}
+.request-draft-main { min-width: 0; max-width: 68ch; }
+.request-draft-title { margin: 0; font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary); overflow-wrap: anywhere; text-wrap: balance; }
+.request-draft-words { margin-top: 12px; }
+.request-draft-words .messages-markdown.gc-msg-content { font-size: 16px; line-height: 25px; }
+.request-draft-words :is(p, .dc-p) { margin: 0 0 12px; }
+.request-draft-words :is(.dc-h3, .dc-h4, .dc-h5) { margin: 20px 0 6px; font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.request-draft-words :is(.dc-ul, .dc-ol) { margin: 0 0 12px; }
+.request-draft-words .messages-markdown > :first-child { margin-top: 0; }
+.request-draft-words .messages-markdown > :last-child { margin-bottom: 0; }
+.request-draft-rail { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.request-draft-panel ul { margin: 0; padding: 12px; list-style: none; display: flex; flex-direction: column; gap: 8px; border-radius: 14px; background: var(--dc-raised); }
+.request-draft-panel li { position: relative; padding-inline-start: 22px; font-size: 14px; line-height: 20px; color: var(--text-primary); overflow-wrap: anywhere; }
+.request-draft-panel li::before { content: ""; position: absolute; inset-inline-start: 6px; top: 8px; width: 5px; height: 5px; border-radius: 9999px; background: var(--text-muted); }
+/* A check still to be met: an empty ring, not a tick. */
+.request-draft-panel[data-draft-panel="doneWhen"] li::before { inset-inline-start: 2px; top: 4px; width: 13px; height: 13px; background: none; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.request-draft-panel li .messages-markdown.gc-msg-content { font-size: 14px; line-height: 20px; }
+.request-draft-panel li small { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.request-draft-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-block: 12px; padding-inline: 20px 14px; border-top: 1px solid var(--app-sheet-line); }
+.request-draft-goes { flex: 1 1 220px; min-width: 0; margin: 0; font-size: 13px; line-height: 19px; color: var(--text-muted); }
+.request-draft-goes b { font-weight: 650; color: var(--text-primary); }
+.request-draft-bar .messages-bot-answers { flex: none; }
+.request-draft-bar .messages-bot-answers button:disabled { opacity: 0.55; cursor: default; }
+/* A refused press says why under the buttons, across the bar. */
+.request-draft-bar .messages-bot-answered { flex: 1 0 100%; margin: 0; text-align: end; }
 .detail-card-body > .detail-preview-slot { min-height: 0; }
 /* Drawn at the top of the page under its anchor (detail-card.tsx places it),
    above a running preview's frame (#staging-overlay, z-index 46). */
@@ -35997,7 +36038,6 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: var(--thread-ffffff); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-opt-look { color: var(--bl-sky); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-bot-answers button:not(.messages-bot-primary, .messages-bot-tint, .messages-bot-done, .messages-bot-on, [aria-pressed="true"]) { box-shadow: var(--bl-raise-edge); }
-html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-request { --thread-ground-look: var(--bl-page); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot[data-thread-foot="failed"] .dev-thread-foot-acts .dev-vote-btn { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts [data-thread-foot-next] :is(button, a) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.messages-bubble, .gc-bubble) { background: var(--bl-page); }
@@ -36179,8 +36219,9 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 /* IN A PANEL TOO (17 Nov 2026): the Workshop's side panel, the column
    beside Homeroom bot's list and the page with the reader open beside it
    drew the same page as one flat sheet, with the timeline a tinted block
-   inside it. They are the same three cards there, on the panel's own
-   ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
+   inside it. They are the same three cards there, lying on whatever is
+   behind the panel as a private thread's do: the sheet paints no ground
+   of its own and no look names one. `#dev-topic-thread`
    is in the scope so the replies' card outranks the thread's own rules. */
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)),
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
@@ -36189,7 +36230,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
   --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
   --thread-card-r: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: transparent; }
 html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail),
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread :is([data-thread-page-post], [data-thread-page-replies]) {
@@ -38715,7 +38756,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   --detail-card: var(--bl-card);
   --detail-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request { --thread-ground-look: var(--bl-page); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])).in-side-panel.side-panel-beside-ai body:has(.dev-thread-card) { background: var(--bl-page) !important; }
 /* Failed tests: the foot's one sun pill is what moves it on (Fix it, or the
    re-run), and Vote steps back to a white pill beside See what failed. */

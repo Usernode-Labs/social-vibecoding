@@ -2309,7 +2309,9 @@ async function reconcileNativeReviewedHead({
             : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
     await sendSystemMessage(
       pool, session.app_id, message, 'system',
-      { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead },
+      { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead,
+        ...(madeBy && !['homeroom', 'bot'].includes(madeBy) ? { by: madeBy } : {}),
+        ...(madeBy || made.madeByHomeroom ? { bot: true } : {}) },
       { type: 'session', ref: session.id }
     ).catch(() => {});
   }
@@ -5441,6 +5443,30 @@ function withFailingResults(req) {
   return { ...req, query: { ...req.query, results: 'failing' } };
 }
 
+/** A change's updates after the first: when, by whom, and whether the vote moved on. */
+async function proposalUpdatesFor(pool, appId, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT m.created_at, m.metadata, u.username
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.thread_type = 'session' AND m.thread_ref = $2
+        AND m.metadata->>'headChanged' = 'true'
+        AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+      ORDER BY m.created_at ASC, m.id ASC
+      LIMIT 20`,
+    [appId, sessionId],
+  ).catch(() => ({ rows: [] }));
+  return rows.map((r) => {
+    const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+    return {
+      at: r.created_at,
+      by: typeof meta.by === 'string' && meta.by ? meta.by : (r.username || null),
+      bot: meta.bot === true,
+      votesKept: meta.votesKept === true,
+    };
+  });
+}
+
 async function readProposalRow(ctx, req, gatedApp, id) {
   const { pool } = ctx;
   const config = ctx.config || sharedConfig || {};
@@ -5538,6 +5564,11 @@ async function readProposalRow(ctx, req, gatedApp, id) {
     // what it brings, what it does here, and where it stands, for the
     // change page's From <original> card. Null for any other change.
     proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
+    // 25 Nov 2026 (#7117 discussion): an update after the first is a change's
+    // history, and the only place it can show is the proposal's timeline. The
+    // trace is the Discussion line the update writes (metadata.headChanged),
+    // the same line the bell's history reads (services/story-history.js).
+    proposal.updates = await proposalUpdatesFor(pool, gatedApp.id, proposal.id);
     // #6140: what its Preview reads (AppView._cardPreviewSpec), on a change
     // still up for a vote. A request's page draws a change from this read
     // alone, with no board row under it, so without these its Testing card

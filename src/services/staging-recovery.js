@@ -552,7 +552,11 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
   // a conductor's to open (services/pr-sync-operation.js): a web process
   // (a Preview click) records it for one, on behalf of whoever asked; a
   // process that runs the workflow opens it itself.
-  if (!session.pr_number && !imported && !session.is_headless) {
+  // 24 Nov 2026: a live app draft has no pull request before it is proposed
+  // (live-drafts.js): its preview is rebuilt as below, and nothing here opens
+  // or adopts one for its working session.
+  const isDraft = await require('./live-drafts').isDraftSession(pool, session.id);
+  if (!session.pr_number && !imported && !session.is_headless && !isDraft) {
     const prSync = require('./pr-sync-operation');
     const role = require('./process-role');
     try {
