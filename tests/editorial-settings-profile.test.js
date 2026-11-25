@@ -168,16 +168,24 @@ test('project cards show every project with a live change, in the order given', 
     stubs: { '../../lib/i18n/react': { useMessages: () => (id, params) => params?.title || id } },
   });
   const html = renderToHtml(createElement(ProfileLiveProjects, { projects: [
-    { sessionId: 4, title: 'Newest <change>', appSlug: 'garden', appName: 'Garden' },
-    { sessionId: 3, title: 'Another project', appSlug: 'tides', appName: 'Tides' },
+    { sessionId: 4, title: 'Newest <change>', appSlug: 'garden', appName: 'Garden', appIconUrl: '/app-icons/abc' },
+    { sessionId: 3, title: 'Another project', appSlug: 'tides', appName: 'Tides', appIconEmoji: '🌊' },
     { sessionId: 2, title: 'Third project', appSlug: 'notes', appName: 'Notes' },
-    { sessionId: 1, title: 'Oldest project', appSlug: 'runs', appName: 'Runs' },
+    { sessionId: 1, title: 'Oldest project', appSlug: 'runs', appName: 'Runs', appIconUrl: null },
   ] }));
   assert.equal((html.match(/class="profile-project-card"/g) || []).length, 4, 'four projects, not three');
   assert.match(html, /Newest &lt;change&gt;/);
   assert.match(html, /Oldest project/);
   const slugs = [...html.matchAll(/href="#app\/([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(slugs, ['garden', 'tides', 'notes', 'runs'], 'newest first, as given');
+  // A project with a logo shows it inside the card's square; one without
+  // keeps its emoji, then its first letter (#7153).
+  assert.match(html, /<span class="profile-project-icon" aria-hidden="true"><img src="\/app-icons\/abc" alt="" loading="lazy"\/><\/span>/, 'the uploaded logo fills the square');
+  assert.match(html, /<span class="profile-project-icon" aria-hidden="true">🌊<\/span>/, 'no logo: the emoji');
+  assert.equal((html.match(/profile-project-icon" aria-hidden="true">[A-Z]<\/span>/g) || []).length, 2, 'no logo and no emoji: the first letter');
+  // The image fills the square at both radii, and the square clips it.
+  assert.match(block(), /#profile-live-projects \.profile-project-icon \{[^}]*overflow: hidden/);
+  assert.match(block(), /#profile-live-projects \.profile-project-icon img \{[^}]*object-fit: cover/);
   const empty = renderToHtml(createElement(ProfileLiveProjects, { projects: [] }));
   assert.match(empty, /profile:projects.empty/);
   assert.doesNotMatch(empty, /class="profile-project-card"/);
