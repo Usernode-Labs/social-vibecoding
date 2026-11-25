@@ -1110,7 +1110,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   const openApp = canOpenApp ? (
     <button
       type="button"
-      className="dev-ws-open-app"
+      // ONE LOOK (25 Nov 2026): the page's one main action, the sun sticker.
+      className="dev-ws-open-app one-btn one-btn-1"
       data-ws-community-open-app=""
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >

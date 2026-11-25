@@ -205,11 +205,13 @@ test('on the Hub the arrow goes back to Home (One Home, #6361); on a place it go
   assert.match(drawer, /if \(shown\.place === 'status'\) \{\s*return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toHome'\)\} onBack=\{toHome\} \/>;/);
   assert.doesNotMatch(drawer, /Squares2X2Icon|toAllCommunities|data-nav-drawer-grid/, 'no grid of every community any more');
   assert.match(drawer, /t\('core:header\.drawer\.toHub', \{ community: shown\.name \}\)/);
-  // The Hub names the community alone, as a name alone is drawn (depth 1).
-  assert.match(drawer, /const hub = mode === 'communities' && shown\.place === 'status';/);
-  assert.match(drawer, /const words = hubRef\.current \? headerFrame\(1, slot\.current, reducedMotion\(\)\)\.inner : frame\.inner;/);
-  const hubWords = math.headerFrame(1, 44).inner;
-  assert.equal(hubWords.subOpacity, 0, 'no line under it');
+  // One look (25 Nov 2026): the Hub says its place under the name, "Hub", as every place does; it named the
+  // community alone (depth 1) until then. Its words rest on the page's frame, with the line.
+  assert.doesNotMatch(drawer, /hubRef|headerFrame\(1, slot\.current/);
+  assert.match(drawer, /const words = frame\.inner;/);
+  assert.match(drawer, /\{two \? two\.sub : pageLabel\(shown\.place\)\}/);
+  const hubWords = math.headerFrame(2, 44).inner;
+  assert.equal(hubWords.subOpacity, math.SUB_OPACITY, 'the line under it');
   assert.equal(math.headerFrame(2, 44).back.live, true, 'and the arrow is pressable where it rests');
 });
 
@@ -335,7 +337,11 @@ test('the phone\'s header names a conversation as its sheet does', () => {
   }
 });
 
-test('a request\'s page has one back, its chip: the drawer draws no arrow beside it (audit N05)', () => {
+// One look (25 Nov 2026): on a phone the page's one back is the bar's white disc, which presses the chip, and the
+// chip is put away while the bar has the disc. Still one back, to the place the chip names (audit N05).
+test('a request\'s page has one back: on a phone the bar\'s disc, which presses its chip (audit N05)', () => {
   const drawer = read(`${DIR}/header-drawer.tsx`);
-  assert.match(drawer, /if \(mode !== 'communities'\) return null;[\s\S]{0,600}if \(subTab === 'topic'\) return null;/);
+  assert.match(drawer, /if \(mode !== 'communities'\) return null;[\s\S]{0,900}if \(subTab === 'topic'\) return topicName \? <BackDisc mode=\{mode\} label=\{topicName\} onBack=\{topicBack\} \/> : null;/);
+  assert.ok(read('public/css/app.css').includes('html:not([data-skin]) body:has(#platform-header [data-nav-drawer-back]) #dev-topic-thread .dev-request > .dev-request-back { display: none; }'),
+    'the chip is put away while the bar draws the way back');
 });

@@ -161,7 +161,8 @@ test('the hub\'s Needs you counts what you have not seen, and stays a door to th
   seen.markNeedsSeen('garden', 'proposal:1@0');
   const one = html();
   assert.match(one, /data-ws-hub-needs-votes="2"/);
-  assert.match(one, /<span class="dev-ws-foryou-pill">2 to vote<\/span>/);
+  // One look (25 Nov 2026): the count is the shared strong tag.
+  assert.match(one, /<span class="dev-ws-foryou-pill one-tag one-tag-strong">2 to vote<\/span>/);
   assert.match(one, /<span data-ws-hub-needs-first="">Tags, and 1 more<\/span>/, 'the first vote you have not seen leads');
   seen.markNeedsSeen('garden', 'proposal:2@0');
   seen.markNeedsSeen('garden', 'proposal:3@0');

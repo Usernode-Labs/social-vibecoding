@@ -15,8 +15,8 @@
  *                  the right as the conversation slides in. A button, not an href'd #back-btn: an arrow with an
  *                  address is what turns on WebKit's own history swipe
  *                  (../header/native-back-navigation.ts).
- *   DrawerTitles   in the h1: the community over its place ("Workshop",
- *                  "#general"), the community alone on its Hub; in Messages
+ *   DrawerTitles   in the h1: the community over its place ("Hub",
+ *                  "Workshop", "#general"); in Messages
  *                  "Messages" or the conversation over who it is with.
  *   DrawerUntint   the bar as it is off a community, laid over the
  *                  community's colour. A community's page rests at the full
@@ -29,7 +29,7 @@
  * frames never re-render.
  */
 
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useRef, type ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -37,6 +37,8 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { topicBack } from '../dev-board/topic/frame/topic-page';
+import { useTopicBackName } from '../dev-board/topic/topic-back';
 import { openPlace } from '../dev-board/workshop/place-store';
 import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
@@ -135,13 +137,17 @@ export function DrawerBack(): ReactNode {
   const mode = useDrawerMode();
   const { shown } = useStoreState(drawerStore);
   const { subTab } = useStoreState(improveStore) as { subTab: string | null };
+  const topicName = useTopicBackName();
   if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
   if (mode !== 'communities') return null;
-  // A request's or a change's page has ONE back: the chip above its sheet,
-  // which names the place it returns to (../dev-board/topic/topic-back.tsx,
-  // where the header draws no arrow). This arrow beside it made two, to two
-  // places (audit N05, 1 Nov 2026).
-  if (subTab === 'topic') return null;
+  // A request's or a change's page has ONE back, to the place its chip names
+  // (../dev-board/topic/topic-back.tsx; two arrows to two places was audit
+  // N05, 1 Nov 2026). ONE LOOK (25 Nov 2026): on a phone that back is the
+  // bar's white disc, as on every other page of the community, and the chip
+  // in the title card is put away (app.css, ONE LOOK · A PROJECT'S HUB AND
+  // ITS REQUESTS). The disc presses the chip, so where it goes, and whether
+  // it steps Back or follows the link, stay the chip's one answer.
+  if (subTab === 'topic') return topicName ? <BackDisc mode={mode} label={topicName} onBack={topicBack} /> : null;
   if (shown.place === 'status') {
     return <BackDisc mode={mode} label={t('core:header.drawer.toHome')} onBack={toHome} />;
   }
@@ -185,13 +191,14 @@ export function DrawerTitles(): ReactNode {
   const conversation = useStoreState(messagesDrawerStore);
   const messages = mode === 'messages';
   const two = messages ? conversation : null;
-  // A community's Hub names the community alone, beside the arrow home:
-  // its title sits as a name alone does (headerFrame at 1), with no line.
-  const hub = mode === 'communities' && shown.place === 'status';
+  // ONE LOOK (25 Nov 2026): a community's Hub says its place under the
+  // name, "Hub", as every other place does ("Workshop", "#general"). It
+  // named the community alone, as a name alone is drawn (headerFrame at 1),
+  // with no line, until then.
   // Where it rests, for a screen reader: the title on show, and the small
   // line only where it says something.
   const outerShown = two ? two.level === 0 : false;
-  const subShown = two ? two.level === 1 && !!two.sub : !hub;
+  const subShown = two ? two.level === 1 && !!two.sub : true;
   const box = useRef<HTMLSpanElement>(null);
   const outer = useRef<HTMLSpanElement>(null);
   const inner = useRef<HTMLSpanElement>(null);
@@ -211,8 +218,6 @@ export function DrawerTitles(): ReactNode {
   // the titles change size, and it never steps past the bar's padding.
   const slot = useRef(44);
   const redraw = useRef(() => {});
-  const hubRef = useRef(hub);
-  hubRef.current = hub;
   const measure = useRef(() => {});
   measure.current = () => {
     const el = box.current;
@@ -246,13 +251,13 @@ export function DrawerTitles(): ReactNode {
   }, []);
   // The drawer it is drawn for, and where it rests, move the boxes: measure
   // again in the same frame, before the paint.
-  useIsomorphicLayoutEffect(() => { measure.current(); }, [mode, hub, two?.level]);
+  useIsomorphicLayoutEffect(() => { measure.current(); }, [mode, two?.level]);
   useHeaderFrame(mode, (frame) => {
     const a = outer.current;
     const b = inner.current;
     const s = sub.current;
     if (!a || !b || !s) return;
-    const words = hubRef.current ? headerFrame(1, slot.current, reducedMotion()).inner : frame.inner;
+    const words = frame.inner;
     a.style.opacity = String(frame.outer.opacity);
     a.style.transform = translate(frame.outer.x, frame.outer.y);
     b.style.opacity = String(words.opacity);
@@ -260,8 +265,6 @@ export function DrawerTitles(): ReactNode {
     s.style.opacity = String(words.subOpacity);
     s.style.transform = translate(words.subX, words.subY);
   }, () => slot.current, redraw);
-  // From the Hub to a place and back the page's line comes and goes.
-  useEffect(() => { redraw.current(); }, [hub]);
   const outerName = messages ? t('core:header.drawer.messages') : t('core:header.communities');
   return (
     <span ref={box} className="nav-drawer-titles" data-nav-drawer-titles="">
@@ -278,7 +281,7 @@ export function DrawerTitles(): ReactNode {
           ) : shown.name}
         </b>
         <small ref={sub} className="nav-drawer-title-page" aria-hidden={!subShown || undefined}>
-          {two ? two.sub : hub ? '' : pageLabel(shown.place)}
+          {two ? two.sub : pageLabel(shown.place)}
         </small>
       </span>
     </span>

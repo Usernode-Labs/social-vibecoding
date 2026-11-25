@@ -38999,6 +38999,717 @@ html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor
 /* ── END ONE LOOK · MESSAGES AND THREADS ── */
 
 /* ── ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
+/* A project's pages in the agreed look: its Hub (the hero, For you, Recently live, Top contributors), a request's page
+   (its title card, the card of what was asked with its status row, How it got here, the replies' card) and, where they
+   share these parts, Needs you and the Workshop. The phone's bar keeps the project's colour, with the white back disc
+   and the place under the name. Everything here is the standard look's (html:not([data-skin])), and draws with the
+   shared parts above; where an earlier, more specific rule of the page drew a part its own way, the rule here puts the
+   part's values back. */
+
+/* ── THE BAR ON A PHONE, ON A PROJECT'S PAGES ── The community's colour stays on the bar (DrawerUntint lays the
+   plain bar over it only while it slides). Back is the plain white disc with an ink chevron and no edge; the name is
+   17/600, the place under it 12/500 at 82%. The bell and the Homeroom menu stay where they are. */
+html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-back {
+  width: 36px;
+  height: 36px;
+  margin: -4px;
+  border: 0;
+  background: #ffffff;
+  color: #121a0e;
+  box-shadow: none;
+}
+html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-back > svg { width: 20px; height: 20px; stroke-width: 2.2; }
+html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-title-name { font-size: 17px; font-weight: 600; line-height: 1.15; letter-spacing: -0.006em; }
+html:not([data-skin]) #platform-header:has(> .nav-drawer-untint) .nav-drawer-title-page { font-size: 12px; font-weight: 500; line-height: 1.2; color: rgb(255 255 255 / 0.82); }
+
+/* ── THE DESKTOP BAR, ON A PROJECT'S PAGES ── the project's tile is a small white tile with one hairline, the name
+   17/600 over its place in the muted ink. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-header #header-app-tile {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background-color: #ffffff;
+    box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.1);
+    outline: 0;
+  }
+  html:not([data-skin]) #platform-header #header-app-tile[data-icon="emoji"] > span { font-size: 17px; line-height: 1; }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) { margin-inline-start: 2px; }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) > #header-title-name { font-size: 17px; font-weight: 600; letter-spacing: -0.006em; line-height: 1.2; }
+  html:not([data-skin]) #platform-header .header-place-name { font-size: 12px; font-weight: 500; line-height: 1.2; color: var(--one-ink-2); opacity: 1; }
+}
+
+/* ── THE DESKTOP BAR'S SUGGEST ── a secondary action: the sky tint, its words in the sky ink, no edge. */
+html:not([data-skin]) #platform-header #header-in-app-suggest {
+  border-color: transparent;
+  background: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  box-shadow: none;
+}
+
+/* ── THE HUB ── */
+/* Its parts stand 10px apart, each label on its own card. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: 10px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is(.dev-ws-hub-section > h2, .dev-ws-hub-sechead > h2) {
+  padding-block: 6px 0;
+  padding-inline: 6px 4px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-section { gap: 10px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > :first-child { margin-bottom: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-sechead { align-items: center; gap: 8px; }
+/* "All in Workshop", at the end of its label: the ink words alone. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-open {
+  padding-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-open > svg { display: none; }
+
+/* THE HERO: what the project is, who it is for and who is about, in a white card with a soft wash of the project's
+   own colour (bright at the top's far corner, a step round the hue at the foot's near one). The kit's picture, its
+   dots and its rings are put away. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+  --one-hub-wash-a: hsl(from var(--wip-hero-tint) h 45% 82% / 0.55);
+  --one-hub-wash-b: hsl(from var(--wip-hero-tint) calc(h - 40) 60% 86% / 0.5);
+  row-gap: 14px;
+  min-height: 0;
+  padding: 16px;
+  border-radius: 20px;
+  background-color: var(--one-surface);
+  background-image:
+    radial-gradient(70% 90% at 100% 0%, var(--one-hub-wash-a), transparent 70%),
+    radial-gradient(60% 80% at 0% 100%, var(--one-hub-wash-b), transparent 70%);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+  color: var(--one-ink);
+}
+html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+  background-image:
+    radial-gradient(70% 90% at 0% 0%, var(--one-hub-wash-a), transparent 70%),
+    radial-gradient(60% 80% at 100% 100%, var(--one-hub-wash-b), transparent 70%);
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+    --one-hub-wash-a: hsl(from var(--wip-hero-tint) h 50% 82% / 0.7);
+    --one-hub-wash-b: hsl(from var(--wip-hero-tint) calc(h - 40) 55% 86% / 0.55);
+    background-image:
+      radial-gradient(50% 120% at 100% 0%, var(--one-hub-wash-a), transparent 70%),
+      radial-gradient(60% 90% at 0% 100%, var(--one-hub-wash-b), transparent 70%);
+  }
+  html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+    background-image:
+      radial-gradient(50% 120% at 0% 0%, var(--one-hub-wash-a), transparent 70%),
+      radial-gradient(60% 90% at 100% 100%, var(--one-hub-wash-b), transparent 70%);
+  }
+}
+html:not([data-skin]).dark #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+  --one-hub-wash-a: hsl(from var(--wip-hero-tint) h 45% 45% / 0.3);
+  --one-hub-wash-b: hsl(from var(--wip-hero-tint) calc(h - 40) 50% 42% / 0.22);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary > :is(.wip-hero-wash, .wip-hero-art) { display: none; }
+@media (min-width: 900px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: 16px; }
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-id { gap: 14px; align-items: center; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-tile {
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  font-size: 30px;
+  background-color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.1), 0 10px 20px -12px rgb(18 26 14 / 0.45);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-id-text { gap: 4px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-name {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-member, .wip-hub-meta-people) {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 19px;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-desc {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--one-ink);
+}
+/* Who was about this week: their faces and how many, in the muted line. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active { gap: 8px; align-items: center; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active .dev-ws-hero-face {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+  font-weight: 650;
+  box-shadow: 0 0 0 2px var(--one-surface);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active .dev-ws-hero-face { margin: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active .dev-ws-hero-face + .dev-ws-hero-face { margin-inline-start: -8px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active-n {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 19px;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-active-names { display: none; }
+/* What you can do: Open app is the page's one sticker, Invite the flat second, the ⋯ a flat disc in the corner. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary > .dev-ws-hero-row { margin-top: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary .dev-ws-hero-actions { gap: 10px; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join], [data-ws-community-invite], [data-ws-community-audience-change]) {
+  height: 44px;
+  min-height: 0;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 9999px;
+  background-image: none;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-invite]) > svg { display: none; }
+/* The main one: Open app, or Join where it leads the row (then Open app is the flat second). */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join]) { background-color: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join]):active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-invite], [data-ws-community-audience-change]),
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row:has([data-ws-invite-join]) :is(button, a)[data-ws-community-open-app] { background-color: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-invite], [data-ws-community-audience-change]):active:not(:disabled),
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row:has([data-ws-invite-join]) :is(button, a)[data-ws-community-open-app]:active:not(:disabled) { transform: scale(0.97); filter: brightness(0.95); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
+  width: 36px;
+  height: 36px;
+  background-color: var(--one-surface);
+  color: var(--one-ink);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join], [data-ws-community-invite], [data-ws-community-audience-change]) { height: 36px; padding: 0 16px; font-size: 15px; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-member, .wip-hub-meta-people, .dev-ws-hero-active-n) { font-size: 13px; line-height: 18px; }
+}
+
+/* FOR YOU: Needs you, the Workshop and the discussion, each on its own coloured tile (the inbox in the pale sun, the
+   board in the sky, the chat in green) and with today's count as a tag. One card of rows on a phone; from 768px each
+   is a door of its own, three side by side where they fit. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * {
+  border-radius: 20px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+  min-height: 0;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) {
+  gap: 12px;
+  padding: 10px 14px;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background-color: var(--one-tile-y-bg);
+  color: var(--one-tile-y-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child > svg { width: 18px; height: 18px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--one-tile-b-bg); color: var(--one-tile-b-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-title { font: var(--one-row-title); color: var(--one-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-sub { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-handle { font-weight: inherit; color: inherit; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
+/* A door's count is a tag at its title's end ("1 to vote" in ink, "3 new" in grey), never a button. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-tag {
+  height: 24px;
+  min-width: 0;
+  padding: 0 9px;
+  border-radius: 9999px;
+  background: var(--one-tag-bg);
+  color: var(--one-tag-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: none;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-tag.one-tag-strong { background: var(--one-tag-strong-bg); color: var(--one-tag-strong-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-tag.one-tag-grey { background: var(--one-tag-grey-bg); color: var(--one-tag-grey-ink); }
+/* On a phone the three are one card of rows (the markup's own card, which the page split into three), parted by
+   hairlines from the text's edge; the rows do not lift under the pointer as the doors do. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou {
+    display: block;
+    order: 3;
+    overflow: hidden;
+    padding: 0;
+    border-radius: 20px;
+    background-color: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-hair);
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * {
+    position: relative;
+    margin: 0;
+    border-radius: 0;
+    background-color: transparent;
+    box-shadow: none;
+    transform: none;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > :hover { transform: none; box-shadow: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + *::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    inset-inline: 56px 0;
+    height: 1px;
+    background: var(--one-line);
+    pointer-events: none;
+  }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { column-gap: 12px; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > :hover { box-shadow: inset 0 0 0 1px var(--one-field-line); }
+}
+/* Stacked one to a row (768 to 1199px), the doors stand 8px apart. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: -2px; }
+}
+
+/* RECENTLY LIVE: on a phone one card of rows, each a small square (the change's picture, or the project's icon on a
+   pale wash of its colour), its title on one line and who made it and when under it, and the "N more" at its foot;
+   from 768px each change its own card, side by side. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-list { gap: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-item { position: relative; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card {
+  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+  align-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 0;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background-color: hsl(from var(--wip-hero-tint) h 40% 90%);
+  box-shadow: none;
+}
+html:not([data-skin]).dark #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic { background-color: hsl(from var(--wip-hero-tint) h 30% 30%); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 18px;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app > span { font-size: inherit; line-height: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-title {
+  align-self: end;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--one-row-title);
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-meta {
+  align-self: start;
+  font: var(--one-row-sub);
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--one-sky-ink); font-weight: 600; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more {
+  position: relative;
+  min-height: 44px;
+  margin: 0;
+  padding-block: 0;
+  padding-inline: 62px 14px;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more-words {
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: #3090e1;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more > svg { color: var(--one-ink-3); }
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] :is(.dev-ws-recent-item + .dev-ws-recent-item, .dev-ws-recent-more)::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    inset-inline: 62px 0;
+    height: 1px;
+    background: var(--one-line);
+    pointer-events: none;
+  }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent {
+    display: grid;
+    gap: 10px;
+    overflow: visible;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-list {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: 12px;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card {
+    grid-template-columns: 52px minmax(0, 1fr);
+    height: 100%;
+    padding: 12px 14px;
+    border-radius: 20px;
+    background-color: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-hair);
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic { width: 52px; height: 52px; border-radius: 12px; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { font-size: 24px; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    line-height: 1.25;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more {
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 20px;
+    background-color: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-hair);
+  }
+}
+
+/* TOP CONTRIBUTORS: the shared segmented switch at its label's end, and one card of rows, a face and a name over the
+   count. */
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg {
+  padding: 2px;
+  border: 0;
+  background-color: var(--one-seg-track);
+  box-shadow: none;
+}
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button {
+  min-height: 30px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background-color: transparent;
+  color: var(--one-seg-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button[aria-pressed="true"] { background-color: transparent; color: var(--one-seg-on-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 20px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou > * + * { border-top: 0; }
+/* Topics and From its versions are the same card of rows: a small tile, the row's two lines at the ramp. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row { position: relative; gap: 12px; margin: 0; padding: 10px 14px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row + .dev-ws-foryou-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline: 56px 0;
+  height: 1px;
+  background: var(--one-line);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row > :first-child:not(.ui-lrow-tx) { width: 30px; height: 30px; border-radius: 8px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row {
+  position: relative;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 14px;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row + .dev-ws-contrib-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline: 58px 0;
+  height: 1px;
+  background: var(--one-line);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-face { width: 32px; height: 32px; font-size: 14px; font-weight: 650; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-foryou-count { font: inherit; color: inherit; }
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row { padding: 8px 14px; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg { width: 200px; min-height: 30px; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button { min-height: 26px; padding: 0 10px; font-size: 13px; }
+}
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-sechead > h2 { white-space: nowrap; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg { min-height: 30px; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button { min-height: 26px; padding: 0 10px; font-size: 13px; }
+}
+
+/* ── A REQUEST'S PAGE ── Its title card (the project's tile, "Audit Garden · Request #21", the title, ⋯), then the card of
+   what was asked, How it got here, and the replies' card, each a white card with one hairline, 12px apart. The page's
+   own rules name its whole ancestry (the panel, the page, the rail), so these name its id twice to settle them. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]):not(.in-side-panel) #dev-topic-thread#dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-thread-card) { padding-inline: 16px; }
+}
+/* On a phone the way back is the bar's white disc (header-drawer.tsx DrawerBack, which presses this chip), so the chip
+   in the title card is put away and the card starts at its tile. Wherever the bar has no disc (a desktop, a card
+   opened from Messages) the chip stays, a flat disc in the card. */
+html:not([data-skin]) body:has(#platform-header [data-nav-drawer-back]) #dev-topic-thread .dev-request > .dev-request-back { display: none; }
+html:not([data-skin]) body:has(#platform-header [data-nav-drawer-back]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { padding-inline-start: 16px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back {
+  background: var(--one-surface);
+  color: var(--one-ink);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+/* The title card. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+  gap: 12px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .messages-thread-header { padding-block: 14px; padding-inline-end: 16px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-thread-bar-tile {
+  border: 0;
+  background-color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.1), 0 10px 20px -12px rgb(18 26 14 / 0.45);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile { width: 44px; height: 44px; border-radius: 12px; font-size: 22px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile[data-icon="emoji"] > span { font-size: 22px; line-height: 1; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .dev-thread-bar-text > :is(.messages-thread-kicker, .messages-thread-sub) {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 19px;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .dev-thread-bar-text > .messages-thread-name {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > .dev-card-menu-btn {
+  width: 34px;
+  height: 34px;
+  background-color: var(--one-surface);
+  color: var(--one-ink);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+/* The cards under it: one hairline each, no lift. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) :is(#gc-thread-head, #gc-thread-rail, #gc-thread-messages) {
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-head { padding: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages { margin-top: 12px; }
+@media (max-width: 1179.98px) {
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-rail { margin-top: 12px; }
+}
+
+/* WHAT WAS ASKED: the words, then Translate (a text action) and who wrote it on one line, a hairline, and the status
+   row: where it stands on the left, and "Work on this with Homeroom bot", the page's one sticker, beside it at its
+   own width. Where both do not fit (a phone) the button goes under, still at its own width. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card { padding: 16px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card > .min-w-0 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card > .min-w-0 > * { flex: 1 1 100%; min-width: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card > .min-w-0 > .dev-request-ask { display: contents; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask > * { flex: 1 1 100%; min-width: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask > :has(> .dev-request-more) { flex: none; margin-top: 10px; gap: 10px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask > .dev-request-more { flex: none; width: auto; margin-top: 10px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask-text > * { max-width: 70ch; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask-text {
+  max-width: none;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-more {
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 19px;
+  color: var(--one-ink);
+  text-decoration: underline;
+  text-decoration-color: #3090e1;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card > .min-w-0 > .dev-thread-by {
+  flex: 1 1 auto;
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot {
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 10px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--one-line);
+  border-radius: 0;
+  background: none;
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-st { flex: 1 1 auto; gap: 2px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-head { font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-sub { font-size: 14px; line-height: 19px; color: var(--one-ink-2); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts { flex: none; max-width: 100%; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts > :is(button, a),
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts > [data-thread-foot-next] > :is(button, a) { flex: none; width: auto; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts .dev-request-primary {
+  height: 44px;
+  min-height: 0;
+  padding: 0 20px;
+  border-radius: 9999px;
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: var(--one-edge);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts .dev-request-primary:hover { background: var(--one-sun); filter: brightness(1.03); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts .dev-request-primary:active { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+
+/* HOW IT GOT HERE: its own card (beside the others on a wide page), a step's mark the small tile of its kind. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail { padding: 14px 16px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-head { padding: 0 0 10px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 12px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step:last-child { padding-bottom: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 14px; top: 34px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark { width: 30px; height: 30px; border-radius: 8px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark .dev-rail-glyph { width: 18px; height: 18px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-step="asked"] .dev-rail-mark:not([data-rail-tone]) { background: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-name { font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-time { font-size: 13px; line-height: 1.2; color: var(--one-ink-2); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-desc { font-size: 14px; line-height: 19px; color: var(--one-ink-2); }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-link {
+  font-weight: 400;
+  color: var(--one-ink);
+  text-decoration: underline;
+  text-decoration-color: #3090e1;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+/* THE REPLIES' CARD: "30 replies" between two hairlines at its top, then the stream (drawn by the conversation's own
+   rules). On a phone the reply bar floats over the page's foot, as it does today; from 768px it is the card's foot,
+   inside it: the card runs on down to the bar and the bar closes the card. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages { padding: 12px 16px; border-radius: 20px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages > .messages-reply-count {
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages > .messages-reply-count > * { flex: none; white-space: nowrap; padding: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages > .messages-reply-count::before,
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-messages > .messages-reply-count::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--one-line);
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"]:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll) { grid-template-rows: auto 1fr; }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"]:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll)::after { height: 0; }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"]:has(.dev-thread-card) #gc-thread-messages {
+    padding-bottom: calc(12px + var(--composer-tuck, 0px));
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    box-shadow: inset 1px 0 0 var(--one-hair), inset -1px 0 0 var(--one-hair), inset 0 1px 0 var(--one-hair);
+  }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"]:has(.dev-thread-card) .dev-request-sheet > .messages-composer {
+    margin-bottom: 16px;
+    padding: 4px 16px 12px;
+    border-radius: 0 0 20px 20px;
+    background-color: var(--one-surface);
+    box-shadow: inset 1px 0 0 var(--one-hair), inset -1px 0 0 var(--one-hair), inset 0 -1px 0 var(--one-hair);
+  }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .dev-thread-bar-text > :is(.messages-thread-kicker, .messages-thread-sub) { font-size: 13px; line-height: 18px; }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-request-ask-text { font-size: 15px; }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card :is(.dev-thread-by, .dev-thread-foot-sub, .dev-rail-desc) { font-size: 13px; line-height: 18px; }
+  html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request[data-thread-page="request"] .dev-request-root.dev-thread-card .dev-thread-foot-acts .dev-request-primary { height: 36px; padding: 0 16px; font-size: 15px; }
+}
+
+/* ── NEEDS YOU AND THE WORKSHOP, WHERE THEY SHARE THESE PARTS ── Their pages keep their own shape. On the Workshop a
+   count that asks for you ("1 needs your vote") is the strong tag, flat and still; its cards keep one hairline; Your
+   work's two lines and "Open the board" read as the hub's do. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-pill {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 9px;
+  background-color: var(--one-tag-strong-bg);
+  color: var(--one-tag-strong-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: none;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-pill:is(:hover, :active) { translate: none; scale: none; background-color: var(--one-tag-strong-bg); }
+html:not([data-skin]) #dev-workshop :is(.dev-ws-front-hero, .dev-ws-front-path, .dev-ws-front-card) { box-shadow: inset 0 0 0 1px var(--one-hair); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > b { font: var(--one-row-title); color: var(--one-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > span { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-go { font-size: 14px; font-weight: 600; color: var(--one-ink); }
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 
 /* ── ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
