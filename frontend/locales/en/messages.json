@@ -5357,7 +5357,7 @@
   },
   "ai.filter.showAll": {
     "text": "Show all projects",
-    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project so the lists show all of them again."
+    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project and closes the panel so the lists show all of them again. It is greyed out and cannot be pressed while nothing is picked."
   },
   "ai.filter.done": {
     "text": "Done",
