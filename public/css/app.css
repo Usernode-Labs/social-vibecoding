@@ -39329,7 +39329,30 @@ html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marke
      laid-out group, so its names follow. */
   html:not([data-skin]):not(.un-android) #platform-header .platform-header-left:has(> #back-btn:not(.hidden)),
   html:not([data-skin]) #platform-header .platform-header-left:has(> .nav-drawer-back) { margin-inline: -8px -10px; }
+  /* 48px under the status bar, the controls in its middle (design review, 25 Nov 2026): 10 over the 28px row and
+     10 under it, where the flat blue bar (Mobile 01) had 12 and 12 (52px). Both bars move together, so the
+     header-height invariant (#909, "Header height invariant" above) still holds, and --platform-header-h says the
+     new height. The doubled id and the body:has() outrank Mobile 01's per-screen rules and the tinted bar's
+     (#4237), which are (2,2,2) and (2,3,2). */
+  html:not([data-skin]) { --platform-header-h: 3rem; }
+  html:not([data-skin]) body:has(:is(#platform-header, #landing-header)) :is(#platform-header#platform-header, #landing-header#landing-header) { padding-bottom: 10px; }
+  html:not([data-skin]) #platform-header { padding-inline-end: 10px; }
+  /* The bell is the mock's: 21px at a 1.8 stroke, centred on the same 28px box. The Homeroom mark is 28px, 14px
+     after the bell, its chevron 12px from the screen's edge. */
+  html:not([data-skin]) #platform-header #notifications-btn > svg { width: 21px; height: 21px; }
+  html:not([data-skin]) #platform-header > .ms-auto { gap: 14px; }
+  html:not([data-skin]) #platform-header #platform-mark-btn .platform-mark-tile { width: 28px; height: 28px; border-radius: 8px; }
 }
+@media (max-width: 767.98px) {
+  @supports (padding: env(safe-area-inset-top)) {
+    html:not([data-skin]) body:has(:is(#platform-header, #landing-header)) :is(#platform-header#platform-header, #landing-header#landing-header).un-safe-top-extend {
+      padding-top: calc(10px + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome:not([data-skin]) body:has(:is(#platform-header, #landing-header)) :is(#platform-header#platform-header, #landing-header#landing-header).un-safe-top-extend { padding-top: 10px !important; }
+  }
+}
+/* Every bar's bell, phone and desktop, at the mock's 1.8 stroke (it was 2). */
+html:not([data-skin]) #platform-header #notifications-btn > svg { stroke-width: 1.8; }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-header #header-title-name,
   html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) > #header-title-name { color: var(--one-ink); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
@@ -39348,6 +39371,18 @@ html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marke
     color: var(--one-ink);
   }  html:not([data-skin]) #platform-header .platform-header-left:has(> #back-btn:not(.hidden)) { margin-inline-end: -4px; }
 }
+/* A SECTION'S OWN ACTION (design review, 25 Nov 2026). The words after a section's label (Edit and Done, See all,
+   Show all, All in Workshop, View all activity) are the label row's own ink at 14/600, with no underline and no
+   chevron: the label beside them already says what they act on, so they need no more than their weight. An action
+   inside a card's words (Translate, Read the request, Change, Cancel) keeps the blue underline (.one-link and the
+   BUTTONS block's level 4). */
+html:not([data-skin]) :is(.home-edit-start, .home-panel-see-all, #communities-edit, .wip-fold-pill, #profile-recent-activity .profile-recent-heading > a):is(button, a, span) {
+  color: var(--one-ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+html:not([data-skin]) .wip-fold-pill > .wip-head-chevron-glyph { display: none; }
 /* ── END ONE LOOK · SHARED PARTS ── */
 
 /* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
@@ -40815,6 +40850,16 @@ html:not([data-skin]) #dev-workshop :is(.dev-ws-front-hero, .dev-ws-front-path, 
 html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > b { font: var(--one-row-title); color: var(--one-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > span { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
 html:not([data-skin]) #dev-workshop .dev-ws-front-go { font-size: 14px; font-weight: 600; color: var(--one-ink); }
+/* ── THE HERO'S LINE (design review, 25 Nov 2026) ── One line under the name, "Private community · 6 members", as
+   the mock draws it: the faces are the hero's once, beside "4 active this week", so the members' count carries
+   none, and the audience has no glyph or dot of its own. "6 members" still opens the roster (phone review #52). */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta { display: inline; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-kind { display: inline; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-kind > svg,
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-kind::before,
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people .dev-ws-hero-faces { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people { display: inline; padding: 0; margin: 0; border: 0; background: none; font: inherit; color: inherit; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people::before { content: "\00B7"; content: "\00B7" / ""; margin-inline: 0.3em; }
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 
 /* ── ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
@@ -40885,7 +40930,7 @@ html:not([data-skin]) #home-create-tile .home-create-label { color: var(--one-in
   html:not([data-skin]) #home-create-tile .home-create-label {
     display: block;
     min-height: 0;
-    margin-top: 6px;
+    margin-top: 0; /* the card's 6px gap is the space under the icon, as the mock's */
     overflow: hidden;
     font-size: 12px;
     font-weight: 600;
@@ -40940,7 +40985,12 @@ html:not([data-skin]) #home-needs-card .wip-activity-words { gap: 2px; min-heigh
 html:not([data-skin]) #home-needs-card .wip-item-title { color: var(--one-ink); font: var(--one-row-title); }
 html:not([data-skin]) #home-needs-card [data-home-activity-line]:not(.one-tag) { color: var(--one-ink-2); font: var(--one-row-sub); }
 html:not([data-skin]) #home-needs-card .wip-activity-words > .one-tag { order: 1; align-self: flex-start; max-width: 100%; margin-top: 6px; }
-html:not([data-skin]) #home-needs-card .wip-activity-when { color: var(--one-ink-2); font-size: 13px; line-height: 16px; }
+/* No "25m ago" (design review, 25 Nov 2026): the card says what waits, not when it last moved. The time stays in
+   the markup for its title and its test, out of view. */
+html:not([data-skin]) #home-needs-card .wip-activity-when { display: none; }
+/* The icon sits 6px over the name, which is the card's 15/600 (the row's 16 is a row's, not a card's). */
+html:not([data-skin]) #home-needs-card .wip-activity-card { gap: 6px; }
+html:not([data-skin]) #home-needs-card .wip-item-title { font-size: 15px; line-height: 18px; }
 @media (min-width: 768px) {
   /* Three cards fill the row; more scroll on sideways. */
   html:not([data-skin]) #home-needs-card .wip-activity-rail { gap: 12px; }
@@ -41307,4 +41357,13 @@ html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done
 }
 html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] > .line-clamp-2 { font: var(--one-row-title); }
 html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] > span:last-child { color: var(--one-points); font-size: 13px; font-weight: 600; }
+/* ── YOU: the hero's type on a phone (design review, 25 Nov 2026) ── The mock's sizes: an 84px picture, the
+   name at 28px, the bio at 15 and the line about the person at 14, which may wrap to a second line. */
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: 5.25rem; height: 5.25rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-name { font-size: 1.75rem; line-height: 1.05; }
+  html:not([data-skin]) #profile-identity-card .profile-id-handle { margin-top: 4px; font-weight: 650; }
+  html:not([data-skin]) #profile-identity-card .profile-id-bio { font-size: 0.9375rem; line-height: 1.45; }
+  html:not([data-skin]) #profile-identity-card .profile-id-about { font-size: 0.875rem; line-height: 1.36; }
+}
 /* ── END ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
