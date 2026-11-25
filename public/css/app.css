@@ -12219,6 +12219,170 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   height: 14px;
 }
 
+/* ── ONE LOOK · THE COMMUNITY CARD AS A COVER AND A ROW (design review, 25 Nov
+   2026; the area "HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES" at the foot
+   of this file). In the standard look, on Home and the Communities page:
+   Featured and a pinned community are covers (the colour band with the icon
+   in its middle, then the name and one line), and on a phone the joined
+   communities are rows of one list card. Here, in the card's own block,
+   because only this block names the card's parts. ── */
+/* A cover: the community's colour band with its icon in the middle, then its
+   name and one line. Featured is one grid of them, two across on a phone and
+   three on a desktop (features/home/communities-to-join.tsx draws every
+   featured community in it). */
+html:not([data-skin]) :is(#home-screen, #communities-screen) [data-home-join-featured] .cm-grid[data-cm-grid="lead"],
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) :is(#home-screen, #communities-screen) [data-home-join-featured] .cm-grid[data-cm-grid="lead"] { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] { gap: 20px; }
+}
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid[data-cm-grid="lead"], .cm-grid[data-cm-grid="pinned"]) {
+  --cm-band-icon: 44px;
+  --cm-band-icon-radius: 12px;
+  --cm-band-icon-shadow: 0 8px 16px -10px rgb(18 26 14 / 0.45);
+}
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-pic {
+  height: 76px;
+  max-height: none;
+  aspect-ratio: auto;
+}
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-band-icon {
+  --cm-band-icon: 44px;
+  --cm-band-icon-radius: 12px;
+  font-size: 22px;
+}
+/* A community's icon is drawn in the opaque ink: an emoji takes the alpha of
+   its words' colour, and the muted ink (60%) left every emoji on a card pale. */
+html:not([data-skin]) :is(#home-screen, #communities-screen) .cm-card :is(.cm-band-icon, .cm-card-icon) { color: var(--one-ink-2); }
+html:not([data-skin]) :is(#home-screen, #communities-screen) .cm-card :is(.cm-band-icon, .cm-card-icon) > span { color: var(--one-ink); }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-body { gap: 3px; padding: 10px 12px 12px; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-head { gap: 10px; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-id { flex: 1 1 auto; gap: 3px; padding-top: 0; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-face { margin-top: -20px; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-icon { width: 40px; height: 40px; border-radius: 11px; font-size: 20px; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-name {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--one-ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-members { color: var(--one-ink-2); font: var(--one-row-sub); }
+html:not([data-skin]) :is(#home-screen, #communities-screen) [data-home-join-featured] .cm-card :is(.cm-card-desc, .cm-card-week) { display: none; }
+/* A pin's name with the votes waiting on you beside it, a tag. */
+html:not([data-skin]) #communities-screen .cm-card-name-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+html:not([data-skin]) #communities-screen .cm-card-name-row > .cm-card-name { flex: 0 1 auto; min-width: 0; }
+html:not([data-skin]) #communities-screen .cm-card-name-row > .one-tag { flex: none; }
+/* (The count on a card's icon, which the tag replaces, wore the look's yellow count; the tag is the shared one.) */
+html:not([data-skin]) #communities-screen .cm-card .one-tag[data-home-community-votes] { background: var(--one-tag-bg); color: var(--one-tag-ink); box-shadow: none; }
+/* On a phone a pin is the cover alone, its name and members; from 768px it
+   says what the community is and its week too, under them. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card :is(.cm-card-desc, .cm-card-week) { display: none; }
+  /* A phone's cover has no room for the name and the tag on one line: the
+     name has its line, and the tag ends the members' line under it. */
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card-id:has(> .cm-card-name-row) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 6px;
+  }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card-name-row { display: contents; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card-name-row > .cm-card-name { grid-column: 1 / -1; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card-id > .cm-card-members { grid-column: 1; grid-row: 2; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card-name-row > .one-tag { grid-column: 2; grid-row: 2; height: 22px; padding-inline: 8px; font-size: 12px; }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) :is(#home-screen, #communities-screen) :is([data-home-join-featured] .cm-grid, .cm-grid[data-cm-grid="pinned"]) .cm-card .cm-card-pic { height: 96px; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card .cm-card-desc { margin-top: 4px; color: var(--one-ink); font-size: 13px; line-height: 18px; -webkit-line-clamp: 1; line-clamp: 1; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card .cm-card-week { padding-top: 2px; color: var(--one-ink-2); font-size: 13px; line-height: 18px; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="pinned"] .cm-card .cm-week-live { color: inherit; font-weight: 400; }
+}
+/* Featured's label and covers start at the page's gutter, as Joined's do. */
+html:not([data-skin]) #communities-screen #communities-all-section > [data-home-join-featured] > :is(h3, [data-cm-grid]) { padding-inline: 0; }
+/* While Featured is read its place is held by covers of the same size. */
+html:not([data-skin]) :is(#home-screen, #communities-screen) [data-home-join-featured] .cm-card-skel .cm-card-pic { height: 76px; aspect-ratio: auto; }
+html:not([data-skin]) :is(#home-screen, #communities-screen) [data-home-join-featured] .cm-card-skel .cm-card-skel-body { height: 58px; }
+
+
+/* Joined: on a phone one list card, a row each (the row's title over its
+   second line, an icon tile, a chevron); from 768px two cards across, each
+   a row of its own. */
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-inline: 2px 4px;
+  border-top: 2px solid var(--one-ink-3);
+  border-inline-end: 2px solid var(--one-ink-3);
+  transform: rotate(45deg);
+}
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card > .cm-card-head { flex: 1 1 auto; align-items: center; gap: 12px; min-width: 0; padding: 0; }
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-face { margin-top: 0; }
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-icon {
+  border-color: transparent;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  font-size: 18px;
+}
+html:not([data-skin]).dark #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-icon { background-color: var(--wip-icon-tile); }
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-id { gap: 2px; padding-top: 0; }
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-name { color: var(--one-ink); font: var(--one-row-title); -webkit-line-clamp: 1; line-clamp: 1; }
+html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] :is(.cm-card-members, .cm-card-live) { color: var(--one-ink-2); font: var(--one-row-sub); }
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] {
+    gap: 0;
+    overflow: hidden;
+    border-radius: 20px;
+    background: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-hair);
+  }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card {
+    min-height: 60px;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card + .cm-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    inset-inline: 58px 0;
+    height: 1px;
+    background: var(--one-line);
+  }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] > .cm-card { padding: 12px 14px; }
+  /* There a card is one row: its name over one line of facts, what went live after a dot. */
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-id { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--one-ink-2); font: var(--one-row-sub); }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-name { display: block; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] :is(.cm-card-members, .cm-card-live) { display: inline; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-live::before { content: "\00B7"; content: "\00B7" / ""; margin-inline: 0.3em; }
+  html:not([data-skin]) #communities-screen .cm-grid[data-cm-grid="joined"] .cm-card-live-tick { display: none; }
+}
+
+/* ── END ONE LOOK · THE COMMUNITY CARD AS A COVER AND A ROW ── */
+
 /* THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx, `#communities`).
    The communities you pinned and the others you are in, as the tiles Home's
    Pinned communities drew, in Home's own column (`.home-column`) and under
@@ -39002,4 +39166,493 @@ html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 
 /* ── ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
+/* Home, Communities, You, Settings and Challenges, each as the design review
+   drew it (S/mockshots), from the shared values above. The layouts are the
+   pages' own; what changes is the parts: one card (white, radius 20, one
+   hairline), rows on the type ramp, tags for counts, the sticker only on a
+   page's main action, every other button flat. */
+
+/* ── HOME AND COMMUNITIES: the cards ─────────────────────────── */
+/* Every card on the two pages is the shared card. The kit's and the community
+   card's own tokens are pointed at it, so their rules draw it. */
+html:not([data-skin]) :is(#home-screen, #communities-screen) {
+  --wip-card-bg: var(--one-surface);
+  --wip-card-line: var(--one-hair);
+  --wip-soft-line: var(--one-hair);
+  --wip-card-radius: 20px;
+  --cm-bg: var(--one-surface);
+  --cm-radius: 20px;
+  --cm-edge: inset 0 0 0 1px var(--one-hair);
+  --cm-edge-on: inset 0 0 0 1px var(--one-field-line);
+  /* Sections stand closer: a label, then its card, a short step apart. */
+  --wip-row-gap: 1.125rem;
+}
+/* The search field of both pages: white, a pill, one hairline. */
+html:not([data-skin]) :is(#home-search-input, #communities-search-input) {
+  height: 40px;
+  border-color: transparent;
+  border-radius: 9999px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  color: var(--one-ink);
+  font-size: 16px;
+}
+html:not([data-skin]) :is(#home-search-input, #communities-search-input)::placeholder { color: var(--one-ink-3); }
+@media (min-width: 768px) {
+  html:not([data-skin]) :is(#home-search-input, #communities-search-input) { height: 36px; font-size: 15px; }
+  /* The field runs to the page's main action at the row's end. */
+  html:not([data-skin]) #home-search-bar .wip-search,
+  html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; max-width: none; }
+  html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) { height: 36px; padding-inline: 16px 18px; font-size: 15px; }
+}
+
+/* ── HOME: Pinned projects ───────────────────────────────────── */
+/* A project's tile: its icon, a white tile on one hairline with a soft drop,
+   and its name on one line under it, in the ink. */
+html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile {
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-line), 0 6px 14px -8px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]).dark #app-list > .app-card > .relative > .app-icon-tile { background-color: var(--wip-icon-tile); box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow); }
+html:not([data-skin]) #app-list .app-card-title { color: var(--one-ink); }
+/* New project, the grid's last tile, is the page's main action: the sun tile
+   with the sticker edge, its name in the ink. */
+html:not([data-skin]) #home-create-tile .home-create-glyph {
+  border: 0;
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: var(--one-edge);
+}
+html:not([data-skin]) #home-create-tile:active:not(:disabled) .home-create-glyph { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) #home-create-tile .home-create-label { color: var(--one-ink); font-weight: 600; }
+/* On a phone the tiles are four across and close: a 56px icon over a name on
+   one line, 12/600 (the full name is the tile's title). */
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #home-screen { --home-cell-h: 5.5rem; }
+  html:not([data-skin]) #app-list .app-card-title,
+  html:not([data-skin]) #home-create-tile .home-create-label {
+    display: block;
+    min-height: 0;
+    margin-top: 6px;
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  html:not([data-skin]) #app-list > .app-card { padding-block: 4px; }
+  html:not([data-skin]) #home-create-tile { padding: 4px 0; }
+  html:not([data-skin]) #home-create-tile .home-create-label { max-width: none; overflow: visible; }
+}
+/* On a desktop a tile is a row: a 48px icon, then its name over one line of
+   facts, "6 members · 3 contributors", in words. */
+@media (min-width: 1280px) {
+  html:not([data-skin]) #home-screen { --home-cell-h: 3.5rem; }
+  html:not([data-skin]) #app-list > .app-card { gap: 12px; padding: 0 4px; }
+  html:not([data-skin]) #app-list > .app-card > .relative,
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: 48px; height: 48px; }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { border-radius: 13px; font-size: 18px; }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile > span { font-size: 24px; }
+  html:not([data-skin]) #app-list > .app-card > .min-w-0 { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  html:not([data-skin]) #app-list .app-card-title { font: var(--one-row-title); }
+  html:not([data-skin]) #app-list .app-card-people { display: inline; margin: 0; color: var(--one-ink-2); font: var(--one-row-sub); }
+  html:not([data-skin]) #app-list .app-card-people + .app-card-people { margin-top: 0; }
+  html:not([data-skin]) #app-list .app-card-people > svg { display: none; }
+  html:not([data-skin]) #app-list .app-card-people + .app-card-people::before { content: "\00B7"; content: "\00B7" / ""; margin-inline: 0.3em; }
+}
+
+/* ── HOME: Recent activity ───────────────────────────────────── */
+/* A row of cards that scrolls sideways, as today: each the shared card, its
+   icon a small white tile, its name on the row's title, its state in the
+   row's second line, and what asks for you a tag at its foot. */
+html:not([data-skin]) #home-needs-card .wip-activity-card {
+  width: 156px;
+  min-height: 0;
+  gap: 8px;
+  padding: 14px;
+}
+html:not([data-skin]) #home-needs-card .wip-activity-top > .app-icon-tile {
+  border-color: transparent;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  font-size: 18px;
+}
+html:not([data-skin]) #home-needs-card .wip-activity-top > .app-icon-tile > span { font-size: 18px; }
+html:not([data-skin]).dark #home-needs-card .wip-activity-top > .app-icon-tile { background-color: var(--wip-icon-tile); }
+html:not([data-skin]) #home-needs-card .wip-activity-chevron { color: var(--one-ink-3); }
+html:not([data-skin]) #home-needs-card .wip-activity-words { gap: 2px; min-height: 0; }
+html:not([data-skin]) #home-needs-card .wip-item-title { color: var(--one-ink); font: var(--one-row-title); }
+html:not([data-skin]) #home-needs-card [data-home-activity-line]:not(.one-tag) { color: var(--one-ink-2); font: var(--one-row-sub); }
+html:not([data-skin]) #home-needs-card .wip-activity-words > .one-tag { order: 1; align-self: flex-start; max-width: 100%; margin-top: 6px; }
+html:not([data-skin]) #home-needs-card .wip-activity-when { color: var(--one-ink-2); font-size: 13px; line-height: 16px; }
+@media (min-width: 768px) {
+  /* Three cards fill the row; more scroll on sideways. */
+  html:not([data-skin]) #home-needs-card .wip-activity-rail { gap: 12px; }
+  html:not([data-skin]) #home-needs-card .wip-activity-rail > li { flex: 0 0 calc((100% - 24px) / 3); }
+  html:not([data-skin]) #home-needs-card .wip-activity-card { width: 100%; }
+}
+
+/* Featured's covers, a pinned community's cover and a joined community's row
+   are the community card's own sizes: they are drawn in its block, "A
+   COMMUNITY'S CARD", under ONE LOOK · THE COMMUNITY CARD AS A COVER AND A ROW.
+   This block only places the card. */
+
+/* ── COMMUNITIES ─────────────────────────────────────────────── */
+/* On a phone the search row is Messages' and Homeroom bot's: the field, then
+   New community as the yellow + (its words stay its accessible name). */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #communities-screen #communities-new-top {
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    gap: 0;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--one-sun);
+    color: #121a0e;
+    box-shadow: var(--one-edge);
+    font-size: 0;
+  }
+  html:not([data-skin]) #communities-screen #communities-new-top:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+  html:not([data-skin]) #communities-screen #communities-new-top > .wip-cta-glyph { width: 21px; height: 21px; }
+  html:not([data-skin]) #communities-screen .communities-top { gap: 10px; }
+}
+/* Pinned: the covers stand on the wash, no card round them. */
+html:not([data-skin]) #communities-body #communities-pinned-section > .wip-card { background: none; box-shadow: none; }
+/* ── YOU ─────────────────────────────────────────────────────── */
+/* The head stays as it is (THE EDITORIAL PAGES): the sky, the photo, the serif
+   name. Edit profile and Save changes are the page's main actions, the sun
+   with the sticker edge; Share is a secondary action, flat; Cancel and "Change
+   your handle in Settings" are text actions. */
+html:not([data-skin]) #profile-screen #profile-identity-card #profile-edit-btn,
+html:not([data-skin]) :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"] {
+  min-height: 44px;
+  padding-inline: 18px 20px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: var(--one-edge);
+  font-size: 16px;
+  font-weight: 600;
+}
+html:not([data-skin]) #profile-screen #profile-identity-card #profile-edit-btn:hover,
+html:not([data-skin]) :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:hover { background: var(--wip-btn-1-hover); }
+html:not([data-skin]).dark #profile-screen #profile-identity-card #profile-edit-btn:hover,
+html:not([data-skin]).dark :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:hover { background: var(--one-sun); filter: brightness(1.05); }
+html:not([data-skin]) #profile-screen #profile-identity-card #profile-edit-btn:active,
+html:not([data-skin]) :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) #profile-screen #profile-activity #profile-activity-share {
+  height: 30px;
+  min-height: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+html:not([data-skin]) #profile-screen #profile-activity #profile-activity-share:active { box-shadow: none; transform: scale(0.97); }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-actions button[type="button"] {
+  padding-inline: 2px;
+  color: var(--one-ink);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note {
+  color: var(--one-ink);
+  font-weight: 500;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+/* One field style: white, one hairline, radius 10, 40px. A field that cannot
+   be changed is the quiet fill. */
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  color: var(--one-ink);
+  font-size: 15px;
+  line-height: 1.4;
+}
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card textarea.profile-details-input { min-height: 66px; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input:focus { outline: 2px solid var(--wip-btn-focus); outline-offset: 0; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card input[readonly] { background: var(--one-quiet); box-shadow: inset 0 0 0 1px var(--one-hair); color: var(--one-ink-2); }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-label { color: var(--one-ink); font-size: 13px; font-weight: 500; }
+/* Its cards are the shared card. */
+html:not([data-skin]) #profile-root :is(#profile-activity, .profile-details-card, .profile-preferences-card, #public-profile-card, section[id^="profile-"] > .ui-glist),
+html:not([data-skin]) #profile-recent-activity ul {
+  border: 0;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+/* A project you helped build: the shared card, with its picture as a band
+   across its top (the sky, or the green and the sun's washes in turn). */
+html:not([data-skin]) #profile-live-projects .profile-project-card {
+  --pp-band: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
+  border-color: var(--one-hair);
+  border-radius: 20px;
+}
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n+2) { --pp-band: linear-gradient(160deg, var(--ed-lit-bg), color-mix(in srgb, var(--ed-lit-bg) 40%, var(--one-surface))); }
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n) { --pp-band: linear-gradient(160deg, var(--ed-stat-bg), color-mix(in srgb, var(--ed-stat-bg) 40%, var(--one-surface))); }
+html:not([data-skin]) #profile-live-projects .profile-project-card:is(:nth-child(3n+1), :nth-child(3n+2), :nth-child(3n)) { background: linear-gradient(var(--one-surface), var(--one-surface)) center bottom / 100% calc(100% - 4.5rem) no-repeat, var(--pp-band); background-origin: border-box; }
+html:not([data-skin]) #profile-live-projects .profile-project-card h3 { margin-top: 1.375rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-hair); }
+/* Recent activity: rows on the ramp, the row's title over its second line,
+   its icon the discussion's green tile. */
+html:not([data-skin]) #profile-recent-activity ul { padding: 0 14px; }
+html:not([data-skin]) #profile-recent-activity li > a { gap: 12px; min-height: 56px; padding: 9px 0; }
+html:not([data-skin]) #profile-recent-activity li + li { border-top-color: var(--one-line); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-icon { width: 32px; height: 32px; border-radius: 9px; background: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-icon svg { width: 18px; height: 18px; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-copy { display: grid; gap: 2px; color: var(--one-ink-2); font: var(--one-row-sub); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-copy strong { margin: 0; color: var(--one-ink); font: var(--one-row-title); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-copy > span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html:not([data-skin]) #profile-recent-activity time { color: var(--one-ink-2); font-size: 13px; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-heading > a {
+  color: var(--one-ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+/* The account's own rows (Account, Preferences) on the ramp. */
+html:not([data-skin]) #profile-root section[id^="profile-"] > .ui-glist .ui-lrow-t { font: var(--one-row-title); }
+html:not([data-skin]) #profile-root section[id^="profile-"] > .ui-glist .ui-lrow-s { font: var(--one-row-sub); }
+
+/* ── SETTINGS ────────────────────────────────────────────────── */
+/* The sky and the serif title stay (THE EDITORIAL PAGES). On a phone the head
+   is closer under the bar, so the search stands in the sky. */
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #settings-root > .settings-frame-head { min-height: 0; padding: 1.25rem 0 0.875rem; }
+  html:not([data-skin]) #settings-root .settings-frame-title { font-size: 2.125rem; }
+  html:not([data-skin]) #settings-root .settings-frame-purpose { font-size: 15px; }
+}
+html:not([data-skin]) #settings-mobile-menu-host .ui-search { padding-inline: 0; padding-bottom: 0.5rem; }
+html:not([data-skin]) #settings-mobile-menu-host .ui-search > .settings-filter { margin-inline: 0; }
+/* A group's label sits a short step above its card, and the groups close up. */
+html:not([data-skin]) #settings-mobile-menu-host > div:has(> .ui-glist) { margin-bottom: 0.5rem; }
+html:not([data-skin]) #settings-mobile-menu-host > div > h2.ui-cap { padding: 0.25rem 2px 0 6px; }
+html:not([data-skin]) #settings-mobile-menu-host > div > h2.ui-cap > button { min-height: 36px; }
+html:not([data-skin]) #settings-root .settings-filter {
+  border-radius: 9999px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+/* The list of sections: the shared rows, each icon a sky-tint tile. */
+html:not([data-skin]) #settings-mobile-menu-host .ui-glist {
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row { gap: 12px; min-height: 52px; padding: 10px 14px; }
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row::after { inset-inline-start: 56px; background-color: var(--one-line); }
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row > svg:first-child,
+html:not([data-skin]) #settings-nav-desktop .settings-nav-item > svg:first-child {
+  box-sizing: border-box;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+}
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row .ui-lrow-t { color: var(--one-ink); font: var(--one-row-title); }
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row .ui-lrow-s { margin-top: 2px; color: var(--one-ink-2); font: var(--one-row-sub); }
+html:not([data-skin]) #settings-mobile-menu-host .settings-menu-row .ui-lrow-go { color: var(--one-ink-3); }
+/* On a desktop each group's rows are one list card inside the side card; the
+   open section is lit in pale sun, and every row keeps its pin. */
+html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet {
+  --lit-tint: var(--one-sun-pale);
+  --lit-ink: var(--one-ink);
+  --lit-line: transparent;
+  border: 0;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #settings-nav-desktop .ui-search { background: var(--one-surface); }
+html:not([data-skin]) #settings-nav-desktop .ui-card {
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #settings-nav-desktop .ui-card > [data-settings-row] + [data-settings-row]::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  inset-inline: 54px 0;
+  height: 1px;
+  background: var(--one-line);
+  pointer-events: none;
+}
+html:not([data-skin]) #settings-nav-desktop .ui-card > [data-settings-row]:has(> [aria-current="page"]) + [data-settings-row]::before,
+html:not([data-skin]) #settings-nav-desktop .ui-card > [data-settings-row]:has(> [aria-current="page"])::before { opacity: 0; }
+html:not([data-skin]) #settings-nav-desktop .settings-nav-item {
+  gap: 12px;
+  min-height: 46px;
+  padding-block: 8px;
+  padding-inline: 12px 40px;
+  border-radius: 0;
+  color: var(--one-ink);
+  font: var(--one-row-title);
+}
+html:not([data-skin]) #settings-nav-desktop .settings-nav-item[aria-current="page"] { background: var(--one-sun-pale); color: var(--one-ink); box-shadow: none; }
+html:not([data-skin]) #settings-nav-desktop .settings-nav-controls { background: transparent; }
+html:not([data-skin]) #settings-nav-desktop .settings-nav-group-label,
+html:not([data-skin]) #settings-nav-desktop h2.ui-cap { padding-inline: 6px; color: var(--one-ink-2); }
+/* The open section's cards are the shared card; their heads keep the serif. */
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  border-color: var(--one-hair);
+  background: var(--one-surface);
+}
+/* Sign-in's rows: the row's title in the sans, and Change a text action. */
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section, [data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-t {
+  color: var(--one-ink);
+  font: var(--one-row-title);
+}
+html:not([data-skin]) #settings-section-content :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-s { color: var(--one-ink-2); }
+html:not([data-skin]) #settings-section-content :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow + .ui-lrow,
+html:not([data-skin]) #settings-section-content > :is([data-settings-section="email"], [data-settings-section="password"]) .ui-glist.ui-glist { box-shadow: inset 0 1px 0 var(--one-line); }
+html:not([data-skin]) #settings-section-content .ui-link,
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-link {
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--one-ink);
+  font-family: var(--wip-font);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) #settings-profile-card .ui-link { font-size: 13px; }
+/* Delete account is a destructive action, flat: the red tint, red words. */
+html:not([data-skin]) #settings-section-content > [data-settings-section="delete-account"] > button {
+  border: 0;
+  background: var(--one-red-tint);
+  color: var(--one-red);
+  box-shadow: none;
+  font-weight: 600;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section="delete-account"] > button:hover { background: var(--one-red-tint); filter: brightness(0.97); }
+html:not([data-skin]) #settings-section-content > [data-settings-section="delete-account"] > button:active { box-shadow: none; transform: scale(0.98); }
+
+/* ── CHALLENGES ──────────────────────────────────────────────── */
+/* Challenges | Standings | History: the shared segmented control, the ink
+   pill sliding to the tab you are on (features/leaderboard/index.tsx sets
+   its count and place). The whole width on a phone; 420px on a desktop. */
+html:not([data-skin]) #leaderboard-screen #standings-tabs.one-seg { display: grid; width: 100%; margin-bottom: 12px; }
+html:not([data-skin]) #leaderboard-screen #standings-tabs.one-seg > button { height: 30px; padding-inline: 10px; }
+@media (min-width: 768px) {
+  html:not([data-skin]) #leaderboard-screen #standings-tabs.one-seg { width: 420px; }
+}
+/* Your place: the shared card, the figure large. */
+html:not([data-skin]) #leaderboard-screen #lb-your-standing {
+  margin-bottom: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #lb-your-standing > p:first-child > span:first-child { color: var(--one-ink); font-size: 2rem; font-weight: 800; line-height: 1.1; }
+html:not([data-skin]) #lb-your-standing > p + p { margin-top: 6px; color: var(--one-ink-2); font: var(--one-row-sub); }
+html:not([data-skin]) #lb-your-standing > p + p + p { margin-top: 0; }
+/* The points line and its bar. */
+html:not([data-skin]) :is(#tc-se-challenge-summary, #tc-se-history-summary) { padding-inline: 4px; color: var(--one-ink-2); font-size: 14px; }
+html:not([data-skin]) :is(#tc-se-challenge-summary, #tc-se-history-summary) > span:first-child { color: var(--one-ink); font-weight: 700; }
+html:not([data-skin]) :is(#tc-se-challenge-summary, #tc-se-history-summary) + div { height: 6px; margin-inline: 4px; width: auto; background: var(--one-quiet); }
+html:not([data-skin]) :is(#tc-se-challenge-summary, #tc-se-history-summary) + div > span { border-radius: 9999px; background: var(--one-sky); }
+/* History: How points work and each challenge done are the shared card, the points in the red-brown. */
+html:not([data-skin]) #leaderboard-screen :is(#tc-se-history-how, [data-history-challenge]) {
+  border: 0;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #leaderboard-screen [data-history-challenge] > div:first-child > span:last-child { color: var(--one-points); font-weight: 600; }
+/* A challenge: the shared card, its big icon on a warm grey tile, its title
+   on the row's title, its points in the red-brown, its labelled bar (a grey
+   track, the blue fill, the label inside) and the arrow, a flat grey button.
+   The one under way keeps its blue ring. */
+html:not([data-skin]) #leaderboard-screen .tc-se-card {
+  border: 0;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card:not([data-challenge-state="done"]) { align-items: flex-start; gap: 12px; padding: 12px; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card.ring-1 { box-shadow: inset 0 0 0 1.5px var(--one-progress), inset 0 0 0 1px var(--one-hair); }
+@media (hover: hover) {
+  html:not([data-skin]) #leaderboard-screen .tc-se-card:hover { box-shadow: inset 0 0 0 1px var(--one-field-line); }
+  html:not([data-skin]) #leaderboard-screen .tc-se-card.ring-1:hover { box-shadow: inset 0 0 0 1.5px var(--one-tile-b-ink); }
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card > [aria-hidden="true"]:first-child {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--one-ink) 8%, var(--one-surface));
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card > [aria-hidden="true"]:first-child > span { font-size: 2rem; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card > [aria-hidden="true"]:first-child > :is(svg, img) { width: 3.25rem; height: 3.25rem; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card .line-clamp-2 { color: var(--one-ink); font-size: 16px; font-weight: 600; line-height: 1.3; -webkit-line-clamp: 3; line-clamp: 3; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card .line-clamp-2 + span { color: var(--one-points); font-size: 13px; font-weight: 600; line-height: 1.3; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card [role="progressbar"] {
+  height: 34px;
+  padding-inline: 10px;
+  border-radius: 10px;
+  background: var(--one-quiet);
+  color: var(--one-ink);
+  font-size: 14px;
+  font-weight: 500;
+  gap: 7px;
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card [role="progressbar"] > span:first-child:not([aria-hidden]) { background: var(--one-progress); }
+html:not([data-skin]) #leaderboard-screen .tc-se-card [role="progressbar"] > span[aria-hidden="true"] { color: var(--one-tile-b-ink); border-color: var(--one-tile-b-ink); }
+html:not([data-skin]) #leaderboard-screen .tc-se-card [role="progressbar"] + span {
+  width: 38px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--one-quiet);
+  color: var(--one-ink);
+  box-shadow: none;
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card [role="progressbar"] + span > svg { width: 17px; height: 17px; }
+/* A challenge done: the discussion's green tile with its tick, the title, the points. */
+html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] { gap: 12px; padding: 12px 14px; }
+html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--one-tile-g-bg);
+  color: var(--one-tile-g-ink);
+}
+html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] > .line-clamp-2 { font: var(--one-row-title); }
+html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done"] > span:last-child { color: var(--one-points); font-size: 13px; font-weight: 600; }
 /* ── END ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */

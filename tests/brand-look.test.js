@@ -161,12 +161,15 @@ const LIGHT = `${FLAG}:not(.dark):not([data-app-tone="dark"])`;
 const DARK = `${FLAG}.dark:not([data-app-tone="light"])`;
 const EITHER = `${FLAG}:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))`;
 
-// The look's block: from its heading to the end of the sheet.
+// The look's block: from its heading to the end of the sheet, or to the
+// standard look's ONE LOOK blocks (25 Nov 2026) where they follow it: those
+// are the standard look's, not this look's.
 function lookBlock() {
   const css = read('public', 'css', 'app.css');
   const at = css.indexOf(HEADING);
   assert.ok(at > 0, 'app.css carries the brand look\'s block');
-  return css.slice(at);
+  const end = css.indexOf('/* ══ ONE LOOK', at);
+  return end > at ? css.slice(at, end) : css.slice(at);
 }
 
 // The sheet before the look's block, less the one other block that may name
@@ -260,7 +263,9 @@ test('the brand look\'s phone bar sizes each seat to its own label (#7059)', () 
 test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
   const css = read('public', 'css', 'app.css');
   const block = lookBlock();
-  assert.ok(css.trimEnd().endsWith(block.trimEnd()), 'appended at the very end of app.css');
+  // Last but for the standard look's ONE LOOK blocks (25 Nov 2026), which settle that look after every other rule.
+  const after = css.slice(css.indexOf(HEADING) + block.length);
+  assert.ok(after.trim() === '' || after.trimStart().startsWith('/* ══ ONE LOOK'), 'appended at the very end of app.css');
   for (const token of ['--home-washes:', '--home-wallpaper:', '--dc-sheet-fill:', '--dc-frost:']) {
     assert.ok(!block.includes(token), `${token} is counted elsewhere and must not be redeclared here`);
   }
@@ -808,7 +813,8 @@ test('the Communities page wears the look: its button, its cards, and no count o
 test('the Communities page\'s cards wear the look: its card, its inks and its small words, from 1280px, read only where they are drawn', () => {
   const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
   assert.match(page, /const brandCards = useMinWidth\(1280\);/);
-  assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/, 'a pin is the big card from 1280px, as the look drew its cards');
+  // One look (25 Nov 2026): the standard look draws a pin's card at every width; this look still from 1280px.
+  assert.match(page, /const pinCards = wip \|\| \(brand && brandCards\);/, 'a pin is the big card from 1280px, as the look drew its cards');
   assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/, 'and a joined community the compact card');
   assert.match(page, /if \(shown && state\.ready && \(\(pinCards && pinKey\) \|\| \(joinCards && joinedKey\)\)\) void loadHomePinsActivity\(\);/, 'what a card says (a pin\'s, and a joined community\'s week) is read only where one is drawn');
   const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');

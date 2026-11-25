@@ -134,17 +134,17 @@ export function CommunitiesScreen() {
   // their Home has the Needs you card and New project as a filled button, so
   // this page takes the same button and leaves the Needs you tile out.
   const kit = wip || brand;
-  // THE COMMUNITY CARD (see the header): a pin is the big card from 768px
-  // under the standard look and from 1280px under the brand look, and a
-  // joined community the compact card wherever its look draws cards. Read
-  // after mount only (useMinWidth), as the look is.
-  const wideCards = useMinWidth(768);
+  // THE COMMUNITY CARD (see the header): a pin is the big card at every
+  // width under the standard look (One look, 25 Nov 2026: its colour band
+  // over its name, as on Home's Featured) and from 1280px under the brand
+  // look, and a joined community the compact card wherever its look draws
+  // cards. Read after mount only (useMinWidth), as the look is.
   // Under 480px the field beside New community has about 180px, and its
   // words were cut mid-word ("Search your commur"): a phone says "Search"
   // (phone review, 23 Nov 2026). The prerender is the narrow one.
   const roomySearch = useMinWidth(480);
   const brandCards = useMinWidth(1280);
-  const pinCards = wip ? wideCards : brand && brandCards;
+  const pinCards = wip || (brand && brandCards);
   const joinCards = wip || (brand && brandCards);
   // What a card says beyond its name (a pin's, and a joined community's
   // week), read only where a card is drawn. Until it lands a joined card
@@ -341,6 +341,7 @@ export function CommunitiesScreen() {
                   community={pinCard(pin)}
                   votes={state.owed[pin.slug] || 0}
                   editing={editing}
+                  voteTag={wip}
                   onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
                 />
               ) : (
@@ -371,6 +372,7 @@ export function CommunitiesScreen() {
                   votes={state.owed[c.slug] || 0}
                   editing={false}
                   compact
+                  voteTag={wip}
                   onPin={editing ? () => { void setHomePin(pinOf(c), true, say(c.name)); } : undefined}
                 />
               ) : (
