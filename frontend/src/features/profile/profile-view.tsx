@@ -22,7 +22,7 @@
  * arrives only from ./profile.js's effects, never from a render.
  */
 
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { k } from '@/components/ui/kit';
@@ -42,7 +42,7 @@ import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
 import { ProfileHistoryList } from './profile-history-list';
 import { ProfileRecentActivity } from './profile-recent-activity';
 import { ProfileLiveProjects } from './profile-live-projects';
-import { ProfileDetailsCard } from './profile-details-card';
+import { InlineBioEdit, InlineNameEdit } from './identity-inline-edit';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
@@ -88,8 +88,11 @@ function IdentityAvatar({ url }: { url: string | null }): ReactNode {
  *  The `profile-id-*` classes are hooks for the standard look's header
  *  (#7072, app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card
  *  spans the page there, with a larger picture and the name in the serif. */
-function IdentityCard({ identity, editorial = false }: { identity: any; editorial?: boolean }): ReactNode {
+function IdentityCard({ identity, user, editorial = false }: { identity: any; user?: any; editorial?: boolean }): ReactNode {
   const t = useMessages('profile');
+  // #7156: which of the two fields is open, if either. One at a time, so a
+  // save never sends a half-edited second field; opening one closes the other.
+  const [editing, setEditing] = useState<'name' | 'bio' | null>(null);
   return (
     <div
       id="profile-identity-card"
@@ -107,8 +110,24 @@ function IdentityCard({ identity, editorial = false }: { identity: any; editoria
           <IdentityAvatar url={identity.avatarUrl} />
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
-                rather than losing its end at the first line. */}
-            <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+                rather than losing its end at the first line. Under the
+                standard look a pencil sits beside it and opens the name for
+                editing in place (#7156); the other looks keep the plain line. */}
+            {editorial ? (
+              <div className="flex items-center gap-2">
+                {editing === 'name' ? null : (
+                  <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+                )}
+                <InlineNameEdit
+                  user={user}
+                  open={editing === 'name'}
+                  onOpen={() => setEditing('name')}
+                  onClose={() => setEditing(null)}
+                />
+              </div>
+            ) : (
+              <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+            )}
             {editorial && identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
             {!editorial && identity.sub ? (
               // Wraps rather than truncating: a fact cut off mid-word is not
@@ -129,7 +148,14 @@ function IdentityCard({ identity, editorial = false }: { identity: any; editoria
           a text child, which is the whole safety story — no HTML string is ever
           built for it, here or anywhere.
       */}
-      {identity.bio ? (
+      {editorial ? (
+        <InlineBioEdit
+          user={user}
+          open={editing === 'bio'}
+          onOpen={() => setEditing('bio')}
+          onClose={() => setEditing(null)}
+        />
+      ) : identity.bio ? (
         /*
             `break-words` is load-bearing (#1612): a bio is free text, so it can
             be one 280-character word or a pasted URL with no space in it, and
@@ -592,7 +618,12 @@ export function ProfileRoot(): ReactNode {
       {frame ? <YouInFrame view={view} tab={(state.tab || 'overview') as YouTab} friendsPending={state.friendsPending ?? null} friendsStatus={state.friendsStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
-          <IdentityCard identity={view.identity} editorial={editorial} />
+          <IdentityCard
+            key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`}
+            identity={view.identity}
+            user={state.user}
+            editorial={editorial}
+          />
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
@@ -610,7 +641,6 @@ export function ProfileRoot(): ReactNode {
           ) : null}
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
-          {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
           {editorial ? <ProfilePreferences /> : null}
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
