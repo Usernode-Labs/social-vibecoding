@@ -528,6 +528,24 @@ test('the All items head meets the top bar where the place bar is folded (asked 
   assert.match(css, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
 });
 
+test('the All items board starts closer under the top bar (asked 25 Nov 2026, #7154)', () => {
+  const css = read('public', 'css', 'app.css');
+  // The head's card sat about 40px under the bar: the page's top padding plus
+  // the tab body's shared 0.75rem. All items keeps only a few pixels of air.
+  const own = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] > \.dev-ws-tabbody \{\s*padding-block-start: 0;\s*\}/);
+  assert.ok(own, 'the All items tab body drops the shared padding');
+  const page = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-body:has\(> #dev-workshop > \.dev-ws\[data-ws-tab="all"\]\) \{\s*padding-top: 4px;\s*\}/);
+  assert.ok(page, 'the page keeps 4px above the board');
+  // Both sit in the 768px block that folds the place bar, after the shared
+  // rule they override (same specificity, so the later rule wins), so the
+  // other three places keep 0.75rem and the phones and other looks keep theirs.
+  const shared = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }');
+  const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
+  assert.ok(shared > 0, 'the shared rule still lists all four tabs');
+  assert.ok(own.index > shared && fold > 0 && own.index > fold, 'it goes in the 768px block, after the rule it overrides');
+  assert.ok(page.index > own.index, 'the page padding follows it, in the same block');
+});
+
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
   const block = menuBlock();
   const all = rules(block);
