@@ -10011,6 +10011,7 @@ html:not([data-skin]) {
   --wip-nav-on-count-bg: #121a0e;
   --wip-nav-on-count-ink: #ffffff;
   --wip-nav-on-badge-bg: color-mix(in srgb, var(--wip-nav-on-ink) 14%, transparent); /* the grey "new to read" count on the lit row: a tint of the row's own ink */
+  --wip-nav-on-pin-hover: color-mix(in srgb, var(--wip-nav-on-ink) 12%, transparent); /* the pin's ground under the pointer, on the lit row: a tint of the row's own ink */
   --wip-nav-row-h: 2.5rem;
   --wip-nav-row-radius: 0.75rem;
   --wip-nav-bar-h: 56px;         /* the phone's bar, as the shell reserves it (--platform-bar-h) */
@@ -10097,6 +10098,18 @@ html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings,
   font-weight: 700;
 }
 html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label, .dev-ws-place-glyph, .dev-ws-place-label, .platform-rail-sub-glyph, .platform-rail-sub-name, .platform-rail-settings-glyph) {
+  color: var(--wip-nav-on-ink);
+}
+/* THE PIN ON THE LIT ROW takes the row's own ink too. It is the row's sibling, not a child of the lit link, so the
+   rules above never reach it: it kept the panel's white, which was unreadable on the sun. Setting its tokens on the
+   button draws its hover ground, its pressed glyph and its keyboard focus ring in that ink, as its name is. */
+html:not([data-skin]) #platform-tabs .platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin {
+  color: var(--wip-nav-on-ink);
+  --lit-ink: var(--wip-nav-on-ink);
+  --lit-tint: var(--wip-nav-on-pin-hover);
+  --accent: var(--wip-nav-on-ink);
+}
+html:not([data-skin]) #platform-tabs .platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin:is(:hover, [aria-pressed="true"], :focus-visible) {
   color: var(--wip-nav-on-ink);
 }
 /* ONE BADGE RECIPE (phone review #45, 23 Nov 2026). The unread count on Messages (and the bot's) was the panel's faint
@@ -37838,6 +37851,14 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings-glyph) {
     color: var(--bl-on-sun);
+  }
+  /* The pin on the lit row reads that row's ink too: it is the row's sibling, so the rule above never reached it and
+     it kept the bar's white on the sun. Its tokens make its hover ground, pressed glyph and focus ring the same ink. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs .platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin {
+    color: var(--bl-on-sun);
+    --lit-ink: var(--bl-on-sun);
+    --lit-tint: color-mix(in srgb, var(--bl-on-sun) 12%, transparent);
+    --accent: var(--bl-on-sun);
   }
   /* A count that asks for you: white, with ink figures. A channel's unread
      count stays the quiet one. */
