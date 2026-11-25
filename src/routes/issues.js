@@ -2506,15 +2506,31 @@ function issueRoutes(config) {
         // requests stored for it, when it has any — a seed's rows. The mocks
         // fill only a project whose request table is empty, open and closed.
         if (IS_STAGING && !parsed) {
+          let closedStored = null;
           try {
-            const closedStored = await requestsSvc.listClosedForApp(app);
-            if (closedStored.issues.length) return res.json(closedStored);
-            const openStored = await requestsSvc.listOpenForApp(app);
-            if (openStored.issues.length) return res.json(closedStored);
+            closedStored = await requestsSvc.listClosedForApp(app);
+            if (closedStored.issues.length && req.query.demo !== '1') return res.json(closedStored);
+            if (!closedStored.issues.length) {
+              const openStored = await requestsSvc.listOpenForApp(app);
+              if (openStored.issues.length && req.query.demo !== '1') return res.json(closedStored);
+            }
           } catch (err) {
             log.warn('issues', 'Could not read a project\'s stored requests on staging', { message: err.message });
+            closedStored = null;
           }
-          return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+          // ?demo=1 still appends the mocks the declared checks read, exactly
+          // as the open list does below.
+          if (!(req.query.demo === '1' && closedStored)) {
+            return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+          }
+          const have = new Set((closedStored.issues || []).map((i) => i.number));
+          return res.json({
+            ...closedStored,
+            issues: [
+              ...(closedStored.issues || []),
+              ...stagingMockClosedIssues(app.repo_url).filter((m) => !have.has(m.number)),
+            ],
+          });
         }
         if (!requestsOn() || !parsed) {
           if (!IS_STAGING) return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
