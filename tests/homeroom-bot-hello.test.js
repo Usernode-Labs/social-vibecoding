@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -215,7 +216,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const asked = await conversations.sendMessage(pool, maya, opened.conversationId, { content: 'hi' });
     const answered = await dm.sendDm(pool, { bot, userId: maya.id, content: 'Hello!', replyToId: asked.message.id, moment: 'reply' });
     const said = await conversations.getMessage(pool, maya, opened.conversationId, answered.messageId);
-    assert.deepEqual(said.sender, { id: bot.id, username: 'homeroom_bot', avatarUrl: null, bot: true, displayName: 'Homeroom bot' });
+    // #7135: a sender with no uploaded photo carries the picture generated
+    // from their account; the bot's face is still its mark on screen (its
+    // row says `bot`), but the payload is the same one every account gets.
+    assert.deepEqual(said.sender, { id: bot.id, username: 'homeroom_bot', avatarUrl: generatedAvatarUrl(bot.id), bot: true, displayName: 'Homeroom bot' });
     // 14 Nov 2026: every message is in a thread, so the bot's answer goes
     // under what it answers and quotes nothing.
     assert.equal(said.threadRootId, asked.message.id);

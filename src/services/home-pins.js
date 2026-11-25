@@ -16,6 +16,7 @@
 // (communities.leave), and its app's pin stays either way.
 
 const appAccess = require('./app-access');
+const { avatarUrlFor } = require('./avatar-url');
 
 /** A sane ceiling on one account's list, not a product limit. */
 const PINS_MAX = 200;
@@ -242,7 +243,7 @@ async function activity(db, userId) {
               WHERE s.app_id = pins.app_id AND s.status = 'merged' AND s.live_at IS NOT NULL
                 AND COALESCE(s.merged_at, s.created_at) >= NOW() - INTERVAL '7 days') AS live_week,
             COALESCE((SELECT MAX(pp.active_week)::int FROM people pp WHERE pp.app_id = pins.app_id), 0) AS active_week,
-            COALESCE((SELECT json_agg(json_build_object('username', pp.username, 'avatar_id', pp.avatar_id) ORDER BY pp.rn)
+            COALESCE((SELECT json_agg(json_build_object('user_id', pp.id, 'username', pp.username, 'avatar_id', pp.avatar_id) ORDER BY pp.rn)
                         FROM people pp WHERE pp.app_id = pins.app_id AND pp.rn <= $2), '[]'::json) AS people
        FROM pins`,
     [userId, ACTIVITY_FACES]
@@ -255,7 +256,7 @@ async function activity(db, userId) {
       activeWeek: Number(r.active_week) || 0,
       people: (Array.isArray(r.people) ? r.people : []).map((p) => ({
         username: p.username,
-        avatarUrl: p.avatar_id ? `/avatars/${p.avatar_id}` : null,
+        avatarUrl: avatarUrlFor(p.avatar_id, p.user_id),
       })),
     };
     // What it is, in its own words (dapp.json's description), when it has any.
