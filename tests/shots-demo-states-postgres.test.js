@@ -33,6 +33,7 @@ const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
 const { composeInProgress } = require('../src/routes/issues');
 const { resolveIssueProposalRefs } = require('../src/services/issue-proposal-ref');
 const notificationsSvc = require('../src/services/notifications');
+const liveDrafts = require('../src/services/live-drafts');
 const { botRequestedBySql } = require('../src/services/bot-requested-by');
 const limits = require('../src/services/limits');
 const express = require('express');
@@ -488,7 +489,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(planState(plan.metadata.homeroomBot), 'built');
   assert.equal(plan.metadata.homeroomBot.firstVersion, true);
   assert.equal(thanks.content, botActivity.thanksText('[shots fixture] Book club'));
-  assert.equal(thanks.id, messages.at(-7).id, 'under it the close offer\'s pair, the drafted request\'s pair and the laid-out answer');
+  assert.equal(thanks.id, messages.at(-11).id, 'under it the close offer\'s pair, the drafted request\'s pair, the laid-out answer and the live draft\'s thread');
   assert.ok(plan.id < thanks.id, 'the plan, then the thanks under it');
   // The plan and its thanks card are replies in the first version's thread
   // now, in that order. Read as the thread shows them (its replies, with no
@@ -512,8 +513,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // Third to last in the same chat, the bot's offer to open a vote on
   // closing request #900001, quoting the member's message that says it is
   // done, with the words, buttons and open action a live offer has
-  // (homeroom-bot-mayor.js offer). The drafted request's pair follows it.
-  const [ask, offered] = messages.slice(-6, -4);
+  // (homeroom-bot-mayor.js offer). The drafted request's pair follows it,
+  // then the laid-out answer's, then the live draft's thread.
+  const [ask, offered] = messages.slice(-10, -8);
   assert.equal(ask.sender.id, member);
   assert.equal(offered.threadRootId, ask.id, 'the offer is under the ask, in the ask\'s thread');
   const { rows: [action] } = await pool.query(
@@ -541,29 +543,43 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual([settled.state, settled.text], ['failed', 'I couldn\'t propose closing it just now. Try again in a minute.']);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
-  // Second to last in the same chat, the bot's drafted request (#4605):
-  // quoting the member's message that asked for one, with the words,
-  // buttons and open action a live offer has (homeroom-bot-mayor.js
-  // offer). The laid-out answer's pair follows it.
-  const [fileAsk, fileOffer] = messages.slice(-4, -2);
+  // Second to last of the older pairs in the same chat, the bot's drafted
+  // request (#4605): quoting the member's message that asked for one, with
+  // the words, buttons and open action a live offer has
+  // (homeroom-bot-mayor.js offer). The laid-out answer's pair follows it,
+  // then the live draft's thread.
+  const [fileAsk, fileOffer] = messages.slice(-8, -6);
   assert.equal(fileAsk.sender.id, member);
   assert.equal(fileOffer.threadRootId, fileAsk.id, 'the draft is under the ask, in the ask\'s thread');
-  // Last in the same chat, the bot's laid-out answer (#6975): the member's
-  // question about a weekly book club and, under it, a chat reply with the
-  // same words drawn as a heading, a list and a table. The chat's newest
-  // message, read, and no news about a request recorded for it.
-  const [layoutAsk, layoutReply] = messages.slice(-2);
+  // Before the live draft's thread, the bot's laid-out answer (#6975): the
+  // member's question about a weekly book club and, under it, a chat reply
+  // with the same words drawn as a heading, a list and a table. Nothing is
+  // recorded for it as news about a request.
+  const [layoutAsk, layoutReply] = messages.slice(-6, -4);
   assert.equal(layoutAsk.sender.id, member);
   assert.equal(layoutReply.threadRootId, layoutAsk.id, 'the answer is under the question, in its thread');
   assert.equal(layoutReply.metadata.homeroomBot.kind, 'chat');
   assert.ok(layoutReply.metadata.homeroomBot.html.trim());
-  assert.equal(chat.latestMessage.id, layoutReply.id);
   assert.equal((await pool.query(
     'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_messages WHERE message_id = $1', [layoutReply.id])).rows[0].n, 0);
+  // Last in the same chat (#7145), the live draft's thread: the member's ask,
+  // the bot's reply, the member's second ask and the bot's reply saying the
+  // change is saved on the draft. The chat's newest message is read.
+  const [liveAsk, liveDone, liveAgain, liveSaved] = messages.slice(-4);
+  assert.equal(liveAsk.sender.id, member);
+  for (const reply of [liveDone, liveSaved]) {
+    assert.equal(reply.threadRootId, liveAsk.id, 'the bot\'s replies are in the ask\'s thread');
+    assert.deepEqual(reply.metadata.homeroomBot, { kind: 'chat' });
+  }
+  assert.equal(liveAgain.sender.id, member);
+  assert.equal(liveAgain.threadRootId, liveAsk.id);
+  assert.equal(chat.latestMessage.id, liveSaved.id);
   // The threads the Homeroom bot page lists for them: the first version's
   // (opened by the line that says it is being set up, holding its plan and
-  // the thanks), and each ask's with its reply. Each is read, so the chat's
-  // count, the sum of its threads', is zero (above).
+  // the thanks), each ask's with its reply, and the live draft's own thread.
+  // Each is read, so the chat's count, the sum of its threads', is zero
+  // (above).
+  const platformApp = Number((await pool.query('SELECT id FROM apps WHERE slug = $1', [SLUG])).rows[0].id);
   const { rows: listedThreads } = await pool.query(
     `SELECT p.kind, p.root_message_id, p.app_id, p.last_read_message_id FROM private_threads p
       WHERE p.user_id = $1 AND p.conversation_id = $2 ORDER BY p.root_message_id`,
@@ -573,6 +589,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     ['idea', ask.id, null, offered.id],
     ['idea', fileAsk.id, null, fileOffer.id],
     ['idea', layoutAsk.id, null, layoutReply.id],
+    ['ask', liveAsk.id, platformApp, liveSaved.id],
   ]);
   assert.equal(thanks.threadRootId, plan.threadRootId, 'the plan and the thanks are in one thread');
   const firstOpener = messages.find((m) => m.id === plan.threadRootId);
@@ -1145,6 +1162,79 @@ test('both copies hold the same demo-state rows, every time in them from the pai
   await assert.rejects(demoStates.installDemoStates(
     { base: { ...base.input, at }, head: { ...head.input, at: new Date().toISOString() } }, demoStates.STATE_IDS),
   /one moment/);
+});
+
+// 25 Nov 2026 (#7145): a live draft open in the column beside the member's
+// thread with Homeroom bot, which no copy starts with (only asking the bot
+// opens one, and no copy has a model). The rows are the staging live-draft
+// seed's, written here on the platform project every copy has.
+test('a live draft opens in the column beside the member\'s thread with Homeroom bot', { timeout: 180000 }, async (t) => {
+  const copies = await pairOfCopies(t);
+  if (!copies) return;
+  const { base, head } = copies;
+  const id = 'shots-demo-member-bot-live-draft-v1';
+  for (const side of [base, head]) {
+    assert.ok((await demoStates.inspectDemoStates(side.input)).includes(id), `${side.name} can hold it`);
+  }
+  const result = await demoStates.installDemoStates({ base: base.input, head: head.input }, [id]);
+  assert.deepEqual(result.skipped, []);
+  assert.deepEqual(result.installed.map((state) => state.id), [id]);
+  // The two copies hold the same draft.
+  const draftOf = async (pool) => {
+    const member = Number((await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0].id);
+    const { rows: [draft] } = await pool.query(
+      `SELECT id, session_id, proposal_session_id, state, live_state, edits, root_message_id, base_sha, head_sha,
+              proposed_head_sha
+         FROM live_drafts WHERE user_id = $1`, [member]);
+    return { member, draft };
+  };
+  const { member, draft } = await draftOf(base.pool);
+  assert.deepEqual(
+    [Number(draft.session_id), Number(draft.proposal_session_id), draft.state, draft.live_state, draft.edits],
+    [demoStates.IDS.liveDraftSession, demoStates.IDS.liveDraftProposal, 'proposed', 'live', 2]);
+  assert.deepEqual([draft.base_sha, draft.proposed_head_sha, draft.head_sha],
+    ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)]);
+  const { draft: otherDraft } = await draftOf(head.pool);
+  assert.equal(Number(otherDraft.session_id), Number(draft.session_id));
+  // Its two edits, both obviously fake.
+  const { rows: edits } = await base.pool.query(
+    `SELECT commit_sha, summary, paths FROM live_draft_edits WHERE draft_id = $1 ORDER BY created_at`, [draft.id]);
+  assert.deepEqual(edits.map((row) => row.commit_sha), ['b'.repeat(40), 'c'.repeat(40)]);
+  assert.ok(edits.every((row) => /^\[shots fixture\] /.test(row.summary)), 'every edit is marked');
+  assert.deepEqual(edits.map((row) => row.paths), [['public/index.html'], ['public/index.html']]);
+  // The draft is on the thread whose first message is the member's ask.
+  const rootId = Number(draft.root_message_id);
+  const { rows: [thread] } = await base.pool.query(
+    'SELECT kind, app_id FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [rootId, member]);
+  assert.equal(thread.kind, 'ask');
+  const platformApp = Number((await base.pool.query('SELECT id FROM apps WHERE slug = $1', [SLUG])).rows[0].id);
+  assert.equal(Number(thread.app_id), platformApp);
+  const { rows: messages } = await base.pool.query(
+    `SELECT content, thread_root_id, metadata FROM conversation_messages
+      WHERE idempotency_key LIKE 'shots-fixture-hrbot-live-draft-%' ORDER BY id`);
+  assert.equal(messages.length, 4);
+  assert.ok(messages.every((row) => /^\[shots fixture\] /.test(row.content)), 'every message is marked');
+  // The member's two messages and the bot's two replies, all in the ask's
+  // thread; the bot's are plain chat answers.
+  assert.deepEqual(messages.map((row) => row.metadata.homeroomBot?.kind || null), [null, 'chat', null, 'chat']);
+  assert.deepEqual(messages.map((row) => (row.thread_root_id == null ? null : Number(row.thread_root_id))),
+    [null, rootId, rootId, rootId]);
+  // Read through the code the column uses: the thread's live draft, open
+  // because it has edits and its proposal has not ended.
+  const live = await liveDrafts.forThread(base.pool, { userId: member, rootId });
+  assert.ok(live, 'the thread has an editable draft');
+  assert.equal(Number(live.id), Number(draft.id));
+  assert.equal(live.state, 'proposed');
+  assert.match(result.installed[0].shows[0].path, /^\/#homeroom-bot\/thread\/\d+\/design$/);
+  // A second look finds nothing to add: the state's own messages are there.
+  for (const side of [base, head]) {
+    assert.ok(!(await demoStates.inspectDemoStates(side.input)).includes(id), `${side.name} holds it already`);
+  }
+  assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM live_drafts')).rows[0].n, 1);
+  assert.equal((await base.pool.query(
+    "SELECT COUNT(*)::int AS n FROM conversation_messages WHERE idempotency_key LIKE 'shots-fixture-hrbot-live-draft-%'"))
+    .rows[0].n, 4);
 });
 
 test('the demo states refuse a database that is not the run\'s own', async () => {
