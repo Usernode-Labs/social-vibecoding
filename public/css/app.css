@@ -38952,6 +38952,44 @@ html:not([data-skin]).dark {
   --one-points: #ffb38a;
   --one-progress: rgb(122 165 255 / 0.30);
 }
+/* THE SHARED PARTS, each drawn once. Markup keeps its own ids and classes (the declared checks select on them) and adds
+   the part's class; an area's own rules below only place a part, never redraw it. */
+/* A tag labels what a row needs or holds ("Read", "Vote", "2 to vote", "3 new"). The row is what you tap, so a tag never
+   looks pressable: flat, no edge, no hover. */
+html:not([data-skin]) .one-tag { display: inline-flex; align-items: center; flex: none; height: 24px; padding: 0 9px; border: 0; border-radius: 9999px; background: var(--one-tag-bg); color: var(--one-tag-ink); font-size: 13px; font-weight: 600; line-height: 1; letter-spacing: 0; white-space: nowrap; box-shadow: none; }
+html:not([data-skin]) .one-tag.one-tag-strong { background: var(--one-tag-strong-bg); color: var(--one-tag-strong-ink); }
+html:not([data-skin]) .one-tag.one-tag-grey { background: var(--one-tag-grey-bg); color: var(--one-tag-grey-ink); }
+html:not([data-skin]) .one-tag.one-tag-quiet { background: var(--one-quiet); color: var(--one-ink-2); }
+/* A segmented control: the chosen option an ink pill with white words, the rest grey on a light track. With
+   --one-seg-n (options) and --one-seg-i (the chosen one's index) set on it, the pill slides between them. */
+html:not([data-skin]) .one-seg { position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: stretch; min-height: 34px; padding: 2px; border: 0; border-radius: 9999px; background: var(--one-seg-track); box-shadow: none; isolation: isolate; }
+html:not([data-skin]) .one-seg > :is(button, a, [role="tab"], [role="radio"]) { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 14px; border: 0; border-radius: 9999px; background: transparent; box-shadow: none; color: var(--one-seg-ink); font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap; transition: color .2s ease, background-color .2s ease; }
+html:not([data-skin]) .one-seg > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: var(--one-seg-thumb); color: var(--one-seg-on-ink); }
+html:not([data-skin]) .one-seg[style*="--one-seg-i"]::before { content: ""; position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--one-seg-n, 2)); border-radius: 9999px; background: var(--one-seg-thumb); transform: translateX(calc(var(--one-seg-i, 0) * 100%)); transition: transform .38s cubic-bezier(.3, 1.3, .5, 1); }
+html:not([data-skin]) .one-seg[style*="--one-seg-i"] > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: transparent; }
+/* A menu chip opens a choice that sets what you are working on (All projects, About, With): a white pill with the small
+   sticker edge, its label's lead word in the quiet ink. */
+html:not([data-skin]) .one-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 34px; padding: 0 10px 0 13px; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: var(--one-edge-sm); color: var(--one-ink); font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap; }
+html:not([data-skin]) .one-chip .one-chip-lead { color: var(--one-ink-2); font-weight: 400; }
+html:not([data-skin]) .one-chip:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+/* The page's main action as an icon (New chat's +, New message's +): the sun disc with the sticker edge. */
+html:not([data-skin]) .one-fab { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-sun); box-shadow: var(--one-edge); color: #121a0e; }
+html:not([data-skin]) .one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+/* Every other icon button on a page: a flat disc with one hairline. */
+html:not([data-skin]) .one-disc { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); color: var(--one-ink); }
+/* The three button levels, for markup that is new in this look (the class-matching layer in BUTTONS covers the rest). */
+html:not([data-skin]) .one-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 9999px; font-size: 16px; font-weight: 600; line-height: 1; white-space: nowrap; transition: transform .12s ease, filter .12s ease; }
+html:not([data-skin]) .one-btn.one-btn-sm { height: 30px; padding: 0 12px; font-size: 14px; }
+html:not([data-skin]) .one-btn.one-btn-1 { background: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge); }
+html:not([data-skin]) .one-btn.one-btn-1.one-btn-sm { box-shadow: var(--one-edge-sm); }
+html:not([data-skin]) .one-btn.one-btn-1:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) .one-btn.one-btn-2 { background: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none; }
+html:not([data-skin]) .one-btn.one-btn-d { background: var(--one-red-tint); color: var(--one-red); box-shadow: none; }
+html:not([data-skin]) .one-btn:is(.one-btn-2, .one-btn-d):active:not(:disabled) { transform: scale(.97); filter: brightness(.95); }
+html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-skin]) :is(.one-seg[style*="--one-seg-i"]::before, .one-btn) { transition: none; }
+}
 /* ── END ONE LOOK · SHARED PARTS ── */
 
 /* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
