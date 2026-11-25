@@ -20,7 +20,7 @@
 
 const requests = require('../../src/services/requests');
 
-const NAMES = ['appFor', 'listOpen', 'getOne', 'getRaw', 'comments', 'findByMarker', 'create',
+const NAMES = ['appFor', 'listOpen', 'listClosed', 'getOne', 'getRaw', 'comments', 'findByMarker', 'create',
   'setTitle', 'setBody', 'setContent', 'close', 'reopen', 'comment'];
 
 function key(owner, repo) {
@@ -85,6 +85,14 @@ function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r)
       const open = [...st.rows.values()].filter((r) => r.state === 'open')
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || b.number - a.number);
       return { issues: open.map((r) => normalized(owner, repo, r)), truncatedList: false };
+    },
+    async listClosed(owner, repo) {
+      read('listClosed', owner, repo);
+      const st = repoState(owner, repo, false);
+      if (!st) return { issues: [], truncatedList: false, note: 'issues unavailable' };
+      const closed = [...st.rows.values()].filter((r) => r.state === 'closed')
+        .sort((a, b) => String(b.closedAt || '').localeCompare(String(a.closedAt || '')) || b.number - a.number);
+      return { issues: closed.map((r) => normalized(owner, repo, r)), truncatedList: false };
     },
     async getOne(owner, repo, n) {
       read('getOne', owner, repo, n);

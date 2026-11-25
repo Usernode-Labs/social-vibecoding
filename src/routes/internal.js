@@ -24,6 +24,7 @@ const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
 const shotsReadyStates = require('../services/shots-ready-states');
+const turnLifecycle = require('../services/turn-lifecycle');
 
 // #6832: what a build is told after it declares that nothing visible changes
 // and has sent no picture of what the change does. With no before/after shots,
@@ -287,13 +288,25 @@ function internalRoutes(_config) {
         shots: { accepted: false, state: 'disabled', reason: 'Collecting declared visible changes is disabled.' },
       });
     }
+    // #7160: which turn declared it, told the same way the status route tells
+    // a change's running turn (the bot's follow-up names its own look, else
+    // the turn's mode). 'turn' when nothing is on record.
+    let declaredBy = 'turn';
+    try {
+      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (durableTurn) {
+        const own = turnLifecycle.ownerOf(durableTurn);
+        const kind = own?.machine === 'bot-request' ? 'homeroom_bot_follow_up' : (durableTurn.mode || 'turn');
+        declaredBy = `turn:${kind}`;
+      }
+    } catch { /* the declaration still records; only its author is unknown */ }
     let result;
     try {
       // Request #7146: a declaration covers the whole change against main,
       // never one turn's commit. The machine holds this build turn's "none"
       // over a declaration an earlier turn made, so a fix that changes
       // nothing a person sees cannot drop the change's shots.
-      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, { guard: true });
+      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, { guard: true, by: declaredBy });
     } catch (err) {
       return shotsError(res, err);
     }

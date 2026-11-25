@@ -1963,6 +1963,17 @@ async function refreshPublicIssues(owner, repo) {
   return { ...result, refreshed: true, retryInMs: 0 };
 }
 
+// The CLOSED requests (#7160): { issues, truncatedList, note? }. Never
+// throws, like fetchPublicIssues — a failed read is an empty list with a note.
+async function fetchClosedIssues(owner, repo) {
+  try {
+    return await requests().listClosed(owner, repo);
+  } catch (err) {
+    log.warn('github', 'Closed request list read failed', { repo: `${owner}/${repo}`, err: err.message });
+    return { issues: [], truncatedList: false, note: 'fetch failed' };
+  }
+}
+
 // One request, open or closed: { issue } or { issue: null, note }. A
 // proposal's number answers 'not an issue (pull request)'.
 async function fetchPublicIssue(owner, repo, number) {
@@ -2097,6 +2108,7 @@ module.exports = {
   recordFetchResponse,
   _instrumentForTests: instrument,
   fetchPublicIssues,
+  fetchClosedIssues,
   fetchPublicIssue,
   fetchIssueComments,
   clipIssueComments,

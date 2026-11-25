@@ -3401,7 +3401,10 @@ function voteRoutes(config) {
               importClient,
               inserted[0].id,
               importVisibleChanges,
-              shotsState.validSha(headSha) ? { headSha, pin: 'imported' } : {}
+              {
+                ...(shotsState.validSha(headSha) ? { headSha, pin: 'imported' } : {}),
+                by: 'homeroom:import',
+              }
             );
           } catch (err) {
             // This transaction owns `importClient`; recordIntent must neither

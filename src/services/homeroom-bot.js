@@ -7604,7 +7604,7 @@ async function recordUnstageable(pool, config, { app, bot, session, head, reason
   try {
     await require('./shots-state').recordIntent(pool, session.id, {
       version: 1, impact: 'none', rationale, stories: [],
-    }, { headSha: head });
+    }, { headSha: head, by: 'homeroom:bot' });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not record that its change cannot be shown on a copy', {
       app: app.slug, sessionId: session.id, err: err.message,

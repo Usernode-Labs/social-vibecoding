@@ -167,6 +167,8 @@ export interface Sync {
 export interface SyncOutcome {
   n: number; reason: string; outcome: string; sha: string | null; message: string | null;
   behind?: number; pushOk?: boolean; conflictFiles?: string[];
+  // When this sync was recorded (#7160). Records from before it have none.
+  at?: string;
 }
 
 export interface Data {
@@ -909,13 +911,14 @@ const syncStop = (d: Data, n: number, by: string | null): WorkRequest =>
 // agent conversation's Stop): it ends as stopped by them, never as a
 // conflict it could not resolve, and gives its once-record back, so the
 // platform asks again when it next needs it.
-const stopRequested: Handler = (s, e, f) => {
+const stopRequested: Handler = (s, e, f, ctx) => {
   const sync = s.data.sync;
   if (!sync) return step(s);
   const by = e.payload.by ?? e.actor ?? null;
   const message = by ? `Sync with main stopped by ${by}. The branch is unchanged.` : 'Sync with main stopped. The branch is unchanged.';
   let d: Data = { ...s.data, sync: null,
-    lastSync: { n: sync.n, reason: sync.reason, outcome: 'stopped', sha: null, message, behind: 0, pushOk: false, conflictFiles: [] } };
+    lastSync: { n: sync.n, reason: sync.reason, outcome: 'stopped', sha: null, message, behind: 0, pushOk: false, conflictFiles: [],
+      at: ctx.now.toISOString() } };
   const writes: DomainWrite[] = [];
   if (sync.claimHead && sync.prev) {
     if (sync.reason === 'boot_failure') writes.push({ type: 'bootFailureRelease', sessionId: d.sessionId, head: sync.claimHead, prev: sync.prev.bootHead ?? null });
@@ -1468,7 +1471,8 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   const outcome = r ? String(r.outcome || 'done') : 'error';
   let d: Data = { ...s.data, sync: null,
     lastSync: { n: sync.n, reason: sync.reason, outcome, sha: r?.sha ?? null, message: r?.message ?? (e.payload as any)?.error?.message ?? null,
-      behind: Number(r?.behind) || 0, pushOk: !!r?.pushOk, conflictFiles: Array.isArray(r?.conflictFiles) ? r.conflictFiles.slice(0, 200) : [] } };
+      behind: Number(r?.behind) || 0, pushOk: !!r?.pushOk, conflictFiles: Array.isArray(r?.conflictFiles) ? r.conflictFiles.slice(0, 200) : [],
+      at: ctx.now.toISOString() } };
   const writes: DomainWrite[] = [];
   if (!r) {
     const failures = (s.data.backoff?.failures || 0) + 1;

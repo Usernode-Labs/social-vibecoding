@@ -71,8 +71,11 @@ test('get_change: a conflicted change keeps its votes when the resolution stays 
     assert.match(step, /its votes stand as long as the resolution stays inside the files that conflicted/, kind);
     assert.doesNotMatch(step, /clear/, kind);
   }
-  // The worker cannot sync; it is told who can, and says nothing about votes.
-  assert.match(nextStepFor(row, 'worker_read'), /Its owner can sync it with main from its page\./);
+  // #7160: no kind points at a "sync with main" button that does not exist.
+  // With no lane reason recorded, Homeroom resolves the conflict itself.
+  const worker = nextStepFor(row, 'worker_read');
+  assert.match(worker, /Homeroom resolves the conflict on its own/);
+  assert.doesNotMatch(worker, /sync it with main from its page/);
 });
 
 test('the charter says a sync keeps the votes', () => {

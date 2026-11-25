@@ -117,6 +117,9 @@ async function recordIntent(pool, sessionId, rawIntent, options = {}) {
     sessionId: id, appId: await sessionApp(pool, id), head: options.headSha || null, intent: prepared.intent,
     guard: options.guard === true,
     pin: options.pin || null, from: options.from || null,
+    // #7160: who declared it, so the record says which turn, person or part
+    // of Homeroom made (or replaced) the standing declaration.
+    actor: options.by ? String(options.by) : null,
   });
   if (outcome.status === 'rejected' && outcome.reason === 'stale_head') {
     throw new ShotsStateError('stale_head', 'A newer revision of this proposal replaced the one this declaration was for.', 409);
@@ -153,6 +156,7 @@ async function recordIntentInTransaction(client, sessionId, rawIntent, options =
   await workflow().shotsDeclared({
     sessionId: Number(sessionId), head: options.headSha || null, intent: prepared.intent, db: client,
     pin: options.pin || null, from: options.from || null,
+    actor: options.by ? String(options.by) : null,
   });
   return {
     accepted: true, unchanged: false, required: prepared.detail.required, state: prepared.state,

@@ -164,6 +164,19 @@ async function listOpen(owner, repo) {
   };
 }
 
+/** The CLOSED requests, most recently closed first (#7160). */
+async function listClosed(owner, repo) {
+  const app = await appFor(owner, repo);
+  if (!app) return { issues: [], truncatedList: false, note: 'issues unavailable' };
+  const { rows } = await db().query(
+    `SELECT ${COLUMNS} FROM requests WHERE app_id = $1 AND state = 'closed'
+      ORDER BY closed_at DESC NULLS LAST, number DESC LIMIT $2`, [app.id, LIST_MAX + 1]);
+  return {
+    issues: rows.slice(0, LIST_MAX).map((r) => normalizedOf(r, app.slug)),
+    truncatedList: rows.length > LIST_MAX,
+  };
+}
+
 /** One request, open or closed. */
 async function getOne(owner, repo, number) {
   const n = Number(number);
@@ -325,6 +338,7 @@ module.exports = {
   requestUrl,
   listOpen,
   getOne,
+  listClosed,
   getRaw,
   comments,
   findByMarker,

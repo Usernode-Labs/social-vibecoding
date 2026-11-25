@@ -744,6 +744,9 @@ function ruleRowFields(gate) {
     creator_yes: !!gate.creatorYes,
     // #3800: the rule the Votes card counts for (AppView._changeVoteFacts).
     approval_rule: gate.shownRule || null,
+    // #7160: the named groups whose votes decide, so the connector can say
+    // who may approve a change.
+    approval_groups: [...new Set(gate.rules.map((r) => r.group).filter(Boolean))],
   };
 }
 
