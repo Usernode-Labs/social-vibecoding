@@ -61,27 +61,27 @@ test('a request\'s summary is written from its visible changes, stored once, and
 
     // One change up for a vote: written once, stored, and reused.
     await change('A moon button beside the bell', 'promoted', [12], 'Adds a moon button to the header.');
-    assert.deepEqual(await ask(), { text: 'Summary 1.', basis: 'change' });
-    assert.deepEqual(await ask(), { text: 'Summary 1.', basis: 'change' });
+    assert.deepEqual(await ask(), { text: 'Summary 1. A change for it is up for a vote.', basis: 'change' });
+    assert.deepEqual(await ask(), { text: 'Summary 1. A change for it is up for a vote.', basis: 'change' });
     assert.equal(calls, 1);
     assert.match(seen[0], /by summary-owner: A moon button beside the bell\nAdds a moon button to the header\./);
     assert.doesNotMatch(seen[0], /Still private|Another request/);
     const row = (await pool.query('SELECT summary, basis, model, generating_until, failed_at FROM request_summaries WHERE app_id = $1 AND issue_number = 12', [app.id])).rows[0];
-    assert.deepEqual({ ...row }, { summary: 'Summary 1.', basis: 'change', model: 'stub-model', generating_until: null, failed_at: null });
+    assert.deepEqual({ ...row }, { summary: 'Summary 1. A change for it is up for a vote.', basis: 'change', model: 'stub-model', generating_until: null, failed_at: null });
 
     // A second change: its basis and its words move.
     await change('In the account menu', 'promoted', [12], 'Puts the switch in the account menu.');
-    assert.deepEqual(await ask(), { text: 'Summary 2.', basis: 'changes' });
+    assert.deepEqual(await ask(), { text: 'Summary 2. Two changes for it are up for a vote.', basis: 'changes' });
     assert.match(seen[1], /CHANGE A \(up for a vote\)[\s\S]*CHANGE B \(up for a vote\)/);
 
     // A write that fails keeps the stored words and is not tried again at once.
     issue.body = 'Edited.';
     const failing = { enabled: true, wait: true, generate: async () => { throw new Error('model down'); } };
-    assert.deepEqual(await summary.forRequest(pool, { appId: app.id, number: 12, issue, asker: 'maya' }, failing), { text: 'Summary 2.', basis: 'changes' });
-    assert.deepEqual(await ask(), { text: 'Summary 2.', basis: 'changes' });
+    assert.deepEqual(await summary.forRequest(pool, { appId: app.id, number: 12, issue, asker: 'maya' }, failing), { text: 'Summary 2. Two changes for it are up for a vote.', basis: 'changes' });
+    assert.deepEqual(await ask(), { text: 'Summary 2. Two changes for it are up for a vote.', basis: 'changes' });
     assert.equal(calls, 2, 'held off after the failure');
     await pool.query(`UPDATE request_summaries SET failed_at = NOW() - interval '1 hour' WHERE app_id = $1`, [app.id]);
-    assert.deepEqual(await ask(), { text: 'Summary 3.', basis: 'changes' });
+    assert.deepEqual(await ask(), { text: 'Summary 3. Two changes for it are up for a vote.', basis: 'changes' });
 
     // The row goes with its project.
     await pool.query('DELETE FROM chat_sessions WHERE app_id = $1', [app.id]);
