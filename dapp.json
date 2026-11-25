@@ -868,6 +868,20 @@
       "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects):has(#profile-preferences):has(.profile-section-links):has(#profile-edit-btn svg) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
+      "id": "profile.section-tabs.changes",
+      "name": "Me: the section row is real tabs, and #profile?tab=changes keeps the profile open with its own changes in the column (#7134)",
+      "path": "/?demo=1#profile?tab=changes",
+      "expectText": "Your changes",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-history:has(h2):has(ul)"
+    },
+    {
+      "id": "profile.section-tabs.activity",
+      "name": "Me: the Activity tab of the section row stays on the profile and shows the recent activity column (#7134)",
+      "path": "/?demo=1#profile?tab=activity",
+      "expectText": "Recent activity",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-recent-activity:has(h2):has(ul)"
+    },
+    {
       "id": "profile.week-share",
       "name": "Me: This week shows the week's live changes and Share opens the card that chooses which figures to send (#6464)",
       "path": "/?demo=1#profile",
@@ -2974,7 +2988,7 @@
     {
       "name": "A direct conversation puts your own message on the right in its tinted bubble, with no avatar, and the other person's on the left in a plain bubble with their avatar (#5680)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>span[aria-hidden]+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
+      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>img+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
     },
     {
       "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", field, Speak and send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735, #4389)",
@@ -4887,8 +4901,14 @@
     {
       "name": "#6019: the AI tab opens on its own page: Needs you, one band with no project or day headings, with a plan waiting for you to review it and a request Homeroom bot handed back for a person to say what's next, another project's build that stopped (Restart build), and a private idea, each ending in what you do; over it, one project filter (24 Nov 2026, the three bands)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]):not(:has([data-ai-group], [data-ai-project-head], [data-ai-day])) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-line=\"private\"] [data-ai-row-end=\"act\"]):has([data-ai-line=\"plan\"]) [data-ai-line=\"decide\"]",
+      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]):has([data-ai-sheet=head] [data-ai-hero-sub] button[data-ai-waiting-open]):not(:has([data-ai-group], [data-ai-project-head], [data-ai-day])) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-line=\"private\"] [data-ai-row-end=\"act\"]):has([data-ai-line=\"plan\"]) [data-ai-line=\"decide\"]",
       "expectText": "Restart build"
+    },
+    {
+      "name": "Homeroom bot's Needs you count opens Waiting on you (#7103): one card of every pending item with its action, no Show more, and All threads back to the three bands",
+      "path": "/?demo=1#homeroom-bot/waiting",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"waiting\"] [data-ai-list=\"waiting\"]:has([data-ai-row-end=\"act\"]):not(:has([data-ai-group-more])) [data-ai-waiting-close]",
+      "expectText": "Waiting on you"
     },
     {
       "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state; mobile polish 05: with how many are new since your last visit in its heading and a line under the new ones",

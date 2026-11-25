@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || process.env.INLOOP_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -62,8 +63,9 @@ test('a member\'s picture reaches the leaderboard and the person page', { timeou
   const byName = (rows) => Object.fromEntries(rows.map((r) => [r.username, r]));
   const full = byName(await rankedUsers(pool, {}));
   assert.equal(full.alice.avatar_url, '/avatars/av_alice');
-  assert.equal(full.bob.avatar_url, null, 'no picture → null');
-  assert.equal(full.dana.avatar_url, null, 'a disabled profile shows no picture');
+  // #7135: no photo (or a disabled profile) shows the account's generated picture.
+  assert.equal(full.bob.avatar_url, generatedAvatarUrl(id('bob')));
+  assert.equal(full.dana.avatar_url, generatedAvatarUrl(id('dana')));
 
   const slim = await rankedUsers(pool, { slim: true });
   for (const row of slim) {
@@ -95,7 +97,7 @@ test('a member\'s picture reaches the leaderboard and the person page', { timeou
   const aliceBody = await (await fetch(`${base}/api/leaderboard/users/alice/prs`)).json();
   assert.equal(aliceBody.user.avatar_url, '/avatars/av_alice');
   const bobBody = await (await fetch(`${base}/api/leaderboard/users/bob/prs`)).json();
-  assert.equal(bobBody.user.avatar_url, null);
+  assert.equal(bobBody.user.avatar_url, generatedAvatarUrl(id('bob')));
   const danaBody = await (await fetch(`${base}/api/leaderboard/users/dana/prs`)).json();
-  assert.equal(danaBody.user.avatar_url, null);
+  assert.equal(danaBody.user.avatar_url, generatedAvatarUrl(id('dana')));
 });

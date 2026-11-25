@@ -87,6 +87,13 @@
       "preview": "migration.sql"
     },
     {
+      "source": "src/db/seed-other-copy.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 2,
+      "preview": "sql"
+    },
+    {
       "source": "src/db/session-locks.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -389,6 +396,13 @@
     },
     {
       "source": "src/routes/feedback.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "aca74cdfc7794b9a7f9d",
+      "count": 1,
+      "preview": "MY_FEEDBACK_SELF_APP_SQL"
+    },
+    {
+      "source": "src/routes/feedback.js",
       "kind": "structural-template",
       "fingerprint": "d15136901fbcf6a52a60",
       "count": 1,
@@ -600,6 +614,13 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "7ffdd7f7a1fa05479558",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "974dbc333f746ae0a00c",
       "count": 1,
       "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
@@ -610,13 +631,6 @@
       "fingerprint": "9e134adc759194b62a60",
       "count": 1,
       "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "b34b87a74ed74ad996e0",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
     },
     {
       "source": "src/routes/sessions.js",
@@ -2110,6 +2124,27 @@
       "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
     },
     {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e98fa2ae3bbef1de386",
+      "count": 1,
+      "preview": "SELF_APP_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a77e64e7f2e320971df9",
+      "count": 1,
+      "preview": "VIEWER_FEEDBACK_SQL"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",
@@ -2595,7 +2630,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "f0bfda8303e734d58580",
+      "fingerprint": "73efd30c0043ffb33c93",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },

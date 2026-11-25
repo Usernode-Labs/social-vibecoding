@@ -241,6 +241,35 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
+test('the pin on the lit row is drawn in the row\'s dark ink, not the panel\'s white', () => {
+  const all = rules(menuBlock());
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-on-pin-hover:/.test(r.body));
+  assert.ok(tokens, 'the menu declares the pin\'s hover ground');
+  assert.match(tokens.body,
+    /--wip-nav-on-pin-hover:\s*color-mix\(in srgb, var\(--wip-nav-on-ink\) 12%, transparent\);/,
+    'a tint of the lit row\'s own ink');
+
+  // The pin is the lit link's sibling, not its child, so it needs a rule of its own.
+  const ROW = '.platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin';
+  const pinRules = all.filter((r) => r.selector.includes(ROW));
+  assert.ok(pinRules.length >= 1, 'the lit row\'s pin has a rule of its own');
+  const base = pinRules.find((r) => /--lit-tint:/.test(r.body));
+  assert.ok(base, 'the rule that sets the pin\'s tokens');
+  assert.match(base.selector, /^html:not\(\[data-skin\]\) #platform-tabs /);
+  assert.match(base.body, /color:\s*var\(--wip-nav-on-ink\);/, 'its glyph is the row\'s ink');
+  assert.match(base.body, /--lit-ink:\s*var\(--wip-nav-on-ink\);/, 'hover and pressed take that ink');
+  assert.match(base.body, /--lit-tint:\s*var\(--wip-nav-on-pin-hover\);/, 'its ground is the ink\'s tint');
+  assert.match(base.body, /--accent:\s*var\(--wip-nav-on-ink\);/, 'and its focus ring');
+  assert.ok(pinRules.some((r) => r.selector.endsWith(':is(:hover, [aria-pressed="true"], :focus-visible)') && /color:\s*var\(--wip-nav-on-ink\);/.test(r.body)),
+    'the hovered, pressed and focused pin is that ink too');
+  // No white ink is left on the sun row.
+  for (const r of pinRules) {
+    assert.doesNotMatch(r.body, /--wip-nav-ink\b|--wip-nav-ink-strong|--wip-nav-hover\b/,
+      `${r.selector} still reads the panel's white`);
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own`);
+  }
+});
+
 test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s, on every page (20 Nov 2026)', () => {
   const all = rules(menuBlock());
   const line = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header::after`);
@@ -499,6 +528,24 @@ test('the All items head meets the top bar where the place bar is folded (asked 
   assert.match(css, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
 });
 
+test('the All items board starts closer under the top bar (asked 25 Nov 2026, #7154)', () => {
+  const css = read('public', 'css', 'app.css');
+  // The head's card sat about 40px under the bar: the page's top padding plus
+  // the tab body's shared 0.75rem. All items keeps only a few pixels of air.
+  const own = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] > \.dev-ws-tabbody \{\s*padding-block-start: 0;\s*\}/);
+  assert.ok(own, 'the All items tab body drops the shared padding');
+  const page = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-body:has\(> #dev-workshop > \.dev-ws\[data-ws-tab="all"\]\) \{\s*padding-top: 4px;\s*\}/);
+  assert.ok(page, 'the page keeps 4px above the board');
+  // Both sit in the 768px block that folds the place bar, after the shared
+  // rule they override (same specificity, so the later rule wins), so the
+  // other three places keep 0.75rem and the phones and other looks keep theirs.
+  const shared = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }');
+  const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
+  assert.ok(shared > 0, 'the shared rule still lists all four tabs');
+  assert.ok(own.index > shared && fold > 0 && own.index > fold, 'it goes in the 768px block, after the rule it overrides');
+  assert.ok(page.index > own.index, 'the page padding follows it, in the same block');
+});
+
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
   const block = menuBlock();
   const all = rules(block);
@@ -644,6 +691,23 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+  // Level 4, an action written as text, leaves a control that cannot be pressed out,
+  // and one rule gives it the muted look instead (request 7131).
+  const link = all.find((r) => r.selector.includes(':is(.text-violet-600, .text-violet-700') && /color: var\(--wip-btn-link-ink\);/.test(r.body));
+  assert.ok(link, 'the level 4 rule is there');
+  assert.match(link.selector, /:not\(:disabled, \[aria-disabled="true"\]\)$/,
+    'a disabled text action is not drawn as an active link');
+  const linkHover = all.find((r) => r.selector.includes(':is(.text-violet-600, .text-violet-700') && /:hover\s*$/.test(r.selector));
+  assert.ok(linkHover, 'its hover rule is there');
+  assert.match(linkHover.selector, /:not\(:disabled, \[aria-disabled="true"\]\):hover$/,
+    'a pointer brings no underline back to a disabled text action');
+  const linkOff = all.find((r) => /:is\(:disabled, \[aria-disabled="true"\]\)$/.test(r.selector) && r.selector.includes(':is(.text-violet-600, .text-violet-700'));
+  assert.ok(linkOff, 'the disabled text action has its own rule');
+  assert.match(linkOff.body, /color: var\(--wip-btn-link-off\);/);
+  assert.match(linkOff.body, /text-decoration: none;/);
+  assert.match(linkOff.body, /cursor: default;/);
+  assert.match(tokens[0].body, /--wip-btn-link-off: #a1a1aa;/, 'the light grey is a token');
+  assert.match(tokens[1].body, /--wip-btn-link-off: #71717a;/, 'the dark grey is a token');
 });
 
 test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {

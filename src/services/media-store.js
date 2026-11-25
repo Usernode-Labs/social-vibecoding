@@ -95,7 +95,12 @@ async function put(tx, store, data, contentType = 'application/octet-stream') {
   await transactionIO.run(tx, async (signal) => {
     const existing = await store.statObject(key);
     signal.throwIfAborted();
-    if (existing && Number(existing.size) !== data.length) throw new Error(`Media object size mismatch: ${key}`);
+    // A staging store run against the pair's other copy knows a file exists
+    // from its registry row but not its size; the content hash already says
+    // the bytes are these (staging-media-store.useOtherCopy).
+    if (existing && existing.sizeKnown !== false && Number(existing.size) !== data.length) {
+      throw new Error(`Media object size mismatch: ${key}`);
+    }
     if (!existing) await store.putObject(key, data, contentType);
   });
   return key;

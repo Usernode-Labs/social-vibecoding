@@ -554,8 +554,10 @@ test('an imported row with no recorded head sha records a terminal skip', () => 
 });
 
 test('the heal never opens a PR for an imported or unattended headless proposal', () => {
-  assert.match(RECOVERY_SRC, /if \(!session\.pr_number && !imported && !session\.is_headless\)/,
-    'only a human-owned native session may gain a draft PR during recovery');
+  assert.match(RECOVERY_SRC, /const isDraft = await require\('\.\/live-drafts'\)\.isDraftSession\(pool, session\.id\);/,
+    'a live app draft is recognised before the PR block');
+  assert.match(RECOVERY_SRC, /if \(!session\.pr_number && !imported && !session\.is_headless && !isDraft\)/,
+    'only a human-owned native session may gain a draft PR during recovery, and never a live draft before it is proposed');
 });
 
 test('recovery only hands over: it never builds, never posts a chat row, never stamps a verdict itself', () => {

@@ -415,9 +415,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false, onOpen 
     : <div className="messages-object-card">{body}</div>;
 }
 
-export function fileSize(bytes: number): string {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+// #7136: a byte formatter is shared with the request draft's list of files,
+// so it lives in lib/file-size.ts. It is still exported here for the chat
+// surfaces that already import it from this module.
+export { fileSize } from '../../lib/file-size';

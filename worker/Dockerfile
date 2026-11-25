@@ -43,6 +43,7 @@ RUN echo "base packages refreshed: ${BASE_PACKAGES_REFRESHED}" \
   && apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
+    librsvg2-bin \
     libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
   && v="$(dpkg-query -W -f='${Version}' linux-libc-dev)" \
   && { dpkg --compare-versions "$v" ge 6.12.118-1 \
@@ -298,6 +299,10 @@ COPY usernode-screen /usr/local/bin/usernode-screen
 # saves one a request links; written into the working tree. Build mode only
 # (WORKER_JWT); the platform makes, bills and checks it.
 COPY usernode-image /usr/local/bin/usernode-image
+# usernode-file (#7136): a build saves a file its request carries into the
+# working tree (usernode-issues <number> lists them with their ids). Build
+# mode only (WORKER_JWT); it writes nothing outside the working tree.
+COPY usernode-file /usr/local/bin/usernode-file
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -328,6 +333,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-progress \
               /usr/local/bin/usernode-screen \
               /usr/local/bin/usernode-image \
+              /usr/local/bin/usernode-file \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 

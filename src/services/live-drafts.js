@@ -68,6 +68,15 @@
 // A thread's draft from main with no edits makes way for one on a proposal
 // (the answer says so); one with edits is never switched.
 //
+// 24 Nov 2026: a draft is not a change until it is proposed. Its working
+// session gets no pull request and no change number, it is on no list, and
+// it has no change page: it lives only in its thread's draft bar, with its
+// preview and Propose (draftSessionSql, isDraftSession, draftHomeOf). An old
+// draft that was numbered before this keeps its pull request, but is no
+// longer a change: the predicate takes it off every list, and its old change
+// address opens its thread. When it is proposed it gets a new number, as any
+// draft does.
+//
 // An admin can switch drafts off for everyone (`live_drafts_enabled` in
 // platform_settings, Admin › Limits): no new draft opens and no edit runs.
 
@@ -181,6 +190,45 @@ const DRAFT_JOINS = `FROM live_drafts d
 // (C). A draft proposed before that was proposed as its own change, its
 // session IS the proposal, and it is never edited again.
 const EDITABLE_SQL = `(d.state = 'open' OR (d.state = 'proposed' AND d.proposal_session_id IS NOT NULL))`;
+
+// 24 Nov 2026: a draft that has not been proposed is not a change. Its
+// working session (`live_drafts.session_id`, never the proposal session
+// Propose makes) is kept off every change path: no pull request, no number,
+// no row in a list and no page. These three helpers are that one rule.
+
+/** Pure: the SQL predicate that keeps a draft's working session off the change path. */
+function draftSessionSql(alias = 'cs') {
+  return `EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = ${alias}.id)`;
+}
+
+/** Whether `sessionId` is a live draft's working session. Never throws: a failed read is false. */
+async function isDraftSession(db, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const { rows } = await db.query('SELECT 1 FROM live_drafts WHERE session_id = $1 LIMIT 1', [id]);
+    return rows.length > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Where an old draft's change address goes: its thread, when `sessionId` is
+ * a draft's working session in `appId` and `viewerId` is its author.
+ * Resolves `{ threadRootId }`, or null for any other viewer or session.
+ */
+async function draftHomeOf(db, { appId, sessionId, viewerId = null }) {
+  const id = Number(sessionId);
+  if (!appId || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(Number(viewerId))) return null;
+  const { rows: [row] } = await db.query(
+    `SELECT d.root_message_id FROM live_drafts d
+      WHERE d.session_id = $1 AND d.app_id = $2 AND d.user_id = $3`,
+    [id, Number(appId), Number(viewerId)],
+  );
+  const root = Number(row?.root_message_id);
+  return Number.isSafeInteger(root) && root > 0 ? { threadRootId: root } : null;
+}
 
 /** Pure: whether a draft (a row) is still worked on: open, or proposed with its own proposal (C). */
 function editable(draft) {
@@ -357,11 +405,12 @@ function describe(draft) {
     app: { slug: draft.app_slug, name: draft.app_name || draft.app_slug },
     edits: Number(draft.edits) || 0,
     headSha: draft.head_sha || null,
-    // A draft proposed as a change of its own (C) is voted on there; one
-    // proposed before that was its own change.
+    // A draft proposed as a change of its own (C) is voted on there; before
+    // that it has no number of its own (24 Nov 2026). An old draft's
+    // working session may carry a `pr_number`: it is not a change any more.
     prNumber: draft.proposal_session_id
       ? (draft.proposal_pr_number ? Number(draft.proposal_pr_number) : null)
-      : (draft.pr_number ? Number(draft.pr_number) : null),
+      : null,
     // C: still worked on, whether up for a vote or not.
     editable: editable(draft),
     // C: its proposal, while it is one: the change, whether it is still up
@@ -1568,6 +1617,7 @@ module.exports = {
   SETTING_KEY, MAX_OPEN_PER_USER, IDLE_CLOSE_MS, PROPOSAL_ENDED, pinFor, pinLine,
   enabled, setEnabled, adminPayload, liveToken,
   byId, forThread, threadOf, rootOf, describe, liveStateOf, editsOf, noteChanged,
+  draftSessionSql, isDraftSession, draftHomeOf,
   editable, proposalOpen, closeReason, settle, repoOf,
   listFiles, readFile, open, supervisorCommand, runtimeFor, noteDeployed,
   draftableFor, platformRunsInPlace, proposalRow, proposalStart, builtOnOf, stackOf,

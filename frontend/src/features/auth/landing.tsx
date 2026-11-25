@@ -1236,8 +1236,11 @@ export function LandingScreen() {
       const signedIn = hasSession();
       // Guard the actual viewer entry, not only tile presentation: the legacy
       // bridge calls this opener too. An anonymous visitor still needs an
-      // account; a waiting-room session already has one (#1895).
-      if (accountRequired && !signedIn) {
+      // account, unless the app offers a guest's view (#7128: Open from a
+      // public project's page keeps Homeroom's bar around the app); a
+      // waiting-room session already has one (#1895).
+      const asGuest = accountRequired && !signedIn && app.guest_ready === true;
+      if (accountRequired && !signedIn && !asGuest) {
         (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
           '/app/' + encodeURIComponent(app.slug || ''),
         );
@@ -1250,12 +1253,14 @@ export function LandingScreen() {
       st.launchId = launchId;
       let launchUrl = app.url;
 
-      // Public apps keep their anonymous URL. An account-required app is
-      // loaded only after the platform has minted the app-scoped identity it
-      // already permits for waitlist sessions. URL.searchParams.set both
-      // preserves existing query/fragment state and replaces any stale token
-      // rather than concatenating a second credential.
-      if (accountRequired) {
+      // Public apps keep their anonymous URL, and so does a guest-ready app an
+      // anonymous visitor opened: the edge gate serves a tokenless request to
+      // its production address as a guest (src/services/edge-gate.js).
+      // An account-required app is loaded only after the platform has minted
+      // the app-scoped identity it already permits for waitlist sessions.
+      // URL.searchParams.set both preserves existing query/fragment state and
+      // replaces any stale token rather than concatenating a second credential.
+      if (accountRequired && !asGuest) {
         const token = await legacy().AppView?._mintToken?.(slug);
         if (launchId !== st.launchId) return;
         if (!token) {

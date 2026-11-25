@@ -115,6 +115,12 @@ const TopochainChallenges = {
   // `_invitesSeq` fences each read the same way.
   _invites: undefined,
   _invitesSeq: 0,
+  // #7152: the viewer's own reports or proposals for this challenge's period,
+  // from GET /challenges-api/me/challenge-items. Same lifecycle as _invites:
+  // `undefined` is loading, `null` could not be read (the page offers a
+  // retry), otherwise { measure, target, weekly, items: [...] }.
+  _items: undefined,
+  _itemsSeq: 0,
   _onboarding: null,
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
@@ -1150,6 +1156,7 @@ const TopochainChallenges = {
     TopochainChallenges._detailChallenge = challenge;
     TopochainChallenges._bpState = undefined;
     TopochainChallenges._invites = undefined;
+    TopochainChallenges._items = undefined;
     // The page's visibility IS its descriptor — _renderDetailOverlay
     // publishing a non-null `detail` is what used to be the
     // classList.remove('hidden') on this line. It is a level of the screen,
@@ -1161,6 +1168,8 @@ const TopochainChallenges = {
     }, fromGrid ? 'push' : 'none');
     if (TopochainChallenges._isBlockProduction(challenge)) TopochainChallenges._loadBpState();
     if (TopochainChallenges._isInvites(challenge)) TopochainChallenges._loadInvites();
+    if (TopochainChallenges._isUsefulFeedback(challenge)
+        || TopochainChallenges._isProposalAccepted(challenge)) TopochainChallenges._loadItems();
   },
 
   closeChallengeDetail(type = 'none') {
@@ -1413,6 +1422,15 @@ const TopochainChallenges = {
     return !!(c && c.card_preview && c.card_preview.illustration === 'useful-feedback');
   },
 
+  // #7152: whether the list on the page is the viewer's reports. Read from
+  // the server's `counted_by` rather than the artwork, so the one-time First
+  // challenge's "Send feedback" (FEEDBACK_SENT) keeps its page as it is while
+  // the graded weekly challenge gets the itemized list.
+  _isUsefulFeedback(c) {
+    const by = c && c.counted_by;
+    return !!(by && by.measure === 'USEFUL_FEEDBACK');
+  },
+
   // Whether a list row is scored by the invite measure ("Invite 3 people"):
   // the server's `counted_by` names the rule's measure, the same key the
   // breakdown route and the invites route key on.
@@ -1658,6 +1676,117 @@ const TopochainChallenges = {
     };
   },
 
+  // ── The itemized list (#7152) ───────────────────────────────────────
+  //
+  // The page's read of every report or proposal the viewer has for the
+  // challenge's period, and how each stands. Same lifecycle as _loadInvites:
+  // seq-fenced, guarded against a closed or changed page, null on any failure
+  // so the page offers a retry instead of a wrong list.
+  async _loadItems() {
+    const challenge = TopochainChallenges._detailChallenge;
+    if (!challenge) return;
+    const seq = ++TopochainChallenges._itemsSeq;
+    let next = null;
+    try {
+      const res = await window.fetch(
+        `/challenges-api/me/challenge-items?challenge_id=${encodeURIComponent(challenge.id)}`,
+        { credentials: 'same-origin' },
+      );
+      const body = res && res.ok ? await res.json() : null;
+      next = body && body.success !== false && body.data ? body.data : null;
+    } catch { next = null; }
+    if (TopochainChallenges._detailChallenge !== challenge || seq !== TopochainChallenges._itemsSeq) return;
+    TopochainChallenges._items = next;
+    TopochainChallenges._renderDetailOverlay();
+  },
+
+  // The list's retry link.
+  retryItems() {
+    TopochainChallenges._items = undefined;
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._loadItems();
+  },
+
+  // The list's descriptor: which kind it is and whether its heading says
+  // "this week", and one row per item with its word and grey line.
+  itemsView() {
+    const challenge = TopochainChallenges._detailChallenge;
+    const kind = TopochainChallenges._isUsefulFeedback(challenge) ? 'feedback' : 'proposals';
+    const challengeWeekly = TopochainChallenges._isWeekly(challenge);
+    const data = TopochainChallenges._items;
+    if (data === undefined) return { state: 'loading', kind, weekly: challengeWeekly };
+    if (data === null) return { state: 'error', kind, weekly: challengeWeekly };
+    const weekly = data.weekly === true;
+    const target = Number(data.target);
+    const items = Array.isArray(data.items) ? data.items : [];
+    return {
+      state: 'ready',
+      kind,
+      weekly,
+      rows: items.map((item) => TopochainChallenges._itemRow(item, kind, target)),
+    };
+  },
+
+  // A points figure with thousands separators, or the value verbatim when it
+  // is not a number.
+  _figure(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toLocaleString('en-US') : TopochainChallenges.str(v);
+  },
+
+  // One row. A report's word groups the server's statuses (Not counted covers
+  // every reason); a proposal's word is the Workshop's own state. The grey
+  // line is what the count does with it, read from the catalog, with the
+  // project's name in front.
+  _itemRow(item, kind, target) {
+    const it = item || {};
+    const t = (key, values) => PlatformI18n.t(`leaderboard:challenges.items.${key}`, values);
+    const project = TopochainChallenges.str(it.app_name).trim();
+    const count = Number.isInteger(target) && target > 0 ? target : null;
+    let word;
+    let accent = false;
+    let reason;
+    if (kind === 'feedback') {
+      const status = String(it.status || '');
+      if (status === 'counted') {
+        word = t('word.counted');
+        reason = t('feedback.counted', {
+          points: TopochainChallenges._figure(it.points),
+          max: TopochainChallenges._figure(it.max),
+          reason: TopochainChallenges.str(it.reason_text).trim(),
+        });
+      } else if (status === 'grading') {
+        word = t('word.grading');
+        reason = t('feedback.grading');
+      } else {
+        word = t('word.notCounted');
+        reason = status === 'over_target'
+          ? t('feedback.over_target', { count: count == null ? 0 : count })
+          : t(`feedback.${status}`);
+      }
+    } else {
+      const state = String(it.state || '');
+      if (state === 'up_for_vote') { word = t('word.upForVote'); accent = true; }
+      else if (state === 'going_live') word = t('word.goingLive');
+      else if (state === 'live') word = t('word.live');
+      else word = t('word.closed');
+      const status = String(it.status || '');
+      if (status === 'counted') reason = t('proposal.counted', { points: TopochainChallenges._figure(it.points) });
+      else if (status === 'over_target') reason = t('proposal.over_target', { count: count == null ? 0 : count });
+      else reason = t(`proposal.${status}`);
+      if (it.via === 'request') reason = `${t('proposal.forRequest')} ${reason}`;
+    }
+    return {
+      key: TopochainChallenges.str(it.key),
+      title: TopochainChallenges.str(it.title),
+      subtitle: project ? t('subtitle', { project, reason }) : reason,
+      word,
+      accent,
+      counted: kind === 'feedback' && String(it.status || '') === 'counted',
+      link: it.link || null,
+    };
+  },
+
   // The account step's button: the app's wallet sheet, whose block-production
   // card holds "Manage delegation" and, on Android, the background-service note.
   openWallet() {
@@ -1783,6 +1912,12 @@ const TopochainChallenges = {
         : null,
       invites: TopochainChallenges._isInvites(challenge)
         ? TopochainChallenges.invitesView()
+        : null,
+      // #7152: on the two challenges whose count is made of the viewer's own
+      // reports or proposals, every item with the status it has.
+      items: TopochainChallenges._isUsefulFeedback(challenge)
+        || TopochainChallenges._isProposalAccepted(challenge)
+        ? TopochainChallenges.itemsView()
         : null,
       // A block-production challenge draws the viewer's step instead of the
       // organiser's link, which could only ever name one destination.

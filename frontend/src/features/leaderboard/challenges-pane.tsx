@@ -48,6 +48,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
+import { ChallengeItemList, type ItemsView } from './challenge-items';
 import { ChallengeHistory, type HistoryView } from './challenge-history';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
@@ -72,6 +73,7 @@ const controller = () => (window as {
     requestBlockProduction(): void;
     retryBpState(): void;
     retryInvites(): void;
+    retryItems(): void;
     openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
@@ -199,6 +201,9 @@ type DetailView = {
     state: 'loading' | 'error' | 'ready';
     people?: { key: string; name: string; word: string; reason: string }[];
   } | null;
+  // #7152: on the feedback and proposal challenges, the viewer's own reports
+  // or proposals for the period and how each stands.
+  items?: ItemsView | null;
   blockProduction?: BlockProductionView | null;
   // The organiser's requirements, under "What counts".
   requirements: string | null;
@@ -662,6 +667,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
+      {/* #7152: the viewer's own reports or proposals, each with the status
+          the count gives it, above "See your feedback" and What counted. */}
+      {view.items ? <ChallengeItemList view={view.items} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}

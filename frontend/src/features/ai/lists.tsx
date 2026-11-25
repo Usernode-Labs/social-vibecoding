@@ -315,6 +315,11 @@ const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300m
 
 const MORE = `flex w-full min-h-[44px] md:min-h-[36px] items-center justify-center gap-1 rounded-xl py-2 text-[13px] font-semibold text-violet-700 hover:bg-zinc-900/[0.035] hover:text-violet-800 active:bg-zinc-900/[0.06] disabled:opacity-60 dark:text-violet-300 dark:hover:bg-white/[0.05] dark:hover:text-violet-200 ${FOCUS}`;
 
+// Waiting on you's way back, at the end of its accent-tinted strip.
+const WAITING_BACK = `ms-auto inline-flex min-h-[32px] shrink-0 items-center rounded-lg px-2 text-[13px] font-semibold hover:bg-white/50 active:bg-white/70 dark:hover:bg-white/[0.1] dark:active:bg-white/[0.16] ${FOCUS}`;
+// The head's Needs you count, as the link it is: the accent's ink, underlined.
+const HEAD_LINK = 'rounded-[3px] text-sm font-semibold text-[color:var(--accent)] underline underline-offset-[3px] hover:text-violet-700 dark:hover:text-violet-300 focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--accent)]';
+
 /**
  * Mobile polish 05 (24 Nov 2026): the line under a band's last new row.
  * Everything above it is new since your last visit, everything below it you
@@ -352,17 +357,19 @@ function RowsWithLine({ lines, before, since }: { lines: Line[]; before: string 
 /**
  * A band's rows: its first few, then the rest folded under its own Show
  * more, which opens them in place (Show less shuts them). The row you are on
- * is never folded away; nor, in Needs you and In progress, is one with
- * something new (#6262) or one that moved while the page was up (PR 6792):
- * past the first few they join them, in their order (./model.ts groupRows).
+ * is never folded away; nor, in Needs you, is one with something new (#6262)
+ * or one that moved while the page was up (PR 6792): past the first few they
+ * join them, in their order (./model.ts groupRows). In progress passes
+ * `lift` `'moved'` (#7138): a row that is only new since the last visit stays
+ * behind Show more, so the band keeps its default length.
  * Opened, the rows that were in sight stay where they were (openRows).
  */
-function BandRows({ lines, first, since = '' }: { lines: Line[]; first: number; since?: string }): ReactNode {
+function BandRows({ lines, first, since = '', lift = true }: { lines: Line[]; first: number; since?: string; lift?: boolean | 'moved' }): ReactNode {
   const t = useMessages('messages');
   // The rows in sight when Show more was pressed, by key: open while kept.
   const [kept, setKept] = useState<string[] | null>(null);
   const open = !!kept;
-  const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false);
+  const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false, lift);
   const visible = hidden ? items.slice(0, shown) : items;
   const folded = hidden ? items.slice(shown) : [];
   // Mobile polish 05: the line goes before the first seen row after the last
@@ -463,6 +470,108 @@ function LoadingLines({ label, ...props }: { label: string } & React.HTMLAttribu
   );
 }
 
+/**
+ * WAITING ON YOU (24 Nov 2026): the list the head's Needs you count opens
+ * (#7103). One card, one row for every thing that needs the person, each
+ * with the action pill it has in Needs you and opening the request or change
+ * it is about. Nothing folds and there is no Show more: the count the head
+ * gave and the rows here are one number. Its way back is All threads.
+ */
+function WaitingCard({ lines, count, ready, failed, onRetry, onClose, searching, noneWords }: {
+  lines: Line[];
+  count: number;
+  ready: boolean;
+  failed: 'unreachable' | 'failed' | null;
+  onRetry?: () => void;
+  onClose?: () => void;
+  searching: boolean;
+  noneWords: string;
+}): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className={BAND} data-ai-sheet="waiting">
+      <section data-ai-list="waiting">
+        <BandHead
+          owe
+          icon={<UserIcon />}
+          name={t('messages:ai.waiting.title')}
+          count={count || null}
+          spoken={t('messages:ai.waiting.titleCount', { count })}
+          extra={onClose ? (
+            <button type="button" className={WAITING_BACK} onClick={onClose} data-ai-waiting-close="">
+              <span aria-hidden="true">‹ </span>{t('messages:ai.waiting.all')}
+            </button>
+          ) : null}
+        />
+        <div className="pt-1">
+          {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          {lines.length ? (
+            <BandRows lines={lines} first={Infinity} />
+          ) : !ready ? (
+            failed ? null : <LoadingLines label={t('messages:ai.waiting.loading')} data-ai-loading="" />
+          ) : searching ? (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="waiting">{noneWords}</p>
+          ) : (
+            <p className="m-0 flex items-start gap-2.5 px-3 py-3 text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-ai-empty="waiting">
+              <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--state-ok)]" aria-hidden="true" strokeWidth="2.25" />
+              <span>{t('messages:ai.waiting.empty')}</span>
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * IN PROGRESS (25 Nov 2026, #7157): the list the head's In progress count
+ * opens, Waiting on you's sibling. One card, one row for every thread being
+ * built, checked or waiting on somebody else, each as its band draws it.
+ * Nothing folds and there is no Show more, so the count the head gave and
+ * the rows here are one number. Its way back is All threads.
+ */
+function ProgressCard({ lines, ready, failed, onRetry, onClose, searching, noneWords }: {
+  lines: Line[];
+  ready: boolean;
+  failed: 'unreachable' | 'failed' | null;
+  onRetry?: () => void;
+  onClose?: () => void;
+  searching: boolean;
+  noneWords: string;
+}): ReactNode {
+  const t = useMessages('messages');
+  const count = lines.length;
+  return (
+    <div className={BAND} data-ai-sheet="progress">
+      <section data-ai-list="progress">
+        <BandHead
+          icon={<ClockIcon />}
+          name={t('messages:ai.band.progress')}
+          count={count || null}
+          spoken={count ? t('messages:ai.band.progressCount', { count }) : t('messages:ai.band.progress')}
+          extra={onClose ? (
+            <button type="button" className={WAITING_BACK} onClick={onClose} data-ai-progress-close="">
+              <span aria-hidden="true">‹ </span>{t('messages:ai.waiting.all')}
+            </button>
+          ) : null}
+        />
+        <div className="pt-1">
+          {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          {lines.length ? (
+            <BandRows lines={lines} first={Infinity} />
+          ) : !ready ? (
+            failed ? null : <LoadingLines label={t('messages:ai.progress.loading')} data-ai-loading="" />
+          ) : searching ? (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="progress">{noneWords}</p>
+          ) : (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="progress">{t('messages:ai.band.progressEmpty')}</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // ── Search's messages ────────────────────────────────────────────────────
 
 /**
@@ -516,7 +625,7 @@ function headWords(needs: number, next: number): { id: string; values: Record<st
 export function AiLists({
   newChat = null, search = null, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
   openRow, openThread, onDone, onDismiss, picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, doneOpen = 0,
-  visit = null,
+  visit = null, waitingOpen = false, onOpenWaiting, onCloseWaiting, progressOpen = false, onOpenProgress, onCloseProgress,
 }: {
   /** The head's New chat (./new-chat-button.tsx), at the end of its line. */
   newChat?: ReactNode;
@@ -589,6 +698,24 @@ export function AiLists({
    * first visit, and until it is read: no marks.
    */
   visit?: LastVisit | null;
+  /**
+   * 24 Nov 2026 (#7103): Waiting on you, drawn in place of the three bands.
+   * The head, its search and its project filter stay above it.
+   */
+  waitingOpen?: boolean;
+  /** The head's Needs you count pressed: open Waiting on you. */
+  onOpenWaiting?: () => void;
+  /** Waiting on you's All threads: back to the head and the three bands. */
+  onCloseWaiting?: () => void;
+  /**
+   * 25 Nov 2026 (#7157): In progress, drawn in place of the three bands from
+   * the head's other count, as Waiting on you is. Only one of the two is open.
+   */
+  progressOpen?: boolean;
+  /** The head's In progress count pressed: open In progress. */
+  onOpenProgress?: () => void;
+  /** In progress's All threads: back to the head and the three bands. */
+  onCloseProgress?: () => void;
 }): ReactNode {
   const t = useMessages('messages');
   const {
@@ -631,6 +758,13 @@ export function AiLists({
   const kindsShown = doneMore || !!historyKind;
 
   const counts = ready ? headWords(needCount, progressCount) : null;
+  // #7103: the Needs you count is the way into Waiting on you. A zero has
+  // nothing to open, and says Nothing needs you in the plain weight.
+  const needsLink = needCount > 0 && !!onOpenWaiting;
+  // #7157: and the In progress count is the way into its own list, drawn
+  // the same way, in the counts and in the Nothing needs you wording. A zero
+  // is not a link, and the wordings without one draw no <1> at all.
+  const progressLink = progressCount > 0 && !!onOpenProgress;
   // The filter at rest says what it shows: All projects, the one picked, or how many.
   const onlyPicked = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
   const filterWords = !picked.length
@@ -652,7 +786,32 @@ export function AiLists({
             <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
             {counts ? (
               <span className="truncate text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-                <RichMessage id={counts.id} values={counts.values} components={[<strong className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" />]} />
+                <RichMessage
+                  id={counts.id}
+                  values={counts.values}
+                  components={[needsLink
+                    ? (
+                      <button
+                        type="button"
+                        className={HEAD_LINK}
+                        onClick={onOpenWaiting}
+                        aria-label={t('messages:ai.waiting.open', { count: needCount })}
+                        data-ai-waiting-open=""
+                      />
+                    )
+                    : <strong className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" />,
+                  progressLink
+                    ? (
+                      <button
+                        type="button"
+                        className={HEAD_LINK}
+                        onClick={onOpenProgress}
+                        aria-label={t('messages:ai.progress.open', { count: progressCount })}
+                        data-ai-progress-open=""
+                      />
+                    )
+                    : <span />]}
+                />
               </span>
             ) : null}
           </span>
@@ -691,6 +850,32 @@ export function AiLists({
           onClose={() => setMore(null)}
         />
       ) : null}
+      {/* #7103: WAITING ON YOU replaces the three cards below the head: one
+          list of everything that needs the person, nothing else. */}
+      {waitingOpen ? (
+        <WaitingCard
+          lines={needs.held}
+          count={needLines.length}
+          ready={ready}
+          failed={failed}
+          onRetry={onRetry}
+          onClose={onCloseWaiting}
+          searching={searching}
+          noneWords={noneWords}
+        />
+      ) : progressOpen ? (
+        // #7157: IN PROGRESS replaces the three cards, as Waiting on you does.
+        <ProgressCard
+          lines={progressLines}
+          ready={ready}
+          failed={failed}
+          onRetry={onRetry}
+          onClose={onCloseProgress}
+          searching={searching}
+          noneWords={noneWords}
+        />
+      ) : (
+      <>
       {/* #6398: one short note says when nothing on the page matched: no
           thread, and (13 Nov 2026) no message either. */}
       {noMatches ? (
@@ -775,7 +960,7 @@ export function AiLists({
               {ready && !progressLines.length ? (
                 <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.band.progressEmpty')}</p>
               ) : (
-                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} />
+                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} lift="moved" />
               )}
             </div>
           </section>
@@ -918,6 +1103,8 @@ export function AiLists({
           </button>
         </div>
       ) : null}
+      </>
+      )}
     </div>
   );
 }

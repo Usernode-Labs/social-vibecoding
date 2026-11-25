@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const { renderGeneratedAvatar } = require('../services/generated-avatar');
 
 // Profile-picture serving (issue #982) — sibling of /app-icons/:id and
 // /issue-images/:id (see src/routes/visuals.js for the full rationale).
@@ -22,6 +23,25 @@ const log = require('../services/logger');
 function avatarRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // The generated picture for an account with no uploaded photo (#7135).
+  // It is drawn from the token alone, so it reads no row and needs no auth;
+  // the address never changes for an account, so the same year-long
+  // immutable cache as an uploaded photo is safe. Registered before
+  // /avatars/:id so the two can never be confused, although the id's
+  // 32-hex shape already excludes this path.
+  router.get('/avatars/g/:token.svg', (req, res) => {
+    const token = String(req.params.token || '');
+    const svg = renderGeneratedAvatar(token);
+    if (!svg) return res.status(404).end();
+    res.set('Content-Type', 'image/svg+xml');
+    res.set('X-Content-Type-Options', 'nosniff');
+    // A document, not a script: an SVG served from our own origin must not
+    // be able to fetch or run anything, whatever a future change emits.
+    res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(svg);
+  });
 
   router.get('/avatars/:id', async (req, res) => {
     const id = String(req.params.id || '');

@@ -65,6 +65,7 @@ const repoRef = require('./repo-ref');
 const workState = require('./work-state');
 const { updateComingSql, updateAskSql, updateFailedSql } = require('./homeroom-bot-progress');
 const { planRecordSql } = require('./request-specs');
+const { draftSessionSql } = require('./live-drafts');
 
 // The most thread rows one read lists of each kind: going live or live this
 // week, and apart, the rest (THREADS_SQL). 24 Nov 2026 (mobile 04): 80 cut
@@ -226,6 +227,8 @@ SELECT t.id, t.app_id, mine.own, mine.wrote, t.number, t.kind, t.title AS thread
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
        AND NOT ${planRecordSql('cs')}
+       -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+       AND NOT ${draftSessionSql('cs')}
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        AND (cs.status NOT IN ('active', 'paused') OR cs.shared_at IS NOT NULL OR cs.user_id = $1)
      ORDER BY CASE cs.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,

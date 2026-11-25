@@ -44,6 +44,7 @@ test('an account with nothing yet is zeros, not a failure', () => {
     merged: 0, apps: 0, proposalsTotal: 0, inProgress: 0, kudos: 0, memberSince: null,
     challenges: { done: 0, total: 0, season: null },
     contributions: [],
+    projects: [],
   });
 });
 
@@ -78,10 +79,23 @@ test('the SQL counts the viewer\'s own, authored, non-headless proposals and bou
     'auto sessions are not proposals anybody authored');
   assert.match(counts, /FROM pr_kudos pk JOIN chat_sessions ks ON ks\.id = pk\.session_id WHERE ks\.user_id = \$1/);
   assert.match(counts, /ib\.awarded_user_id = \$1 AND ib\.status = 'awarded'/);
-  const list = collapse(route.slice(route.indexOf('const SUMMARY_CONTRIBUTIONS_SQL'), route.indexOf('const SELF_APP_SQL')));
+  const list = collapse(route.slice(route.indexOf('const SUMMARY_CONTRIBUTIONS_SQL'), route.indexOf('const SUMMARY_PROJECTS_LIMIT')));
   assert.match(list, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL/);
   assert.match(list, /ORDER BY cs\.merged_at DESC NULLS LAST, cs\.id DESC LIMIT \$2/);
   assert.equal(profile.SUMMARY_CONTRIBUTIONS_LIMIT, 5);
+});
+
+test('the projects read is one live, authored row per app, newest merge first, bounded', () => {
+  const projects = collapse(profile.SUMMARY_PROJECTS_SQL);
+  assert.match(projects, /cs\.user_id = \$1 AND cs\.is_headless = FALSE/,
+    'auto sessions are not projects anybody helped build');
+  assert.match(projects, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL/,
+    'a change counts once it is live, as the merged stat counts it');
+  assert.match(projects, /DISTINCT ON \(cs\.app_id\)/);
+  assert.match(projects, /JOIN apps a ON a\.id = latest\.app_id/);
+  assert.match(projects, /ORDER BY latest\.merged_at DESC NULLS LAST/);
+  assert.match(projects, /LIMIT \$2/);
+  assert.equal(profile.SUMMARY_PROJECTS_LIMIT, 100);
 });
 
 // ─── The demo overlay ───────────────────────────────────────────────────
@@ -95,6 +109,18 @@ test('?demo=1 fills an EMPTY lower half, and never covers real data', () => {
   assert.equal(demo.merged, profile.DEMO_CONTRIBUTIONS.length);
   assert.equal(demo.contributions.length, profile.DEMO_CONTRIBUTIONS.length);
   assert.ok(demo.contributions.every((c) => c.appSlug === 'usernode-2d5619' && c.platform));
+  assert.equal(demo.projects.length, 1, 'one card for the demo project');
+  assert.deepEqual(demo.projects[0], {
+    sessionId: profile.DEMO_CONTRIBUTIONS[0].sessionId,
+    prNumber: profile.DEMO_CONTRIBUTIONS[0].prNumber,
+    title: profile.DEMO_CONTRIBUTIONS[0].title,
+    appSlug: 'usernode-2d5619',
+    appName: 'Homeroom',
+    appIconEmoji: null,
+    appIconUrl: null,
+    platform: true,
+    mergedAt: new Date(Date.parse('2026-09-23T00:00:00Z') - profile.DEMO_CONTRIBUTIONS[0].days * 86400000).toISOString(),
+  }, 'the newest demo row, in the self app');
   assert.deepEqual(demo.challenges, EMPTY.challenges, 'challenge totals survive the clone and are never mocked');
   const real = { ...EMPTY, merged: 1, contributions: [{ sessionId: 5 }] };
   assert.equal(profile.withDemoSummary(real, SELF_APP), real, 'REAL DATA WINS');
@@ -128,6 +154,7 @@ function mockPool(state) {
       if (sql.includes('FROM chat_sessions cs, since')) return { rows: [{ merged: state.weekMerged || 0 }] };
       if (sql.includes('JOIN apps a ON a.id = cs.app_id, since')) return { rows: state.weekApps || [] };
       if (sql.includes('LEFT JOIN app_activity')) return { rows: state.activityDays || WEEK };
+      if (sql.includes('DISTINCT ON (cs.app_id)')) return { rows: state.projects || [] };
       if (sql.includes("cs.status = 'merged' AND cs.live_at IS NOT NULL ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
       if (sql.includes('FROM apps WHERE self_hosted = TRUE')) return { rows: state.selfApp ? [state.selfApp] : [] };
       if (sql.includes('FROM seasons')) return { rows: state.season ? [state.season] : [] };
@@ -193,6 +220,7 @@ test('one round: the counts, the list and the season go out together, scoped to 
   const { app, pool } = makeApp({
     counts: { merged: 2, apps: 1, direct_kudos: 3, bounty_kudos: 0, member_since: '2026-01-01T00:00:00Z' },
     contributions: [{ session_id: 9, pr_number: 1, pr_title: 'A', merged_at: '2026-09-01T00:00:00Z', app_slug: 'a', app_name: 'A', self_hosted: false, kudos: 1 }],
+    projects: [{ session_id: 9, pr_number: 1, pr_title: 'A', merged_at: '2026-09-01T00:00:00Z', app_slug: 'a', app_name: 'A', self_hosted: false }],
     season: { id: 1, name: 'Season 1' },
     totals: { total: 9, done: 4 },
   }, { user: USER });
@@ -202,9 +230,12 @@ test('one round: the counts, the list and the season go out together, scoped to 
   assert.equal(body.kudos, 3);
   assert.deepEqual(body.challenges, { done: 4, total: 9, season: { id: 1, name: 'Season 1' } });
   assert.equal(body.contributions[0].sessionId, 9);
+  assert.equal(body.projects[0].sessionId, 9);
+  assert.equal(body.projects[0].appSlug, 'a');
+  assert.ok(!('kudos' in body.projects[0]), 'a project card carries no kudos');
   assert.ok(!('demo' in body), 'not a demo payload');
-  const scoped = pool.calls.filter((c) => /AS direct_kudos|ORDER BY cs\.merged_at/.test(c.sql));
-  assert.equal(scoped.length, 2);
+  const scoped = pool.calls.filter((c) => /AS direct_kudos|ORDER BY cs\.merged_at|DISTINCT ON \(cs\.app_id\)/.test(c.sql));
+  assert.equal(scoped.length, 3);
   for (const c of scoped) assert.equal(c.params[0], 7, 'the SESSION user, never a query param');
 });
 
@@ -220,6 +251,7 @@ test('?demo=1 in staging fills an empty Me from the merged mocks', async () => {
   const { body } = await get(app, '/api/me/summary?demo=1');
   assert.equal(body.demo, true);
   assert.equal(body.contributions.length, profile.DEMO_CONTRIBUTIONS.length);
+  assert.equal(body.projects.length, 1, 'one card, for the self app');
 });
 
 // ─── The "This week" card's numbers (#5626) ─────────────────────────────

@@ -2,7 +2,8 @@
  * A live app draft, as its private thread with Homeroom bot shows it
  * (services/live-drafts.js). There is no standing button: a draft is opened
  * by asking Homeroom bot (homeroom-bot-mayor.js open_app_preview), or with
- * New chat's "I want to change an app live…" start (./new-thread.tsx).
+ * New chat's "I want to make changes to a live preview of…" start
+ * (./new-thread.tsx).
  *
  * 20 Nov 2026 (live-draft review, G): there is no bar any more. The "Live
  * preview · Tell Homeroom bot what to change. [Show preview] [Propose] [Close
@@ -120,6 +121,17 @@ export function draftAction(draft: LiveDraft): 'propose' | 'update' | null {
   if (draft.state === 'open') return draft.edits > 0 ? 'propose' : null;
   if (draft.state === 'proposed' && draft.proposal?.open && draft.proposal.pending > 0) return 'update';
   return null;
+}
+
+/**
+ * Pure (request 7119): the change page a draft belongs to, the one its preview
+ * header names ("Change #145"), or null when it cannot be named. Never the
+ * proposal it was started on (`builtOn.sessionId`) nor the one it is up for a
+ * vote with (`proposal.sessionId`): those are other changes.
+ */
+export function draftChangeHref(draft: LiveDraft | null | undefined): string | null {
+  if (!draft?.sessionId || !draft.app?.slug) return null;
+  return `#app/${encodeURIComponent(draft.app.slug)}/dev/proposals/${draft.sessionId}`;
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -424,7 +436,8 @@ export function useLiveDraftActs(draft: LiveDraft | null): LiveDraftActs {
 
 /**
  * G: a live draft's own controls in its preview's header, beside its ×: one
- * short line saying where the draft stands, and Propose (Update proposal
+ * short line saying where the draft stands, Open change (request 7119: the
+ * way through to the change the line names), and Propose (Update proposal
  * once it is up for a vote with changes not in it yet). Discard draft is not
  * here: it is the title menu's last entry (useLiveDraftActs). Drawn by
  * ../staging/staging-overlay.tsx only while the preview shown is this
@@ -438,6 +451,7 @@ export function LiveDraftControls({ draft, acts }: { draft: LiveDraft | null; ac
   const { busy, error, act } = acts;
   const line = draftHeadLine(draft);
   const action = draftAction(draft);
+  const changeHref = draftChangeHref(draft);
 
   return (
     <span className="staging-draft" data-live-draft={draft.id} data-live-draft-state={draft.live || ''} role="group"
@@ -446,6 +460,16 @@ export function LiveDraftControls({ draft, acts }: { draft: LiveDraft | null; ac
         title={line.bad ? t('messages:liveDraft.foot.failedSub') : undefined}>
         {error || t(line.id, line.values)}
       </span>
+      {changeHref ? (
+        <button type="button" className="staging-draft-quiet" data-live-draft-change=""
+          onClick={() => {
+            // The preview closes as its change page opens, as Discard draft does.
+            if (stagingStore.get().open) (window as any).AppView?.closeStagingOverlay?.();
+            window.location.hash = changeHref;
+          }}>
+          {t('messages:liveDraft.openChange')}
+        </button>
+      ) : null}
       {action === 'propose' ? (
         <button type="button" className="staging-draft-act" data-live-draft-propose=""
           disabled={busy === 'propose' || draft.live !== 'live'} onClick={() => void act('propose')}>

@@ -372,16 +372,18 @@ test('the identity card renders picture, name and the way in to editing', () => 
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
   assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
-  // #7109: with no photo the picture is the brand's boy and girl side by side,
-  // not the person's first letter.
+  // #7135: the two-person drawing is no longer a stand-in picture. A person
+  // with no photo has a generated picture of their own, sent as avatarUrl;
+  // the component only names no picture for an unknown account.
   const avatar = profileViewTsx.slice(
     profileViewTsx.indexOf('function IdentityAvatar('),
     profileViewTsx.indexOf('function IdentityCard(')
   );
   assert.ok(avatar.length, 'IdentityAvatar must exist');
-  assert.match(avatar, /\/brand\/groups\/avatar-m3\.webp/, 'the brand boy is the no-photo fallback');
-  assert.match(avatar, /\/brand\/groups\/avatar-f3\.webp/, 'the brand girl is the no-photo fallback');
-  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is no longer drawn');
+  assert.doesNotMatch(avatar, /\/brand\/groups\/avatar-/, 'the brand pair is retired as the fallback');
+  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is not drawn either');
+  assert.match(avatar, /profile-id-avatar[^"`]*rounded-full[^"`]*overflow-hidden/,
+    'an unknown account still holds the round frame, empty');
   // The builder-profile chip left the card: the viewer's proposed PRs are
   // Your changes now (UI overhaul; they were "See all" over Your
   // contributions, which went with it).

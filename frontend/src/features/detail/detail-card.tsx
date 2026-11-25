@@ -334,13 +334,21 @@ export function DetailCard({ entry, layout, children }: {
 }): ReactNode {
   const t = useMessages('messages');
   const [actions, setActions] = useState<HTMLElement | null>(null);
-  const [label, setLabel] = useState<DetailLabel | null>(null);
+  // A new thing open: its words come from its own pane. The words are kept
+  // with the open they were said for (`seq`), so an earlier open's are never
+  // shown for this one. They used to be cleared in an effect here, which runs
+  // after the pane's own (a child's effects run first): a pane that knew its
+  // title at once, as a request draft does from the message's copy, had it
+  // cleared and never said it again. `say` is new with each open, so every
+  // pane says its words again for it (useDetailLabel).
+  const seq = entry.seq;
+  const [said, setSaid] = useState<{ seq: number; label: DetailLabel | null }>({ seq, label: null });
   const head = useRef<HTMLDivElement>(null);
   const say = useCallback((next: DetailLabel | null) => {
-    setLabel((had) => (had?.title === next?.title && had?.line === next?.line ? had : next));
-  }, []);
-  // A new thing open: its words come from its own pane.
-  useEffect(() => { setLabel(null); }, [entry.seq]);
+    setSaid((had) => (had.seq === seq && had.label?.title === next?.title && had.label?.line === next?.line
+      ? had : { seq, label: next }));
+  }, [seq]);
+  const label = said.seq === seq ? said.label : null;
   const chrome = useMemo<Chrome>(() => ({ card: true, actions, label: say }), [actions, say]);
   const body = (
     <div className="detail-card-body" data-detail-body={entry.kind}>

@@ -1,5 +1,7 @@
 'use strict';
 
+const { avatarUrlFor } = require('./avatar-url');
+
 // Mutual friends (#2386).
 //
 // ── The relationship ───────────────────────────────────────────────────
@@ -77,8 +79,9 @@ function stateFor(row, viewerId) {
   return row.status === 'pending' ? 'incoming' : 'none';
 }
 
-function avatarUrl(id) {
-  return id ? `/avatars/${id}` : null;
+/** The person's picture: their photo, else the one generated from the account. */
+function avatarUrl(avatarId, userId) {
+  return avatarUrlFor(avatarId, userId);
 }
 
 async function loadPair(db, a, b) {
@@ -169,7 +172,7 @@ async function listFor(db, userId) {
   const incoming = [];
   const outgoing = [];
   for (const row of rows) {
-    const person = { id: row.id, username: row.username, avatarUrl: avatarUrl(row.avatar_id) };
+    const person = { id: row.id, username: row.username, avatarUrl: avatarUrl(row.avatar_id, row.id) };
     const state = stateFor(row, userId);
     if (state === 'friends') friends.push({ ...person, since: row.responded_at || row.created_at });
     else if (state === 'incoming') incoming.push({ ...person, requestedAt: row.created_at });

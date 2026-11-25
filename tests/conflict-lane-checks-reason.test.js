@@ -78,8 +78,61 @@ test('a conflict only in a mechanical file is settled without spending the free 
   assert.deepEqual(admission(candidate({ conflictFiles: ['tests/baselines/test-durations.json', 'src/a.ts'], approved: false }), Date.now()),
     { admit: true, reason: 'first_conflict' });
   // GitHub's own refusal is measured afresh; it is not the mechanical lane's.
+  // #7158: an unapproved conflicting change is never left waiting for a vote
+  // nobody is asked for: main it has not been resolved against yet is a
+  // resolution, not a wait.
   assert.deepEqual(admission(candidate({ conflictFiles: ['tests/baselines/test-durations.json'], githubConflict: true,
-    resolutionSpent: true, approved: false }), Date.now()), { admit: false, reason: 'awaiting_approval' });
+    resolutionSpent: true, approved: false }), Date.now()), { admit: true, reason: 'main_moved' });
+});
+
+// #7158: a conflicting change's checks wait on the conflict, so the vote is
+// asked only of a change that merges cleanly: `awaiting_approval` on one is a
+// wait for something that never comes (PR #7122 sat in it for good). The
+// free resolution goes back when its sync ran nothing, and past it the lane
+// resolves again whenever main has moved since the last resolution.
+test('a conflicting change is never left waiting for a vote nobody is asked for (#7158)', () => {
+  const main = 'b'.repeat(40);
+  // Main moved since the resolution ran: resolve it again.
+  assert.deepEqual(admission(candidate({ approved: false, resolutionSpent: true, resolvedMain: 'c'.repeat(40) }), Date.now()),
+    { admit: true, reason: 'main_moved' });
+  // No main recorded (a row from before the record): read as moved, once.
+  assert.deepEqual(admission(candidate({ approved: false, resolutionSpent: true, resolvedMain: null }), Date.now()),
+    { admit: true, reason: 'main_moved' });
+  assert.deepEqual(admission(candidate({ approved: false, resolutionSpent: true }), Date.now()),
+    { admit: true, reason: 'main_moved' }, 'a candidate with no record at all reads the same');
+  // The very main it was just resolved onto: no resolution can help it, and
+  // that is said rather than left waiting.
+  assert.deepEqual(admission(candidate({ approved: false, resolutionSpent: true, resolvedMain: main }), Date.now()),
+    { admit: false, reason: 'unresolvable' });
+  // A resolution that ran against a main neither side recorded: not again.
+  assert.deepEqual(admission(candidate({ approved: false, resolutionSpent: true, resolvedMain: null, integrationMain: null }), Date.now()),
+    { admit: false, reason: 'unresolvable' });
+  // Enough yes votes is approved, whatever the resolution record says.
+  assert.deepEqual(admission(candidate({ approved: true, resolutionSpent: true, resolvedMain: main }), Date.now()),
+    { admit: true, reason: 'approved' });
+  assert.deepEqual(admission(candidate({ approved: true, resolutionSpent: true, resolvedMain: null }), Date.now()),
+    { admit: true, reason: 'approved' });
+
+  // No input yields it any more.
+  const verdicts = new Set();
+  for (const approved of [true, false]) {
+    for (const forced of [true, false]) {
+      for (const resolutionSpent of [true, false]) {
+        for (const resolvedMain of [null, main, 'c'.repeat(40)]) {
+          for (const unmergeable of [null, 'lock', 'checks_failing', 'checks_error']) {
+            for (const githubConflict of [true, false]) {
+              verdicts.add(admission(candidate({ approved, forced, resolutionSpent, resolvedMain, unmergeable, githubConflict }),
+                Date.now()).reason);
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.equal(verdicts.has('awaiting_approval'), false, 'nothing is parked for a vote it will not be asked for');
+  assert.match(read('src/workflow/merge-queue/machine.ts'),
+    /const LANE_REASONS: ReadonlySet<string> = new Set\(\['awaiting_approval', 'unresolvable', 'fork_head', 'checks_failing', 'checks_error'\]\);/,
+    'the old reason stays in the lane\'s list only so a stale one is cleared from a row');
 });
 
 test('the gate\'s thread line and the dev-chat pill say the checks come first', () => {

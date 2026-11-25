@@ -1,0 +1,13 @@
+-- 25 Nov 2026 (#7158): the main a change's free conflict resolution ran against.
+--
+-- The conflict lane spends one free resolution per approval epoch
+-- (chat_sessions.integration_resolved_epoch), and a change that conflicted
+-- again because main had moved was left in Waiting for a vote nobody is asked
+-- for (PR #7122). The lane now resolves it again once main moves, which needs
+-- to know the main the last resolution ran against:
+--   - NULL on an existing row means "main unknown", and the next sweep reads
+--     that as moved and resolves the change once (which is how the changes
+--     stuck before this column get their conflict resolved, with no repair);
+--   - a resolution that ran stores the main it merged into here, and the same
+--     main is not resolved against twice.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_main_sha TEXT;

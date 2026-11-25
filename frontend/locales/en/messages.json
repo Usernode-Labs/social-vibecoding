@@ -3909,11 +3909,67 @@
   },
   "draft.pane.sub": {
     "text": "Request draft · {{project}}",
-    "description": "The small grey line under a draft request's title in its preview: what is being read and the project it will be filed on. {{project}} is the project's name."
+    "description": "The small grey line over a draft request's title at the head of its preview: what is being read and the project it will be filed on. {{project}} is the project's name."
   },
-  "draft.pane.nothingFiled": {
-    "text": "Nothing is filed until you press File it under the bot's reply.",
-    "description": "The quiet note at the foot of a request draft's preview, saying that reading it files nothing: the File it button stays on the card in the chat."
+  "draft.pane.goesOn": {
+    "text": "Goes on <0>{{project}}</0> as a new request. Nothing is filed until you press File it.",
+    "description": "The quiet line at the foot of a request draft's preview, beside its File it and Not now buttons: where the request will be filed, and that reading it files nothing. {{project}} is the project's name, in bold (tag 0)."
+  },
+  "draft.pane.question": {
+    "text": "File this as a request on {{project}}?",
+    "description": "Accessible name of the pair of buttons, File it and Not now, at the foot of a request draft's preview. {{project}} is the project's name."
+  },
+  "draft.pane.file": {
+    "text": "File it",
+    "description": "Button at the foot of a request draft's preview: files the drafted request on its project, the same as File it on the draft's card in the chat."
+  },
+  "draft.pane.notNow": {
+    "text": "Not now",
+    "description": "Button at the foot of a request draft's preview, beside File it: puts the draft away without filing it, the same as Not now on the draft's card in the chat."
+  },
+  "draft.pane.files": {
+    "text": "Files it carries",
+    "description": "Label over the list of files a request draft will carry onto the request, beside the draft's words in its preview. Each line is a file's name and size."
+  },
+  "draft.pane.filesNote": {
+    "text": "They go on the request: anyone who can see it sees their names, and its build can open them.",
+    "description": "One line under the list of files a request draft carries, saying what happens to them once the request is filed."
+  },
+  "draft.pane.undecided": {
+    "text": "Still undecided",
+    "description": "Label over the list of open questions a request draft leaves undecided, beside the draft's words in its preview."
+  },
+  "draft.pane.doneWhen": {
+    "text": "Done when",
+    "description": "Label over a request draft's checks of what is true when the request is done, beside the draft's words in its preview."
+  },
+  "draft.pane.related": {
+    "text": "Related",
+    "description": "Label over the list of open requests a request draft overlaps, beside the draft's words in its preview."
+  },
+  "draft.pane.where": {
+    "text": "Where",
+    "description": "Label over where the thing a request draft is about happened (a request, something the person saw), beside the draft's words in its preview."
+  },
+  "draft.pane.whereRequest": {
+    "text": "Request #{{number}} on {{project}}",
+    "description": "A line under Where in a request draft's preview: the request the draft is about. {{number}} is that request's number and {{project}} its project's name."
+  },
+  "draft.pane.relation.same": {
+    "text": "The same thing",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: that request asks for the same thing as the draft."
+  },
+  "draft.pane.relation.partOf": {
+    "text": "Part of it",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft is part of that request."
+  },
+  "draft.pane.relation.dependsOn": {
+    "text": "Depends on it",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft depends on that request."
+  },
+  "draft.pane.relation.buildTogether": {
+    "text": "Build together",
+    "description": "Small grey line under an open request listed as Related in a request draft's preview: the draft and that request are best built together."
   },
   "draft.pane.close": {
     "text": "Close the preview",
@@ -5357,7 +5413,7 @@
   },
   "ai.filter.showAll": {
     "text": "Show all projects",
-    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project so the lists show all of them again."
+    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project and closes the panel so the lists show all of them again. It is greyed out and cannot be pressed while nothing is picked."
   },
   "ai.filter.done": {
     "text": "Done",
@@ -5588,20 +5644,64 @@
     "description": "The Homeroom bot tab, Needs you, when the project chips are narrowed to one project and nothing of the person's is under way or waiting there. {{project}} is the project's name."
   },
   "ai.head.counts": {
-    "text": "<0>Needs you: {{needs}}</0> · In progress: {{next}}",
-    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list, beside the Homeroom mark and New chat. {{needs}} is how many threads are in the Needs you band, {{next}} how many are in the In progress band. <0></0> is drawn in the stronger weight; keep it round the first half."
+    "text": "<0>Needs you: {{needs}}</0> · <1>In progress: {{next}}</1>",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list, beside the Homeroom mark and New chat. {{needs}} is how many threads are in the Needs you band, {{next}} how many are in the In progress band. <0></0> is drawn in the stronger weight; keep it round the first half. <1></1> is the In progress count, a link that opens the list of threads in progress; keep it round the second half."
   },
   "ai.head.needs": {
     "text": "<0>Needs you: {{needs}}</0>",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when nothing is in progress. {{needs}} is how many threads are in the Needs you band. <0></0> is drawn in the stronger weight."
   },
   "ai.head.clear": {
-    "text": "<0>Nothing needs you</0> · In progress: {{next}}",
-    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty: the person has nothing to do. {{next}} is how many threads are in the In progress band. <0></0> is drawn in the stronger weight."
+    "text": "<0>Nothing needs you</0> · <1>In progress: {{next}}</1>",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty: the person has nothing to do. {{next}} is how many threads are in the In progress band. <0></0> is drawn in the stronger weight. <1></1> is the In progress count, a link that opens the list of threads in progress; keep it round the second half."
   },
   "ai.head.clearAlone": {
     "text": "<0>Nothing needs you</0>",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The line at the top of the list when the Needs you band is empty and nothing is in progress either. <0></0> is drawn in the stronger weight."
+  },
+  "ai.waiting.title": {
+    "text": "Waiting on you",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab: one row for every thing that needs the person, each with its action and a way straight to it. This is the list's heading."
+  },
+  "ai.waiting.titleCount_one": {
+    "text": "Waiting on you · {{count}}",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab. What a screen reader says for its heading: its name and how many things need the person ({{count}}, here 1)."
+  },
+  "ai.waiting.titleCount_other": {
+    "text": "Waiting on you · {{count}}",
+    "description": "The Homeroom bot tab's Waiting on you list, opened by pressing the Needs you count at the top of the tab. What a screen reader says for its heading: its name and how many things need the person ({{count}})."
+  },
+  "ai.waiting.open_one": {
+    "text": "Show the {{count}} thing waiting on you",
+    "description": "The Homeroom bot tab's Needs you count, which is now a button: its name for a screen reader. Pressing it opens Waiting on you, the list of everything that needs the person. {{count}} is how many things need them, here 1."
+  },
+  "ai.waiting.open_other": {
+    "text": "Show the {{count}} things waiting on you",
+    "description": "The Homeroom bot tab's Needs you count, which is now a button: its name for a screen reader. Pressing it opens Waiting on you, the list of everything that needs the person. {{count}} is how many things need them."
+  },
+  "ai.progress.open_one": {
+    "text": "Show the {{count}} thread in progress",
+    "description": "The Homeroom bot tab's In progress count, which is a button: its name for a screen reader. Pressing it opens the list of everything in progress. {{count}} is how many threads are in progress, here 1."
+  },
+  "ai.progress.open_other": {
+    "text": "Show the {{count}} threads in progress",
+    "description": "The Homeroom bot tab's In progress count, which is a button: its name for a screen reader. Pressing it opens the list of everything in progress. {{count}} is how many threads are in progress."
+  },
+  "ai.progress.loading": {
+    "text": "Loading what is in progress",
+    "description": "Accessible name, read by a screen reader, of the placeholder bars in the Homeroom bot tab's In progress list while its rows load."
+  },
+  "ai.waiting.all": {
+    "text": "All threads",
+    "description": "The button at the end of the Waiting on you list's heading, which goes back to the Homeroom bot tab's full list: Needs you, In progress and Done. A ‹ is drawn before it in code."
+  },
+  "ai.waiting.empty": {
+    "text": "Nothing is waiting on you",
+    "description": "The Homeroom bot tab's Waiting on you list when it holds nothing: every decision and answer is done, with a check beside it."
+  },
+  "ai.waiting.loading": {
+    "text": "Loading what is waiting on you",
+    "description": "Accessible name, read by a screen reader, of the placeholder bars in the Homeroom bot tab's Waiting on you list while its rows load."
   },
   "ai.band.progress": {
     "text": "In progress",
@@ -6467,6 +6567,10 @@
     "text": "Proposing…",
     "description": "The Propose button's words on a thread's live draft bar while the draft is being put up for a vote."
   },
+  "liveDraft.openChange": {
+    "text": "Open change",
+    "description": "Button in the header of a live draft's preview, beside Propose: closes the preview and opens the change page the draft belongs to, the one the header names."
+  },
   "liveDraft.close": {
     "text": "Discard draft",
     "description": "Confirm button of the question asked before a live draft is discarded (\"Discard this draft?\"): ends the draft and stops its live preview. A draft already up for a vote keeps its proposal."
@@ -6488,12 +6592,12 @@
     "description": "Under \"The preview couldn't start\" on a private thread's opening card."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change an app live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to make changes to a live preview of {{app}}<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. {{app}} is the picked project's name. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change an app live",
-    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
+    "text": "I want to make changes to a live preview of {{app}}",
+    "description": "Written into the message box when the \"I want to make changes to a live preview of…\" pill is tapped, for the person to finish the sentence (for example, \"I want to make changes to a live preview of Supply Line: make the start button bigger\"). {{app}} is the picked project's name. Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   },
   "artifacts.button": {
     "text": "Artifacts",

@@ -10,7 +10,7 @@
  *     `--community-tint`, the guest page's own reading of the icon.
  *   - Its picture leads (ProjectPreview): the project's preview loop where
  *     its group voted one in, playing on its own with a pause button and
- *     "Preview of the real app"; a still under reduced motion, Data Saver or
+ *     "Preview"; a still under reduced motion, Data Saver or
  *     "Play previews" off (lib/card-previews.ts previewsAllowed). Without a
  *     loop it is the featured illustration, and without that the icon on
  *     the project's colour, the same picture Discover's card shows

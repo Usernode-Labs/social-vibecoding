@@ -221,7 +221,7 @@ function verifyWith(token, key, { algorithm, audience, purpose }) {
 // usernode_pubkey, locale }` is the documented contract every child app
 // reads (src/prompts/app-conventions.md). Authority and environment claims
 // are added around them.
-function signAppIdentityToken({ appId, user, ttl, environment = process.env.USERNODE_ENV === 'staging' ? 'preview' : 'production' }) {
+function signAppIdentityToken({ appId, user, ttl, agent = false, environment = process.env.USERNODE_ENV === 'staging' ? 'preview' : 'production' }) {
   if (environment !== 'preview' && environment !== 'production') {
     throw new Error('platform-jwt: invalid app identity environment');
   }
@@ -236,6 +236,13 @@ function signAppIdentityToken({ appId, user, ttl, environment = process.env.USER
       locale: user.locale ?? null,
       pur: PUR_IFRAME,
       env: environment,
+      // An identity the app-host gate made for a personal access token
+      // (services/app-access-tokens.js). It names the member to the app and
+      // nothing more: every platform service an app can call with a
+      // person's identity (the AI proxy, file storage, the directory)
+      // refuses one that carries a scope, so a token never spends a
+      // member's allowance or reads on their behalf while they are away.
+      ...(agent ? { scope: 'access_token' } : {}),
     },
     iframePrivateKey(),
     {

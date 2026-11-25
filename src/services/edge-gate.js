@@ -105,6 +105,23 @@ const { readSessionCookie } = require('./browser-session-cookies');
 // platform's sign-up or sign-in, which brings them back through the
 // authorize hop, signed in.
 //
+// ── A member's own assistant (personal access tokens) ───────────────────
+//
+// A request with no browser behind it (an MCP client, a script) can carry a
+// member's personal access token as `Authorization: Bearer hrat_…`
+// (services/app-access-tokens.js). The gate checks it on every request and
+// lets it through as that member only on a path the app declared in
+// dapp.json (`agentPaths`), at the production address, while the token is
+// live and its owner is still a member who may see the app. So a private
+// app stays closed to everybody else, and the app itself never meets a
+// caller Homeroom has not vouched for. Any refusal is one bare 401.
+//
+// The same path opens to an assistant its owner approved in a browser
+// (services/app-agent-oauth.js): the 401 on a declared path names the
+// document, on Homeroom's own address, that says where to ask; the member
+// approves on Homeroom; and the assistant's hour-long token (`hrao_…`) is
+// checked here like a personal one.
+//
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
 // identity from the cookie, no guests, the chromeless view for a direct visit
 // to a private app) while keeping everything else.
@@ -150,11 +167,16 @@ const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
 const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
+const accessTokens = require('./app-access-tokens');
+const appAgent = require('./app-agent-oauth');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
 const { appHostIsIsolated } = require('./browser-site-isolation');
 
 const CALLBACK_PATH = '/__usernode_access';
+// Where a client may look for the document naming who gives out tokens for
+// an address (RFC 9728).
+const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
 const STORAGE_SETUP_PATH = '/__usernode_access/storage';
 const STORAGE_COOKIE = '__Host-usernode_embed';
 // Appended when the gate redirects to itself to set a cookie from an iframe
@@ -566,8 +588,8 @@ async function redeemOnce(pool, jti, expSeconds) {
 // PROVISIONAL handle on a public app (`publicApp`): the person has not
 // picked the username a public place shows (services/usernames.js), so the
 // app sees a visitor until they do, as /api/iframe-token's refusal does.
-async function mintIdentity(pool, appId, uid, { publicApp = false, platformPreview = false } = {}) {
-  const key = `${appId}:${uid}:${platformPreview}`;
+async function mintIdentity(pool, appId, uid, { publicApp = false, platformPreview = false, agent = false } = {}) {
+  const key = `${appId}:${uid}:${platformPreview}:${agent}`;
   const hit = identities.get(key);
   if (hit && Date.now() - hit.at < IDENTITY_REUSE_MS) return hit.token;
   const { rows } = await pool.query(
@@ -581,7 +603,7 @@ async function mintIdentity(pool, appId, uid, { publicApp = false, platformPrevi
   if (publicApp && user.provisional === true) return null;
   const identity = { id: user.id, username: user.username,
     usernode_pubkey: user.usernode_pubkey || null, locale: user.locale || null };
-  const token = platformJwt.signAppIdentityToken({ appId,
+  const token = platformJwt.signAppIdentityToken({ appId, agent,
     user: platformPreview ? require('./platform-preview-data-policy').previewIdentity(identity) : identity,
   });
   boundedSet(identities, key, { at: Date.now(), token });
@@ -770,7 +792,7 @@ async function handleAccess(pool, req, res) {
 
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
-  const allow = async ({ identityFor = null, guest = false, cacheApp = true } = {}) => {
+  const allow = async ({ identityFor = null, guest = false, cacheApp = true, agent = false } = {}) => {
     // A request that reaches a preview is a use of it: a preview in use
     // does not go to sleep (#6157). At most once a minute per preview, and
     // never awaited.
@@ -779,7 +801,7 @@ async function handleAccess(pool, req, res) {
       if (named) require('./preview-sleep').touchActivity(pool, named.sessionId, { slug: named.slug }).catch(() => {});
     }
     if (identityFor != null) {
-      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
+      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG, agent });
       if (token) res.set('X-Usernode-Identity', token);
     } else if (guest) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));
@@ -949,6 +971,80 @@ async function handleAccess(pool, req, res) {
     return redirect(isProduction ? chromelessUrl(slug, appReturnPath(next)) : `https://${USERNODE_DOMAIN}/`);
   }
 
+  // ── A member's personal access token (services/app-access-tokens.js) ──
+  //
+  // `Authorization: Bearer hrat_…` is Homeroom's to check, on a public app
+  // and a private one alike, and it is checked on every request: the path
+  // is one the app declared, this is the app's production address (a
+  // preview runs unmerged code), the token is live and is this app's, and
+  // its owner is still a member who may see the app. Then the request goes
+  // on as that member, with the identity a signed-in visit carries. Every
+  // refusal is the same bare 401, so a caller learns nothing from it: not
+  // whether the app exists as an agent endpoint, nor what was wrong.
+  const requestPath = uriPath(uri);
+  const agentPath = isProduction && accessTokens.onAgentPath(vis.agentPaths, requestPath);
+  // The declared path the request is on or under: the address an assistant
+  // was given, and the one an approval is for.
+  const declaredPath = agentPath
+    ? vis.agentPaths.find((p) => requestPath === p || requestPath.startsWith(p + '/'))
+    : null;
+  const metadataUrl = (path) => `https://${USERNODE_DOMAIN}${appAgent.metadataPath(host, path)}`;
+  // On a declared path the 401 also says where an assistant may ask for a
+  // token (RFC 9728): Homeroom, where its owner approves it in a browser
+  // (services/app-agent-oauth.js). The same answer whatever was wrong.
+  const refuseAgent = () => {
+    res.set('WWW-Authenticate', declaredPath
+      ? `Bearer resource_metadata="${metadataUrl(declaredPath)}"`
+      : 'Bearer');
+    return res.status(401).type('text/plain').send('Unauthorized');
+  };
+  // A client that looks for that document on the app's own address, as the
+  // rule lets it, is sent to it. The door can pass a request to the app or
+  // answer it, never serve a page here, so the document is Homeroom's.
+  if (isProduction && method === 'GET' && vis.agentPaths?.length
+      && (requestPath === PROTECTED_RESOURCE_PATH || requestPath.startsWith(PROTECTED_RESOURCE_PATH + '/'))) {
+    const suffix = requestPath.slice(PROTECTED_RESOURCE_PATH.length);
+    const named = suffix
+      ? (vis.agentPaths.includes(suffix) ? suffix : null)
+      : (vis.agentPaths.length === 1 ? vis.agentPaths[0] : null);
+    if (named) return redirect(metadataUrl(named));
+  }
+  // Two tokens open a declared path, and the door asks the same of both: a
+  // personal one the member copied from the app (`hrat_…`), and one an
+  // assistant was given when the member approved it on Homeroom (`hrao_…`,
+  // an hour long). Each is looked up in its own table.
+  const header_ = header(req.headers, 'authorization');
+  const personal = accessTokens.bearerOf(header_);
+  const approved = personal ? null : appAgent.bearerOf(header_);
+  if (personal || approved) {
+    if (!agentPath || ws) return refuseAgent();
+    const held = personal
+      ? await accessTokens.resolve(pool, personal)
+      : await appAgent.resolveAccess(pool, approved);
+    if (!held || held.appId !== vis.appId) return refuseAgent();
+    // A member since before the token was made: somebody who left and was
+    // let back in does not get an old token back, even if nothing called
+    // with it while they were out.
+    const member = await accessTokens.heldSinceJoining(pool, held)
+      && await appAccess.isViewMember(pool, vis.appId, held.userId);
+    if (!member) {
+      const gone = { appId: vis.appId, userId: held.userId };
+      await accessTokens.revokeAllFor(pool, gone);
+      await appAgent.revokeAllFor(pool, gone);
+      log.warn('edge-gate', 'Access token refused', { host, reason: 'not_a_member' });
+      return refuseAgent();
+    }
+    // No identity, no entry: a token never opens the app anonymously.
+    // The identity is marked as a token's (platform-jwt signAppIdentityToken
+    // `agent`): it names the member to the app, and no platform service
+    // takes it.
+    const identity = await mintIdentity(pool, vis.appId, held.userId, { agent: true, publicApp: !vis.viewPrivate });
+    if (!identity) return refuseAgent();
+    if (personal) accessTokens.touch(pool, held.id);
+    else appAgent.touch(pool, held.id);
+    return allow({ identityFor: held.userId, cacheApp: false, agent: true });
+  }
+
   const ownToken = header(req.headers, 'x-usernode-token');
   const queryToken = query.get('token') || '';
 
@@ -1046,7 +1142,11 @@ async function handleAccess(pool, req, res) {
     // A cookie whose platform session has ended opens nothing.
   }
 
-  // 4. Nothing valid. A visit that already went round the hop (the loop
+  // 4. Nothing valid. An agent's call to a declared path is told so in a
+  // way a client can act on (it has no browser to send round the hop).
+  if (agentPath && !topNav && !crossSiteFrame && !browserRequest(req.headers)) return refuseAgent();
+
+  // A visit that already went round the hop (the loop
   // marker) goes where an unsigned visitor goes rather than round again.
   if (topNav && isProduction) {
     return signin && query.get(RETRY_MARKER) !== '1'

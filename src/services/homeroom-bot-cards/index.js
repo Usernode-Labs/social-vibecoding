@@ -168,4 +168,103 @@ function historyLine(card) {
   }
 }
 
-module.exports = { decide, setCardState, cardOf, boundedValue, historyLine, HANDLERS };
+// ── An offer, read back ─────────────────────────────────────────────────
+//
+// #7125: an offer is a message whose whole text is the draft (lead, heading,
+// details, Where, Done when) with a card under it. Read back as its own words
+// at full length, the model learns that an offer is a block of text, and
+// after one or two in a thread it writes the block with no card at all
+// (`historyMessages` guarded platform-written lines the same way, #3772).
+// Its message's `actionId` names its bot_cards row; these two helpers turn
+// that pair into the lead, the heading, and what became of the card.
+
+const MAX_OFFER_TITLE_CHARS = 140;
+
+// Which tool put the card, by its kind, as the note names it.
+const OFFER_TOOLS = Object.freeze({
+  file_request: 'offer_request',
+  move_request: 'offer_move_request',
+  copy_request: 'offer_copy_request',
+  close_request: 'offer_close_request',
+  withdraw_proposal: 'withdraw_proposal',
+  propose_draft: 'offer_propose_draft',
+  update_draft_proposal: 'offer_propose_draft',
+});
+
+const oneLine = (value, max) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim().slice(0, max);
+
+/**
+ * Pure: an offer message's text as the model reads it back: everything above
+ * its heading line (the lead), then the heading itself; the draft's details,
+ * Where and Done when are left out. With no heading, its first paragraph.
+ * Null when there is no text. Never throws.
+ */
+function offerHistoryText(content) {
+  try {
+    const text = typeof content === 'string' ? content : '';
+    if (!text.trim()) return null;
+    const lines = text.split('\n');
+    const at = lines.findIndex((line) => /^\*\*[^*\n]+\*\* · /.test(line.trim()));
+    let above;
+    if (at >= 0) {
+      above = lines.slice(0, at).map((line) => line.trimEnd());
+      while (above.length && !above[0].trim()) above.shift();
+      while (above.length && !above[above.length - 1].trim()) above.pop();
+      above = [...above, '', lines[at].trim()];
+    } else {
+      const end = lines.findIndex((line) => !line.trim());
+      above = lines.slice(0, end === -1 ? lines.length : end).map((line) => line.trim()).filter(Boolean);
+    }
+    const out = above.join('\n').trim();
+    if (!out) return null;
+    return out.length > MAX_HISTORY_LINE_CHARS ? `${out.slice(0, MAX_HISTORY_LINE_CHARS - 1)}…` : out;
+  } catch (err) {
+    log.warn('homeroom-bot-cards', 'Could not read an offer back for the history', { err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Pure: what became of an offer's card, as the line the model reads under
+ * the message: "[Homeroom: under this reply, offer_request put a File it
+ * card for "<title>" on <name>. They tapped File it, and it was filed as
+ * #7121.]" `words` is the card's two button words `[yes, no]`, `expired`
+ * whether an open one is past `expires_at` (bot-cards.js stillOpen). Null on
+ * input it cannot word, in which case the message reads as it is stored.
+ * Never throws.
+ */
+function offerHistoryLine({ kind, status, title, issueNumber, expired = false, name = '', words = null } = {}) {
+  try {
+    const state = typeof status === 'string' ? status : '';
+    const yes = oneLine(Array.isArray(words) ? words[0] : '', 40) || 'Yes';
+    const no = oneLine(Array.isArray(words) ? words[1] : '', 40) || 'No';
+    const who = OFFER_TOOLS[kind] || 'you';
+    // A post's stored title is an internal tag ("dm_answer"), not words a
+    // person wrote, so it is never read back.
+    const named = kind !== 'post_reply' && oneLine(title, MAX_OFFER_TITLE_CHARS)
+      ? ` for "${oneLine(title, MAX_OFFER_TITLE_CHARS)}"` : '';
+    const where = oneLine(name, 120) ? ` on ${oneLine(name, 120)}` : '';
+    const number = Number(issueNumber) > 0 ? Number(issueNumber) : null;
+    let outcome;
+    if (state === 'expired' || (state === 'open' && expired)) outcome = 'Its buttons went after 14 days with no answer.';
+    else if (state === 'open') outcome = 'It is still waiting for their answer.';
+    else if (state === 'deciding') outcome = `They tapped ${yes}, and it is being done now.`;
+    else if (state === 'declined') outcome = `They tapped ${no}.`;
+    else if (state === 'failed') outcome = `They tapped ${yes}, but it did not go through.`;
+    else if (state === 'retired') outcome = 'Its buttons went: what it was about moved on.';
+    else if (state === 'done') {
+      outcome = number && kind === 'move_request' ? `They tapped ${yes}, and it was moved, now request #${number}.`
+        : number && kind === 'copy_request' ? `They tapped ${yes}, and it was copied as request #${number}.`
+          : number && kind === 'file_request' ? `They tapped ${yes}, and it was filed as #${number}.`
+            : `They tapped ${yes}, and it went through.`;
+    } else return null;
+    return `[Homeroom: under this reply, ${who} put a ${yes} card${named}${where}. ${outcome}]`;
+  } catch (err) {
+    log.warn('homeroom-bot-cards', 'Could not read an offer card back for the history', { err: err.message });
+    return null;
+  }
+}
+
+module.exports = {
+  decide, setCardState, cardOf, boundedValue, historyLine, offerHistoryText, offerHistoryLine, HANDLERS,
+};

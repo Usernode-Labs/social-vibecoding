@@ -162,6 +162,31 @@ test('a message named without its thread opens the thread it is in, at it; in no
   } finally { lost.restore(); }
 });
 
+test('the column\'s own address write waits while an old address is being resolved', async () => {
+  const { mod, seen, restore } = load({ hash: '#homeroom-bot/main' });
+  let land;
+  globalThis.fetch = (url) => {
+    seen.fetched.push(url);
+    return new Promise((resolve) => {
+      land = () => resolve({ ok: true, status: 200, json: async () => ({ rootId: null, earlierRootId: 12 }) });
+    });
+  };
+  try {
+    mod.openOldMain('#homeroom-bot/main');
+    assert.equal(mod.oldAddressPending(), true,
+      'showAddress must not write the bare tab over #homeroom-bot/main while the server is still saying where it lands');
+    assert.deepEqual(seen.fetched, ['/api/ai/where']);
+    land();
+    await settle();
+    assert.equal(mod.oldAddressPending(), false, 'and the hold ends with the answer');
+    assert.deepEqual(seen.replaced, ['/#homeroom-bot/thread/12']);
+    assert.deepEqual(seen.tab, [{ threadRootId: 12, focusMessageId: null }]);
+  } finally { restore(); }
+  // The writer the hold protects: the tab's own address effect asks before it writes.
+  assert.match(read('frontend/src/features/ai/index.tsx'), /if \(oldAddressPending\(\)\) return;/,
+    'showAddress leaves an address from before to where.ts');
+});
+
 test('an answer that comes after the reader moved on is dropped, and a read that fails falls back to a new chat or the page', async () => {
   const moved = load({ hash: '#homeroom-bot/main', answer: { rootId: null, earlierRootId: 12 } });
   try {

@@ -663,7 +663,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     ]);
     // An older picture is named, not sent; a file that is not a picture is named.
     assert.match(words, /an older look at it \[Homeroom: they attached the picture older\.png\. Only the newest pictures are shown\.\]/);
-    assert.match(words, /my notes on it \[Homeroom: they attached the file notes\.md, which you cannot open\.\]/);
+    assert.match(words, /my notes on it \[Homeroom: they attached the file notes\.md\. You cannot open it, but a request filed from this thread can carry it to its build\.\]/);
     assert.ok(!JSON.stringify(said).includes('elsewhere.png'), 'nothing of another thread');
     assert.doesNotMatch(words, /\(id c+\d+\)/, 'no file id is on a thread\'s line');
     assert.match(views[0][0].content, /Never say that no picture or file came through/);

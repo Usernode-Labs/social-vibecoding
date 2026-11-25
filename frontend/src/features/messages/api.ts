@@ -1575,12 +1575,82 @@ export async function decideBotAction(actionId: number, choice: string, answers?
   return { label: text(pick(data, 'label')) || null };
 }
 
-/** #6248: a drafted request, as it will be filed: its whole description, its project and the line it ends with. */
+/** An open request a draft overlaps, as the draft says it. `relation` is null for one this client does not know. */
+export interface DraftRelated {
+  number: number;
+  title: string;
+  relation: 'same' | 'part_of' | 'depends_on' | 'build_together' | null;
+  why: string | null;
+}
+
+/**
+ * What a draft carries besides its words (homeroom-bot-mayor.js
+ * draftExtrasView): what it leaves undecided, its Done when checks, the open
+ * requests it overlaps and where it happened. Every list is there, empty
+ * when the draft has none.
+ */
+/** #7136: a file a draft carries onto the request, as its pane lists it. */
+export interface RequestDraftFile {
+  name: string;
+  size: number;
+}
+
+export interface RequestDraftExtras {
+  /** One entry per file it carries, with its size in bytes. */
+  files: RequestDraftFile[];
+  undecided: string[];
+  doneWhen: string[];
+  related: DraftRelated[];
+  where: { request: { number: number; name: string; slug: string | null } | null; saw: string | null };
+}
+
+/** #6248: a drafted request, as it will be filed: its whole description, its project, what it carries besides, and the line it ends with. */
 export interface RequestDraft {
   title: string;
   details: string;
   app: { slug: string; name: string };
   footer: string;
+  extras: RequestDraftExtras;
+}
+
+const DRAFT_RELATIONS: ReadonlySet<string> = new Set(['same', 'part_of', 'depends_on', 'build_together']);
+
+/** Pure: a draft's extras as the server sent them, with anything malformed left out. */
+export function draftExtras(value: unknown): RequestDraftExtras {
+  const data = record(value);
+  const lines = (list: unknown): string[] => (Array.isArray(list) ? list.map((line) => text(line).trim()).filter(Boolean) : []);
+  const where = record(pick(data, 'where'));
+  const req = record(pick(where, 'request'));
+  const reqNumber = Number(pick(req, 'number'));
+  const related: DraftRelated[] = [];
+  const listed = pick(data, 'related');
+  for (const item of Array.isArray(listed) ? listed : []) {
+    const row = record(item);
+    const number = Number(pick(row, 'number'));
+    if (!Number.isSafeInteger(number) || number <= 0) continue;
+    const relation = text(pick(row, 'relation'));
+    related.push({
+      number,
+      title: text(pick(row, 'title')),
+      relation: DRAFT_RELATIONS.has(relation) ? relation as DraftRelated['relation'] : null,
+      why: text(pick(row, 'why')) || null,
+    });
+  }
+  return {
+    files: array(pick(data, 'files'))
+      .map((item) => record(item))
+      .map((item) => ({ name: text(pick(item, 'name')).trim(), size: Number(pick(item, 'size')) || 0 }))
+      .filter((item) => item.name !== ''),
+    undecided: lines(pick(data, 'undecided')),
+    doneWhen: lines(pick(data, 'doneWhen')),
+    related,
+    where: {
+      request: Number.isSafeInteger(reqNumber) && reqNumber > 0
+        ? { number: reqNumber, name: text(pick(req, 'name')), slug: text(pick(req, 'slug')) || null }
+        : null,
+      saw: text(pick(where, 'saw')) || null,
+    },
+  };
 }
 
 /**
@@ -1596,6 +1666,7 @@ export async function readRequestDraft(actionId: number): Promise<RequestDraft> 
     details: text(pick(data, 'details')),
     app: { slug: text(pick(app, 'slug')), name: text(pick(app, 'name')) },
     footer: text(pick(data, 'footer')),
+    extras: draftExtras(pick(data, 'extras')),
   };
 }
 
