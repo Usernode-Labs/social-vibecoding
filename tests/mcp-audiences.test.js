@@ -321,7 +321,10 @@ test('the next step walks a change through its whole life', () => {
   assert.match(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }), /working on Change 50 right now/);
   assert.match(step({ status: 'active' }, { sync: { phase: 'merging' } }), /being synced with main/);
   assert.match(step({ status: 'active', check_state: 'pending' }), /Checks are running/);
-  assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. Syncing it with main from its page/);
+  // #7158: there is no sync on a change's page; Homeroom resolves it itself.
+  assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }),
+    /conflicts with main\. Homeroom resolves the conflict on its own/);
+  assert.doesNotMatch(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /Syncing it with main from its page/);
   assert.match(step({ status: 'active', check_state: 'error' }), /errored before any test reported/);
   assert.match(step({ status: 'active', check_state: 'passing' }), /ready to go up for a vote: its owner puts it there from its page/);
   assert.match(step({ status: 'paused', check_state: 'passing' }), /It is idle/);

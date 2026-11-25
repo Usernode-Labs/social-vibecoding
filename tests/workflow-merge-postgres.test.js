@@ -518,17 +518,24 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal(calls(WORK.sync).length, 2);
   });
 
-  await t.test('M10 rule C: an unapproved conflicting head gets one resolution per epoch, then waits for the vote', async () => {
+  await t.test('M10 rule C: one resolution per epoch and per main; against the main it was just resolved onto it is never parked for a vote nobody is asked (#7158)', async () => {
     defaults();
     const s = await proposalRow({ clean: false, approvalsRequired: 3 });
     await want(s.app);
     await settle();
     assert.equal(calls(WORK.sync).length, 1, 'its first conflict is resolved before the vote');
     assert.equal(Number((await row(s)).integration_resolved_epoch), 0, 'spent, with the sync');
+    assert.equal((await row(s)).integration_resolved_main_sha, SHA('e'), 'against the main it merged into');
     await want(s.app);
     await settle();
-    assert.equal(calls(WORK.sync).length, 1);
-    assert.deepEqual((await row(s)).integration_block_reasons, ['awaiting_approval']);
+    assert.equal(calls(WORK.sync).length, 1, 'the same main is not resolved twice');
+    assert.deepEqual((await row(s)).integration_block_reasons, ['unresolvable'], 'never awaiting a vote nobody is asked for');
+    // Main moved: the lane resolves it again, so it reaches its checks and
+    // its vote on its own.
+    await pool.query('UPDATE chat_sessions SET integration_main_sha = $2 WHERE id = $1', [s.id, SHA('f')]);
+    await want(s.app);
+    await settle();
+    assert.equal(calls(WORK.sync).length, 2, 'resolved again once main moved');
   });
 
   await t.test('M11 a force lasts through a resolution until it merges; an authored push ends it (bug 6, M4)', async () => {
@@ -968,6 +975,53 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await rt.drain();
     assert.equal((await outcome(person)).reason, 'in_progress');
     await settle();
+  });
+
+  // #7158: PR #7122's conflict sync met the shots run that held its worker,
+  // failed at once ("another turn already owns this session"), and its free
+  // resolution stayed spent: the change sat in Waiting for a vote nobody is
+  // asked for. A conflict sync waits for the turn now, and one that ran
+  // nothing gives the resolution back.
+  await t.test('M24b a conflict sync waits for a busy turn, and one that ran nothing gives its free resolution back (#7158)', async () => {
+    defaults();
+    const s = await proposalRow({ clean: false, approvalsRequired: 2 });
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t"}'::jsonb WHERE id = $1`, [s.id]);
+    const asked = await toProposal(s, 'SyncRequested', { reason: 'conflict', queueN: 7 }, fromQueueSrc);
+    await rt.drain();
+    assert.equal((await outcome(asked)).result, 'accepted', 'a turn holding the session is waited for, in the work');
+    const input = (await pool.query(`SELECT input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3`,
+      [MACHINE, sessionKey(s.id), WORK.sync])).rows[0].input;
+    assert.equal(input.waitForIdle, true, 'it waits for the turn or the shots run holding the session');
+    assert.equal(input.measureFirst, false, 'a conflict resolution still measures nothing first');
+    const spending = await row(s);
+    assert.equal(Number(spending.integration_resolved_epoch), Number(spending.approval_epoch), 'spent with the sync');
+    assert.equal(spending.integration_resolved_main_sha, spending.integration_main_sha, 'and records the main it merges into');
+
+    // The worker stayed busy for the whole wait: the sync ran nothing.
+    await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [s.id]);
+    work.answer.set(WORK.sync, { outcome: 'busy' });
+    await settle();
+    const busy = await row(s);
+    assert.equal(busy.integration_resolved_epoch, null, 'nothing ran: the free resolution is given back');
+    assert.equal(busy.integration_resolved_main_sha, null, 'and the main with it');
+
+    // A failure before it touched the branch: given back again.
+    work.answer.set(WORK.sync, { outcome: 'error' });
+    const again = await toProposal(s, 'SyncRequested', { reason: 'conflict', queueN: 8 }, fromQueueSrc);
+    await rt.drain();
+    assert.equal((await outcome(again)).result, 'accepted', 'may be asked again for this head');
+    await settle();
+    assert.equal((await row(s)).integration_resolved_epoch, null);
+
+    // One that ran keeps it, with the main it ran against.
+    work.answer.set(WORK.sync, { outcome: 'clean', sha: SHA('5') });
+    const third = await toProposal(s, 'SyncRequested', { reason: 'conflict', queueN: 9 }, fromQueueSrc);
+    await rt.drain();
+    assert.equal((await outcome(third)).result, 'accepted');
+    await settle();
+    const kept = await row(s);
+    assert.equal(Number(kept.integration_resolved_epoch), Number(kept.approval_epoch), 'a resolution that ran is not asked again');
+    assert.equal(kept.integration_resolved_main_sha, kept.integration_main_sha, 'for the main it ran against');
   });
 
   await t.test('M25 the whole line is read: an approved proposal behind 200 older ones waiting for votes is merged (PR review)', async () => {
