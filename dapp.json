@@ -868,6 +868,20 @@
       "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects):has(#profile-preferences):has(.profile-section-links):has(#profile-edit-btn svg) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
+      "id": "profile.section-tabs.changes",
+      "name": "Me: the section row is real tabs, and #profile?tab=changes keeps the profile open with its own changes in the column (#7134)",
+      "path": "/?demo=1#profile?tab=changes",
+      "expectText": "Your changes",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-history:has(h2):has(ul)"
+    },
+    {
+      "id": "profile.section-tabs.activity",
+      "name": "Me: the Activity tab of the section row stays on the profile and shows the recent activity column (#7134)",
+      "path": "/?demo=1#profile?tab=activity",
+      "expectText": "Recent activity",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-main > #profile-recent-activity:has(h2):has(ul)"
+    },
+    {
       "id": "profile.week-share",
       "name": "Me: This week shows the week's live changes and Share opens the card that chooses which figures to send (#6464)",
       "path": "/?demo=1#profile",
