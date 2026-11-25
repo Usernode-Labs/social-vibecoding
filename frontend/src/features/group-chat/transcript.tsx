@@ -790,15 +790,17 @@ function SpecSnippet({ html }: { html: string }) {
 
 /**
  * A person's message — a named row, Discord's shape, on every surface
- * (#2783): square avatar, name, time, flat text, the viewer's own on the
- * left like everybody else's. The general chat used to put a person's body in
- * a bubble and the viewer's own on the right; the Messages screen's DMs did
- * the same and dropped it at the same time, so every chat reads alike.
+ * (#2783): square avatar, name, time, flat text. In a channel (`surface`
+ * `main`) the viewer's own rows are drawn on the right, the chat's "me"
+ * side (#7163): your picture at the trailing edge beside your words, your
+ * name and time against the right, and the body stacked right. Reply
+ * threads and a request's or change's stream (`surface` `thread`) keep the
+ * left-hand row for everyone.
  *
  * `grouped` is a continuation of the same person's previous message
  * (`groupsWithPrevious`): no avatar and no header, the time in the gutter.
  * `gc-msg-self` stays on the viewer's own rows, which the reaction bar and a
- * thread's tint key off.
+ * thread's tint key off; `gc-msg-end` marks the right-hand rows.
  *
  * ── The controls are the shared bar (#2387) ───────────────────────────
  *
@@ -961,6 +963,9 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
+  // #7163: your own message in a channel sits on the right, the chat's "me"
+  // side; a reply thread and a page's stream keep the left-hand row.
+  const right = !!msg.mine && surface === 'main';
   // #4055: in the app, whether its build can save a picture is known only
   // once asked; asking re-renders the row so the menu's Download line can
   // appear. Nothing is asked for a row without a picture.
@@ -976,7 +981,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   ] : [];
   return (
     <ChatMessageRow
-      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
+      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${right ? ' gc-msg-end' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
+      from={right ? 'me' : 'them'}
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}

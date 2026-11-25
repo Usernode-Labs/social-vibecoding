@@ -590,7 +590,12 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
-  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
+  // #7163: your own message in a channel sits on the right like a chat, its
+  // face at the trailing edge beside its words (app.css), the head against
+  // that edge as it already was. A conversation's bubbles have their own
+  // side (`.messages-message-bubble`), so this is the named row alone.
+  const endRow = mine && !sided;
+  const stateClasses = `${mine ? 'messages-message-self' : ''} ${endRow ? 'messages-message-end' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the
