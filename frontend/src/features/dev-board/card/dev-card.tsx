@@ -309,7 +309,7 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
         title={spec.title}
         onClick={() => call({ fn: 'swapToStagingForSession', args: [spec.sessionId, spec.url] })}
       >
-        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" />{t('project:card.preview.label')}</>}
+        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" className="h-4 w-4 shrink-0" />{t('project:card.preview.label')}</>}
       </button>
     );
   }
