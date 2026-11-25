@@ -5,7 +5,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { relativeDate } from './profile-store.js';
 
 type RecentChange = { sessionId: number; prNumber?: number | null; title: string; appSlug: string; appName: string; mergedAt?: string | null };
-export function ProfileRecentActivity({ changes }: { changes: RecentChange[] }) {
+export function ProfileRecentActivity({ changes, limit = 3 }: { changes: RecentChange[]; limit?: number }) {
   const t = useMessages('profile');
   if (!changes.length) return null;
   return <section id="profile-recent-activity">
@@ -14,7 +14,7 @@ export function ProfileRecentActivity({ changes }: { changes: RecentChange[] }) 
       <a href="#homeroom-bot/history?kind=change">{t('profile:recent.all')}</a>
     </div>
     <ul>
-      {changes.slice(0, 3).map((change) => {
+      {changes.slice(0, limit).map((change) => {
         const when = relativeDate(change.mergedAt);
         return <li key={change.sessionId}>
           <a href={changeHref(change.appSlug, change.sessionId, change.prNumber)}>

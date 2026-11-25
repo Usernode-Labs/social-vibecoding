@@ -39,6 +39,7 @@ import {
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
+import { ProfileHistoryList } from './profile-history-list';
 import { ProfileRecentActivity } from './profile-recent-activity';
 import { ProfileLiveProjects } from './profile-live-projects';
 import { ProfileDetailsCard } from './profile-details-card';
@@ -487,6 +488,12 @@ export function ProfileRoot(): ReactNode {
   const frame = isFrameSkin(skin);
   const editorial = skin === 'standard';
   const view = buildProfileView(state);
+  // #7134: the standard page's section row is real tabs, and the tab that is
+  // up decides the right column. It is the same store field the frame's You
+  // page reads (./profile.js _readTab / showTab).
+  const tab = state.tab || 'overview';
+  const contributions = state.data?.summary?.contributions || [];
+  const onHistoryTab = tab === 'changes' || tab === 'requests' || tab === 'votes';
 
   if (view.kind === 'empty') return null;
   // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
@@ -591,12 +598,18 @@ export function ProfileRoot(): ReactNode {
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
-        <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
-          {editorial ? <ProfileSectionLinks /> : null}
-          {editorial ? <ProfileLiveProjects changes={state.data?.summary?.contributions || []} /> : null}
-          {editorial ? <ProfileRecentActivity changes={state.data?.summary?.contributions || []} /> : null}
-          <WorkPanel rows={view.rows} />
-          <RewardsPanel rows={view.rows} />
+        <div id="profile-main" className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {editorial ? <ProfileSectionLinks tab={tab} /> : null}
+          {editorial && onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
+          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} /> : null}
+          {!editorial || (!onHistoryTab && tab !== 'activity') ? (
+            <>
+              {editorial ? <ProfileLiveProjects changes={contributions} /> : null}
+              {editorial ? <ProfileRecentActivity changes={contributions} /> : null}
+              <WorkPanel rows={view.rows} />
+              <RewardsPanel rows={view.rows} />
+            </>
+          ) : null}
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
           {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
