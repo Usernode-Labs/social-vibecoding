@@ -75,6 +75,9 @@ const IDS = Object.freeze({
   updateRunningProposal: 990884,
   approvedSyncingProposal: 990885,
   voteAfterUpdateProposal: 990886,
+  // 25 Nov 2026 (#7137): a public project whose app answers a guest, so a
+  // signed-out visitor's project page shows Open.
+  guestProjectApp: 990887,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -123,6 +126,12 @@ const FIRST_VERSION_NAME = '[shots fixture] Book club';
 const ACCESS_APP_SLUG = 'shots-demo-member-walking-club';
 const ACCESS_APP_NAME = '[shots fixture] Walking club';
 const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-walking-club';
+// #7137: a public project whose app answers a guest, so a signed-out
+// visitor's page shows Open. The staging seed's own guest-ready project
+// (#7128) is new, so a change based on an earlier revision would miss it on
+// the before copy; this state writes its own on both.
+const GUEST_PROJECT_SLUG = 'shots-demo-guest-puzzle-club';
+const GUEST_PROJECT_NAME = '[shots fixture] Puzzle club';
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
@@ -1498,9 +1507,57 @@ const STATES = [
     },
   },
   {
+    // #7137: a public project whose app answers a guest, so a signed-out
+    // visitor's project page shows Open beside Join and Share. Neither copy
+    // held such a project of its own unless the change added one, so a
+    // change about that page had no shots on either side. The staging
+    // seed's own guest-ready fixture (#7128) is new: a revision before it
+    // would miss the state on its copy, which is why this writes one.
+    id: 'shots-demo-guest-project-open-v1',
+    persona: 'guest',
+    needs: {
+      apps: ['id', 'name', 'slug', 'status', 'created_by', 'collab_visibility', 'view_visibility',
+        'icon_emoji', 'last_deploy_at', 'anon_shell', 'guest_shell', 'anon_shell_checked_at', 'created_at'],
+      app_collaborators: ['app_id', 'user_id', 'status', 'accepted_at'],
+    },
+    free: async (client) => {
+      const taken = await client.query('SELECT 1 FROM apps WHERE slug = $1', [GUEST_PROJECT_SLUG]);
+      return taken.rowCount === 0 && await idsFree(client, 'apps', [IDS.guestProjectApp]);
+    },
+    async install(client, ctx) {
+      // The shape the staging seed's guest-ready project has (#7128): public
+      // to see and to join, its app answers a guest (guest_shell public)
+      // while a visitor with no credential at all is still asked to sign in
+      // (anon_shell gated), which is what makes its page show Open. The
+      // shell check is stamped a year out so the probe never reclassifies
+      // it, and there is no running container behind it.
+      await client.query(
+        `INSERT INTO apps
+           (id, name, slug, status, created_by, collab_visibility, view_visibility, icon_emoji,
+            last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at, created_at)
+         VALUES ($1, $2, $3, 'running', $4, 'public', 'public', '🧩',
+                 NOW() - INTERVAL '2 days', 'gated', 'public', NOW() + INTERVAL '1 year',
+                 NOW() - INTERVAL '10 days')`,
+        [IDS.guestProjectApp, GUEST_PROJECT_NAME, GUEST_PROJECT_SLUG, ctx.member.id]
+      );
+      await client.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '10 days')`,
+        [IDS.guestProjectApp, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A public project a signed-out visitor can open: its page shows Open [shots fixture] Puzzle club, Join and Share.',
+          path: `/#app/${GUEST_PROJECT_SLUG}/dev/hub`,
+        }],
+      };
+    },
+  },
+  {
     // Free app slots for the member and the read-only admin. The states
-    // above give the member three projects (the remix, the book club and the
-    // walking club) against the allowance of two everyone starts with, so
+    // above give the member four projects (the remix, the book club, the
+    // walking club and the puzzle club) against the allowance of two
+    // everyone starts with, so
     // "What do you want to make?" read "3 of 2 app slots used" with Make it
     // off, and two of PR 4777's three changes (a ready-made Study timer)
     // were skipped for it. The copies already lift the server-wide cap

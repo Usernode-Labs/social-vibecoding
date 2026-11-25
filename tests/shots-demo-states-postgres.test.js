@@ -26,6 +26,7 @@ const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('../src/ro
 const { attachForkLineage, accessFlags } = require('../src/routes/apps');
 const suggestBack = require('../src/services/suggest-back');
 const appAllowance = require('../src/services/app-allowance');
+const { listPublicApps } = require('../src/services/public-app-directory');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
 const mayor = require('../src/services/homeroom-bot-mayor');
@@ -271,7 +272,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 
   // The brief tells the agent who each state is for and where it is.
   for (const state of result.installed) {
-    assert.ok(['member', 'read_only_admin', 'full_admin'].includes(state.persona), state.id);
+    assert.ok(['member', 'read_only_admin', 'full_admin', 'guest'].includes(state.persona), state.id);
     assert.ok(state.shows.length && state.shows.every((item) => item.state && item.path.startsWith('/')), state.id);
   }
 });
@@ -429,13 +430,31 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     [accessApp.id, member]);
   assert.equal(collab.status, 'member');
 
-  // Room to make projects (PR 4777): the member owns the three projects the
+  // #7137: a public project whose app answers a guest, read through the
+  // directory the signed-out project page reads: in the reserved block,
+  // public to see, and guest-ready while still asking a visitor with no
+  // credential at all to sign in (so its page shows Open).
+  const { rows: [guestProject] } = await pool.query(
+    'SELECT id, slug, name, view_visibility FROM apps WHERE id = $1', [demoStates.IDS.guestProjectApp]);
+  assert.ok(guestProject, 'the guest-ready project is written');
+  assert.equal(guestProject.name, '[shots fixture] Puzzle club');
+  assert.equal(guestProject.view_visibility, 'public');
+  const [reservedLow, reservedHigh] = demoStates.RESERVED_RANGE;
+  assert.ok(Number(guestProject.id) >= reservedLow && Number(guestProject.id) <= reservedHigh,
+    'its id is in the reserved block');
+  const [directoryProject] = await listPublicApps(pool, { slug: guestProject.slug });
+  assert.equal(directoryProject.slug, guestProject.slug);
+  assert.equal(directoryProject.guest_ready, true, 'a guest can open it');
+  assert.equal(directoryProject.requires_login, true,
+    'a visitor with no credential at all is still asked to sign in');
+
+  // Room to make projects (PR 4777): the member owns the four projects the
   // states above made, and both the member and the read-only admin have
   // five slots free beside what they own, read through the allowance the
   // make screen and POST /api/apps read. Five free hides the allowance card
   // (app-allowance.tsx allowanceWorthShowing) as for anybody with room.
   const memberRoom = await appAllowance.read(pool, { id: member });
-  assert.deepEqual(memberRoom.quota, { used: 3, limit: 8, remaining: 5 });
+  assert.deepEqual(memberRoom.quota, { used: 4, limit: 9, remaining: 5 });
   assert.equal(memberRoom.canCreateApps, true);
   const adminRoom = await appAllowance.read(pool, { id: ids['usernode-capture-admin'] });
   assert.deepEqual(adminRoom.quota, { used: 0, limit: 5, remaining: 5 });

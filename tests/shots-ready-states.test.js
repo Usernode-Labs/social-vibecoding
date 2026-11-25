@@ -269,6 +269,18 @@ test('a change being updated, one syncing with main and one back up for a vote a
   }
 });
 
+// #7137: a signed-out visitor's project page, whose app a guest can open.
+test('a signed-out visitor\'s project page whose app opens for a guest is ready-made for the guest', () => {
+  const claim = 'A signed-out visitor\'s public project page shows Open on a guest-ready app.';
+  assert.deepEqual(warned(declare(story('open-button', claim, { persona: 'guest' })), true), [],
+    'the ready-made project is the guest\'s');
+  const [asMember] = warned(declare(story('open-button', claim, { persona: 'member' })), true);
+  assert.match(asMember, /^open-button seems to need a public project a signed-out visitor can open, and the ready-made state that holds it on these copies is for guest \(see availableStates\)\./);
+  // A child app's copies have no ready-made states at all.
+  const [child] = warned(declare(story('open-button', claim, { persona: 'guest' })), false);
+  assert.match(child, /this app's copies have no ready-made states/);
+});
+
 test('a change whose steps wait for a model\'s reply is warned about whatever setup or state it names', () => {
   // PR 4536's own words: its shots ended on "I can't reach my model".
   const asked = story('close-offer', 'When you ask the Homeroom bot in chat to close a request, or say one is done '
