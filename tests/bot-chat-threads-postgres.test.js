@@ -651,7 +651,7 @@ test('GET /api/ai/where is the signed-in person\'s own read, never cached', () =
   const start = routes.indexOf("router.get('/api/ai/where'");
   assert.ok(start > 0);
   const route = routes.slice(start, routes.indexOf('\n  });', start));
-  assert.match(routes.slice(start, start + 120), /router\.get\('\/api\/ai\/where', appChatReadLimiter, sameOriginBrowserOnly, async/);
+  assert.match(routes.slice(start, start + 120), /router\.get\('\/api\/ai\/where', appChatLoadLimiter, sameOriginBrowserOnly, async/);
   assert.match(route, /res\.set\('Cache-Control', 'private, no-store'\);/);
   assert.match(route, /if \(!req\.user\?\.id\) return res\.status\(401\)/);
   // The chat is the signed-in person's, resolved on the server: the request

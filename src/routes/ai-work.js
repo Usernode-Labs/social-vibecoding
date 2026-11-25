@@ -11,7 +11,7 @@ const threadMentions = require('../services/thread-mentions');
 const aiVisits = require('../services/ai-visits');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { appChatReadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
+const { appChatReadLimiter, appChatLoadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -199,7 +199,7 @@ function aiWorkRoutes(config = {}) {
   //
   // `?demo=1` on staging reads the demo's own chat, made first if it is not
   // there yet, as the tab's other reads of it do.
-  router.get('/api/ai/where', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+  router.get('/api/ai/where', appChatLoadLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
@@ -293,7 +293,7 @@ function aiWorkRoutes(config = {}) {
   // project at all is the app-access check's. ?demo=1 on staging: none (the
   // demo's mock rows are the viewer's by their author, which the filter
   // reads first).
-  router.get('/api/apps/:slug/threads/yours', appChatReadLimiter, async (req, res) => {
+  router.get('/api/apps/:slug/threads/yours', appChatLoadLimiter, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
