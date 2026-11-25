@@ -124,7 +124,7 @@ function PickerBody({ ranked, picked, onToggle, onClear, onClose, search }: Pick
         <button
           type="button"
           className="min-h-[44px] px-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 disabled:cursor-default disabled:text-zinc-400 dark:text-violet-300 dark:hover:text-violet-200 dark:disabled:text-zinc-500 md:min-h-[36px]"
-          onClick={onClear}
+          onClick={() => { onClear(); onClose(); }}
           disabled={!picked.length}
           data-ai-pick-all=""
         >
