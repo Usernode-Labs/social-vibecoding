@@ -1297,6 +1297,9 @@ const STATES = [
         attachmentIds: [DRAFT_PICTURE_ID],
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
+        // What the draft leaves undecided, its own short list (its pane
+        // lists it beside the words: request-draft-pane.tsx).
+        undecided: ['Whether a week starts on Monday or on Sunday'],
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
         chatHref: '#homeroom-bot',
       };
@@ -1366,7 +1369,7 @@ const STATES = [
       const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together), Still undecided (one question) and Done when (two checks), and File it (filled) and Not now waiting for your answer. A tap on the drafted request's card opens the whole draft beside the thread. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path,
         }],
       };
