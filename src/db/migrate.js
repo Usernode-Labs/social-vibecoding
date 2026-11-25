@@ -454,6 +454,10 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  // #7133's shots: the profile's "Projects you've helped build" shows one card
+  // per project where the capture member has a live change. A fresh staging
+  // copy has none, so the section would only have its empty state.
+  await seedStagingProfileProjects(pool);
   await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
   // #4803: feedback is private in clones and GitHub writes are unavailable.
@@ -552,6 +556,42 @@ async function seedStagingAppGroups(pool) {
        ON CONFLICT DO NOTHING`, [group.id]);
   } catch (err) {
     log.warn('db', 'Staging app groups seed failed', { message: err.message });
+  }
+}
+
+// #7133: the profile's project cards, for their before & after shots. Three
+// obviously fake projects, each with one live merged change by the capture
+// member, so the card row has more than the demo's one project to show. The
+// merged insert trigger fills live_at. Staging only and idempotent.
+async function seedStagingProfileProjects(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const member = (await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) return;
+    const projects = [
+      { id: 900809, slug: 'staging-demo-profile-garden', name: 'Staging demo garden',
+        title: 'Staging demo: a reminder when the soil is dry', hoursAgo: 1 },
+      { id: 900810, slug: 'staging-demo-profile-tides', name: 'Staging demo tides',
+        title: 'Staging demo: the tide table in your own time', hoursAgo: 2 },
+      { id: 900811, slug: 'staging-demo-profile-notes', name: 'Staging demo notes',
+        title: 'Staging demo: pin a note to the top', hoursAgo: 3 },
+    ];
+    for (const project of projects) {
+      await pool.query(
+        `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+         VALUES ($1, $2, $3, 'running', 'private', 'private', $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [project.id, project.name, project.slug, member.id]);
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at)
+         SELECT $1, $2, $3::varchar(255), $4::text, $4::text, 'merged',
+                NOW() - make_interval(hours => $5::int)
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3::varchar(255))`,
+        [project.id, member.id, `staging-fixture/profile-${project.slug}`, project.title, project.hoursAgo]);
+    }
+  } catch (err) {
+    log.warn('db', 'Staging profile projects seed failed', { message: err.message });
   }
 }
 
@@ -17838,6 +17878,7 @@ module.exports = {
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
+  seedStagingProfileProjects,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   // #6284: the stopped-fix change the Testing card and Homeroom bot page
