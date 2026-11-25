@@ -35468,8 +35468,10 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
   scroll-padding-top: var(--pill-under);
 }
 /* The scroller's scroll-padding already holds the timeline under the pill
-   (a sticky box is placed inside it), so its own `top: 0` stays. */
-html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
+   (a sticky box is placed inside it), so its own `top: 0` stays. The rail's
+   height cap is the wide sticky column's alone, and lives in the wide block
+   below (#7171): here, where the rail is in normal flow, a percentage cap
+   painted its last step over the replies. */
 
 /* THE VOTE FOLDS INTO THE HEADER (18 Nov 2026, thread-card.tsx `FootFloat`).
    While a change waits on the reader's vote and its foot has gone up behind
@@ -36668,6 +36670,41 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   .dev-rail-press { padding: 4px 6px 6px; }
   .dev-rail-step[data-rail-now] { padding-top: 0; }
   .dev-rail-step[data-rail-now] .dev-rail-press { padding-top: 8px; }
+}
+
+/* ONE SCALE ON A PHONE'S THREAD PAGE (#7171). The three cards under the head
+   (the change, "How it got here" and the replies) each had sizes of their
+   own: 12.5, 13.5, 14.5, 15.5 and 17px, close enough together to read as a
+   mistake. Under 768px they take the platform's scale instead: words at
+   15px, times and second lines at 13px, the one small label at 12px, and the
+   head's title as the page's only larger line at 18px. Written in rem, so
+   Settings' Text size scales them, as it does the rest of the shell. Desktop
+   widths, the side panel's sizes on a wide screen and the frame's own looks
+   are untouched. */
+@media (max-width: 767.98px) {
+  /* The head's title is the one larger line; its tight state keeps its own. */
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { font-size: 1.125rem; line-height: 1.5rem; }
+  /* The card. */
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-card .dev-request-title { font-size: 1.125rem; line-height: 1.5rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-card .dev-request-ask-text { font-size: 0.9375rem; line-height: 1.375rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-by { font-size: 0.8125rem; }
+  /* Its foot: the headline stays bold, at the words' size. */
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-foot-head { font-size: 0.9375rem; line-height: 1.25rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-foot-q { font-size: 0.9375rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-wait > b { font-size: 0.9375rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-thread-wait > span { font-size: 0.8125rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread :is(.dev-checks-why, .dev-thread-tiles-said, .dev-thread-tiles-legend .shots-change strong) { font-size: 0.8125rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread :is(.dev-thread-opt-name, .dev-thread-opt-look) { font-size: 0.9375rem; }
+  /* "How it got here": one small label, its steps at the words' size. */
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-rail-title { font-size: 0.75rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-rail-time { font-size: 0.8125rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread :is(.dev-rail-pile-more, .dev-rail-desc, .dev-rail-note) { font-size: 0.8125rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-rail-name { font-size: 0.9375rem; }
+  /* The replies, as Messages draws a row: 15 over 13. */
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 0.9375rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 0.8125rem; }
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug,
+  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content { font-size: 0.9375rem; line-height: 1.4; }
 }
 
 /* THE BELL'S SHEET (features/notifications/notifications-sheet.tsx, the
