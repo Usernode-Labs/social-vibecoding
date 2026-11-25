@@ -2633,10 +2633,26 @@ caller Homeroom has not vouched for. Do not build your own tokens for this.
    need from members' own visits. A call on a declared path is the member's
    assistant; anything it writes should say so.
 
+4. **Or let the member approve their assistant in a browser, with no token
+   to copy.** Nothing to build: an MCP client given only the declared
+   address (`https://<your app>/mcp`) is told by the door's 401 where to
+   ask, the member presses Allow on Homeroom, and the client gets an
+   hour-long token it renews by itself. Its calls reach the app exactly as
+   a personal token's do. `GET /access-tokens` also answers
+   `connections: [{ id, name, origin, created_at, last_used_at }]`, the
+   assistants that member approved, and
+   `DELETE /access-tokens/connections/:id` disconnects one: list them
+   beside the tokens. It works for clients whose sign-in comes back to
+   claude.ai or ChatGPT; a client that comes back to the member's own
+   computer (a command-line tool) still needs a personal token.
+
 - **The door refuses everything else with a bare 401**: no token, a wrong or
   revoked one, another app's, a path that was not declared, and a token
   whose owner has left the project or can no longer see the app (their
-  tokens are then revoked). The app never sees those requests.
+  tokens are then revoked). The app never sees those requests. On a
+  declared path that 401 carries `WWW-Authenticate: Bearer
+  resource_metadata="…"`, which is how a client finds the approval above:
+  do not answer `/.well-known/oauth-protected-resource` yourself.
 - **Production only.** A preview has no app credential, so it cannot make a
   token, and a token never opens a preview. Show the token screen with a
   plain "works on the live app" note there, and seed nothing for it.
