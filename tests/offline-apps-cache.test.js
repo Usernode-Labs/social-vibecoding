@@ -186,6 +186,9 @@ const DOMAIN = require('../src/services/caddy').USERNODE_APPS_DOMAIN;
 const ACCESS_APPS = {
   offapp: { id: 301, runtime_name: 'sv-app-301-offapp', offline: true },
   optout: { id: 302, runtime_name: 'sv-app-302-optout', offline: false },
+  // Two people's frames found its page did not open at the cacheable address
+  // on its live build: the shell frames it the old way until it deploys again.
+  refused: { id: 303, runtime_name: 'sv-app-303-refused', offline: true, refused: true },
 };
 const accessPool = {
   queries: [],
@@ -202,9 +205,9 @@ const accessPool = {
     if (/SELECT staging_runtime_name FROM chat_sessions/.test(sql)) {
       return { rows: [{ staging_runtime_name: 'sv-preview-301-s42' }] };
     }
-    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off FROM apps WHERE id = \$1/.test(sql)) {
+    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off,[\s\S]*offline_cache_off_sha[\s\S]*main_sha[\s\S]*AS refused\s+FROM apps WHERE id = \$1/.test(sql)) {
       const app = Object.values(ACCESS_APPS).find((a) => a.id === params[0]);
-      return { rows: [{ off: app ? app.offline === false : null }] };
+      return { rows: [{ off: app ? app.offline === false : null, refused: app ? app.refused === true : null }] };
     }
     throw new Error(`offline-apps-cache stub: unexpected query: ${sql}`);
   },
@@ -264,6 +267,32 @@ test('the access answer asks the gate to cache a production app, only with the s
   res = await ask(`offapp--s42.${DOMAIN}`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('x-usernode-cache'), null, 'a preview runs unmerged code');
+
+  // Framed the old way on its live build, where the bridge's refresh never
+  // runs: its files keep the app's own headers.
+  res = await ask(`refused.${DOMAIN}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-usernode-cache'), null, 'the cacheable address is off on its live build');
+});
+
+// 25 Nov 2026: a private project showed its new page over its old
+// screens.css after every change. The shell frames a view-private app with
+// the token in its address (forApp is false for it), where the bridge's
+// refresh never runs, yet the gate kept its files 30 days. The gate now
+// asks forApp's question: the view-private half is read off the host's
+// visibility, which a request the gate lets through for a private app
+// already carries.
+test('the gate never keeps a view-private app\'s files, nor one framed the old way on its build', () => {
+  const gate = read('src/services/edge-gate.js');
+  const decision = gate.slice(gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP') - 700,
+    gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP'));
+  assert.match(decision, /cacheApp && isProduction && !vis\.viewPrivate && offlineCache\.enabled\(\)/);
+  assert.match(decision, /appAccess\.offlineCacheOff\(pool, vis\.appId\)/);
+  const access = read('src/services/app-access.js');
+  assert.match(access, /offline_cache_off_sha IS NOT NULL AND lower\(offline_cache_off_sha\) = lower\(main_sha\)\) AS refused/,
+    'switched off on its live build, as offlineCache.refusedOnThisBuild reads it');
+  assert.equal(offlineCache.forApp({ view_visibility: 'private', manifest_snapshot: {} }, { APP_OFFLINE_CACHE: 'on' }), false,
+    'the shell\'s side of the same rule');
 });
 
 // ── The shared files ─────────────────────────────────────────────────────
@@ -321,15 +350,19 @@ function memoryStorage(initial = {}) {
 // the validator of the copy kept (`kept`, what `cache: "force-cache"` reads)
 // and of the app's current one (`now`, what `cache: "no-cache"` answers);
 // null for none, 'fail' for a request that fails. `checked`: the stored
-// record of the last check. The load event and its timer run on fireLoad().
+// record of the last check. `script`: the address this bridge was loaded
+// from (the apps' copy by default; null for none). `storageBroken`: storage
+// refuses every write. The load event and its timer run on fireLoad().
 function runBridge({
   href, standalone = false, files = null, pageOk = true, entries = [],
-  resources = null, served = {}, online = true, checked = null,
+  resources = null, served = {}, online = true, checked = null, script, storageBroken = false,
 }) {
   const url = new URL(href);
   const posted = [];
   const fetched = [];
   const replaced = [];
+  const reloads = [];
+  const forced = [];
   const listeners = {};
   const timers = [];
   const style = { visibility: '' };
@@ -337,7 +370,9 @@ function runBridge({
   const location = {
     href: url.href, origin: url.origin, pathname: url.pathname, search: url.search, hash: url.hash,
     replace(to) { replaced.push(to); },
+    reload(force) { reloads.push(location.href); forced.push(force); },
   };
+  const scriptSrc = script === undefined ? `${url.origin}/usernode-bridge/v1/bridge.js` : script;
   const history = {
     state: null,
     replaceState(_s, _t, to) {
@@ -350,6 +385,7 @@ function runBridge({
   if (files) stored['usernode:offline-files'] = JSON.stringify(files);
   if (checked) stored['usernode:offline-checked'] = JSON.stringify(checked);
   const storage = memoryStorage(stored);
+  if (storageBroken) storage.setItem = () => { throw new Error('QuotaExceededError'); };
   let observer = null;
   const win = {
     addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
@@ -357,7 +393,7 @@ function runBridge({
   win.parent = standalone ? win : parent;
   const context = {
     window: win, location, history, localStorage: storage, URL, URLSearchParams, JSON, Promise, String, Array,
-    document: { documentElement: { style } },
+    document: { documentElement: { style }, currentScript: scriptSrc === null ? null : { src: scriptSrc } },
     navigator: { onLine: online },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); },
     PerformanceObserver: class {
@@ -384,7 +420,7 @@ function runBridge({
     for (const t of timers.splice(0)) t.fn();
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  return { location, posted, fetched, replaced, style, storage, observer, listeners, timers, fireLoad };
+  return { location, posted, fetched, replaced, reloads, forced, style, storage, observer, listeners, timers, fireLoad };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // Values built inside the vm have its realm's prototypes: compare as JSON.
@@ -421,7 +457,7 @@ test('it moves the token and theme into the query, remembers files, and says it 
   assert.equal(msgs(b), JSON.stringify([{ __usernode_offline_cache: 'open', fresh: true }]));
   await flush();
   assert.equal(b.fetched.length, 0);
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
 });
 
 test('un-refresh fetches the page and the remembered files past the cache, then reloads without it', async () => {
@@ -433,14 +469,14 @@ test('un-refresh fetches the page and the remembered files past the cache, then 
   await flush(); await flush();
   assert.deepEqual(b.fetched.map((f) => f.u).sort(), ['https://chores.apps.example/', 'https://chores.apps.example/app.js']);
   assert.ok(b.fetched.every((f) => f.opts.cache === 'reload'), 'past the cache');
-  assert.deepEqual(b.replaced, ['https://chores.apps.example/#un-token=tok1&un-theme=light'],
+  assert.deepEqual(b.reloads, ['https://chores.apps.example/#un-token=tok1&un-theme=light'],
     'the same address without the flag: the reload is the next, fresh open');
 });
 
 test('a refresh that cannot fetch the page runs on the copy there is', async () => {
   const b = runBridge({ href: 'https://chores.apps.example/#un-theme=light&un-refresh=1', pageOk: false });
   await flush(); await flush();
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '', 'shown again');
   assert.equal(msgs(b), JSON.stringify([{ __usernode_offline_cache: 'open', fresh: false }]),
     'never fresh: the shell asks again on the next open');
@@ -497,7 +533,7 @@ test('online, after load, a file the app now serves differently brings one reloa
     const modes = checks(b).filter((f) => f.u === u).map((f) => f.opts.cache);
     assert.deepEqual(modes, ['force-cache', 'no-cache'], `${u}: the kept copy, then the app's, once each`);
   }
-  assert.deepEqual(b.replaced, [`${PAGE}#un-token=tok1&un-theme=light&un-checked=1`],
+  assert.deepEqual(b.reloads, [`${PAGE}#un-token=tok1&un-theme=light&un-checked=1`],
     'one reload of the same address, marked so the reload checks nothing');
   assert.equal(b.style.visibility, 'hidden', 'the old styling is not shown while it reloads');
   const last = JSON.parse(b.storage.getItem('usernode:offline-checked'));
@@ -513,7 +549,7 @@ test('nothing changed, nothing reloads', async () => {
   const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: same });
   await b.fireLoad();
   assert.ok(checks(b).length > 0);
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '');
 });
 
@@ -522,7 +558,7 @@ test('the reload it made, an open offline, and a second open within ten minutes 
   await again.fireLoad();
   assert.equal((again.listeners.load || []).length, 0, 'the reload it made');
   assert.equal(checks(again).length, 0);
-  assert.equal(again.replaced.length, 0);
+  assert.equal(again.reloads.length, 0);
 
   const offline = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, online: false });
   await offline.fireLoad();
@@ -538,14 +574,14 @@ test('the reload it made, an open offline, and a second open within ten minutes 
     href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, checked: { page: PAGE, at: Date.now() - 11 * 60_000 },
   });
   await later.fireLoad();
-  assert.equal(later.replaced.length, 1, 'eleven minutes later it checks again');
+  assert.equal(later.reloads.length, 1, 'eleven minutes later it checks again');
 
   const newBuild = runBridge({
     href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS,
     checked: { page: `${SITE}/?un-build=old999`, at: Date.now() - 60_000 },
   });
   await newBuild.fireLoad();
-  assert.equal(newBuild.replaced.length, 1, 'a new build\'s page is its own address, checked at once');
+  assert.equal(newBuild.reloads.length, 1, 'a new build\'s page is its own address, checked at once');
 });
 
 test('a file with no validator, or a check that fails, counts as unchanged', async () => {
@@ -556,7 +592,7 @@ test('a file with no validator, or a check that fails, counts as unchanged', asy
   };
   const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: unknown });
   await b.fireLoad();
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '');
 });
 
@@ -566,12 +602,12 @@ test('a refresh does not also check, and the open after it does', async () => {
   });
   await flush(); await flush();
   assert.equal((refreshing.listeners.load || []).length, 0);
-  assert.deepEqual(refreshing.replaced, [`${PAGE}#un-token=tok1`], 'the refresh reloads as before');
+  assert.deepEqual(refreshing.reloads, [`${PAGE}#un-token=tok1`], 'the refresh reloads as before');
   // That reload is an ordinary open: it checks, and catches the file the
   // refresh never remembered.
-  const after = runBridge({ href: refreshing.replaced[0], resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`] });
+  const after = runBridge({ href: refreshing.reloads[0], resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`] });
   await after.fireLoad();
-  assert.deepEqual(after.replaced, [`${PAGE}#un-token=tok1&un-checked=1`]);
+  assert.deepEqual(after.reloads, [`${PAGE}#un-token=tok1&un-checked=1`]);
 });
 
 test('without Resource Timing it checks the files it remembered', async () => {
@@ -582,7 +618,98 @@ test('without Resource Timing it checks the files it remembered', async () => {
   });
   await b.fireLoad();
   assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/screens.css`]);
-  assert.equal(b.replaced.length, 1);
+  assert.equal(b.reloads.length, 1);
+});
+
+// ── The same check anywhere else an app loads the bridge (25 Nov 2026) ───
+//
+// A private project is framed with the token in its address, where steps 1
+// to 4 never run, and the gate kept its files 30 days anyway: its new page
+// showed over its old screens.css after every change. The gate no longer
+// keeps them, and a browser still holding such a copy heals on its next
+// open: step 5 runs in a frame opened the old way and on the app's own
+// domain too, reloading in place.
+
+const OLD_WAY = `${SITE}/?token=tok1&__ua=1&un-theme=dark`;
+
+test('a frame opened the old way checks the files it ran on and reloads once in place', async () => {
+  const b = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS });
+  assert.equal(b.posted.length, 0, 'it says nothing to the shell: that is the cacheable address\'s');
+  assert.equal(b.location.search, '?token=tok1&__ua=1&un-theme=dark', 'the address is left as it is');
+  assert.equal(b.observer, null, 'nothing is remembered for a refresh');
+  await b.fireLoad();
+  assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/logo.png`, `${SITE}/screens.css`]);
+  assert.equal(b.reloads.length, 1, 'one reload, of the same address');
+  assert.equal(b.replaced.length, 0);
+  assert.equal(b.style.visibility, 'hidden');
+  assert.equal(JSON.parse(b.storage.getItem('usernode:offline-checked')).page, `${SITE}/`,
+    'recorded without the token, the retry marker or the theme');
+});
+
+test('the app on its own domain is checked the same way', async () => {
+  const b = runBridge({ href: `${SITE}/list?view=week`, standalone: true, resources: RAN_ON, served: STALE_CSS });
+  await b.fireLoad();
+  assert.equal(b.reloads.length, 1);
+  assert.equal(JSON.parse(b.storage.getItem('usernode:offline-checked')).page, `${SITE}/list?view=week`);
+  const same = runBridge({
+    href: `${SITE}/list?view=week`, standalone: true, resources: RAN_ON,
+    served: { [`${SITE}/app.js`]: { kept: 'W/"10-a"', now: 'W/"10-a"' } },
+  });
+  await same.fireLoad();
+  assert.ok(checks(same).length > 0);
+  assert.equal(same.reloads.length, 0, 'nothing changed, nothing reloads');
+});
+
+test('the reload it made checks nothing, whatever new token it carries', async () => {
+  const again = runBridge({
+    href: `${SITE}/?token=tok2&un-theme=dark`, resources: RAN_ON, served: STALE_CSS,
+    checked: { page: `${SITE}/`, at: Date.now() - 5_000 },
+  });
+  await again.fireLoad();
+  assert.equal(checks(again).length, 0);
+  assert.equal(again.reloads.length, 0);
+});
+
+test('outside the cacheable address, no storage means no check rather than a reload loop', async () => {
+  const b = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS, storageBroken: true });
+  await b.fireLoad();
+  assert.equal(checks(b).length, 0);
+  assert.equal(b.reloads.length, 0);
+});
+
+test('Homeroom\'s own pages, which load the unversioned copy, are never checked', async () => {
+  for (const href of [`${SITE}/`, OLD_WAY]) {
+    const b = runBridge({ href, standalone: href === `${SITE}/`, resources: RAN_ON, served: STALE_CSS, script: `${SITE}/usernode-bridge.js` });
+    await b.fireLoad();
+    assert.equal((b.listeners.load || []).length, 0, href);
+    assert.equal(checks(b).length, 0, href);
+    assert.equal(b.reloads.length + b.replaced.length, 0, href);
+  }
+  const unknown = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS, script: null });
+  await unknown.fireLoad();
+  assert.equal(checks(unknown).length, 0, 'a bridge that cannot tell where it was loaded from checks nothing');
+});
+
+// 25 Nov 2026: in Firefox the check put the new screens.css in the disk
+// cache, and the frame reloaded onto the old styling anyway. Firefox reuses a
+// stylesheet it has already parsed, from memory, on a plain reload and on a
+// navigation to the same page (measured in headless Firefox 160, both at the
+// cacheable address and in a frame opened the old way). Only reload(true),
+// its forceGet, draws the new one; other browsers ignore the argument.
+test('every reload the block makes goes past the browser\'s own caches', async () => {
+  const refreshing = runBridge({ href: `${PAGE}#un-token=tok1&un-refresh=1`, files: [`${SITE}/app.js`] });
+  await flush(); await flush();
+  const cacheable = runBridge({ href: `${PAGE}#un-token=tok1&un-theme=light`, resources: RAN_ON, served: STALE_CSS });
+  await cacheable.fireLoad();
+  const oldWay = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS });
+  await oldWay.fireLoad();
+  for (const [what, b] of [['the refresh on a new build', refreshing], ['a check at the cacheable address', cacheable],
+    ['a check in a frame opened the old way', oldWay]]) {
+    assert.equal(b.reloads.length, 1, what);
+    assert.deepEqual(b.forced, [true], `${what}: reload(true)`);
+    assert.equal(b.replaced.length, 0, `${what}: never a navigation, which Firefox serves from memory`);
+  }
+  assert.doesNotMatch(BLOCK, /location\.replace\(/, 'nothing in the block navigates to reload');
 });
 
 // ── The shell ────────────────────────────────────────────────────────────
