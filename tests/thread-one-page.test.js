@@ -618,6 +618,23 @@ test('D2: a change built for a request lands on the request\'s page, at it; one 
   assert.match(changes, /if \(!card \|\| !takeVotesInView\(id\)\) return;/, 'the change\'s section takes the ask');
 });
 
+test('#7140: a draft opened in the side panel\'s document hands its thread to the top window', () => {
+  const view = read('public/js/app-view.js');
+  const start = view.indexOf('  _openDraftThread(threadRootId) {');
+  const fn = view.slice(start, view.indexOf('  // 6 Nov 2026 (#6439)', start));
+  // The frame draws no bot page: its list belongs to the top window, so the
+  // thread is handed up in place and nothing here moves or reveals a screen.
+  assert.match(fn, /if \(typeof App !== 'undefined' && App\.embeddedPanel\) \{[\s\S]{0,320}?sidePanelEmbed\?\.handTop\?\.\('homeroom-bot\/thread\/' \+ root\);[\s\S]{0,80}?return true;/);
+  assert.ok(fn.indexOf('handTop') < fn.indexOf('history.replaceState'),
+    'handed up before this document\'s own address moves');
+  assert.ok(fn.indexOf('handTop') < fn.indexOf('App.navigateToAi'),
+    'and the frame never reveals the bot page beside its own list');
+  // Outside the panel the draft keeps today's behaviour: its old address is
+  // replaced in place and the thread opens in the tab's column.
+  assert.match(fn, /history\.replaceState\(null, '', `#homeroom-bot\/thread\/\$\{root\}`\)/);
+  assert.match(fn, /App\.navigateToAi\(\);[\s\S]{0,120}?ai\?\.openAt\?\.\(\{ threadRootId: root, focusMessageId: null \}\)/);
+});
+
 // #6225: a change's Votes card lists every request a yes would close, each
 // with its title and filer, and marks a request its requester has not agreed
 // to. The card is GateCard (change-head.tsx), which a change's section on the

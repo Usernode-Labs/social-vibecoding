@@ -43,6 +43,7 @@ RUN echo "base packages refreshed: ${BASE_PACKAGES_REFRESHED}" \
   && apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
+    librsvg2-bin \
     libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
   && v="$(dpkg-query -W -f='${Version}' linux-libc-dev)" \
   && { dpkg --compare-versions "$v" ge 6.12.118-1 \

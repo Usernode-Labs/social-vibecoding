@@ -49,6 +49,10 @@ const contentRules = require('./content-rules-prompt');
 const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 const DEFAULT_WEEKLY_CAP = 24;
 const MAX_COUNT = 4;
+// #7118: a first version's build pays for its own pictures (its logo's card
+// picture, light and dark), so the first two pictures a first-version session
+// makes count toward the build and not the maker's week.
+const FIRST_VERSION_FREE_PICTURES = 2;
 const LETTERS = Object.freeze(['A', 'B', 'C', 'D']);
 const VARIANTS = Object.freeze(['light', 'dark']);
 // The shapes a picture comes in, as the image models take them
@@ -451,11 +455,16 @@ async function drawAll(ask, { model, apiKey, baseUrl, origin, fetchImpl, like = 
 
 // ── Keeping them ─────────────────────────────────────────────────────────
 
-/** How many pictures this person has had made this week (Monday 00:00 UTC on). */
+/**
+ * How many pictures this person has had made this week (Monday 00:00 UTC on).
+ * A first version's own two are the build's, not theirs (#7118), so they are
+ * left out.
+ */
 async function picturesThisWeek(pool, userId) {
   if (!userId) return 0;
   const { rows: [row] } = await pool.query(
-    'SELECT COALESCE(SUM(images), 0)::int AS n FROM homeroom_bot_pictures WHERE payer_user_id = $1 AND created_at >= $2',
+    `SELECT COALESCE(SUM(images), 0)::int AS n FROM homeroom_bot_pictures
+      WHERE payer_user_id = $1 AND created_at >= $2 AND counts_toward_cap`,
     [Number(userId), require('./limits').weekStartUtc()],
   );
   return Number(row?.n) || 0;
@@ -470,7 +479,7 @@ async function picturesThisWeek(pool, userId) {
  */
 async function storePictures(pool, store, {
   payerId = null, conversationId = null, sessionId = null, appId = null, purpose = 'other', prompt, model,
-  costUsd = null, error = null, made = [],
+  costUsd = null, error = null, made = [], countsTowardCap = true,
 }) {
   const media = require('./media-store');
   const client = await pool.connect();
@@ -478,10 +487,12 @@ async function storePictures(pool, store, {
     await client.query('BEGIN');
     const { rows: [row] } = await client.query(
       `INSERT INTO homeroom_bot_pictures
-         (payer_user_id, conversation_id, session_id, app_id, purpose, prompt, model, images, cost_usd, error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+         (payer_user_id, conversation_id, session_id, app_id, purpose, prompt, model, images, cost_usd, error,
+          counts_toward_cap)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [payerId, conversationId, sessionId, appId, purpose, clip(prompt, STORED_PROMPT_CHARS) || '(none)',
-        clip(model, 255), made.length, costUsd == null ? null : Math.round(costUsd * 1e6) / 1e6, error ? clip(error, 200) : null],
+        clip(model, 255), made.length, costUsd == null ? null : Math.round(costUsd * 1e6) / 1e6,
+        error ? clip(error, 200) : null, countsTowardCap !== false],
     );
     const keys = made.length ? await media.putMany(client, store, made.map((m) => ({ data: m.data, contentType: m.contentType }))) : [];
     const images = [];
@@ -531,6 +542,9 @@ const FAILED_TEXT = 'The picture model did not send a picture back just now. Try
  */
 async function generate(pool, config, {
   payerId, ask, conversationId = null, sessionId = null, app = null, settings = null, like = null, deps = {},
+  // #7118: a first version's own pictures are the build's, so they skip the
+  // maker's weekly cap (and are stored as not counting toward it).
+  capFree = false,
 }) {
   if (!payerId) return { ok: false, status: 402, error: 'Nobody\'s building time pays for this, so no picture was made.' };
   const found = guard(ask.prompt);
@@ -540,7 +554,7 @@ async function generate(pool, config, {
   const allowance = pictureAllowance({
     cap: s.pictureWeeklyCap ?? DEFAULT_WEEKLY_CAP, used: await picturesThisWeek(pool, payerId), asked: imagesAsked(ask),
   });
-  if (!allowance.ok) return { ok: false, status: 429, error: allowanceText(allowance), allowance };
+  if (!allowance.ok && !capFree) return { ok: false, status: 429, error: allowanceText(allowance), allowance };
   if (await dm.overWeeklyAllowance(pool, s, payerId)) {
     return { ok: false, status: 402, error: 'Your building time for this week is used up, so I can\'t make pictures until it resets on Monday. Nothing was made.' };
   }
@@ -563,6 +577,7 @@ async function generate(pool, config, {
     payerId: Number(payerId), conversationId: conversationId ? Number(conversationId) : null,
     sessionId: sessionId ? Number(sessionId) : null, appId: app?.id ? Number(app.id) : null,
     purpose: sessionId ? 'build' : ask.purpose, prompt: ask.prompt, model, costUsd: drawn.costUsd,
+    countsTowardCap: !capFree,
   };
   await recordBotSpend(pool, bot.id, drawn.costUsd, deps);
   if (!drawn.made.length) {
@@ -820,7 +835,9 @@ async function designPictures(pool, threadId, artifactId = null) {
  * Who pays for a build session's pictures: the person whose building time
  * pays for the bot's build it is (homeroom_bot_runs: its payer, else its
  * requester), or the person whose own session it is. Null for a build
- * nobody pays for (a shadow build, the bot's own).
+ * nobody pays for (a shadow build, the bot's own). `firstVersion` is true
+ * when the run is a project's first version (#7118), whose own pictures the
+ * build pays for rather than the maker's week.
  */
 async function sessionPayer(pool, sessionId) {
   const { rows: [row] } = await pool.query(
@@ -829,7 +846,12 @@ async function sessionPayer(pool, sessionId) {
                FROM homeroom_bot_runs r
                LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
               WHERE (r.build_session_id = cs.id OR r.session_id = cs.id) AND r.charged
-              ORDER BY r.id DESC LIMIT 1) AS run_payer
+              ORDER BY r.id DESC LIMIT 1) AS run_payer,
+            (SELECT COALESCE(q.first_version, FALSE)
+               FROM homeroom_bot_runs r
+               LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+              WHERE (r.build_session_id = cs.id OR r.session_id = cs.id) AND r.charged
+              ORDER BY r.id DESC LIMIT 1) AS run_first_version
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
       WHERE cs.id = $1`,
@@ -837,7 +859,20 @@ async function sessionPayer(pool, sessionId) {
   );
   if (!row) return null;
   const payerId = row.run_payer ? Number(row.run_payer) : (row.user_id && !row.is_synthetic ? Number(row.user_id) : null);
-  return { sessionId: Number(row.id), appId: row.app_id ? Number(row.app_id) : null, payerId };
+  return {
+    sessionId: Number(row.id), appId: row.app_id ? Number(row.app_id) : null, payerId,
+    firstVersion: row.run_first_version === true,
+  };
+}
+
+/** Whether this first-version session has fewer than its two cap-free pictures so far. */
+async function firstVersionFreePicturesLeft(pool, sessionId) {
+  const { rows: [row] } = await pool.query(
+    `SELECT COALESCE(SUM(images), 0)::int AS n FROM homeroom_bot_pictures
+      WHERE session_id = $1 AND NOT counts_toward_cap`,
+    [Number(sessionId)],
+  );
+  return (Number(row?.n) || 0) < FIRST_VERSION_FREE_PICTURES;
 }
 
 /**
@@ -849,8 +884,11 @@ async function generateForSession(pool, config, { sessionId, prompt, aspect = 's
   if (!who) return { ok: false, status: 404, error: 'No such build.' };
   const ask = normalizeAsk({ prompt, count: 1, aspect, variants: variant ? [variant] : null, for: 'app' });
   if (ask.error) return { ok: false, status: 400, error: ask.error };
+  // #7118: a first version's build makes its own logo's card picture in both
+  // looks, and those first two pictures are the build's, not the maker's.
+  const capFree = who.firstVersion && await firstVersionFreePicturesLeft(pool, who.sessionId);
   const made = await generate(pool, config, {
-    payerId: who.payerId, ask, sessionId: who.sessionId, app: who.appId ? { id: who.appId } : null, deps,
+    payerId: who.payerId, ask, sessionId: who.sessionId, app: who.appId ? { id: who.appId } : null, deps, capFree,
   });
   if (!made.ok) return made;
   const first = made.images[0];
@@ -863,6 +901,7 @@ module.exports = {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_WEEKLY_CAP,
   MAX_COUNT,
+  FIRST_VERSION_FREE_PICTURES,
   LETTERS,
   VARIANTS,
   ASPECTS,

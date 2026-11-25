@@ -47,6 +47,8 @@ interface TopPanel {
   openApp?: (slug: string) => void;
   leave?: (route: string) => void;
   back?: () => void;
+  /** #7140: a route this document must not draw, to the top in place. */
+  swap?: (route: string) => void;
 }
 
 type Win = Window & {
@@ -70,6 +72,14 @@ export interface EmbeddedRuntime {
   go(route: string): void;
   /** App.restoreFromHash asks: is `route` the top window's? If so it has gone there. */
   forward(route: string): boolean;
+  /**
+   * #7140: a route this document must not draw at all — the Homeroom bot tab,
+   * whose list belongs to the top window. Hand it up, which replaces the
+   * top's own entry with it, and leave the page here on screen. Not gated on
+   * `booted` as `forward` is: a frame whose FIRST page is that address has to
+   * hand it up too.
+   */
+  handTop(route: string): boolean;
   /** An app's App tab, asked for in here: the running app beside the panel. */
   openApp(slug: string): void;
   /** The top document's comment picture asks for this document's own page (#4975). */
@@ -327,6 +337,17 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
       const slug = appTabSlug(next);
       if (slug) panel.openApp?.(slug);
       else panel.leave?.(next);
+      return true;
+    },
+    handTop(next: string): boolean {
+      if (!next) return false;
+      // Put this document back on the page it is showing first, so the frame
+      // never stays on an address it is not drawing while the top moves. A
+      // frame still booting has no settled page to put back.
+      if (booted) restore();
+      const panel = top();
+      if (!panel || typeof panel.swap !== 'function') return false;
+      panel.swap(next);
       return true;
     },
     openApp(slug: string): void {

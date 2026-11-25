@@ -711,6 +711,11 @@ test('the filter: projects ranked by what needs you most, one control that opens
     'a sheet on a phone, a menu under the chip on a wide window; nothing in the prerender');
   assert.match(picker, /type="checkbox"[\s\S]*?checked=\{picked\.includes\(p\.app\.slug\)\}[\s\S]*?onChange=\{\(\) => onToggle\(p\.app\.slug\)\}/, 'a pick applies at once');
   assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
+  // #7126: Show all projects clears the ticks and then closes, so the lists
+  // behind show every project again rather than the panel staying as it was.
+  assert.match(picker, /onClick=\{\(\) => \{ onClear\(\); onClose\(\); \}\}\s+disabled=\{!picked\.length\}\s+data-ai-pick-all=""/,
+    'Show all projects unpicks every project, then closes the panel; with nothing picked it is disabled');
+  assert.doesNotMatch(picker, /onClick=\{onClear\}/, 'the press does more than clear, which changed nothing inside the panel');
   assert.equal(message('messages:ai.filter.note.needs', { count: 1 }), '1 needs you');
   assert.equal(message('messages:ai.filter.note.needs', { count: 3 }), '3 need you');
   assert.equal(message('messages:ai.filter.note.live', { count: 2 }), '2 live this week');
@@ -1365,6 +1370,22 @@ test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old
   // A Messages address of the bot's chat is swapped in place for the tab's.
   assert.match(app, /const botTab = validConversation \? window\.UsernodeReact\?\.ai\?\.botTabFromMessages\?\.\(`#\$\{hash\}`\) : null;\s+if \(botTab\) \{\s+try \{ history\.replaceState\(null, '', App\._rootUrl\(botTab\)\); \} catch \(_\) \{ return; \}\s+App\.restoreFromHash\(\);\s+return;\s+\}/);
   assert.match(read('frontend/src/features/nav-drawer/messages-drawer.ts'), /if \(at\.conversationId && at\.bot\) return false;/);
+});
+
+test('#7140: a thread beside the list sits on the tab\'s own ground, never a white sheet', () => {
+  // The private thread is drawn as cards on the page's ground: the docked
+  // column paints nothing round it. Pinned so the panel's white ground cannot
+  // come back as the thread's (the second copy of the list that did is
+  // covered by tests/side-panel.test.js and tests/thread-one-page.test.js).
+  const css = read('public/css/app.css');
+  const rule = css.match(/#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\.dev-private-thread\) \{([^}]*)\}/);
+  assert.ok(rule, 'the docked column\'s thread rule exists');
+  assert.match(rule[1], /background: none;/);
+  assert.match(rule[1], /border: 0;/);
+  assert.match(rule[1], /border-radius: 0;/);
+  // And the panel's document never mounts the bot page's lists at all.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(App\.embeddedPanel\) \{\s+const hash = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);\s+const route = \/\^homeroom-bot\(\?:\\\/\|\$\)\/\.test\(hash\) \? hash\.split\('\?'\)\[0\] : 'homeroom-bot';\s+window\.UsernodeReact\?\.sidePanelEmbed\?\.handTop\?\.\(route\);\s+return;\s+\}/);
 });
 
 test('the way into the bot\'s chat: each address and each door names a place in it, on its tab', () => {

@@ -104,6 +104,8 @@ export interface PanelHeadReport {
   kind: 'request' | 'change';
   pill: unknown | null;
   menuKey: string | null;
+  /** #7120: the title the page's bar draws in place of its plain one, or null. */
+  title?: string | null;
 }
 
 /** What the door says of the page it opens in the panel, for the column's header row. */
@@ -541,9 +543,11 @@ export function back(): void {
 /**
  * Navigate the top window to `route` with its ordinary routing, as a real
  * history entry. Pushed and routed here rather than by assigning the hash, so
- * it runs once and at once instead of on a later hashchange.
+ * it runs once and at once instead of on a later hashchange. `replace` trades
+ * the entry on screen for `route` instead, for a page handed up from the
+ * panel that takes the place of the address it was opened from (#7140).
  */
-function navigateTop(route: string): void {
+function navigateTop(route: string, options?: { replace?: boolean }): void {
   const A = app();
   if (!A) return;
   bypass = true;
@@ -553,7 +557,8 @@ function navigateTop(route: string): void {
       return;
     }
     const url = typeof A._rootUrl === 'function' ? A._rootUrl(`#${route}`) : `/#${route}`;
-    window.history.pushState(null, '', url);
+    if (options && options.replace) window.history.replaceState(null, '', url);
+    else window.history.pushState(null, '', url);
     A._routeFromHash?.();
   } finally {
     bypass = false;
@@ -705,6 +710,18 @@ function embeddedBack(): void {
 }
 
 /**
+ * #7140: a page the panel's document must not draw — the Homeroom bot tab,
+ * whose list belongs to the top window — is handed up by the frame. The top
+ * REPLACES its own entry with it, so the thread takes the place of the
+ * address it was opened from and leaves no Back step of its own. On the top
+ * window's own turn, never inside the frame's call: that frame is dropped as
+ * the bot page's thread takes the column.
+ */
+function embeddedSwap(route: string): void {
+  window.setTimeout(() => navigateTop(route, { replace: true }), 0);
+}
+
+/**
  * The page on screen publishes what its column draws (#6431): its status pill
  * and its own ⋯ key. Taken only while the document can report at all, and
  * null for a page that has neither (a decision, a private thread), so the
@@ -714,7 +731,7 @@ function embeddedHead(route: string, report: PanelHeadReport | null): void {
   const s = sidePanelStore.get();
   if (!ready || !s.frameSrc || !route) return;
   head = report && (report.kind === 'request' || report.kind === 'change')
-    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, route }
+    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, title: typeof report.title === 'string' ? report.title : null, route }
     : null;
   sidePanelStore.set({ head });
 }
@@ -822,6 +839,7 @@ export const embeddedApi = {
   openApp: embeddedOpenApp,
   leave: embeddedLeave,
   back: embeddedBack,
+  swap: embeddedSwap,
 };
 
 // ── The two chokepoints ──────────────────────────────────────────────────
