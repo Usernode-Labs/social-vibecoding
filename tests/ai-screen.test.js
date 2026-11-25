@@ -1367,6 +1367,22 @@ test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old
   assert.match(read('frontend/src/features/nav-drawer/messages-drawer.ts'), /if \(at\.conversationId && at\.bot\) return false;/);
 });
 
+test('#7140: a thread beside the list sits on the tab\'s own ground, never a white sheet', () => {
+  // The private thread is drawn as cards on the page's ground: the docked
+  // column paints nothing round it. Pinned so the panel's white ground cannot
+  // come back as the thread's (the second copy of the list that did is
+  // covered by tests/side-panel.test.js and tests/thread-one-page.test.js).
+  const css = read('public/css/app.css');
+  const rule = css.match(/#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\.dev-private-thread\) \{([^}]*)\}/);
+  assert.ok(rule, 'the docked column\'s thread rule exists');
+  assert.match(rule[1], /background: none;/);
+  assert.match(rule[1], /border: 0;/);
+  assert.match(rule[1], /border-radius: 0;/);
+  // And the panel's document never mounts the bot page's lists at all.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(App\.embeddedPanel\) \{\s+const hash = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);\s+const route = \/\^homeroom-bot\(\?:\\\/\|\$\)\/\.test\(hash\) \? hash\.split\('\?'\)\[0\] : 'homeroom-bot';\s+window\.UsernodeReact\?\.sidePanelEmbed\?\.handTop\?\.\(route\);\s+return;\s+\}/);
+});
+
 test('the way into the bot\'s chat: each address and each door names a place in it, on its tab', () => {
   const door = loadTsx('frontend/src/features/ai/door.ts');
   const plain = (v) => JSON.parse(JSON.stringify(v));
