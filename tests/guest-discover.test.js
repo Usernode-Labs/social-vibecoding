@@ -130,7 +130,20 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   // viewer (the pinned-app tiles); the project page asks the same question.
   assert.match(read(DISCOVER), /<TryLink app=\{app\} className="flex min-w-0 flex-col items-center gap-1\.5 no-underline" onOpenInside=\{open\} inside=\{signedIn\}>/);
   assert.match(read(PROJECT), /const canTry = signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\);/);
-  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview \|\| app\.guest_ready === true\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  // #7128: a guest-ready app opens in the landing's viewer for a visitor too,
+  // so the bar (and its way back) stays around it. The frame's Try it asks
+  // the same question in its own onClick.
+  assert.match(read('frontend/src/features/guest/frame/project-frame.tsx'),
+    /if \(signedIn \|\| app\.requires_login === false \|\| app\.guest_ready === true\) \{ event\.preventDefault\(\); onOpenInside\(app\); \}/);
+  // Rendered as a visitor with no account: an app with a guest's view keeps
+  // Open; one without keeps Sign up to open.
+  const guestReady = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[0]));
+  assert.match(guestReady, /data-guest-try="game-corner"/);
+  assert.doesNotMatch(guestReady, /data-guest-use=/);
+  const accountOnly = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[1]));
+  assert.match(accountOnly, /data-guest-use=""/);
+  assert.doesNotMatch(accountOnly, /data-guest-try=/);
   const { inHomeroomApp } = loadTsx(DATA);
   assert.equal(inHomeroomApp(), false, 'a server render is never the app');
 });

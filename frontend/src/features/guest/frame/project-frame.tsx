@@ -113,8 +113,10 @@ export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn,
           href={app.url}
           data-guest-try={app.slug}
           onClick={(event) => {
-            // As the standard page's Try it (../guest-discover.tsx TryLink).
-            if (signedIn || app.requires_login === false) { event.preventDefault(); onOpenInside(app); }
+            // As the standard page's Try it (../guest-discover.tsx TryLink): a
+            // guest-ready app opens in the landing's viewer too, so the bar
+            // (and its way back) stays around it (#7128).
+            if (signedIn || app.requires_login === false || app.guest_ready === true) { event.preventDefault(); onOpenInside(app); }
           }}
         >
           <Icon name="play" size={17} />

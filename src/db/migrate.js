@@ -8810,16 +8810,18 @@ async function seedStagingDemoAppCard(pool) {
 // The pre-sign-in page is the first thing a logged-out visitor sees, and a
 // fresh staging DB has no public running apps at all — so the grid renders
 // empty and neither the open-tile zoom nor the gated-tile signup detour can
-// be exercised. This seeds ONE open tile and ONE gated tile so both branches
-// of the `requires_login` mapping are visible side by side, plus a little
-// app_activity so the open tile's active-users badge is nonzero.
+// be exercised. This seeds ONE open tile, ONE gated tile and ONE guest-ready
+// tile whose app asks for an account (guest_shell public, anon_shell gated;
+// #7128), so every branch of the `requires_login`/`guest_ready` mapping is
+// visible side by side, plus a little app_activity so the open tile's
+// active-users badge is nonzero.
 //
 // The far-future anon_shell_checked_at is load-bearing: src/services/
 // shell-probe.js re-probes every running public app whose check is stale
 // (NULL, older than an hour, or predating last_deploy_at), and these
 // fixtures have no container behind them — a plain NOW() stamp would be
 // overwritten with 'unknown' (→ gated) inside one 5-minute sweep and the
-// open tile would silently flip. Stamping a year out keeps both fixtures
+// open tile would silently flip. Stamping a year out keeps the fixtures
 // pinned to the classification seeded here.
 //
 // Ids sit in the 9001xx range so they clear cloned prod rows and the other
@@ -8851,19 +8853,26 @@ async function seedStagingLandingDirectory(pool) {
 
     const OPEN_APP_ID = 900100;
     const GATED_APP_ID = 900101;
+    // #7128: a public project whose app answers a guest but still asks for an
+    // account (anon_shell gated, guest_shell public): Open from its page must
+    // keep Homeroom's bar around the app for a visitor with no account.
+    const GUEST_READY_APP_ID = 900102;
     await pool.query(
       `INSERT INTO apps
          (id, name, slug, status, view_visibility, created_by,
-          icon_emoji, last_deploy_at, anon_shell, anon_shell_checked_at)
+          icon_emoji, last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at)
        VALUES
          ($1, '[Mock] Open demo app', 'staging-landing-open',
-          'running', 'public', $3, '🛝',
-          NOW() - INTERVAL '2 days', 'public', NOW() + INTERVAL '1 year'),
+          'running', 'public', $4, '🛝',
+          NOW() - INTERVAL '2 days', 'public', 'unknown', NOW() + INTERVAL '1 year'),
          ($2, '[Mock] Gated demo app', 'staging-landing-gated',
-          'running', 'public', $3, '🔒',
-          NOW() - INTERVAL '3 days', 'gated', NOW() + INTERVAL '1 year')
+          'running', 'public', $4, '🔒',
+          NOW() - INTERVAL '3 days', 'gated', 'unknown', NOW() + INTERVAL '1 year'),
+         ($3, '[Mock] Guest-ready demo app', 'staging-landing-guest-ready',
+          'running', 'public', $4, '🎲',
+          NOW() - INTERVAL '1 day', 'gated', 'public', NOW() + INTERVAL '1 year')
        ON CONFLICT DO NOTHING`,
-      [OPEN_APP_ID, GATED_APP_ID, OWNER_ID]
+      [OPEN_APP_ID, GATED_APP_ID, GUEST_READY_APP_ID, OWNER_ID]
     );
 
     // Re-stamp on every boot: ON CONFLICT above skips rows that already
@@ -8872,9 +8881,10 @@ async function seedStagingLandingDirectory(pool) {
     await pool.query(
       `UPDATE apps
           SET anon_shell = CASE WHEN id = $1 THEN 'public' ELSE 'gated' END,
+              guest_shell = CASE WHEN id = $3 THEN 'public' ELSE guest_shell END,
               anon_shell_checked_at = NOW() + INTERVAL '1 year'
-        WHERE id IN ($1, $2)`,
-      [OPEN_APP_ID, GATED_APP_ID]
+        WHERE id IN ($1, $2, $3)`,
+      [OPEN_APP_ID, GATED_APP_ID, GUEST_READY_APP_ID]
     );
 
     // Active-users badge: the public list counts distinct users with a
