@@ -1151,7 +1151,9 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     liveAt: v.liveAt || null,
     // T2.3: the change's stored row words the last step, as it words the foot.
     work: v.work || null,
-  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt, v.work]);
+    // #7117 discussion: each update after the first is a step of its own.
+    updates: v.updates || null,
+  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt, v.work, v.updates]);
   // The standard look and the brand look draw the card the thread design
   // agreed (./thread-card.tsx): a kicker, the summary and whose words it is,
   // the picture, and a foot that says where it stands. A step of the

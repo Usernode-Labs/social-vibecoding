@@ -154,6 +154,29 @@ test('up for a vote, approved and going live, live, and closed', () => {
   assert.equal(closed[1].tone, 'muted');
 });
 
+test('#7117 discussion: each update after the first is a step of its own', () => {
+  const { changeRail } = loadTsx(MODEL);
+  const gate = (over = {}) => ({ name: 'Votes', figure: '', tone: 'muted', done: false, note: [], ...over });
+  const input = {
+    id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: null,
+    testing: gate({ name: 'Tested', figure: 'All checks passed', tone: 'done', done: true }),
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: gate({ figure: 'Needs 2 more yes' }),
+  };
+  const updated = changeRail({
+    ...input,
+    updates: [{ at: '2026-11-20T09:00:00Z', by: 'evan', votesKept: false }],
+  });
+  assert.deepEqual(names(updated), ['Built', 'Updated', 'Tested', 'Up for a vote'], 'the update sits after Built');
+  assert.equal(updated[1].at, '2026-11-20T09:00:00Z', 'when it happened');
+  assert.equal(words(updated[1].desc), 'By evan.', 'by whom, when the line records a person');
+  assert.equal(words(updated[1].note), 'Earlier votes were cleared.');
+  const kept = changeRail({ ...input, updates: [{ at: '2026-11-21T09:00:00Z', bot: true, votesKept: true }] });
+  assert.equal(words(kept[1].desc), 'By Homeroom bot.', 'Homeroom made it, and said so without a name');
+  assert.equal(words(kept[1].note), 'Earlier votes still stand.');
+  assert.deepEqual(names(changeRail({ ...input, updates: [] })), ['Built', 'Tested', 'Up for a vote'], 'no updates, no step');
+});
+
 test('several changes are numbered, and each opens its own section', () => {
   const { requestRail } = loadTsx(MODEL);
   const steps = requestRail({
