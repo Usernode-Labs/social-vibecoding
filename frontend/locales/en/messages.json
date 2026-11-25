@@ -6524,12 +6524,12 @@
     "description": "Under \"The preview couldn't start\" on a private thread's opening card."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change an app live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to make changes to a live preview of {{app}}<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. {{app}} is the picked project's name. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change an app live",
-    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
+    "text": "I want to make changes to a live preview of {{app}}",
+    "description": "Written into the message box when the \"I want to make changes to a live preview of…\" pill is tapped, for the person to finish the sentence (for example, \"I want to make changes to a live preview of Supply Line: make the start button bigger\"). {{app}} is the picked project's name. Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   },
   "artifacts.button": {
     "text": "Artifacts",

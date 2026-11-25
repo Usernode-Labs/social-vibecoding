@@ -354,7 +354,7 @@ test('a draft the turn just opened makes the change asked for in that same turn,
   };
   await realMayor.runDmTurn(pool, {}, {
     bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: { mode: 'live' }, conversationId: 7,
-    message: { id: 61, content: 'I want to change an app live: make the start button bigger', threadRootId: 50 },
+    message: { id: 61, content: 'I want to make changes to a live preview of Gym: make the start button bigger', threadRootId: 50 },
     deps: {
       chat: async (options) => {
         seen.push({ tools: options.tools.map((t) => t.function.name), messages: JSON.parse(JSON.stringify(options.messages)) });
