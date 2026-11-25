@@ -504,20 +504,28 @@ async function getHostVisibility(pool, slug) {
   return entry;
 }
 
-// Did this app say `"offline": false` in dapp.json (services/offline-cache.js)?
-// The app gate's access answer asks, only while offline apps are on. The one
-// field, not the snapshot (the platform's own is ~280 KB), by the same rule
-// as offlineCache.optedOut: only a literal false.
+// Is this app kept out of the offline cache (services/offline-cache.js)? The
+// app gate's access answer asks, only while offline apps are on, by the rest
+// of offlineCache.forApp's rule (the gate itself reads view-private):
+//   * it said `"offline": false` in dapp.json: only a literal false, read as
+//     the one field, not the snapshot (the platform's own is ~280 KB);
+//   * two people's frames found its page did not open at the cacheable
+//     address on its live build (offline-cache-refusals.js): the shell
+//     frames it with the token in its address until it deploys again, where
+//     the bridge's refresh never runs, so a kept file would outlive the
+//     next change.
 const offlineOptOutById = new Map(); // appId -> { at, off }
-async function offlineOptedOut(pool, appId) {
+async function offlineCacheOff(pool, appId) {
   const now = Date.now();
   const hit = offlineOptOutById.get(appId);
   if (hit && now - hit.at < VIS_CACHE_TTL_MS) return hit.off;
   const { rows } = await pool.query(
-    `SELECT (manifest_snapshot -> 'offline') = 'false'::jsonb AS off FROM apps WHERE id = $1`,
+    `SELECT (manifest_snapshot -> 'offline') = 'false'::jsonb AS off,
+            (offline_cache_off_sha IS NOT NULL AND lower(offline_cache_off_sha) = lower(main_sha)) AS refused
+       FROM apps WHERE id = $1`,
     [appId]
   );
-  const off = rows[0]?.off === true;
+  const off = rows[0]?.off === true || rows[0]?.refused === true;
   if (offlineOptOutById.size >= 5000) offlineOptOutById.clear();
   offlineOptOutById.set(appId, { at: now, off });
   return off;
@@ -539,7 +547,7 @@ async function isViewMember(pool, appId, userId) {
 }
 
 module.exports = {
-  offlineOptedOut,
+  offlineCacheOff,
   resetOfflineOptOutsForTest,
   ACCESS_COLUMNS,
   SECRET_APP_COLUMNS,
