@@ -78,10 +78,10 @@ test('a row with no timestamp sorts last, not first', () => {
   assert.deepEqual(merged.map((e) => e.key), ['person:3', 'person:2', 'person:1']);
 });
 
-test('one heading, People, and there are no filter chips and no Agents', () => {
+test('one heading, DMs & groups, and there are no filter chips and no Agents', () => {
   assert.equal(inbox.INBOX_SECTIONS, undefined, 'one section: there is no list of them');
-  assert.equal(message('messages:inbox.section.people'), 'People',
-    'audit C02: it holds group chats too, so it is not headed "Direct messages"');
+  assert.equal(message('messages:inbox.section.people'), 'DMs & groups',
+    'audit C02: it holds group chats too, so it is not headed "Direct messages" (desktop polish 09: nor "People")');
   assert.throws(() => message('messages:inbox.section.agents'), 'Agents is no heading of Messages any more');
   assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the heading says what the rows are');
   assert.equal(inbox.admits, undefined);
@@ -423,8 +423,8 @@ test('#name is a channel only when the viewer has one; #123 stays an issue and P
   assert.deepEqual(segs.filter((s) => s.type !== 'text'), [
     { type: 'channel', handle: 'general' },
     { type: 'channel', handle: 'recipe-box' },
-    { type: 'ref', isPr: false, num: '123' },
-    { type: 'ref', isPr: true, num: '9' },
+    { type: 'ref', isPr: false, num: '123', label: '#123' },
+    { type: 'ref', isPr: true, num: '9', label: 'PR#9' },
     { type: 'mention', name: 'ada' },
   ]);
   assert.equal(segs.map((s) => s.value || '').join('').includes('#todo'), true, 'an unknown #word is left as text');
@@ -587,7 +587,7 @@ test('a new account\'s Messages says it is empty: #general is read but never lis
 });
 
 
-test('the oldest-chats shortcut shows only above the end of a visible overflowing inbox', () => {
+test('the jump-to-bottom shortcut shows only above the end of a visible overflowing inbox', () => {
   const { showsToEnd } = loadTsx('frontend/src/features/messages/inbox-to-end.tsx');
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 500, scrollTop: 0 }), false);
   assert.equal(showsToEnd({ clientHeight: 0, scrollHeight: 900, scrollTop: 0 }), false);
@@ -595,5 +595,7 @@ test('the oldest-chats shortcut shows only above the end of a visible overflowin
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 580 }), false);
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 579 }), true);
   assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>/);
-  assert.equal(message('messages:inbox.toEnd.label'), 'Oldest chats');
+  // Desktop polish 10: it says what it does, not where it lands.
+  assert.equal(message('messages:inbox.toEnd.label'), 'Jump to bottom');
+  assert.equal(message('messages:inbox.toEnd.name'), 'Jump to the bottom of the list');
 });

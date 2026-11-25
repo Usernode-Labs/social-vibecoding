@@ -44,6 +44,9 @@
 // Materialize the ignored SQL input even for direct node --test invocations.
 require('../../src/db/schema-source').ensureSchema();
 
+// A forced exit waits until the process's report has reached the runner.
+require('./forced-exit');
+
 const net = require('net');
 
 // ── Patch 1 ─────────────────────────────────────────────────────────────

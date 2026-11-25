@@ -106,7 +106,9 @@ test('the Workshop tab draws no "Lately in this project" panel: Overview leads s
   assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/dev-board/workshop/notices.tsx')), 'the panel is gone');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(lander, /WorkshopNotices|NoticesPanel|data-ws-notices|from '\.\/notices'/);
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  // 24 Nov 2026: the brand look's tab (the standard look draws the front page, ./front-page.tsx, which has no such panel either).
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp && !frontPage && !wipLook ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/front-page.tsx'), /WorkshopNotices|NoticesPanel|data-ws-notices/);
   assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── YOUR WORK ──/,
     'the Overview card, then Your work (5 Nov 2026: it was What\'s happening)');
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-notice/, 'and none of its CSS');
@@ -137,12 +139,11 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // The menu row lands on the hub before it follows its link, which is full
   // width everywhere, beside a running app too: a community's page is never
   // the side panel's (side-panel/routes.ts).
-  // #5927 item 3: while its badge counts decisions waiting on you, the row
-  // is a door to the list of them, Needs you, instead of the hub; a plain
-  // click only (tests/app-menu-title-version.test.js presses it).
+  // #7049: the row always opens the hub, even while its badge counts
+  // decisions waiting on you; a plain click only (the same suite presses it).
   const sheetSrc = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheetSrc, /onClick=\{\(e\) => openCommunityRow\(e, slug, owed\)\}/);
-  assert.match(sheetSrc, /if \(communityRowPlace\(owed\) === 'needs'\) view\?\._landOnTab\?\.\(slug, 'needs'\);\n\s*else view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
+  assert.match(sheetSrc, /if \(slug\) \{\n\s*const view = \(window as any\)\.AppView;\n\s*view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
   // One Home (#6361): a Home card's "Go to community" and an old
   // `#apps/<slug>` details address are doors to the hub too.
   assert.match(read('frontend/src/features/home/home.js'), /openHub\(slug\) \{\n\s*if \(!slug\) return;\n\s*try \{ window\.AppView\?\._landOnHub\?\.\(slug\); \}/);

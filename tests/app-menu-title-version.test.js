@@ -118,15 +118,15 @@ test('Homeroom\'s line names the build this document loaded, not the newer one o
     message('agent:appContext.about.version.app', { version: 'b0b0b0b' }));
 });
 
-test('Go to community opens on Needs you while decisions wait on you, else on the hub (#5927 item 3)', () => {
-  assert.equal(ui.communityRowPlace(7), 'needs', 'the badge counts decisions, so the row opens on the list of them');
-  assert.equal(ui.communityRowPlace(1), 'needs');
-  assert.equal(ui.communityRowPlace(0), 'status', 'nothing waits: the hub');
-  assert.equal(ui.communityRowPlace(null), 'status', 'no figure (loading, offline): the hub');
+test('Go to community always opens the hub, even while decisions wait on you (#7049)', () => {
+  assert.equal(ui.communityRowPlace(7), 'status', 'the badge still counts them, but the row opens the hub');
+  assert.equal(ui.communityRowPlace(1), 'status');
+  assert.equal(ui.communityRowPlace(0), 'status');
+  assert.equal(ui.communityRowPlace(null), 'status', 'no figure (loading, offline): the hub too');
 
   // The link the browser opens by itself (new tab, middle click) names the
-  // same place: Needs you's own address while the badge shows.
-  assert.equal(ui.communityRowHref('bread-bot', 3), '/app/bread-bot/workshop?ws=needs');
+  // same place, whatever the badge says.
+  assert.equal(ui.communityRowHref('bread-bot', 3), '#app/bread-bot/dev/hub');
   assert.equal(ui.communityRowHref('bread-bot', 0), '#app/bread-bot/dev/hub', 'the Hub\'s own address: a new tab lands where a tap does');
   assert.equal(ui.communityRowHref('bread-bot', null), '#app/bread-bot/dev/hub');
   assert.equal(ui.communityRowHref(null, 3), '#');
@@ -136,7 +136,7 @@ test('Go to community opens on Needs you while decisions wait on you, else on th
   assert.match(html, /id="app-menu-row-workshop"[^>]*href="#app\/bread-bot\/dev\/hub"/);
 });
 
-test('pressing Go to community: a plain click lands on its place, a modified one changes nothing here (#5927 item 3)', (t) => {
+test('pressing Go to community: a plain click always lands on the hub, a modified one changes nothing here (#7049)', (t) => {
   const previousWindow = global.window;
   const realDismiss = ui.AppContext.dismissForNav;
   t.after(() => { global.window = previousWindow; ui.AppContext.dismissForNav = realDismiss; });
@@ -167,13 +167,13 @@ test('pressing Go to community: a plain click lands on its place, a modified one
   };
 
   const plain = press({}, 7);
-  assert.deepEqual(plain.calls, [['tab', 'bread-bot', 'needs']], 'a plain click opens the page on Needs you');
+  assert.deepEqual(plain.calls, [['hub', 'bread-bot']], 'a plain click opens the hub, even with 7 waiting on you');
   assert.ok(plain.prevented, 'and follows the page address in place');
   assert.equal(plain.hash, '#app/bread-bot/workshop');
   assert.equal(plain.dismissed, 1);
 
   const none = press({}, 0);
-  assert.deepEqual(none.calls, [['hub', 'bread-bot']], 'nothing waiting: the hub, as before');
+  assert.deepEqual(none.calls, [['hub', 'bread-bot']], 'the same with nothing waiting');
 
   for (const mods of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
     const r = press(mods, 7);
@@ -187,10 +187,10 @@ test('pressing Go to community: a plain click lands on its place, a modified one
   assert.deepEqual(taken.calls, [], 'a click something else took changes nothing here either');
 });
 
-test('a modified click on Go to community: the real close waits until the browser has read the link (#5927 item 3)', async (t) => {
-  // Closing publishes `open: false` synchronously, which clears the badge's
-  // figure and so the row's Needs you address. The browser reads the link
-  // once the click handler returns, so nothing may publish before then.
+test('a modified click on Go to community: the real close waits until the browser has read the link (#7049)', async (t) => {
+  // Closing publishes `open: false` synchronously, which tears the row down.
+  // The browser reads the link once the click handler returns, so nothing may
+  // publish before then.
   const previousWindow = global.window;
   const initial = { ...ui.appContextStore.get() };
   t.after(() => { global.window = previousWindow; ui.appContextStore.set(initial); });
@@ -212,7 +212,7 @@ test('a modified click on Go to community: the real close waits until the browse
   // row's href are what they were when the person clicked.
   assert.deepEqual(published, [], 'nothing published during the click');
   assert.equal(ui.AppContext.isOpen(), true);
-  assert.equal(ui.communityRowHref('bread-bot', owed), '/app/bread-bot/workshop?ws=needs');
+  assert.equal(ui.communityRowHref('bread-bot', owed), '#app/bread-bot/dev/hub');
 
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(ui.AppContext.isOpen(), false, 'and then the menu closes, through its own dismissal');

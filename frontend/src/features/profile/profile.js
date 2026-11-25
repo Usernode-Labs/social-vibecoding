@@ -208,8 +208,8 @@ const Profile = {
     else if (Profile._takeSheetAsk('slots')) Profile._appSlotsRequested = true;
     // Under a look You has tabs (./frame/you-frame.tsx), and the address
     // names the one that is up (`#profile?tab=changes`): read on every entry,
-    // so a plain `#profile` is the Overview again. The standard page has no
-    // tabs and never reads this.
+    // so a plain `#profile` is the Overview again. The standard page's
+    // section row reads the same field (#7134): its words are real tabs.
     Profile._readTab(targetUsername);
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and
@@ -1237,16 +1237,16 @@ const Profile = {
   // which keep the sheet open with the user's other edits intact) or
   // `{ error }`. The sheet component owns the disabled state and the messages;
   // this owns the order and the truth-refresh.
-  async _save({ displayName, bio }) {
+  async _save({ displayName, bio, detailsOnly = false }) {
     try {
-      if (Profile._pendingAvatar === 'remove') {
+      if (!detailsOnly && Profile._pendingAvatar === 'remove') {
         const res = await fetch('/api/me/avatar', {
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok) {
           throw new Error((await Profile._errText(res)) || t('profile:edit.photo.removeFailed'));
         }
-      } else if (Profile._pendingAvatar) {
+      } else if (!detailsOnly && Profile._pendingAvatar) {
         const res = await fetch('/api/me/avatar', {
           method: 'POST',
           credentials: 'same-origin',
@@ -1283,7 +1283,7 @@ const Profile = {
       }
 
       await Profile._refreshUser();
-      Profile._dismissSheet();
+      if (!detailsOnly) Profile._dismissSheet();
       Profile._render();
       if (window.PlatformUI) PlatformUI.toast(t('profile:edit.saved'));
       return { ok: true };

@@ -328,13 +328,13 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     ]);
     const out = await turn(place, model, { through: id - 1, key: 'reads-1' });
     assert.equal(out.outcome, 'replied');
-    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its eight rounds, the last of them the answer');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its twelve rounds, the last of them the answer');
     const lastResult = (i) => {
       const results = snaps[i].filter((m) => m.role === 'tool');
       return results.length ? String(results[results.length - 1].content) : '';
     };
-    assert.doesNotMatch(lastResult(4), /reading for this turn is done/, 'the fourth read is served');
-    assert.match(lastResult(5), /reading for this turn is done/, 'the fifth is refused');
+    assert.doesNotMatch(lastResult(8), /reading for this turn is done/, 'the eighth read is served');
+    assert.match(lastResult(9), /reading for this turn is done/, 'the ninth is refused');
     const last = model.seen[voice.MAX_ROUNDS - 1];
     assert.equal(last.toolChoice, 'required');
     assert.deepEqual(last.tools.map((tl) => tl.function.name).sort(), ['reply', 'stay_quiet', 'update_change'],
@@ -663,7 +663,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     ]);
     // An older picture is named, not sent; a file that is not a picture is named.
     assert.match(words, /an older look at it \[Homeroom: they attached the picture older\.png\. Only the newest pictures are shown\.\]/);
-    assert.match(words, /my notes on it \[Homeroom: they attached the file notes\.md, which you cannot open\.\]/);
+    assert.match(words, /my notes on it \[Homeroom: they attached the file notes\.md\. You cannot open it, but a request filed from this thread can carry it to its build\.\]/);
     assert.ok(!JSON.stringify(said).includes('elsewhere.png'), 'nothing of another thread');
     assert.doesNotMatch(words, /\(id c+\d+\)/, 'no file id is on a thread\'s line');
     assert.match(views[0][0].content, /Never say that no picture or file came through/);

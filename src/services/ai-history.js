@@ -20,10 +20,15 @@
 //             decision they opened or voted on, once decided;
 //   solo      a private thread with Homeroom bot: marked done, put away,
 //             filed (or posted) as a request that has since finished, or
-//             about a change that is live or closed.
+//             about a change that is live or closed;
+//   thread    24 Nov 2026 (mobile 04, Evan: "the tab includes every thread
+//             you are in"): a thread they only wrote in or were named in
+//             with @, once it has finished, with how it ended (live, closed,
+//             passed, withdrawn). It is none of the four kinds above, so it
+//             is listed under All and under no kind's chip.
 //
-// A thread they only wrote in or followed is not theirs to remember, so it
-// is not listed. In a private project they are no longer in, only what they
+// A thread they only followed is not theirs to remember, so it is not
+// listed. In a private project they are no longer in, only what they
 // made themselves stays: their own changes and requests, never their votes
 // or other people's decisions. `before` pages back (the `at` of the last row
 // read), `project` narrows to one project, `kind` to one of the four.
@@ -31,15 +36,16 @@
 const aiWork = require('./ai-work');
 
 const LIMIT_MAX = 60;
+// The kinds a `?kind=` narrows to: the four chips. A `thread` row is All's.
 const KINDS = new Set(['change', 'request', 'vote', 'solo']);
 
 // $1 viewer, $2 show self-hosted, $3 admin, $4 the most rows, $5 before (or
 // NULL), $6 a project's slug (or NULL), $7 the days a live change stays in
 // Live this week.
 const HISTORY_THREADS_SQL = `
-WITH mine AS (${aiWork.threadsInSql('$1')})
+WITH mine AS (${aiWork.threadsInSql('$1', { named: true })})
 SELECT * FROM (
-SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.closed_at,
+SELECT t.id, t.app_id, mine.own, mine.wrote, t.number, t.kind, t.title AS thread_title, t.closed_at,
        a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
        ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL) AS visible,
        req.id AS request_id, req.title AS request_title, req.state AS request_state,
@@ -217,6 +223,17 @@ function pastOf(row, viewerId, botId = null) {
     past = { kind: 'request', outcome: 'closed' };
   } else if (row.change_status === 'archived' && vote) {
     past = { kind: 'vote', outcome: 'closed', myVote: vote };
+  }
+  // 24 Nov 2026 (mobile 04): a thread they only wrote in or were named in,
+  // once it has finished: its change went live, its request or decision
+  // closed, or (a change with no request) its change closed. A request still
+  // open after a change of it closed has not finished: it is on the lists.
+  if (!past && row.wrote === true) {
+    if (row.decision_id != null) past = { kind: 'thread', outcome: row.decision_outcome || 'closed', decision: true };
+    else if (row.change_status === 'merged') past = { kind: 'thread', outcome: 'live' };
+    else if (row.request_state === 'closed' || (row.request_id == null && row.change_status === 'archived')) {
+      past = { kind: 'thread', outcome: 'closed' };
+    }
   }
   if (!past) return null;
   if (keepsOnlyOwn && past.kind !== 'change' && past.kind !== 'request') return null;

@@ -1,9 +1,8 @@
 /**
- * The look picker beside the bell: an admin's way to switch the device's
- * look from any screen. It is drawn in the frame's bar under a look
- * (./frame-app.tsx) and in the platform's header under the standard one
- * (../header/platform-header.tsx), so a look can always be left the way it
- * was entered.
+ * The look picker in the frame's bar: an admin's way to switch the device's
+ * look from under a look (./frame-app.tsx), so a look can always be left the
+ * way it was entered. Under the standard header, Settings > Experimental >
+ * Look is where a look is chosen.
  *
  * It is the choice Settings > Experimental > Look makes, no second one:
  * window.Skin (frontend/src/head.html) keeps it on the device and every
@@ -28,20 +27,11 @@ import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { LOOK_CHOICES, useLiveSkin, type Skin } from '../../lib/skin';
 
-// Whole literals, so the catalog inventory can see each id asked for. 'wip'
-// is named by the token set that draws it, the one kept of its four.
+// Whole literals, so the catalog inventory can see each id asked for.
 const NAME_OF: Record<string, string> = {
   standard: 'settings:experimental.look.standard',
-  wip: 'settings:experimental.wipTokens.brand',
   brand: 'settings:experimental.look.brand',
 };
-
-// The platform header's own disc, as its bell wears it (#2798: no fill at rest).
-const SHELL = 'relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)] cursor-pointer';
-// The look label carries no un-touch-target: its ::after hit box would paint
-// over the select and take every press, so the select brings its own 44px
-// square instead (#6648).
-const SHELL_LOOK = 'relative w-7 h-7 flex items-center justify-center rounded-full border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)] cursor-pointer';
 
 // One listener on window.Theme for every picker mounted (the head module
 // keeps what it is handed for the page's life).
@@ -59,8 +49,8 @@ function subscribeTheme(onChange: () => void): () => void {
 const isDark = () => document.documentElement.classList.contains('dark');
 
 export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
-  /** 'frame': in the kit's bar, under a look. 'shell': in the platform's header. */
-  variant: 'frame' | 'shell';
+  /** 'frame': in the kit's bar, under a look. */
+  variant: 'frame';
   skin: Skin;
   onPick: (next: Skin) => void;
   /** The screen is dark now; with `onDark`, the toggle beside the look. */
@@ -79,15 +69,13 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
   // title (the two left it about 85px): the pair is the desktop's, and a
   // phone gets one button whose small menu holds both (fr-d and fr-p are
   // the kit's own "desktop only" and "phone only").
-  const frame = variant === 'frame';
-  const fold = frame && !!onDark;
+  const fold = !!onDark;
   return (
     <>
-    <label className={frame ? (fold ? 'fr-ib fr-look fr-d' : 'fr-ib fr-look') : SHELL_LOOK} title={label} data-look-picker={variant}>
+    <label className={fold ? 'fr-ib fr-look fr-d' : 'fr-ib fr-look'} title={label} data-look-picker={variant}>
       <Icon name="layers" size={20} />
       <select
         aria-label={label}
-        className={frame ? undefined : 'absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer opacity-0'}
         value={value}
         onChange={(event) => pick(event.target.value)}
       >
@@ -95,7 +83,7 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
       </select>
     </label>
     {onDark ? (
-      <button type="button" className={frame ? 'fr-ib fr-d' : SHELL} aria-pressed={!!dark} aria-label={darkName} title={darkName} data-look-theme={variant} onClick={onDark}>
+      <button type="button" className="fr-ib fr-d" aria-pressed={!!dark} aria-label={darkName} title={darkName} data-look-theme={variant} onClick={onDark}>
         <Icon name={dark ? 'sun' : 'moon'} size={20} />
       </button>
     ) : null}
@@ -143,7 +131,7 @@ function LookFold({ value, onPick, dark, onDark }: { value: Skin; onPick: (choic
   );
 }
 
-export function LookPicker({ variant }: { variant: 'frame' | 'shell' }) {
+export function LookPicker({ variant }: { variant: 'frame' }) {
   const skin = useLiveSkin();
   const [admin, setAdmin] = useState(false);
   useEffect(() => whenPlatformViewer(() => setAdmin((window as any).App?._realIsAdmin === true)), []);

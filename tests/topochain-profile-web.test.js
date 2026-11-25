@@ -368,10 +368,22 @@ test('the identity card renders picture, name and the way in to editing', () => 
     profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
-  assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
+  assert.match(fn, /IdentityAvatar/, 'the picture, or the brand pair fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
   assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  // #7135: the two-person drawing is no longer a stand-in picture. A person
+  // with no photo has a generated picture of their own, sent as avatarUrl;
+  // the component only names no picture for an unknown account.
+  const avatar = profileViewTsx.slice(
+    profileViewTsx.indexOf('function IdentityAvatar('),
+    profileViewTsx.indexOf('function IdentityCard(')
+  );
+  assert.ok(avatar.length, 'IdentityAvatar must exist');
+  assert.doesNotMatch(avatar, /\/brand\/groups\/avatar-/, 'the brand pair is retired as the fallback');
+  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is not drawn either');
+  assert.match(avatar, /profile-id-avatar[^"`]*rounded-full[^"`]*overflow-hidden/,
+    'an unknown account still holds the round frame, empty');
   // The builder-profile chip left the card: the viewer's proposed PRs are
   // Your changes now (UI overhaul; they were "See all" over Your
   // contributions, which went with it).
@@ -774,4 +786,35 @@ test('the profile no longer fetches the season challenge list via the old route'
     path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
   assert.doesNotMatch(standing, /\/challenges-api\/me\/breakdown/, 'nor does the standing card');
   assert.match(standing, /\/challenges-api\/me\/ranking\?season_id=active/);
+});
+
+
+test('inline profile save leaves a staged photo and its sheet alone', async () => {
+  const saved = { window: globalThis.window, App: globalThis.App, fetch: globalThis.fetch };
+  const calls = [];
+  const app = { user: { username: 'webuser', displayName: 'Before' } };
+  globalThis.window = { App: app, addEventListener() {}, removeEventListener() {} };
+  globalThis.App = app;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ user: { username: 'webuser', displayName: 'After' } }) };
+  };
+  try {
+    const Profile = loadProfileModule();
+    Profile._pendingAvatar = 'remove';
+    let dismissed = false;
+    Profile._dismissSheet = () => { dismissed = true; };
+    Profile._render = () => {};
+    const result = await Profile._save({ displayName: 'After', bio: 'Building together', detailsOnly: true });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.map((call) => call.url), ['/api/me/profile', '/api/auth/me']);
+    assert.deepEqual(JSON.parse(calls[0].options.body), { displayName: 'After', bio: 'Building together' });
+    assert.equal(app.user.displayName, 'After');
+    assert.equal(Profile._pendingAvatar, 'remove');
+    assert.equal(dismissed, false);
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.App = saved.App;
+    globalThis.fetch = saved.fetch;
+  }
 });

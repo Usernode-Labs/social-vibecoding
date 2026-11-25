@@ -84,7 +84,8 @@ test('a database without the moment counts from now, never from no time at all',
 test('#6632: the one rule the settings carry is who the bot works for, everyone by default', () => {
   const s = bot.parseSettings([]);
   assert.equal(s.worksFor, 'everyone');
-  assert.deepEqual(s.verifiedSignals, ['phone', 'x', 'github'], 'what starts ticked when verified is first chosen');
+  assert.deepEqual(s.verifiedSignals, ['phone', 'github_x_age'], 'what starts ticked when verified is first chosen');
+  assert.equal(s.verifiedMinAccountAgeDays, 365, 'GitHub and X must both be a year old by default');
   assert.equal(s.verifiedGrandfather, true);
   assert.equal(s.verifiedSince, null);
   const on = bot.parseSettings([
@@ -99,7 +100,7 @@ test('#6632: the one rule the settings carry is who the bot works for, everyone 
   );
   assert.deepEqual(bot.parseSettings([{ key: 'homeroom_bot_verified_signals', value: 'not json' }]).verifiedSignals, [],
     'a stored list that does not parse is no signal: the closed side');
-  for (const key of ['KEY_WORKS_FOR', 'KEY_VERIFIED_SIGNALS', 'KEY_VERIFIED_GRANDFATHER', 'KEY_VERIFIED_SINCE']) {
+  for (const key of ['KEY_WORKS_FOR', 'KEY_VERIFIED_SIGNALS', 'KEY_VERIFIED_GRANDFATHER', 'KEY_VERIFIED_SINCE', 'KEY_VERIFIED_MIN_AGE']) {
     assert.ok(bot.SETTING_KEYS ? bot.SETTING_KEYS.includes(bot[key]) : bot[key], `${key} is read with the settings`);
   }
   assert.notEqual(bot.KEY_WORKS_FOR, 'homeroom_bot_audience', 'not the retired row schema.sql deletes');
@@ -109,6 +110,24 @@ test('#6632: the one rule the settings carry is who the bot works for, everyone 
     { ok: false, error: 'Tick at least one signal that counts as verified.' }, 'never locked for everyone by accident');
   assert.equal(bot.validateSettingsPatch({ verifiedSignals: ['fax'] }).ok, false);
   assert.equal(bot.validateSettingsPatch({ verifiedSince: '2020-01-01T00:00:00.000Z' }).ok, false, 'the moment is never a patch\'s');
+});
+
+test('the minimum account age for GitHub and X together: 0 to 3650 days, 365 unless set', () => {
+  assert.deepEqual(bot.validateSettingsPatch({ verifiedMinAccountAgeDays: 0 }).updates, [[bot.KEY_VERIFIED_MIN_AGE, '0']]);
+  assert.deepEqual(bot.validateSettingsPatch({ verifiedMinAccountAgeDays: 365 }).updates, [[bot.KEY_VERIFIED_MIN_AGE, '365']]);
+  assert.deepEqual(bot.validateSettingsPatch({ verifiedMinAccountAgeDays: 3650 }).updates, [[bot.KEY_VERIFIED_MIN_AGE, '3650']]);
+  for (const bad of [-1, 3651, 1.5, '30', null, true]) {
+    assert.equal(bot.validateSettingsPatch({ verifiedMinAccountAgeDays: bad }).ok, false, String(bad));
+  }
+  assert.deepEqual(bot.validateSettingsPatch({ verifiedSignals: ['github_x_age'] }).updates,
+    [[bot.KEY_VERIFIED_SIGNALS, '["github_x_age"]']]);
+  const read = (value) => bot.parseSettings([{ key: bot.KEY_VERIFIED_MIN_AGE, value }]).verifiedMinAccountAgeDays;
+  assert.equal(read('30'), 30);
+  assert.equal(read('0'), 0);
+  assert.equal(read('junk'), 365, 'unreadable is the default');
+  assert.equal(read('99999'), 3650, 'clamped to ten years');
+  assert.deepEqual(bot.parseSettings([{ key: bot.KEY_VERIFIED_SIGNALS, value: '["phone","x","github"]' }]).verifiedSignals,
+    ['phone', 'x', 'github'], 'a list saved before github_x_age existed is read as it was');
 });
 
 // ── 2. Who has it, and where it acts ─────────────────────────────────────

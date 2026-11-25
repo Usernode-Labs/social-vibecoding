@@ -59,13 +59,18 @@ const APPS = [
 
 // ─── guest-data.ts ────────────────────────────────────────────────
 
-test('the sorts: most active, newest, most built, most members, ties in the directory\'s order', () => {
+test('the sorts: most active, newest, most built, most members, alphabetical, ties in the directory\'s order', () => {
   const { sortApps } = loadTsx(DATA);
   const slugs = (sort) => sortApps(APPS, sort).map((a) => a.slug);
   assert.deepEqual(slugs('trending'), ['game-corner', 'todo-list', 'fresh-one']);
   assert.deepEqual(slugs('new'), ['fresh-one', 'game-corner', 'todo-list']);
   assert.deepEqual(slugs('built'), ['fresh-one', 'game-corner', 'todo-list']);
   assert.deepEqual(slugs('popular'), ['game-corner', 'todo-list', 'fresh-one'], 'the most members first');
+  assert.deepEqual(slugs('name'), ['fresh-one', 'game-corner', 'todo-list'], 'A to Z by name');
+  // Case and accents do not move a name along: "Álpha" sorts with "alpha".
+  assert.deepEqual(sortApps([{ slug: 'b', name: 'beta' }, { slug: 'a', name: 'Álpha' }], 'name').map((a) => a.slug), ['a', 'b']);
+  assert.deepEqual(sortApps([{ slug: 'x', name: 'Same' }, { slug: 'y', name: 'same' }], 'name').map((a) => a.slug), ['x', 'y'],
+    'two equal names keep the directory order');
   const tie = [{ slug: 'a', active_users: 1 }, { slug: 'b', active_users: 1 }];
   assert.deepEqual(sortApps(tie, 'trending').map((a) => a.slug), ['a', 'b']);
   const memberTie = [{ slug: 'a', member_count: 2 }, { slug: 'b', member_count: 2 }];
@@ -125,7 +130,20 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   // viewer (the pinned-app tiles); the project page asks the same question.
   assert.match(read(DISCOVER), /<TryLink app=\{app\} className="flex min-w-0 flex-col items-center gap-1\.5 no-underline" onOpenInside=\{open\} inside=\{signedIn\}>/);
   assert.match(read(PROJECT), /const canTry = signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\);/);
-  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview \|\| app\.guest_ready === true\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  // #7128: a guest-ready app opens in the landing's viewer for a visitor too,
+  // so the bar (and its way back) stays around it. The frame's Try it asks
+  // the same question in its own onClick.
+  assert.match(read('frontend/src/features/guest/frame/project-frame.tsx'),
+    /if \(signedIn \|\| app\.requires_login === false \|\| app\.guest_ready === true\) \{ event\.preventDefault\(\); onOpenInside\(app\); \}/);
+  // Rendered as a visitor with no account: an app with a guest's view keeps
+  // Open; one without keeps Sign up to open.
+  const guestReady = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[0]));
+  assert.match(guestReady, /data-guest-try="game-corner"/);
+  assert.doesNotMatch(guestReady, /data-guest-use=/);
+  const accountOnly = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[1]));
+  assert.match(accountOnly, /data-guest-use=""/);
+  assert.doesNotMatch(accountOnly, /data-guest-try=/);
   const { inHomeroomApp } = loadTsx(DATA);
   assert.equal(inHomeroomApp(), false, 'a server render is never the app');
 });
@@ -620,12 +638,13 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sort, 'the rest has a sort menu');
   assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
-  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending'],
-    'New, Popular and Most active, in that order');
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'name'],
+    'New, Popular, Most active and A to Z, in that order');
   assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
     'most active until another is picked');
   assert.equal(message('home:join.sort.new'), 'New');
   assert.equal(message('home:join.sort.popular'), 'Popular');
+  assert.equal(message('home:join.sort.name'), 'A to Z');
   // One card is nothing to order: the menu is not drawn.
   const one = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.filter((a) => a.slug === 'fresh-one') }));
   assert.doesNotMatch(one, /data-home-join-sort=/, 'one card, no sort');
@@ -1170,7 +1189,7 @@ test('the project card\'s picture: the still first, a loop only after mount and 
   assert.match(src, /setCanPlay\(!!src && previewsAllowed\(\) && !previewFailed\(src\)\)/);
   assert.match(src, /onError=\{\(\) => \{ markPreviewFailed\(src\); setCanPlay\(false\); \}\}/);
   assert.match(src, /aria-label=\{paused \? t\('auth:guest\.project\.card\.play'\) : t\('auth:guest\.project\.card\.pause'\)\}/);
-  assert.equal(message('auth:guest.project.card.previewLabel'), 'Preview of the real app');
+  assert.equal(message('auth:guest.project.card.previewLabel'), 'Preview');
   // Buttons on a phone are 50px; 52px from 768px.
   assert.match(src, /export const CARD_OPEN_BTN = 'flex h-\[50px\][^']* md:h-\[52px\]/);
 });

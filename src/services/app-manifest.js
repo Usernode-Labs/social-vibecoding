@@ -917,6 +917,14 @@ function readVisibility(parsed) {
 // The browser-cache opt-out offlineCache.optedOut reads. Only a literal
 // false means anything; an absent key or any other value stays null, so a
 // manifest that says nothing keeps today's behaviour. Never throws.
+// dapp.json's `agentPaths`: the paths a member's personal access token may
+// be used on at the app's own address (services/app-access-tokens.js, whose
+// header has the whole rule). Null unless every entry is well formed.
+function readAgentPaths(parsed) {
+  const paths = require('./app-access-tokens').cleanAgentPaths(parsed?.agentPaths);
+  return paths.length ? paths : null;
+}
+
 function readOffline(parsed) {
   return parsed?.offline === false ? false : null;
 }
@@ -1537,6 +1545,7 @@ function read(cloneDir) {
     // A private app can opt in if its frame document bundles its startup
     // resources and its later requests authenticate with an app token.
     ...(parsed?.cookieFreeFrame === true ? { cookieFreeFrame: true } : {}),
+    ...(readAgentPaths(parsed) ? { agentPaths: readAgentPaths(parsed) } : {}),
   };
 }
 
@@ -2594,11 +2603,26 @@ async function reconcilePlatformEnv(pool, appId, entries) {
   );
   const beforeKeys = new Set(before.rows.map((r) => r.key));
 
-  for (const e of list) {
+  // One statement for them all. One each was a commit each, and the 110 the
+  // platform declares took about 4 s of every release's migration Job. The
+  // last entry of a repeated key wins, as it did one by one: a statement may
+  // not update the same row twice.
+  const declared = [...new Map(list.map((e) => [e.key, {
+    key: e.key,
+    description: e.description || '',
+    required: !!e.required,
+    private: !!e.private,
+    grouping: e.group || 'General',
+    default_value: e.default ?? null,
+    unwritable: !!e.unwritable,
+  }])).values()];
+  if (declared.length) {
     await pool.query(
       `INSERT INTO platform_env_declarations
          (app_id, key, description, required, private, grouping, default_value, unwritable)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       SELECT $1::int, d.key, d.description, d.required, d.private, d.grouping, d.default_value, d.unwritable
+         FROM jsonb_to_recordset($2::jsonb) AS d(key text, description text, required boolean, private boolean,
+                                                 grouping text, default_value text, unwritable boolean)
        ON CONFLICT (app_id, key) DO UPDATE SET
          description = EXCLUDED.description,
          required = EXCLUDED.required,
@@ -2607,8 +2631,7 @@ async function reconcilePlatformEnv(pool, appId, entries) {
          default_value = EXCLUDED.default_value,
          unwritable = EXCLUDED.unwritable,
          updated_at = NOW()`,
-      [appId, e.key, e.description || '', !!e.required, !!e.private,
-        e.group || 'General', e.default ?? null, !!e.unwritable]
+      [appId, JSON.stringify(declared)]
     );
   }
 

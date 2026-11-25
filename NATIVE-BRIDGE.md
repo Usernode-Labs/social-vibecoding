@@ -516,6 +516,9 @@ boot and whenever the answer changes, and only with a changed value:
 - otherwise `"dark"` on a project's pages, whose header wears its
   community's colour (`data-community-tint` on `<html>`); every such colour
   is fitted for white text, and the attribute is off inside a running app;
+- otherwise `"dark"` on a phone's top-level screens (under 768px, in the
+  standard look, so no `data-skin`, and not beside the iPhone Duo's side
+  strip), whose header is the tab bar's blue in light and dark alike;
 - otherwise the running app's tone (`data-app-tone` on `<html>`), when an
   app is on screen;
 - otherwise `null`. The boot publish is `null` too, which also clears an

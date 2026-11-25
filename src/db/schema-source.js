@@ -76,7 +76,11 @@ function loadPlan(dir = directory,
   if (manifest.version !== 1 || !Array.isArray(manifest.migrations) || !manifest.migrations.length) {
     throw new Error('Invalid schema migration manifest');
   }
-  const prefix = [];
+  // Each entry names the checksum of the whole history up to it. The history
+  // is hashed once, as it grows, and read off at each entry. Hashing it again
+  // from the start for every entry took 112 of this check's 133 ms (113
+  // migrations, 24 Nov 2026), in every one of the unit suite's test processes.
+  const history = crypto.createHash('sha256');
   const seen = new Set();
   const migrations = manifest.migrations.map((entry, index) => {
     if (typeof entry.id !== 'string' || !validId(entry.id, index) || seen.has(entry.id)
@@ -91,8 +95,9 @@ function loadPlan(dir = directory,
     if (!transactional(sql)) {
       throw new Error(`Schema migration must be transactional: ${entry.id}`);
     }
-    prefix.push(sql);
-    if (digest(prefix.join('\n')) !== entry.schemaSha256) {
+    if (index > 0) history.update('\n');
+    history.update(sql);
+    if (history.copy().digest('hex') !== entry.schemaSha256) {
       throw new Error(`Schema migration history checksum mismatch: ${entry.id}`);
     }
     return { ...entry, sql };

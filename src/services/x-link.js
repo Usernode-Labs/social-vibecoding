@@ -6,10 +6,14 @@
 
 const log = require('./logger');
 const socialIdentity = require('./social-identity');
+const accountAge = require('./social-account-age');
 
 const AUTHORIZE_URL = 'https://x.com/i/oauth2/authorize';
 const TOKEN_URL = 'https://api.x.com/2/oauth2/token';
-const USER_URL = 'https://api.x.com/2/users/me';
+// user.fields=created_at: when the account was made on X, for Homeroom
+// bot's account-age signal (services/social-account-age.js). The token is
+// revoked straight after this call, so the date is read in it.
+const USER_URL = 'https://api.x.com/2/users/me?user.fields=created_at';
 const REVOKE_URL = 'https://api.x.com/2/oauth2/revoke';
 const SCOPES = Object.freeze(['tweet.read', 'users.read']);
 const PROVIDER_TIMEOUT_MS = 10_000;
@@ -222,7 +226,7 @@ async function exchangeCode(config, { code, redirectUri, verifier }) {
     const handle = user.username;
     if (!userResp.ok || !socialIdentity.SUBJECT_RE.test(subject)
         || typeof handle !== 'string' || !USERNAME_RE.test(handle)) return null;
-    return { provider: 'x', subject, handle };
+    return { provider: 'x', subject, handle, accountCreatedAt: accountAge.parseProviderDate(user.created_at) };
   } finally {
     await revokeCredential(config, token);
   }

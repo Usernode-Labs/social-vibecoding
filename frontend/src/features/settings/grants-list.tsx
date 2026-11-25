@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { grantsStore } from './grants-store.js';
+import { PermissionsEmpty } from './permissions-empty';
 
 type GrantView = {
   appId: number;
@@ -217,7 +218,7 @@ export function GrantsListView({ phase, grants }: GrantsState) {
   if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:grants.loadFailed')}</p>;
   if (!grants.length) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:grants.empty')}</p>;
+    return <PermissionsEmpty kind="ai">{t('settings:grants.empty')}</PermissionsEmpty>;
   }
   // #6512 item 6: what the apps spent between them, for the same day each
   // row's own figure covers (the cap is daily, so the total is today's). A

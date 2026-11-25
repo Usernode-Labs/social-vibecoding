@@ -38,6 +38,14 @@ export interface DeskSummary {
   /** The first thing you owe, by its title. */
   first: string | null;
   /**
+   * 24 Nov 2026: your three most pressing threads here, what each is in a
+   * glyph and whether it asks for you: what owes you first, then what is
+   * being worked on. The Workshop's Your work door draws one small card per
+   * thread peeking out of it (../dev-board/workshop/front-page.tsx), an
+   * icon and nothing else.
+   */
+  top?: DeskGlyph[];
+  /**
    * The read has come back, whatever it said: `ready` stays false when it
    * failed. The Workshop holds its Your work card's place until then
    * (../dev-board/workshop/your-work.tsx), and no longer once it has.
@@ -45,19 +53,39 @@ export interface DeskSummary {
   settled?: boolean;
 }
 
-export const EMPTY_DESK: DeskSummary = { ready: false, needs: 0, progress: 0, waiting: 0, first: null };
+/** One thread as the Your work door's small cards draw it: a glyph, and whether it asks for you. */
+export interface DeskGlyph {
+  glyph: 'vote' | 'plan' | 'ask' | 'fix' | 'build';
+  hot: boolean;
+}
+
+export const EMPTY_DESK: DeskSummary = { ready: false, needs: 0, progress: 0, waiting: 0, first: null, top: [] };
+
+/** Pure: what a row of Needs you is, by its key (./model.ts needsYou): a vote, a plan to read, a fix, or a question. */
+export function needGlyph(key: string): DeskGlyph['glyph'] {
+  const [kind, sub] = String(key || '').split(':');
+  if (kind === 'need') return sub === 'proposal' || sub === 'ballot' || sub === 'governance' ? 'vote' : 'ask';
+  if (kind === 'plan') return 'plan';
+  if (kind === 'fix_yours' || kind === 'bot_fix_failed') return 'fix';
+  return 'ask';
+}
 
 /** Pure: one project's share of the tab's lists. */
 export function deskOf(slug: string, needs: NeedItem[] | null, work: AiWork | null): DeskSummary {
   if (!work || !needs) return EMPTY_DESK;
   const here = (row: { app: { slug: string } | null }) => row.app?.slug === slug;
   const owed = needsYou(needs, work).filter(here).filter((row) => row.pill);
+  const progress = inProgress(needs, work).filter(here);
   return {
     ready: true,
     needs: owed.length,
-    progress: inProgress(needs, work).filter(here).length,
+    progress: progress.length,
     waiting: upNext(needs, work).filter(here).length,
     first: owed[0]?.title || null,
+    top: [
+      ...owed.slice(0, 3).map((row) => ({ glyph: needGlyph(row.key), hot: true })),
+      ...progress.slice(0, 3).map(() => ({ glyph: 'build' as const, hot: false })),
+    ].slice(0, 3),
   };
 }
 

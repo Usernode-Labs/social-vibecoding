@@ -358,6 +358,9 @@ test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal(mine.details, long, 'the whole saved description');
     assert.deepEqual(mine.app, { slug: 'run-club', name: 'Run Club' });
     assert.equal(mine.footer, 'Filed from sam\'s chat with Homeroom bot.');
+    // What it carries besides its words, for the pane: every list there, empty for a draft with no message of its own.
+    // #7136: and the files it carries, empty for a draft with none.
+    assert.deepEqual(mine.extras, { files: [], undecided: [], doneWhen: [], related: [], where: { request: null, saw: null } });
     assert.equal((await mayor.readDraft(pool, { user: { id: maya.id, username: 'maya' }, actionId: action.id })).ok, false,
       'somebody else\'s draft');
     await pool.query(`UPDATE homeroom_bot_dm_actions SET status = 'done' WHERE id = $1`, [action.id]);

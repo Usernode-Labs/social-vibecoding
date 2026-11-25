@@ -1,199 +1,184 @@
 /**
- * The Homeroom bot tab's lists (30 Oct 2026, Evan, from his Task Assistant
- * prototype and a day of iterating on the page as an artifact):
+ * The Homeroom bot tab's list as three bands (24 Nov 2026, Evan's review of
+ * the thread list, option D of the board drawn that day). Every thread is in
+ * one of three places, and the list makes two things obvious: what is in
+ * Needs you, and that an empty Needs you means you are finished.
  *
- *   [tile] Homeroom bot              ← a sheet of its own: the title, then
- *          Needs you: 15 · …           chips to see only some projects' work
- *   ( All ) ( Homeroom ) ( Game Corner ) ( Run Club )    ( 28 more ⌄ )
+ *   [mark] Needs you: 23 · In progress: 5            ( + New chat )   ← the head card:
+ *   ( 🔍 Search threads…              ⌘K ) ( ⫶ All projects ⌄ )        its line, then its tools
  *
- *   NEEDS YOU · 15                   ← a band, the sheet's width
- *   [tile] Homeroom
- *     ☑ #6038  Spell out the approval rules…      Vote
- *     ▶ #6000  Add reopen proposal…               Build it
- *              Show 5 more ⌄
+ *   👤 Needs you  23                          ← a card a band, its strip first
+ *   [ic] Homeroom   Rework challenges to match current goals   (Review plan)  ⋯
+ *        #6277     Waiting for you to OK the plan · Sunday
+ *               Show 17 more
  *
- *   WAITING & IN PROGRESS · 8        ← a sheet of its own, quieter rows:
- *                                      what is under way, then what waits
+ *   🕒 In progress  5                         ← quiet grey state pills
+ *   ✓ Done  80 this week                      ← a tick for what went live, else
+ *                                               History's word; Show more runs
+ *                                               on into History, 20 at a time
  *
- *   LIVE THIS WEEK · 41              ← a sheet of its own, quieter rows
+ * FOUR CARDS, STACKED: the head, then one card a state, as this list has
+ * always been drawn and as a thread is beside it. All three bands are always
+ * open and none folds. Inside a band there are no project heads and no day
+ * lines: its rows are newest first (./lines.ts newestFirst), and the band as
+ * a whole shows its first few (BAND_FIRST) before its own Show more.
  *
- *   one line a row   its glyph says what it asks (in the accent when it is
- *                    yours to do), then its number, its title and, on the
- *                    right, the one word that matters. The whole line is its
- *                    tooltip; on a phone, where nothing hovers, a row whose
- *                    reason is news says it on a second line (whyOf).
- *   grouped          each section's rows under their project's name, once,
- *                    instead of a tile on every row. Needs you stays first
- *                    whatever the project.
- *   each group folds a project shows its first few rows; its own Show more
- *                    opens the rest downward (height and fade, the kit's
- *                    spring ease; none under Reduce Motion).
- *   project chips    pick one or several projects to see only theirs (the
- *                    shell's filter chip, a toggle each; none picked is
- *                    All). One picked: its name is not said again over
- *                    every section. The rail shows any picked from More,
- *                    then the three that need you most; its last chip, "N
- *                    more", opens every project with a search
- *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
- *                    was unusable with dozens).
- *   no row lines     space and the project's name group the rows.
- *   search           the box by New chat narrows every list to the threads
- *                    that match (#6398) and, under them, lists the messages
- *                    in the person's threads with the bot that do, each a
- *                    link to that message (13 Nov 2026, ./search.ts).
+ * DONE IS THE WHOLE PAST: this week's rows (Live this week, until today a
+ * card of its own) and then History's (a card of its own too, by month),
+ * each thread once. Show more adds twenty at a time and reads History's next
+ * page when it runs out; its kind chips sit under the strip once it has been
+ * pressed (or a kind was picked by an address). No month headings: each
+ * row's second line says when.
  *
- * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
- * "Type and colour"): this page's exception, recorded there.
+ * THE ROW, left to right: the project's tile; its name over the thread's
+ * number (#6277, PR 7077; Only you for a private thread); the title over its
+ * reason and time ("Waiting for you to OK the plan · Sunday"); and one thing
+ * at its end (./lines.ts LineEnd): a verb pill in the accent in Needs you, a
+ * grey state pill in In progress, a green tick for what went live, else
+ * History's grey word. A private thread keeps its ⋯ with Mark done. The whole
+ * row is one button; its pill is the same action, drawn as one.
  *
- * The row whose place is in the column beside the list (a private thread,
- * or a request, a change or a decision on its page: #6218)
- * is drawn lit, where you are (`--lit-tint`, `--lit-ink`). A row is lit by
- * the column it opens (./column.ts rowKey), the one the page says is open.
- * #6153: a design thread filed as a request is that request's row (In
- * progress, Waiting or Live, with the track's word on its right), which
- * opens the thread and is lit while it is in the column.
+ * NARROW, UNDER 520PX OF LIST (app.css, the list's own container query, not
+ * the window's): the default 352px beside a thread, and a phone. The project
+ * column, the second line and the ⋯ go; the title takes up to two lines and
+ * one small line under it keeps the project and the number ("Homeroom ·
+ * #6277"). Mark done is then the thread's own ⋯, in its head.
+ *
+ * The open thread's row (`lit`, ./column.ts rowKey) is drawn where you are:
+ * the lit tint behind it and its title in the lit ink, the accent's own.
+ *
+ * Rows here are 14px over 12, not the shell's 15 over 13 (AGENTS.md, "Type
+ * and colour"): this page's exception, recorded there.
  */
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Chip } from '@/components/ui/chip';
-import { SectionHeader } from '@/components/ui/grouped-list';
+import { Chip, FadeRail as KindRail } from '@/components/ui/chip';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
-  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, SearchIcon, WarningTriangleIcon, XIcon,
+  ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, FilterIcon, LockIcon, SearchIcon, UserIcon, XIcon,
 } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
-import { getDateLocale } from '../../lib/i18n/runtime';
-import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, openRows, recentGroupsFirst,
-  type AiApp, type AiThread, type WorkRow,
-} from './model';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { groupRows, holdOrder, openRows, type AiApp, type AiThread, type WorkRow } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { reload as reloadTab } from '../../lib/tab-build';
 import { Marked, followFound } from './found';
-import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
+import { BAND_FIRST, DONE_STEP, newestFirst, useAiLines, type FoundLine, type Line } from './lines';
+import { lineBefore, newFirst, type LastVisit } from './visit';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
-import { monthName, type HistoryRow, type HistoryState } from './history';
+import type { HistoryRow, HistoryState } from './history';
 import type { Found } from './search';
+import { BOT_AVATAR } from '../messages/format';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
 const PLANE = 'mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+// A band's card: the plane, with the strip and the rows 6px inside it.
+const BAND = `${PLANE} p-1.5`;
 // A chip on a sheet: the sheet's own hairline round it, so a white chip does not melt into it.
 const CHIP_EDGE = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+// Keyboard focus on anything pressable here: the accent's ring, inside the
+// card so a card's edge never clips it.
+const FOCUS = 'outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--accent)]';
 
-const G = 'h-[18px] w-[18px]';
-/** Each glyph's icon on this face (./lines.ts names them). */
-const GLYPHS: Record<Glyph, (props: { className?: string }) => ReactNode> = {
-  chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon, again: ArrowPathIcon, warning: WarningTriangleIcon,
-  lock: LockIcon, ballot: BallotIcon, upload: ArrowUpTrayIcon, eye: EyeIcon, cog: CogIcon, reply: ReplyArrowIcon, code: CodeIcon,
-  clock: ClockIcon, camera: CameraIcon, x: XIcon, bubble: ChatBubbleTailIcon,
-};
-function GlyphIcon({ name }: { name: Glyph }): ReactNode {
-  const Icon = GLYPHS[name];
-  return <Icon className={G} />;
-}
+// ── The row ──────────────────────────────────────────────────────────────
 
-// Complete literals: Tailwind's extractor reads source text. 36px a row on a
-// desktop, so a project's rows sit closer than the groups do; 44px on a
-// phone, the shell's tap target.
-const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
-const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
-const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
-const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
-// Where you are: the row whose chat is in the column, on the lit tint.
-const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
-// Phone review #140 (23 Nov 2026): a row with its own ⋯ beside it is lit
-// whole, the ⋯ inside the tint, so the button does not hang outside its own
-// row; the row's button then keeps the lit ink and no fill of its own.
-const LIT_ROW_WHOLE = 'flex min-w-0 items-center gap-1 rounded-md bg-[color:var(--lit-tint)]';
-const LIT_INK_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md text-[color:var(--lit-ink)]';
+/**
+ * The row's own button. Its hover and press are the row's fill; its pill
+ * (`group`) answers both, so the pill reads as the button it is. Complete
+ * literals: Tailwind's extractor reads source text.
+ */
+const ROW = `group relative flex min-h-[44px] w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-start hover:bg-zinc-900/[0.035] active:bg-zinc-900/[0.06] dark:hover:bg-white/[0.05] dark:active:bg-white/[0.08] ${FOCUS}`;
+// Where you are: the row whose thread is in the column, on the lit tint.
+const LIT_ROW = `group relative flex min-h-[44px] w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-start bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] ${FOCUS}`;
+// A row with its ⋯: lit whole, the ⋯ inside the tint (phone review #140).
+const LIT_ROW_WHOLE = 'flex min-w-0 items-center rounded-xl bg-[color:var(--lit-tint)]';
+const LIT_INK_ROW = `group relative flex min-h-[44px] w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-start text-[color:var(--lit-ink)] ${FOCUS}`;
 
-function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
-  // #6159: a private thread's row has its ⋯ beside it, with Mark done.
-  if (line.done) {
-    const { rootId, mark } = line.done;
+/**
+ * #6262: the dot in the row's leading padding, so rows with and without one
+ * stay lined up. The accent the pills use. Mobile polish 05 (24 Nov 2026):
+ * 7px, on every row new since your last visit as well as one with unread
+ * messages.
+ */
+const DOT = 'absolute start-1 top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+
+// The one thing at a row's end (./lines.ts LineEnd). A pill never wraps: the
+// title truncates instead, so the pills keep one right edge down a band.
+const PILL = 'inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full px-2.5 text-xs font-semibold leading-none';
+const PILL_ACT = `${PILL} bg-[color:var(--accent-tint)] text-[color:var(--accent-tint-ink)] group-hover:shadow-[inset_0_0_0_1px_var(--accent)] group-active:bg-violet-600/[0.16] dark:group-active:bg-violet-400/[0.24]`;
+const PILL_STATE = `${PILL} bg-zinc-900/[0.05] font-medium text-zinc-600 dark:bg-white/[0.08] dark:text-zinc-300`;
+
+function RowEnd({ line }: { line: Line }): ReactNode {
+  const end = line.end;
+  if (!end || !end.text) return null;
+  if (end.kind === 'act') return <span className={PILL_ACT} data-ai-row-end="act">{end.text}</span>;
+  if (end.kind === 'state') return <span className={PILL_STATE} data-ai-row-end="state">{end.text}</span>;
+  if (end.kind === 'tick') {
+    // A finished thing gets no fill: the tick alone, its word for a screen reader.
     return (
-      <div className={line.lit ? LIT_ROW_WHOLE : 'flex min-w-0 items-center gap-1'} data-ai-line-done="">
-        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} inLitRow={line.lit} /></div>
-        <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
-      </div>
+      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-[color:var(--state-ok)]" data-ai-row-end="tick">
+        <CheckIcon className="h-[18px] w-[18px]" aria-hidden="true" strokeWidth="2.25" />
+        <span className="sr-only">{end.text}</span>
+      </span>
     );
   }
-  return <LineButton line={line} quiet={quiet} freshTitles={freshTitles} />;
+  return <span className="shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" data-ai-row-end="word">{end.text}</span>;
 }
 
-/**
- * #6262: the dot in the row's leading margin, so rows with and without one
- * stay lined up. The accent the page already uses for Vote and Needs reply.
- */
-const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+/** A row's tile: its project's, or a lock for a private thread in no project. */
+function RowTile({ app }: { app: AiApp | null }): ReactNode {
+  if (app) return <SmallTile app={app} size="band" />;
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-zinc-900/[0.06] text-zinc-500 dark:bg-white/[0.1] dark:text-zinc-400" aria-hidden="true">
+      <LockIcon className="h-3.5 w-3.5" />
+    </span>
+  );
+}
 
-/**
- * #6312 (4 Nov 2026, Evan): the box a fold clips, while it animates open and
- * shut. The dot stands 12px past its row's start edge (DOT), so the box keeps
- * 16px of room on that side: the negative start margin widens the clip edge,
- * and the same padding leaves every row exactly where it was, so a row with
- * something new shows its dot folded and open alike.
- */
-const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
-
-/**
- * 19 Nov 2026: how a fold opens and shuts. Its height eases on one curve
- * both ways. Opening, its rows fade in as the room opens. Shutting, they
- * stay drawn while the clip takes them from the bottom up, and turn
- * transparent only once the room is gone. Both used to run one sharp
- * ease-out, so a shutting fold had faded out within a frame or two while
- * most of its room was still there: a blank band that then closed.
- */
-const FOLD_OPEN = 'grid-rows-[1fr] opacity-100 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_200ms_ease-out]';
-const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_0s_linear_300ms]';
-
-function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false }: { line: Line; quiet?: boolean; freshTitles?: boolean; inLitRow?: boolean }): ReactNode {
+function RowButton({ line, inLitRow = false }: { line: Line; inLitRow?: boolean }): ReactNode {
   const t = useMessages('messages');
   // #6421: a thread that holds several requests says how many after its title.
   const many = Number(line.requests) > 1;
   const requestsWord = many ? t('messages:ai.row.requests', { count: line.requests }) : '';
   const tooltip = many ? `${line.tooltip} · ${requestsWord}` : line.tooltip;
+  const project = line.project || '';
+  const ref = line.ref || '';
+  // The narrow row's one small line: the project, then its number, once.
+  const where = ref && ref !== project ? t('messages:ai.row.whereShort', { project, ref }) : project;
   return (
     <button
       type="button"
-      className={`${line.lit ? (inLitRow ? LIT_INK_ROW : LIT_ROW) : quiet ? LIVE_ROW : ROW} relative`}
+      className={line.lit ? (inLitRow ? LIT_INK_ROW : LIT_ROW) : ROW}
       onClick={line.open}
       title={tooltip}
       data-ai-line={line.kind}
       data-ai-lit={line.lit ? '' : undefined}
       data-ai-fresh={line.fresh ? '' : undefined}
+      data-ai-new={line.isNew ? '' : undefined}
       aria-current={line.lit ? 'true' : undefined}
     >
-      {line.fresh ? <span className={DOT} aria-hidden="true" data-ai-dot="" /> : null}
-      <span className={line.owe ? GLYPH_OWE : GLYPH} aria-hidden="true"><GlyphIcon name={line.glyph} /></span>
-      {/* Not on a phone, where the drawer's list is 85% of the screen: the
-          title needs the room more, and the tooltip still says the number.
-          1 Nov 2026: nor under 1024px, where the column beside the list
-          leaves it about as narrow. 23 Nov 2026: nor at any width while a
-          thread is open beside the list (app.css, `data-ai-line-number`). */}
-      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-ai-line-number="">
-        {line.number ? t(line.pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: line.number }) : ''}
+      {line.fresh || line.isNew ? <span className={DOT} aria-hidden="true" data-ai-dot="" /> : null}
+      <RowTile app={line.app} />
+      {/* The wide row's project column (app.css hides it under 520px of list). */}
+      <span className="ai-row-project min-w-0 shrink-0" data-ai-row-project="">
+        <span className="block truncate text-[13px] font-semibold leading-[18px] text-zinc-900 dark:text-zinc-100">{project}</span>
+        <span className="block truncate text-xs leading-4 tabular-nums text-zinc-500 dark:text-zinc-400" data-ai-line-number="">{ref}</span>
       </span>
       <span className="min-w-0 flex-1">
-        <span className={line.lit
-          ? 'block truncate text-sm leading-5 font-medium'
-          : quiet
-            ? 'block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400'
+        <span
+          className={`ai-row-title block truncate text-sm leading-[19px] ${line.lit
+            ? 'font-semibold'
             : line.fresh
-              // #6262: what is new is bold; the rest of Needs you, once
-              // anything there is new, is lighter so it stands out.
-              ? 'block truncate text-sm leading-5 font-bold text-zinc-900 dark:text-zinc-100'
-              : freshTitles
-                ? 'block truncate text-sm leading-5 font-normal text-zinc-600 dark:text-zinc-400'
-                : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
+              // #6262: what is new is bold.
+              ? 'font-bold text-zinc-900 dark:text-zinc-100'
+              : 'font-semibold text-zinc-900 dark:text-zinc-100'}`}
+          data-ai-line-title=""
         >
           {line.title}
           {many ? (
@@ -202,488 +187,253 @@ function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false
             </span>
           ) : null}
         </span>
-        {line.why ? (
-          <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">{line.why}</span>
+        {line.sub ? (
+          <span className="ai-row-sub block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400" data-ai-line-why="">{line.sub}</span>
+        ) : null}
+        {where ? (
+          <span className="ai-row-where truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400" data-ai-line-where="">{where}</span>
         ) : null}
       </span>
-      {/* #6389: a pill may be two words ("Tests failing", "Conflicts with
-          main"), so it never wraps: the title truncates instead. */}
-      <span className={line.owe
-        ? 'shrink-0 whitespace-nowrap text-[13px] font-semibold text-violet-700 dark:text-violet-300'
-        : 'shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400'}
-      >
-        {line.right}
-      </span>
+      <RowEnd line={line} />
+      {/* Mobile polish 05: the dot, said. */}
+      {line.isNew ? <span className="sr-only" data-ai-new-spoken="">{t('messages:ai.row.newSpoken')}</span> : null}
       <span className="sr-only">{tooltip}</span>
     </button>
   );
 }
 
 /**
- * 13 Nov 2026: the words the search found, in a message's snippet. The
- * accent's own tint behind them (a token, so it follows the theme) and the
- * title's ink and weight, so they stand out of the quiet line round them.
+ * 24 Nov 2026 (mobile 04): Dismiss, beside Reply on a thread somebody named
+ * you in: the one Needs you row that asks a courtesy rather than a
+ * decision, so the one that can be waved off. Quiet, as Mark done is in a
+ * private thread's ⋯: grey words, no fill, its own target at the row's end,
+ * on a phone as well (it is outside `ai-row-menu`, which a narrow row drops).
  */
-const FOUND_MARK = 'rounded-[3px] bg-[color:var(--accent-tint)] font-semibold text-zinc-900 dark:text-zinc-100';
+const DISMISS = `inline-flex min-h-[44px] md:min-h-[36px] shrink-0 items-center rounded-xl px-2.5 text-[13px] font-semibold text-zinc-500 hover:bg-zinc-900/[0.035] hover:text-zinc-700 active:bg-zinc-900/[0.06] dark:text-zinc-400 dark:hover:bg-white/[0.05] dark:hover:text-zinc-200 dark:active:bg-white/[0.08] ${FOCUS}`;
 
 /**
- * 13 Nov 2026 (./search.ts): a message the search found, as one of the
- * list's quiet rows, and a link to it: its snippet with the found words
- * marked, where it is (its thread's name, or the chat itself) and its day.
- * Under 1024px, where the line has no room for it (the width a row gives up
- * its number at), where it is goes on a second line, as a row's reason
- * does on a phone. The link's name says all of it, and who wrote it.
+ * A row, and its ⋯ where it has one (#6159: a private thread's, with Mark
+ * done). Every wide row keeps the ⋯'s room (`ai-row-menu`), so the pills
+ * line up down the band whichever rows have one; app.css takes it away on a
+ * narrow row, where Mark done is the thread's own ⋯ in its head. A thread
+ * somebody named you in has Dismiss after its Reply (mobile 04).
  */
-function FoundRow({ line }: { line: FoundLine }): ReactNode {
+function Row({ line }: { line: Line }): ReactNode {
+  const t = useMessages('messages');
+  const done = line.done;
+  const dismiss = line.dismiss;
+  // Lit whole, its ⋯ or its Dismiss inside the tint (phone review #140).
+  const whole = !!line.lit && (!!done || !!dismiss);
   return (
-    <a
-      href={line.href}
-      className={LIVE_ROW}
-      title={line.name}
-      aria-label={line.name}
-      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
-      data-ai-found={line.thread ? 'thread' : 'chat'}
-    >
-      <span className={GLYPH} aria-hidden="true"><GlyphIcon name="chat" /></span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400" data-ai-found-words="">
-          <Marked parts={line.parts} className={FOUND_MARK} />
-        </span>
-        <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 lg:hidden">{line.place}</span>
+    <div className={whole ? LIT_ROW_WHOLE : 'flex min-w-0 items-center'} data-ai-row="" data-ai-line-done={done ? '' : undefined}>
+      <div className="min-w-0 flex-1"><RowButton line={line} inLitRow={whole} /></div>
+      {dismiss ? (
+        <button
+          type="button"
+          className={DISMISS}
+          onClick={dismiss}
+          aria-label={t('messages:ai.named.dismissLabel', { title: line.title })}
+          title={t('messages:ai.named.dismissTitle')}
+          data-ai-dismiss=""
+        >
+          {t('messages:ai.named.dismiss')}
+        </button>
+      ) : null}
+      <span className="ai-row-menu flex w-8 shrink-0 items-center justify-center">
+        {done ? (
+          <ThreadDoneMenu rootId={done.rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') done.mark(); }} className="shrink-0" />
+        ) : null}
       </span>
-      <span className="hidden max-w-[40%] shrink truncate text-[13px] text-zinc-500 dark:text-zinc-400 lg:block" data-ai-found-place="">{line.place}</span>
-      <span className="shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400">{line.date}</span>
-    </a>
-  );
-}
-
-/**
- * #6262: the line between what is new in a project and what the reader has
- * already seen. The small caps label style of the section headings.
- */
-function EarlierRule(): ReactNode {
-  const t = useMessages('messages');
-  return (
-    <div className="flex items-center gap-2 py-1.5" data-ai-earlier="">
-      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
-      <span className="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('messages:ai.work.earlier')}</span>
-      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
     </div>
   );
 }
 
+// ── A band ───────────────────────────────────────────────────────────────
+
+const STRIP = 'flex min-h-[40px] items-center gap-2 rounded-[14px] px-3 py-2';
+const STRIP_OWE = `${STRIP} bg-[color:var(--accent-tint)] text-[color:var(--accent-tint-ink)]`;
+const STRIP_QUIET = `${STRIP} bg-zinc-900/[0.04] text-zinc-900 dark:bg-white/[0.06] dark:text-zinc-100`;
+const COUNT = 'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-xs font-bold tabular-nums dark:bg-zinc-900';
 /**
- * 6 Nov 2026 (Evan): the day inside a project's rows, in Needs you and
- * Waiting & in progress: the small caps label with a thin rule after it, as
- * the design's "With date headings" column drew it.
+ * Mobile polish 05 (24 Nov 2026): what is new since your last visit, at the
+ * heading's end ("2 new"): a small pill filled with the accent, for what
+ * Show more hides. Beside the band's own count, never added to it.
  */
-function DayRule({ at }: { at: string | null | undefined }): ReactNode {
-  const t = useMessages('messages');
-  const label = dayHeading(at, t, getDateLocale());
-  if (!label) return null;
-  return (
-    <div className="flex items-center gap-2 py-1.5" data-ai-day={dayKey(at)}>
-      <span className="shrink-0 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
-      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
-    </div>
-  );
-}
+const NEW_COUNT = 'ms-auto inline-flex h-5 shrink-0 items-center rounded-full bg-[color:var(--accent)] px-2 text-[11px] font-bold leading-5 tabular-nums text-[color:var(--accent-ink)]';
 
 /**
- * #6262: a count of new threads, on a chip or beside a heading. The number
- * is decoration; the spoken words say what it counts.
+ * A band's header strip: its icon, its name and its count (or what stands
+ * for one), as a heading whose spoken name carries the count.
  */
-function FreshBadge({ count, className = '' }: { count: number; className?: string }): ReactNode {
-  const t = useMessages('messages');
-  if (count <= 0) return null;
-  return (
-    // `relative` holds the spoken label (sr-only, absolute) inside the badge:
-    // a chip scrolled past the rail's end would otherwise let its label sit
-    // past the screen's edge and widen the whole list (#6838).
-    <span className={`relative inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
-      <span aria-hidden="true">{count}</span>
-      <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
-    </span>
-  );
-}
-
-/**
- * The chips' rail inside the title's sheet: one line that scrolls, as the
- * shell's ChipRail does, fading out toward whichever edge has more chips past
- * it rather than cutting the last one off against the sheet's border (Evan,
- * 30 Oct: wrapping to a second line read worse). The fade is a mask, so it
- * fades to whatever the sheet is, in either theme.
- *
- * THE FADE IS ONLY OVER A CHIP THAT IS CUT (phone review #95, 23 Nov 2026).
- * A fixed 40px fade at an edge with anything past it washed out a chip that
- * fitted whole (the picked "Homeroom" went grey on its right) and let a
- * sliver of the next chip show beside More. So each edge is read off the
- * chip the rail's edge actually cuts (`railMask`): a chip shown by less than
- * a tap's worth is clipped clean at its own start, one shown by more fades
- * over its cut part only (never more than 40px), and with no chip cut there
- * is no fade at all. The picked chips are scrolled whole into view
- * (`reveal`), so the one you chose is never the one under the fade.
- */
-const FADE = 40;
-/** Under this many pixels showing, a cut chip is clipped clean rather than faded. */
-const SLIVER = 28;
-
-/**
- * Pure: the mask for a rail `width` wide whose chips span `spans` (each
- * [left, right], from the rail's own left edge), or null when nothing is
- * cut. Physical sides, so it holds in either direction.
- */
-export function railMask(width: number, spans: ReadonlyArray<readonly [number, number]>): string | null {
-  let left: string | null = null;
-  let right: string | null = null;
-  for (const [a, b] of spans) {
-    // Cut by the left edge: its start is past it, its end is not.
-    if (a < -0.5 && b > 0.5) {
-      const at = Math.round(b);
-      left = b < SLIVER ? `transparent ${at}px, #000 ${at}px` : `transparent 0px, #000 ${Math.round(Math.min(b, FADE))}px`;
-    }
-    // Cut by the right edge.
-    if (a < width - 0.5 && b > width + 0.5) {
-      const at = Math.round(a);
-      right = width - a < SLIVER ? `#000 ${at}px, transparent ${at}px` : `#000 ${Math.round(Math.max(a, width - FADE))}px, transparent 100%`;
-    }
-  }
-  if (!left && !right) return null;
-  return `linear-gradient(to right, ${left || '#000 0px'}, ${right || '#000 100%'})`;
-}
-
-function FadeRail({ className = '', children, reveal = '', ...props }: React.ComponentProps<'div'> & { reveal?: string }): ReactNode {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [mask, setMask] = useState<string | null>(null);
-  const sync = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const box = el.getBoundingClientRect();
-    const spans = [...el.children].map((child) => {
-      const r = child.getBoundingClientRect();
-      return [r.left - box.left, r.right - box.left] as const;
-    });
-    const next = railMask(box.width, spans);
-    setMask((had) => (had === next ? had : next));
-  }, []);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    sync();
-    el.addEventListener('scroll', sync, { passive: true });
-    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
-    ro?.observe(el);
-    return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
-  }, [sync]);
-  // The picked chips, whole: scrolled into the rail (never the page) when
-  // the pick changes, then the mask is read again for where they landed.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const picked = [...el.querySelectorAll<HTMLElement>('[aria-pressed="true"]')];
-    const box = el.getBoundingClientRect();
-    let by = 0;
-    for (const chip of picked) {
-      const r = chip.getBoundingClientRect();
-      if (r.right > box.right) by = Math.max(by, r.right - box.right + 16);
-      else if (r.left < box.left) by = Math.min(by, r.left - box.left - 16);
-    }
-    if (by) el.scrollLeft += by;
-    sync();
-  }, [reveal, sync]);
-  return (
-    <div
-      ref={ref}
-      // ChipRail's own classes, with a ref, and its clip kept 6px inside the
-      // sheet's border (mx-1.5): a chip fades out short of the border, never
-      // under it. The first chip still starts 16px in, as the title does.
-      className={`mx-1.5 flex gap-2 overflow-x-auto px-2.5 pt-3 pb-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
-      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
-      {...props}
-    >
-      {children}
-    </div>
-  );
-}
-
-/**
- * A project's own Show more, under its rows: centred, its arrow pointing down
- * (up once open). #6408: where the fold holds rows with something new, it
- * says so ("Show 73 more · 44 new").
- */
-function GroupMore({ hidden, fresh = 0, open, onClick }: { hidden: number; fresh?: number; open: boolean; onClick: () => void }): ReactNode {
-  const t = useMessages('messages');
-  const label = open
-    ? t('messages:ai.work.showLess')
-    : fresh > 0
-      ? t('messages:ai.work.showMoreFresh', { count: hidden, fresh })
-      : t('messages:ai.work.showMore', { count: hidden });
-  return (
-    <button
-      type="button"
-      className="flex w-full min-h-[44px] md:min-h-0 items-center justify-center gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-      onClick={onClick}
-      aria-expanded={open}
-      data-ai-group-more=""
-    >
-      {label}
-      <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${open ? ' rotate-180' : ''}`} aria-hidden="true" />
-    </button>
-  );
-}
-
-/**
- * One section's rows under their project, once, each project's first few
- * before its own Show more. A row whose chat is in the column is never
- * folded away: past the first rows it joins them, so where you are is
- * always shown.
- */
-function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false }: {
-  lines: Line[];
-  quiet?: boolean;
-  heads: boolean;
-  first: number;
-  /** #6262: Needs you draws new rows first, under an Earlier line. */
-  freshStyle?: boolean;
-  /** How many rows each project has that are new, for its name's pill. */
-  freshProjects?: Record<string, number>;
-  /** 6 Nov 2026: split each project's rows by day, under a small caps divider. */
-  dayHeads?: boolean;
-  /**
-   * #6408: Live this week folds after its first few whatever is new, so a
-   * busy week reads as a list and not fifty rows. Its rows still put what is
-   * new first, and the fold counts them.
-   */
-  foldFresh?: boolean;
+function BandHead({ owe = false, icon, name, count, aside, spoken, news = 0, extra = null }: {
+  owe?: boolean;
+  icon: ReactNode;
+  name: string;
+  /** Beside the name, in a pill: the band's count. */
+  count?: number | null;
+  /** After it, in the lighter weight: what stands for a count ("all done", "80 this week"). */
+  aside?: string | null;
+  /** The heading's whole name for a screen reader: its name and its count. */
+  spoken: string;
+  /** Mobile polish 05: how many of its rows are new since your last visit; zero says nothing. */
+  news?: number;
+  extra?: ReactNode;
 }): ReactNode {
   const t = useMessages('messages');
-  // Each open project's rows that were in sight when its Show more was
-  // pressed, by key (./model.ts openRows). A project is open while it has them.
-  const [opened, setOpened] = useState<Record<string, string[]>>({});
+  return (
+    <div className={owe ? STRIP_OWE : STRIP_QUIET} data-ai-band="">
+      <h3 className="m-0 flex min-w-0 items-center gap-2 text-[15px] font-semibold leading-5">
+        <span className="flex shrink-0 [&>svg]:h-[18px] [&>svg]:w-[18px]" aria-hidden="true">{icon}</span>
+        <span className="truncate" aria-hidden="true">{name}</span>
+        {count ? <span className={`${COUNT} ${owe ? 'text-[color:var(--accent-tint-ink)]' : 'text-zinc-500 dark:text-zinc-400'}`} aria-hidden="true" data-ai-band-count="">{count}</span> : null}
+        {aside ? (
+          <span className={`truncate text-[13px] font-medium ${owe ? '' : 'text-zinc-500 dark:text-zinc-400'}`} aria-hidden="true" data-ai-band-aside="">{aside}</span>
+        ) : null}
+        <span className="sr-only">{news > 0 ? t('messages:ai.band.withNew', { heading: spoken, count: news }) : spoken}</span>
+      </h3>
+      {news > 0 ? <span className={NEW_COUNT} aria-hidden="true" data-ai-band-new="">{t('messages:ai.band.newCount', { count: news })}</span> : null}
+      {extra}
+    </div>
+  );
+}
+
+/**
+ * #6312 (4 Nov 2026): the box the fold clips while it opens and shuts; its
+ * rows keep their own padding, so a row with something new shows its dot
+ * folded and open alike.
+ */
+const FOLD_CLIP = 'min-h-0 overflow-hidden';
+
+/**
+ * 19 Nov 2026: how a band's Show more opens and shuts. Its height eases on
+ * one curve both ways. Opening, its rows fade in as the room opens. Shutting,
+ * they stay drawn while the clip takes them from the bottom up, and turn
+ * transparent only once the room is gone.
+ */
+const FOLD_OPEN = 'grid-rows-[1fr] opacity-100 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_200ms_ease-out]';
+const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_0s_linear_300ms]';
+
+const MORE = `flex w-full min-h-[44px] md:min-h-[36px] items-center justify-center gap-1 rounded-xl py-2 text-[13px] font-semibold text-violet-700 hover:bg-zinc-900/[0.035] hover:text-violet-800 active:bg-zinc-900/[0.06] disabled:opacity-60 dark:text-violet-300 dark:hover:bg-white/[0.05] dark:hover:text-violet-200 ${FOCUS}`;
+
+// Waiting on you's way back, at the end of its accent-tinted strip.
+const WAITING_BACK = `ms-auto inline-flex min-h-[32px] shrink-0 items-center rounded-lg px-2 text-[13px] font-semibold hover:bg-white/50 active:bg-white/70 dark:hover:bg-white/[0.1] dark:active:bg-white/[0.16] ${FOCUS}`;
+// The head's Needs you count, as the link it is: the accent's ink, underlined.
+const HEAD_LINK = 'rounded-[3px] text-sm font-semibold text-[color:var(--accent)] underline underline-offset-[3px] hover:text-violet-700 dark:hover:text-violet-300 focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--accent)]';
+
+/**
+ * Mobile polish 05 (24 Nov 2026): the line under a band's last new row.
+ * Everything above it is new since your last visit, everything below it you
+ * have seen. A 1.5px rule in the accent across the band, inset as the rows
+ * are, with the time of the last visit at its end ("New since 9:40"). A real
+ * element, so a screen reader hears it. The rule is a filled bar, not a
+ * border: Chrome draws a 1.5px border 1px wide (it snaps border widths to
+ * whole pixels) and leaves a bar's height alone.
+ */
+function NewLine({ since }: { since: string }): ReactNode {
+  const t = useMessages('messages');
+  const words = t('messages:ai.band.newSince', { time: since });
+  return (
+    <div role="separator" aria-label={words} className="flex items-center gap-2 px-3 py-1.5" data-ai-new-line="">
+      <span className="h-[1.5px] min-w-0 flex-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
+      <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold leading-[18px] text-[color:var(--accent)]" aria-hidden="true">{words}</span>
+    </div>
+  );
+}
+
+/** Rows, with the band's line before `before` (./visit.ts lineBefore) when it is one of them. */
+function RowsWithLine({ lines, before, since }: { lines: Line[]; before: string | null; since: string }): ReactNode {
   return (
     <>
-      {byProject(lines).map((g) => {
-        const key = g.app?.slug || 'none';
-        const kept = opened[key];
-        const open = !!kept;
-        // #6245: only a folded group lifts the row you are on. #6262: a fresh
-        // row is never folded either. 19 Nov 2026: opened, the rows that were
-        // in sight stay where they were and the rest open under them, so no
-        // row moves into the fold as it opens (openRows); a row pressed while
-        // it is open still keeps its place.
-        // 6 Nov 2026: a day-headed list keeps each day's rows together, so a
-        // project reads Today's rows, then Yesterday's, then the date.
-        const rows = dayHeads ? byDay(g.items) : g.items;
-        const { items, shown, hidden } = kept ? openRows(rows, kept) : groupRows(rows, first, false, !foldFresh);
-        // #6408: how many of the folded rows have something new, for Show more's ending.
-        const freshHidden = foldFresh ? items.slice(shown).filter((line) => line.fresh).length : 0;
-        const anyFresh = freshStyle && g.items.some((line) => line.fresh);
-        const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
-        // The line only where an older row is actually drawn: with every
-        // older row folded, Show more already says there is more.
-        const earlierAt = firstOld >= 0 && firstOld < shown ? firstOld : -1;
-        const freshHere = freshStyle && g.app ? freshProjects?.[g.app.slug] || 0 : 0;
-        const draw = (line: Line) => <LineRow key={line.key} line={line} quiet={quiet} freshTitles={freshStyle} />;
-        // 6 Nov 2026: the day each drawn row opens, in the order the rows are
-        // drawn. A divider past the fold stays inside the fold, and a day that
-        // spans the fold is not said twice: the first folded row shares the
-        // day the last drawn one did.
-        let lastDay = '';
-        const drawn = items.map((line) => {
-          const day = dayHeads ? dayKey(line.at) : '';
-          const divider = !!day && day !== lastDay;
-          if (day) lastDay = day;
-          return { line, divider };
-        });
-        const visible = hidden ? drawn.slice(0, shown) : drawn;
-        const folded = hidden ? drawn.slice(shown) : [];
-        return (
-          <div key={key} data-ai-group={key}>
-            {heads ? (
-              <div className="flex items-center gap-2 pt-3 pb-1 text-[13px] font-semibold text-zinc-600 dark:text-zinc-300" data-ai-project-head="">
-                {/* A private idea in no project yet goes under Only you, with a lock. */}
-                {g.app ? <SmallTile app={g.app} size="head" /> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" />}
-                <span className="truncate">{g.app ? g.app.name || g.app.slug : t('messages:ai.short.private')}</span>
-                {g.items.some((line) => line.left) ? (
-                  <span className="shrink-0 font-normal text-zinc-500 dark:text-zinc-400" data-ai-left="">· {t('messages:ai.history.left')}</span>
-                ) : null}
-                {freshHere > 0 ? (
-                  <span className="ms-auto shrink-0 rounded-full bg-violet-600/10 px-2 py-0.5 text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
-                    {t('messages:ai.work.fresh', { count: freshHere })}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            {/* The rows sit in a little under their project's name. */}
-            <div className={heads ? 'ms-3' : undefined}>
-              {visible.map(({ line, divider }, i) => (
-                <Fragment key={line.key}>
-                  {i === earlierAt ? <EarlierRule /> : null}
-                  {divider ? <DayRule at={line.at} /> : null}
-                  {draw(line)}
-                </Fragment>
-              ))}
-              {/* The rest, folded: a grid row that grows from 0fr to 1fr, so
-                  it opens to its own height without measuring it. */}
-              {hidden ? (
-                <div
-                  className={`grid motion-reduce:transition-none ${open ? FOLD_OPEN : FOLD_SHUT}`}
-                  aria-hidden={open ? undefined : true}
-                  inert={!open}
-                  data-ai-group-rest=""
-                >
-                  <div className={FOLD_CLIP}>
-                    {folded.map(({ line, divider }) => (
-                      <Fragment key={line.key}>
-                        {divider ? <DayRule at={line.at} /> : null}
-                        {draw(line)}
-                      </Fragment>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {hidden ? (
-                <GroupMore
-                  hidden={hidden}
-                  fresh={freshHidden}
-                  open={open}
-                  onClick={() => setOpened((o) => {
-                    const next = { ...o };
-                    // Opening keeps the rows in sight where they are.
-                    if (open) delete next[key];
-                    else next[key] = items.slice(0, shown).map((line) => line.key);
-                    return next;
-                  })}
-                />
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
+      {lines.map((line) => (
+        <Fragment key={line.key}>
+          {before && since && line.key === before ? <NewLine since={since} /> : null}
+          <Row line={line} />
+        </Fragment>
+      ))}
     </>
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false, dayHeads = false, foldFresh = false }: {
-  /** Which list, for the page's checks: work, busy, live. */
-  list: string;
-  /** Said over the rows, whatever they are: why the lists show less than they should. */
-  note?: ReactNode;
-  /** Drawn with no rows too: Needs you's band is in the prerender. */
-  keep?: boolean;
-  head: ReactNode;
-  owe?: boolean;
-  lines: Line[];
-  /**
-   * #6158: the rows nobody is moving, in one part of their own at the
-   * bottom of the section, folded until it is opened (or one of them is
-   * where you are).
-   */
-  still?: { head: string; lines: Line[] } | null;
-  quiet?: boolean;
-  empty?: ReactNode;
-  /** Rows a project shows before its own Show more. */
-  first: number;
-  /** The project's name over its rows; not when one project's chip says it already. */
-  heads: boolean;
-  /** #6262: how many of its rows have something new, for the band's pill. */
-  fresh?: number;
-  /** #6262: each project's count of new rows, for its name's pill. */
-  freshBySlug?: Record<string, number>;
-  /** #6262: Needs you draws new first, with an Earlier line (GroupList). */
-  freshStyle?: boolean;
-  /** 6 Nov 2026: split each project's rows by day (Needs you, Waiting & in progress). */
-  dayHeads?: boolean;
-  /** #6408: Live this week puts new rows first and folds after its first few whatever is new. */
-  foldFresh?: boolean;
-}): ReactNode {
+/**
+ * A band's rows: its first few, then the rest folded under its own Show
+ * more, which opens them in place (Show less shuts them). The row you are on
+ * is never folded away; nor, in Needs you, is one with something new (#6262)
+ * or one that moved while the page was up (PR 6792): past the first few they
+ * join them, in their order (./model.ts groupRows). In progress passes
+ * `lift` `'moved'` (#7138): a row that is only new since the last visit stays
+ * behind Show more, so the band keeps its default length.
+ * Opened, the rows that were in sight stay where they were (openRows).
+ */
+function BandRows({ lines, first, since = '', lift = true }: { lines: Line[]; first: number; since?: string; lift?: boolean | 'moved' }): ReactNode {
   const t = useMessages('messages');
-  const [stillOpen, setStillOpen] = useState(false);
-  // #6245: while the pointer is over Needs you or a row in it has keyboard
-  // focus, keep the order it was drawn in, so a live refresh cannot slide a
-  // row out from under the one being pressed. Rows that arrived meanwhile
-  // follow the drawn ones; anything that left drops out at once. On release
-  // the list settles into the incoming order.
-  const holdRef = useRef<HTMLElement | null>(null);
-  const drawn = useRef<string[] | null>(null);
-  const [holding, setHolding] = useState(false);
-  const hold = list === 'work';
-  // #6262: Needs you draws what is new first, before the order is held, so
-  // a held list keeps the order it was drawn in (#6245). #6408: Live this
-  // week does the same without the styles, so its first few include any new.
-  // #6672: Needs you then lifts each project by its newest activity, so a
-  // project whose only row is a fresh private chat is not always last.
-  const ordered = freshStyle ? recentGroupsFirst(freshFirst(lines)) : foldFresh ? freshFirst(lines) : lines;
-  const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
-  const startHold = () => {
-    if (!hold) return;
-    if (!drawn.current) drawn.current = ordered.map((line) => line.key);
-    setHolding(true);
-  };
-  const endHold = () => {
-    if (!hold) return;
-    drawn.current = null;
-    setHolding(false);
-  };
-  const within = (node: EventTarget | null) => !!holdRef.current && node instanceof Node && holdRef.current.contains(node);
-  if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
-  const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
-  // A row in the folded part that is where you are opens it.
-  const stillShown = stillOpen || !!still?.lines.some((l) => l.lit);
-  const body = (
+  // The rows in sight when Show more was pressed, by key: open while kept.
+  const [kept, setKept] = useState<string[] | null>(null);
+  const open = !!kept;
+  const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false, lift);
+  const visible = hidden ? items.slice(0, shown) : items;
+  const folded = hidden ? items.slice(shown) : [];
+  // Mobile polish 05: the line goes before the first seen row after the last
+  // new one, in whichever part it is: under Show more, it opens with it.
+  const before = lineBefore(items);
+  return (
     <>
-      {note}
-      {!lines.length ? empty : null}
-      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} dayHeads={dayHeads} foldFresh={foldFresh} />
-      {still && still.lines.length ? (
-        <div data-ai-still-part="">
-          <button
-            type="button"
-            className="flex w-full min-h-[44px] md:min-h-0 items-center justify-start gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-            onClick={() => setStillOpen((o) => !o)}
-            aria-expanded={stillShown}
-            data-ai-still=""
-          >
-            {still.head}
-            <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${stillShown ? ' rotate-180' : ''}`} aria-hidden="true" />
-          </button>
-          <div
-            className={`grid motion-reduce:transition-none ${stillShown ? FOLD_OPEN : FOLD_SHUT}`}
-            aria-hidden={stillShown ? undefined : true}
-            inert={!stillShown}
-            data-ai-still-rest=""
-          >
-            <div className={FOLD_CLIP}>
-              <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} dayHeads={dayHeads} />
-            </div>
+      <RowsWithLine lines={visible} before={before} since={since} />
+      {hidden ? (
+        <div
+          className={`grid motion-reduce:transition-none ${open ? FOLD_OPEN : FOLD_SHUT}`}
+          aria-hidden={open ? undefined : true}
+          inert={!open}
+          data-ai-group-rest=""
+        >
+          <div className={FOLD_CLIP}>
+            <RowsWithLine lines={folded} before={before} since={since} />
           </div>
         </div>
       ) : null}
+      {hidden ? (
+        <button
+          type="button"
+          className={MORE}
+          onClick={() => setKept(open ? null : items.slice(0, shown).map((line) => line.key))}
+          aria-expanded={open}
+          data-ai-group-more=""
+        >
+          {open ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: hidden })}
+          <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${open ? ' rotate-180' : ''}`} aria-hidden="true" />
+        </button>
+      ) : null}
     </>
   );
-  return (
-    <section
-      ref={holdRef}
-      className="pb-1"
-      data-ai-list={list}
-      onPointerEnter={startHold}
-      onPointerLeave={endHold}
-      onFocus={(e) => { if (!within(e.relatedTarget)) startHold(); }}
-      onBlur={(e) => { if (!within(e.relatedTarget)) endHold(); }}
-    >
-      <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-        <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>
-          {head}
-          {fresh > 0 ? (
-            <span className="ms-1.5 rounded-full bg-violet-600/10 px-2 py-0.5 align-middle text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
-              {t('messages:ai.work.fresh', { count: fresh })}
-            </span>
-          ) : null}
-        </SectionHeader>
-      </div>
-      <div className="px-4">{body}</div>
-    </section>
-  );
+}
+
+/**
+ * #6245: while the pointer is over Needs you or a row in it has keyboard
+ * focus, keep the order it was drawn in, so a live refresh cannot slide a row
+ * out from under the one being pressed. Rows that arrived meanwhile follow
+ * the drawn ones; anything that left drops out at once. On release the band
+ * settles into the incoming order.
+ */
+function useHeld(lines: Line[]) {
+  const ref = useRef<HTMLElement | null>(null);
+  const drawn = useRef<string[] | null>(null);
+  const [holding, setHolding] = useState(false);
+  const held = holding && drawn.current ? holdOrder(lines, drawn.current) : lines;
+  const start = () => {
+    if (!drawn.current) drawn.current = lines.map((line) => line.key);
+    setHolding(true);
+  };
+  const end = () => {
+    drawn.current = null;
+    setHolding(false);
+  };
+  const within = (node: EventTarget | null) => !!ref.current && node instanceof Node && ref.current.contains(node);
+  const handlers = {
+    onPointerEnter: start,
+    onPointerLeave: end,
+    onFocus: (e: React.FocusEvent) => { if (!within(e.relatedTarget)) start(); },
+    onBlur: (e: React.FocusEvent) => { if (!within(e.relatedTarget)) end(); },
+  };
+  return { ref, held, handlers };
 }
 
 /**
@@ -694,13 +444,13 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
 function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; onRetry: () => void }): ReactNode {
   const t = useMessages('messages');
   return (
-    <div className="py-3" data-ai-failed={failed} role="status">
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+    <div className="px-3 py-3" data-ai-failed={failed} role="status">
+      <p className="m-0 text-sm text-zinc-500 dark:text-zinc-400">
         {failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')}
       </p>
       <button
         type="button"
-        className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+        className={`mt-1 inline-flex min-h-[44px] md:min-h-0 items-center rounded-md py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200 ${FOCUS}`}
         onClick={onRetry}
         data-ai-retry=""
       >
@@ -710,38 +460,200 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
   );
 }
 
+/** Two rows' lines while a band's rows are on their way: two bars, no more. */
+function LoadingLines({ label, ...props }: { label: string } & React.HTMLAttributes<HTMLDivElement>): ReactNode {
+  return (
+    <SkeletonGroup label={label} className="flex flex-col gap-8 px-3 py-4" {...props}>
+      <Skeleton className="w-1/2" />
+      <Skeleton className="w-2/5" />
+    </SkeletonGroup>
+  );
+}
+
+/**
+ * WAITING ON YOU (24 Nov 2026): the list the head's Needs you count opens
+ * (#7103). One card, one row for every thing that needs the person, each
+ * with the action pill it has in Needs you and opening the request or change
+ * it is about. Nothing folds and there is no Show more: the count the head
+ * gave and the rows here are one number. Its way back is All threads.
+ */
+function WaitingCard({ lines, count, ready, failed, onRetry, onClose, searching, noneWords }: {
+  lines: Line[];
+  count: number;
+  ready: boolean;
+  failed: 'unreachable' | 'failed' | null;
+  onRetry?: () => void;
+  onClose?: () => void;
+  searching: boolean;
+  noneWords: string;
+}): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className={BAND} data-ai-sheet="waiting">
+      <section data-ai-list="waiting">
+        <BandHead
+          owe
+          icon={<UserIcon />}
+          name={t('messages:ai.waiting.title')}
+          count={count || null}
+          spoken={t('messages:ai.waiting.titleCount', { count })}
+          extra={onClose ? (
+            <button type="button" className={WAITING_BACK} onClick={onClose} data-ai-waiting-close="">
+              <span aria-hidden="true">‹ </span>{t('messages:ai.waiting.all')}
+            </button>
+          ) : null}
+        />
+        <div className="pt-1">
+          {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          {lines.length ? (
+            <BandRows lines={lines} first={Infinity} />
+          ) : !ready ? (
+            failed ? null : <LoadingLines label={t('messages:ai.waiting.loading')} data-ai-loading="" />
+          ) : searching ? (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="waiting">{noneWords}</p>
+          ) : (
+            <p className="m-0 flex items-start gap-2.5 px-3 py-3 text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-ai-empty="waiting">
+              <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--state-ok)]" aria-hidden="true" strokeWidth="2.25" />
+              <span>{t('messages:ai.waiting.empty')}</span>
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * IN PROGRESS (25 Nov 2026, #7157): the list the head's In progress count
+ * opens, Waiting on you's sibling. One card, one row for every thread being
+ * built, checked or waiting on somebody else, each as its band draws it.
+ * Nothing folds and there is no Show more, so the count the head gave and
+ * the rows here are one number. Its way back is All threads.
+ */
+function ProgressCard({ lines, ready, failed, onRetry, onClose, searching, noneWords }: {
+  lines: Line[];
+  ready: boolean;
+  failed: 'unreachable' | 'failed' | null;
+  onRetry?: () => void;
+  onClose?: () => void;
+  searching: boolean;
+  noneWords: string;
+}): ReactNode {
+  const t = useMessages('messages');
+  const count = lines.length;
+  return (
+    <div className={BAND} data-ai-sheet="progress">
+      <section data-ai-list="progress">
+        <BandHead
+          icon={<ClockIcon />}
+          name={t('messages:ai.band.progress')}
+          count={count || null}
+          spoken={count ? t('messages:ai.band.progressCount', { count }) : t('messages:ai.band.progress')}
+          extra={onClose ? (
+            <button type="button" className={WAITING_BACK} onClick={onClose} data-ai-progress-close="">
+              <span aria-hidden="true">‹ </span>{t('messages:ai.waiting.all')}
+            </button>
+          ) : null}
+        />
+        <div className="pt-1">
+          {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          {lines.length ? (
+            <BandRows lines={lines} first={Infinity} />
+          ) : !ready ? (
+            failed ? null : <LoadingLines label={t('messages:ai.progress.loading')} data-ai-loading="" />
+          ) : searching ? (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="progress">{noneWords}</p>
+          ) : (
+            <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="progress">{t('messages:ai.band.progressEmpty')}</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ── Search's messages ────────────────────────────────────────────────────
+
+/**
+ * 13 Nov 2026: the words the search found, in a message's snippet. The
+ * accent's own tint behind them (a token, so it follows the theme) and the
+ * title's ink and weight, so they stand out of the quiet line round them.
+ */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--accent-tint)] font-semibold text-zinc-900 dark:text-zinc-100';
+const FOUND_ROW = `flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 rounded-xl px-3 py-1.5 text-start hover:bg-zinc-900/[0.035] active:bg-zinc-900/[0.06] dark:hover:bg-white/[0.05] dark:active:bg-white/[0.08] ${FOCUS}`;
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as one of the
+ * list's quiet rows, and a link to it: its snippet with the found words
+ * marked, where it is (its thread's name, or the chat itself) and its day.
+ * Where the list is narrow, where it is goes on a second line (app.css). The
+ * link's name says all of it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      href={line.href}
+      className={FOUND_ROW}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className="flex shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true"><ChatIcon className="h-[18px] w-[18px]" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400" data-ai-found-words="">
+          <Marked parts={line.parts} className={FOUND_MARK} />
+        </span>
+        <span className="ai-found-place-under block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400">{line.place}</span>
+      </span>
+      <span className="ai-found-place max-w-[40%] shrink truncate text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-found-place="">{line.place}</span>
+      <span className="shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400">{line.date}</span>
+    </a>
+  );
+}
+
+// ── The list ─────────────────────────────────────────────────────────────
+
+/** The head's counts, as its line says them: a zero says nothing (Y03). */
+function headWords(needs: number, next: number): { id: string; values: Record<string, number> } {
+  if (needs > 0) return next > 0
+    ? { id: 'messages:ai.head.counts', values: { needs, next } }
+    : { id: 'messages:ai.head.needs', values: { needs } };
+  return next > 0 ? { id: 'messages:ai.head.clear', values: { next } } : { id: 'messages:ai.head.clearAlone', values: {} };
+}
+
 export function AiLists({
-  hero, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
-  picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
+  newChat = null, search = null, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
+  openRow, openThread, onDone, onDismiss, picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, doneOpen = 0,
+  visit = null, waitingOpen = false, onOpenWaiting, onCloseWaiting, progressOpen = false, onOpenProgress, onCloseProgress,
 }: {
-  /** The page's title, drawn in the sheet the chips are in. */
-  hero: ReactNode;
+  /** The head's New chat (./new-chat-button.tsx), at the end of its line. */
+  newChat?: ReactNode;
+  /** The head's search field (./index.tsx), first on its tools line. */
+  search?: ReactNode;
   /**
-   * Empty the search box (phone review, 23 Nov 2026, #3): what the chip
-   * beside History's heading does, so a search that is narrowing History can
-   * be seen and ended there, with the box itself a long scroll above.
+   * Empty the search box (phone review, 23 Nov 2026, #3): what the chip on
+   * Done's strip does, so a search that is narrowing it can be seen and
+   * ended there, with the box itself a long scroll above.
    */
   onQueryClear?: () => void;
   /**
-   * #6398: what the page's search box says. The lists keep only the threads
+   * #6398: what the page's search box says. The bands keep only the threads
    * whose title, number or project name contains it, upper and lower case
-   * alike; a section with no match folds away. '' (the box closed or
-   * empty) filters nothing.
+   * alike; a band with no match is not drawn. '' filters nothing.
    */
   query?: string;
   /**
    * 13 Nov 2026: the messages in the person's threads with the bot that
    * match what the box says (./search.ts useBotSearch), listed under the
-   * threads that do; null while the first answer is on its way.
+   * bands; null while the first answer is on its way.
    */
   found?: Found | null;
   /** Search the messages again: the Try again of the note that says they could not be. */
   onFoundRetry?: () => void;
   /**
    * What the column shows (./column.ts columnKey): `private:<root>` or
-   * `page:<route>`. The row that opens it is lit: a private thread's row,
-   * the row of the request it was filed as (#6153), or a request's, a
-   * change's or a decision's row while its page is in the column (#6218).
+   * `page:<route>`. The row that opens it is lit.
    */
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
@@ -759,82 +671,174 @@ export function AiLists({
   openThread: (t: AiThread) => void;
   /** #6159: a private thread's row was marked done from its ⋯: it leaves the lists at once. */
   onDone?: (rootId: number) => void;
+  /** Mobile 04: Dismiss on a thread somebody named you in: it leaves Needs you at once. */
+  onDismiss?: (row: WorkRow) => void;
   /**
-   * The projects the chips narrow every list to (none: All). The page keeps
-   * them, in its address (./filter-address.ts), so a link can open the tab
-   * narrowed to a project: a project's Workshop and Hub do.
+   * The projects the filter narrows every band to (none: All). The page
+   * keeps them in its address (./filter-address.ts), so a link can open the
+   * tab narrowed to a project: a project's Workshop and Hub do.
    */
   picked?: readonly string[];
   onPick?: (slugs: string[]) => void;
-  /** A project the lists do not name (one picked by a link), for its chip. */
+  /** A project the lists do not name (one picked by a link), for the filter's name. */
   appFor?: (slug: string) => AiApp | null;
-  /** The History card's rows (./history.ts useHistory); none, no card. */
+  /** History's rows (./history.ts useHistory), which Done runs on into; none, this week's alone. */
   history?: HistoryState | null;
   historyKind?: HistoryKind | null;
   onHistoryKind?: (kind: HistoryKind | null) => void;
   openHistory?: (row: HistoryRow) => void;
-  /** The card itself, which #homeroom-bot/history scrolls to. */
+  /** Done's card, which #homeroom-bot/history scrolls to. */
   historyRef?: React.Ref<HTMLDivElement>;
+  /** Bumped by #homeroom-bot/history: Done opens past its first rows, its kind chips shown. */
+  doneOpen?: number;
+  /**
+   * Mobile polish 05 (24 Nov 2026): your last visit (./use-visit.ts), which
+   * each band marks what is new since: a dot on each new row, the new rows
+   * first with a line under them, and a count in its heading. Null on a
+   * first visit, and until it is read: no marks.
+   */
+  visit?: LastVisit | null;
+  /**
+   * 24 Nov 2026 (#7103): Waiting on you, drawn in place of the three bands.
+   * The head, its search and its project filter stay above it.
+   */
+  waitingOpen?: boolean;
+  /** The head's Needs you count pressed: open Waiting on you. */
+  onOpenWaiting?: () => void;
+  /** Waiting on you's All threads: back to the head and the three bands. */
+  onCloseWaiting?: () => void;
+  /**
+   * 25 Nov 2026 (#7157): In progress, drawn in place of the three bands from
+   * the head's other count, as Waiting on you is. Only one of the two is open.
+   */
+  progressOpen?: boolean;
+  /** The head's In progress count pressed: open In progress. */
+  onOpenProgress?: () => void;
+  /** In progress's All threads: back to the head and the three bands. */
+  onCloseProgress?: () => void;
 }): ReactNode {
   const t = useMessages('messages');
-  // The rows, the chips' projects, the counts and the notes are built once
-  // for this list and the one the looks draw (./lines.ts).
   const {
-    searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
-    needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
-  // More, open under its chip.
+    searching, ranked, picked, setOnly, toggle, needLines, progressLines, doneLines, liveBehind, onlyApp, nothingHere,
+    noMatches, noneWords, foundLines, foundMore, foundFailed, needCount, progressCount, weekCount,
+    needNew, progressNew, doneNew, newSince,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found, visit });
+  // The project picker, open under the filter.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
+  // Needs you, newest first, its order held while it is being used (#6245).
+  // Mobile polish 05: what is new since your last visit before the rest.
+  const needs = useHeld(newFirst(newestFirst(needLines)));
+
+  // DONE'S PAGING. How many of its rows are drawn: five at rest, twenty more
+  // a press. A door that asks for History opens it past its first rows.
+  const [doneShown, setDoneShown] = useState<number>(() => (doneOpen ? BAND_FIRST.done + DONE_STEP : BAND_FIRST.done));
+  useEffect(() => { if (doneOpen) setDoneShown((n) => Math.max(n, BAND_FIRST.done + DONE_STEP)); }, [doneOpen]);
+  const doneMore = doneShown > BAND_FIRST.done;
+  // Show more reads History's next page when what is read runs out, and
+  // keeps reading until the press's twenty are there or nothing is older. A
+  // search lists what has loaded, as History did; its Show more reads on.
+  const wantMore = !!history && history.ready && !history.loading && !history.failed && !!history.next && !searching
+    && doneMore && doneLines.length < doneShown;
+  const readMore = history?.more;
+  useEffect(() => { if (wantMore && readMore) readMore(); }, [wantMore, readMore]);
+  const done = searching
+    ? { items: doneLines, shown: doneLines.length, hidden: 0 }
+    : groupRows(doneLines, doneShown, false, false);
+  const doneDrawn = done.items.slice(0, done.shown);
+  const doneLoading = !!history && (!history.ready || history.loading) && !history.failed
+    && (searching ? false : doneDrawn.length < doneShown);
+  // More to show: rows already read past what is drawn, or an older page.
+  const historyCan = !!history && history.ready && !history.loading && !!history.next;
+  const doneCan = searching ? historyCan : (done.hidden > 0 || historyCan);
+  const showDoneMore = useCallback(() => {
+    if (searching) { history?.more(); return; }
+    setDoneShown((n) => n + DONE_STEP);
+  }, [searching, history]);
+  const kindsShown = doneMore || !!historyKind;
+
+  const counts = ready ? headWords(needCount, progressCount) : null;
+  // #7103: the Needs you count is the way into Waiting on you. A zero has
+  // nothing to open, and says Nothing needs you in the plain weight.
+  const needsLink = needCount > 0 && !!onOpenWaiting;
+  // #7157: and the In progress count is the way into its own list, drawn
+  // the same way, in the counts and in the Nothing needs you wording. A zero
+  // is not a link, and the wordings without one draw no <1> at all.
+  const progressLink = progressCount > 0 && !!onOpenProgress;
+  // The filter at rest says what it shows: All projects, the one picked, or how many.
+  const onlyPicked = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
+  const filterWords = !picked.length
+    ? t('messages:ai.filter.allProjects')
+    : onlyPicked ? onlyPicked.name || onlyPicked.slug : t('messages:ai.filter.someProjects', { count: picked.length });
+  const progressSpoken = progressLines.length
+    ? t('messages:ai.band.progressCount', { count: progressLines.length })
+    : t('messages:ai.band.progress');
   return (
-    <div className="flex flex-col gap-3 pt-4" data-ai-lists="">
-      <div className={`${PLANE} pt-1`} data-ai-sheet="head">
-        {hero}
-        {ranked.length > 1 || picked.length ? (
-          // More stands outside the rail, at its end, so a phone's narrow
-          // rail never scrolls it out of reach. Drawn too whenever a link
-          // picked a project, however few there are, so All is a tap away.
-          <div className="flex items-start" data-ai-project-filter="">
-            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1" reveal={picked.join(' ')}>
-              <Chip size="bar" className={`gap-2 px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
-                {t('messages:ai.filter.all')}
-                <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
-              </Chip>
-              {rail.map((app) => (
-                <Chip key={app.slug} size="bar" className={`gap-2 ps-2.5 pe-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
-                  <SmallTile app={app} />
-                  {app.name || app.slug}
-                  <FreshBadge count={freshByApp[app.slug] || 0} className={picked.includes(app.slug) ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
-                </Chip>
-              ))}
-            </FadeRail>
-            {past > 0 ? (
-              <Chip
-                size="bar"
-                className={`mb-4 me-4 mt-3 gap-1 ps-4 pe-3 ${CHIP_EDGE}`}
-                selected={false}
-                aria-pressed={undefined}
-                aria-haspopup="dialog"
-                aria-expanded={!!more}
-                onClick={(e) => setMore(more ? null : e.currentTarget.getBoundingClientRect())}
-                data-ai-project-more=""
-              >
-                {t('messages:ai.filter.more', { count: past })}
-                <ChevronDownIcon aria-hidden="true" />
-              </Chip>
+    <div className="ai-lists flex flex-col gap-3 pt-4" data-ai-lists="">
+      <div className={`${PLANE} pb-3`} data-ai-sheet="head">
+        {/* THE HEAD'S LINE: the Homeroom mark, the counts the bands below
+            carry, and New chat. The page is named once on screen, by the bar
+            above (phone review, 23 Nov 2026, S14): the heading stays for a
+            screen reader. */}
+        <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
+          <img src={BOT_AVATAR} alt="" className="h-10 w-10 shrink-0 rounded-[13px] object-cover" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
+            {counts ? (
+              <span className="truncate text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
+                <RichMessage
+                  id={counts.id}
+                  values={counts.values}
+                  components={[needsLink
+                    ? (
+                      <button
+                        type="button"
+                        className={HEAD_LINK}
+                        onClick={onOpenWaiting}
+                        aria-label={t('messages:ai.waiting.open', { count: needCount })}
+                        data-ai-waiting-open=""
+                      />
+                    )
+                    : <strong className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" />,
+                  progressLink
+                    ? (
+                      <button
+                        type="button"
+                        className={HEAD_LINK}
+                        onClick={onOpenProgress}
+                        aria-label={t('messages:ai.progress.open', { count: progressCount })}
+                        data-ai-progress-open=""
+                      />
+                    )
+                    : <span />]}
+                />
+              </span>
             ) : null}
-          </div>
-        ) : <div className="pb-3" />}
-      </div>
-      {/* #6398: one short note says when nothing on the page matched: no
-          thread, and (13 Nov 2026) no message either, once the messages'
-          answer is in (./lines.ts noneWords). */}
-      {noMatches ? (
-        <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">{noneWords}</p>
+          </span>
+          {newChat}
+        </section>
+        {/* THE TOOLS LINE: the search, always there, and one project filter
+            that opens the picker (./project-picker.tsx). No sort and no
+            status filter: the bands are the status. */}
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-3" data-ai-tools="">
+          {search}
+          <button
+            type="button"
+            className={`inline-flex h-9 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-900/[0.04] active:bg-zinc-900/[0.07] disabled:text-zinc-400 dark:text-zinc-100 dark:hover:bg-white/[0.06] dark:active:bg-white/[0.1] dark:disabled:text-zinc-500 ${FOCUS}`}
+            aria-haspopup="dialog"
+            aria-expanded={!!more}
+            aria-label={t('messages:ai.filter.button', { shown: filterWords })}
+            disabled={!ranked.length}
+            onClick={(e) => setMore(more ? null : e.currentTarget.getBoundingClientRect())}
+            data-ai-project-more=""
+            data-ai-picked={picked.length ? picked.join(' ') : undefined}
+          >
+            {onlyPicked ? <SmallTile app={onlyPicked} /> : <FilterIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+            <span className="min-w-0 truncate">{filterWords}</span>
+            <ChevronDownIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+          </button>
         </div>
-      ) : null}
+      </div>
       {more ? (
         <ProjectPicker
           sheet={phone}
@@ -846,99 +850,143 @@ export function AiLists({
           onClose={() => setMore(null)}
         />
       ) : null}
-      {!searching || !ready || needLines.length || failed ? (
-      <div className={`${PLANE} pb-4`} data-ai-sheet="open">
-        <Section
-          list="work"
-          keep
-          head={owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}
-          owe={owedShown > 0}
-          lines={needLines}
-          note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
-          /* While searching, this card is drawn only when it has a match, so
-             its empty line is never the search's answer: the page says "No
-             threads match" in one note of its own (#6398). */
-          empty={ready ? (
-            <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
-              {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
-            </p>
-          ) : (
-            // L06 (overnight audit, 2 Nov 2026): until the lists are read the
-            // card said nothing at all, an empty card that read as final.
-            // Two rows' lines at the one-line row's spacing instead: two
-            // bars and no more, as the screen is in the prerendered document
-            // (tests/mount-on-reveal.test.js counts its elements). A read
-            // that failed says so in its note (ListsFailed) instead, with no
-            // skeleton under it: no rows are coming (offline test, 2 Nov 2026).
-            failed ? null : (
-              <SkeletonGroup label={t('messages:ai.work.loading')} className="flex flex-col gap-8 py-4" data-ai-loading="">
-                <Skeleton className="w-1/2" />
-                <Skeleton className="w-2/5" />
-              </SkeletonGroup>
-            )
-          )}
-          first={searching ? Infinity : GROUP_FIRST.needs}
-          heads={heads}
-          fresh={freshShown}
-          freshBySlug={freshProjects}
-          freshStyle
-          dayHeads
+      {/* #7103: WAITING ON YOU replaces the three cards below the head: one
+          list of everything that needs the person, nothing else. */}
+      {waitingOpen ? (
+        <WaitingCard
+          lines={needs.held}
+          count={needLines.length}
+          ready={ready}
+          failed={failed}
+          onRetry={onRetry}
+          onClose={onCloseWaiting}
+          searching={searching}
+          noneWords={noneWords}
         />
-      </div>
-      ) : null}
-      {busyLines.length || stillLines.length ? (
-        <div className={`${PLANE} pb-2`} data-ai-sheet="busy">
-          <Section
-            list="busy"
-            quiet
-            head={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })}
-            lines={busyLines}
-            still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
-            first={searching ? Infinity : GROUP_FIRST.busy}
-            heads={heads}
-            dayHeads
-          />
+      ) : progressOpen ? (
+        // #7157: IN PROGRESS replaces the three cards, as Waiting on you does.
+        <ProgressCard
+          lines={progressLines}
+          ready={ready}
+          failed={failed}
+          onRetry={onRetry}
+          onClose={onCloseProgress}
+          searching={searching}
+          noneWords={noneWords}
+        />
+      ) : (
+      <>
+      {/* #6398: one short note says when nothing on the page matched: no
+          thread, and (13 Nov 2026) no message either. */}
+      {noMatches ? (
+        <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
+          <p className="m-0 text-sm text-zinc-500 dark:text-zinc-400">{noneWords}</p>
         </div>
       ) : null}
-      {liveLines.length ? (
-        <div className={`${PLANE} pb-2`} data-ai-sheet="live">
-          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={searching ? Infinity : GROUP_FIRST.live} heads={heads} foldFresh />
-          {liveBehind ? (
-            // #6233: one Reload under the list, for every row this tab is
-            // older than.
-            <div className="flex items-center gap-2 border-t border-zinc-900/[0.07] px-4 pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
-              <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
-              <button
-                type="button"
-                className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                onClick={() => reloadTab()}
-                data-ai-older-tab-reload=""
-              >
-                {t('messages:ai.short.reload')}
-              </button>
+
+      {/* NEEDS YOU. Its strip is the accent's tint, the one band that is
+          your job. While searching it is drawn only with a match, so its
+          empty line is never the search's answer. */}
+      {!searching || !ready || needLines.length || failed ? (
+        <div className={BAND} data-ai-sheet="open">
+          <section
+            ref={needs.ref}
+            data-ai-list="work"
+            {...needs.handlers}
+          >
+            <BandHead
+              owe
+              icon={<UserIcon />}
+              name={t('messages:ai.work.title')}
+              count={needLines.length || null}
+              aside={ready && !failed && !needLines.length ? t('messages:ai.band.allDone') : null}
+              spoken={needLines.length
+                ? t('messages:ai.work.titleCount', { count: needLines.length })
+                : ready && !failed ? t('messages:ai.band.allDoneSpoken') : t('messages:ai.work.title')}
+              news={needNew}
+            />
+            <div className="pt-1">
+              {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+              {needLines.length ? (
+                // Rows that arrived are drawn, under the note when the other
+                // list could not be read.
+                <BandRows lines={needs.held} first={searching ? Infinity : BAND_FIRST.needs} since={newSince} />
+              ) : !ready ? (
+                // L06 (overnight audit, 2 Nov 2026): until the lists are read
+                // the band shows its rows' shape: two bars and no more, as the
+                // screen is in the prerendered document. A read that failed
+                // says so in its note instead: no rows are coming.
+                failed ? null : <LoadingLines label={t('messages:ai.work.loading')} data-ai-loading="" />
+              ) : nothingHere && !doneLines.length && onlyApp ? (
+                <p className="m-0 px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="project">
+                  {t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug })}
+                </p>
+              ) : failed ? null : (
+                // NOTHING NEEDS YOU: you are finished; the platform is doing
+                // the rest, and says how much of it.
+                <p className="m-0 flex items-start gap-2.5 px-3 py-3 text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-ai-empty="">
+                  <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--state-ok)]" aria-hidden="true" strokeWidth="2.25" />
+                  <span>
+                    <RichMessage
+                      id={progressCount ? 'messages:ai.band.clear' : 'messages:ai.band.clearAlone'}
+                      values={{ count: progressCount }}
+                      components={[<strong className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
+                    />
+                  </span>
+                </p>
+              )}
             </div>
-          ) : null}
+          </section>
         </div>
       ) : null}
-      {/* #6398: History is searched as far as it has loaded; with no match in
-          it, its card folds away like any other section. */}
-      {history && (!searching || historyLines.length) ? (
-        <div ref={historyRef} className={`${PLANE} pb-2 scroll-mt-4`} data-ai-sheet="history">
-          <section className="pb-1" data-ai-list="history">
-            <div className="mb-1 flex items-center gap-2 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-              <SectionHeader className="shrink-0 px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
-              {/* #3 (phone review, 23 Nov 2026): History is searched like
-                  every list, and the search box is the page's first thing,
-                  far above this card. So while a search narrows it, the card
-                  says so beside its heading, with the way to end it. */}
-              {/* The chip idiom's selection (a filter is on: you are looking
-                  at a subset), but a press clears it, so it is no toggle. */}
-              {searching && onQueryClear ? (
+
+      {/* IN PROGRESS: everything being built, checked or waiting on somebody
+          else, the threads nobody is moving among them (Not moving). It and
+          Done follow Needs you once the lists are read (or rows of theirs
+          arrived): the prerender is the head and Needs you's two bars, as
+          it was with the cards they replace (tests/mount-on-reveal.test.js
+          bounds the document). */}
+      {(ready || progressLines.length) && (!searching || progressLines.length) ? (
+        <div className={BAND} data-ai-sheet="busy">
+          <section data-ai-list="busy">
+            <BandHead
+              icon={<ClockIcon />}
+              name={t('messages:ai.band.progress')}
+              count={progressLines.length || null}
+              spoken={progressSpoken}
+              news={progressNew}
+            />
+            <div className="pt-1">
+              {ready && !progressLines.length ? (
+                <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.band.progressEmpty')}</p>
+              ) : (
+                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} lift="moved" />
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {/* DONE: the whole past, newest first. */}
+      {(ready || doneLines.length) && (!searching || doneLines.length) ? (
+        <div ref={historyRef} className={`${BAND} scroll-mt-4`} data-ai-sheet="live">
+          <section data-ai-list="live">
+            <BandHead
+              icon={<CheckIcon strokeWidth="2.25" />}
+              name={t('messages:ai.band.done')}
+              aside={weekCount ? t('messages:ai.band.thisWeek', { count: weekCount }) : null}
+              spoken={weekCount ? t('messages:ai.band.doneCount', { count: weekCount }) : t('messages:ai.band.done')}
+              news={doneNew}
+              extra={searching && onQueryClear ? (
+                // #3 (phone review, 23 Nov 2026): Done is searched like every
+                // band, and the search box is far above it. So while a search
+                // narrows it, its strip says so, with the way to end it: the
+                // chip idiom's selection, but a press clears it.
                 <Chip
                   size="bar"
                   selected
                   aria-pressed={undefined}
-                  className="-my-1.5 ms-auto h-8 min-w-0 max-w-[70%] gap-1.5 ps-2.5 pe-2 text-[13px] [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0"
+                  className="-my-1 ms-auto h-8 min-w-0 max-w-[60%] gap-1.5 ps-2.5 pe-2 text-[13px] [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0"
                   aria-label={t('messages:ai.history.searching.clear', { query: query.trim() })}
                   title={t('messages:ai.history.searching.clear', { query: query.trim() })}
                   onClick={onQueryClear}
@@ -949,57 +997,68 @@ export function AiLists({
                   <XIcon aria-hidden="true" strokeWidth="2.25" />
                 </Chip>
               ) : null}
-            </div>
-            <div role="group" aria-label={t('messages:ai.history.kind.label')} className="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-ai-history-kinds="">
-              <Chip size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">
-                {t('messages:ai.history.kind.all')}
-              </Chip>
-              {HISTORY_KINDS.map((kind) => (
-                <Chip key={kind} size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind}>
-                  {kind === 'change' ? t('messages:ai.history.kind.change')
-                    : kind === 'request' ? t('messages:ai.history.kind.request')
-                      : kind === 'vote' ? t('messages:ai.history.kind.vote')
-                        : t('messages:ai.history.kind.solo')}
+            />
+            {/* History's kind chips, once Show more has been pressed (or an
+                address picked a kind): a kind narrows the whole of Done. */}
+            {kindsShown ? (
+              <KindRail role="group" aria-label={t('messages:ai.history.kind.label')} className="gap-1.5 px-1.5 pt-2 pb-1" data-ai-history-kinds="">
+                <Chip size="bar" className={`h-8 px-3 text-[13px] whitespace-nowrap ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">
+                  {t('messages:ai.history.kind.all')}
                 </Chip>
-              ))}
-            </div>
-            <div className="px-4">
-              {!history.ready ? (
-                <SkeletonGroup label={t('messages:ai.history.loading')} className="flex flex-col gap-8 py-4" data-ai-history-loading="">
-                  <Skeleton className="w-1/2" />
-                  <Skeleton className="w-2/5" />
-                </SkeletonGroup>
-              ) : null}
-              {history.ready && history.failed && !historyLines.length ? (
-                <div className="py-3" role="status" data-ai-history-failed="">
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.history.failed')}</p>
+                {HISTORY_KINDS.map((kind) => (
+                  <Chip key={kind} size="bar" className={`h-8 px-3 text-[13px] whitespace-nowrap ${CHIP_EDGE}`} selected={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind}>
+                    {kind === 'change' ? t('messages:ai.history.kind.change')
+                      : kind === 'request' ? t('messages:ai.history.kind.request')
+                        : kind === 'vote' ? t('messages:ai.history.kind.vote')
+                          : t('messages:ai.history.kind.solo')}
+                  </Chip>
+                ))}
+              </KindRail>
+            ) : null}
+            <div className="pt-1">
+              {/* Mobile polish 05: its line only where the rows drawn hold
+                  both new and seen ones; past Show more the count says how
+                  many more are new. */}
+              <RowsWithLine lines={doneDrawn} before={lineBefore(doneDrawn)} since={newSince} />
+              {/* While a page loads, two bars sit where its rows will be; if
+                  it fails, one line with Try again. Neither moves the rows
+                  above. */}
+              {doneLoading ? <LoadingLines label={t('messages:ai.history.loading')} data-ai-history-loading="" /> : null}
+              {history && history.ready && history.failed ? (
+                <div className="px-3 py-3" role="status" data-ai-history-failed="">
+                  <p className="m-0 text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.history.failed')}</p>
                   <button
                     type="button"
-                    className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-                    onClick={history.retry}
+                    className={`mt-1 inline-flex min-h-[44px] md:min-h-0 items-center rounded-md py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200 ${FOCUS}`}
+                    onClick={history.rows.length ? history.more : history.retry}
                   >
                     {t('core:common.tryAgain')}
                   </button>
                 </div>
               ) : null}
-              {history.ready && !history.failed && !historyLines.length && !history.next ? (
-                <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
+              {ready && !doneLines.length && (!history || (history.ready && !history.failed && !history.next)) ? (
+                <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
               ) : null}
-              {historyMonths.map((month) => (
-                <div key={month.key} data-ai-history-month={month.key}>
-                  <h3 className="m-0 pt-4 text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{monthName(month.at, locale)}</h3>
-                  <GroupList lines={month.rows} quiet heads={heads} first={searching ? Infinity : GROUP_FIRST.live} />
+              {/* #6233: one Reload under Done's rows, for every row this tab
+                  is older than. */}
+              {liveBehind ? (
+                <div className="mx-3 mt-1 flex items-center gap-2 border-t border-zinc-900/[0.07] pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
+                  <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
+                  <button
+                    type="button"
+                    className={`shrink-0 rounded-md text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300 ${FOCUS}`}
+                    onClick={() => reloadTab()}
+                    data-ai-older-tab-reload=""
+                  >
+                    {t('messages:ai.short.reload')}
+                  </button>
                 </div>
-              ))}
-              {history.ready && history.next ? (
-                <button
-                  type="button"
-                  className="flex w-full min-h-[44px] md:min-h-0 items-center justify-start gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 disabled:opacity-60 dark:text-violet-300 dark:hover:text-violet-200"
-                  onClick={history.more}
-                  disabled={history.loading}
-                  data-ai-history-more=""
-                >
-                  {t('messages:ai.history.earlier')}
+              ) : null}
+              {/* Show more: twenty more, into older work. No count: the
+                  archive's size is not known. Gone once nothing is older. */}
+              {doneCan ? (
+                <button type="button" className={MORE} onClick={showDoneMore} data-ai-history-more="">
+                  {t('messages:ai.band.showMore')}
                   <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
                 </button>
               ) : null}
@@ -1007,19 +1066,23 @@ export function AiLists({
           </section>
         </div>
       ) : null}
-      {/* 13 Nov 2026: the messages that match, under the threads that do: a
-          card of its own, its rows links to each message. Drawn only while a
-          search is on and has found some (nothing in the prerender). */}
+
+      {/* 13 Nov 2026: the messages that match, under the bands: a card of
+          its own, its rows links to each message. Drawn only while a search
+          is on and has found some (nothing in the prerender). */}
       {foundLines.length ? (
-        <div className={`${PLANE} pb-2`} data-ai-sheet="found">
-          <section className="pb-1" data-ai-list="found">
-            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.search.messages', { count: foundLines.length })}</SectionHeader>
-            </div>
-            <div className="px-4">
+        <div className={BAND} data-ai-sheet="found">
+          <section data-ai-list="found">
+            <BandHead
+              icon={<ChatIcon />}
+              name={t('messages:ai.search.messagesTitle')}
+              count={foundLines.length}
+              spoken={t('messages:ai.search.messages', { count: foundLines.length })}
+            />
+            <div className="pt-1">
               {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
               {foundMore ? (
-                <p className="py-2 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-found-more="">{t('messages:ai.search.more')}</p>
+                <p className="m-0 px-3 py-2 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-found-more="">{t('messages:ai.search.more')}</p>
               ) : null}
             </div>
           </section>
@@ -1029,10 +1092,10 @@ export function AiLists({
           again, as a list that could not be read says it (ListsFailed). */}
       {foundFailed ? (
         <div className={`${PLANE} px-4 py-3`} data-ai-search-failed="" role="status">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.failed')}</p>
+          <p className="m-0 text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.failed')}</p>
           <button
             type="button"
-            className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            className={`mt-1 inline-flex min-h-[44px] md:min-h-0 items-center rounded-md py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200 ${FOCUS}`}
             onClick={() => onFoundRetry?.()}
             data-ai-search-retry=""
           >
@@ -1040,6 +1103,8 @@ export function AiLists({
           </button>
         </div>
       ) : null}
+      </>
+      )}
     </div>
   );
 }

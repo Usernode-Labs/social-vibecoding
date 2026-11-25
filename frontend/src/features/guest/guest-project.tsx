@@ -380,7 +380,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   const actions = (
     <>
       {canTry ? (
-        <TryLink app={app} inside={signedIn || preview} onOpenInside={onOpenInside} className={CARD_OPEN_BTN}>
+        <TryLink app={app} inside={signedIn || preview || app.guest_ready === true} onOpenInside={onOpenInside} className={CARD_OPEN_BTN}>
           <span className="truncate">{openLabel}</span>
         </TryLink>
       ) : (

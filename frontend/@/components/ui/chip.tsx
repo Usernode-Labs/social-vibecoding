@@ -115,10 +115,11 @@ export function ChipRail({ className, ...props }: React.ComponentProps<'div'>) {
  * worse). The fade is a mask, so it fades to whatever it sits on, in either
  * theme. Both edges false, as when every chip fits, sets no mask at all.
  *
- * Its user is Home's kind chips (features/home/communities-to-join.tsx). The
- * base classes are `ChipRail`'s own; a caller passes the spacing its surface
- * needs, since the rail sits in the page's gutter. The AI page's project
- * chips (features/ai/lists.tsx) keep their own copy, inside a sheet, whose
+ * Its users are Home's kind chips (features/home/communities-to-join.tsx) and
+ * the AI page's History kinds (features/ai/lists.tsx). The base classes are
+ * `ChipRail`'s own; a caller passes the spacing its surface needs, since the
+ * rail sits in the page's gutter. The AI page's PROJECT chips
+ * (features/ai/lists.tsx) keep their own copy, inside a sheet, whose
  * measurement `tests/rtl-geometry.test.js` pins.
  */
 const FADE = 40;

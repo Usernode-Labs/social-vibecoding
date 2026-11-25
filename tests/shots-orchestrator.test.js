@@ -627,6 +627,12 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
   // again once, a few minutes on, by the recovery sweep.
   assert.deepEqual(fault({ code: 'github_unavailable' }),
     { kind: 'github_unavailable', retryAt: now + 5 * 60_000 });
+  // 23 Nov 2026: a connection the database would not give in time (a
+  // release's draining process on its small pool) is the database's,
+  // whichever step met it, and is taken again once.
+  assert.deepEqual(fault(new Error('timeout exceeded when trying to connect')), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' })), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('sorry, too many clients already'), { code: '53300' })), { kind: 'database' });
 
   for (const error of [
     null,
@@ -638,9 +644,26 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
     { code: 'shots_stopped' },
     { code: 'visible_changes_conflict' },
     { shotsPlatformFault: 'not_a_kind' },
+    // An ordinary query error is not the database being out of reach.
+    Object.assign(new Error('syntax error at or near "SELEC"'), { code: '42601' }),
   ]) {
     assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
   }
+});
+
+test('a run that ended on a connection it could not get records one code, whatever the driver said', () => {
+  for (const error of [
+    new Error('timeout exceeded when trying to connect'),
+    Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+  ]) {
+    assert.equal(orchestrator.errorCode(error), 'database_busy');
+    const agent = orchestrator.agentErrorOf(error);
+    assert.equal(agent.code, 'database_busy');
+    assert.deepEqual(agent.platformFault, { kind: 'database' });
+  }
+  assert.equal(orchestrator.errorCode(new Error('Image build failed')), 'shots_failed');
+  assert.equal(orchestrator.errorCode({ code: 'shots_capture_incomplete' }), 'shots_capture_incomplete');
 });
 
 // trace_summary.tokenUsage was null on every shots run (18 Nov 2026). The
@@ -666,4 +689,43 @@ test('a run\'s trace says what its agent spent, however the turn ended', () => {
   const none = orchestrator.newRunMetrics();
   orchestrator.addAgentUsage(none, { result: null, agentError: { code: 'shots_agent_failed' } });
   assert.equal(Object.hasOwn(orchestrator.traceSummary(none), 'tokenUsage'), false);
+});
+
+// #7139: a change's own staging seeds are written into the before copy too.
+// When one could not go in, the brief names it so a claim that needed it is
+// skipped with a plain reason instead of a vague capture failure.
+test('Homeroom\'s brief carries changeSeeds only when a seed was left out of the before copy', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-change-seeds-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (beforeSeeds) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A guest-ready demo project' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/db/migrate.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' }, beforeSeeds },
+      intent: contract.parseIntent(fixtures.intent()),
+      selfApp: true,
+    });
+    assert.equal('changeSeeds' in briefFor({ ran: true, applied: ['seedA'], leftOut: [] }), false,
+      'nothing left out says nothing');
+    assert.equal('changeSeeds' in briefFor(null), false);
+
+    const applied = briefFor({ ran: true, applied: [], leftOut: [{ name: 'seedNeedsNewTable', why: 'schema' }] });
+    assert.deepEqual(applied.changeSeeds, {
+      beforeCopy: 'applied',
+      leftOut: [{ seed: 'seedNeedsNewTable', why: 'schema' }],
+      note: applied.changeSeeds.note,
+    });
+    assert.match(applied.changeSeeds.note, /the before copy can't hold the demo data this change adds \(seed name\)/);
+    assert.match(applied.changeSeeds.note, /on the after copy only/);
+
+    assert.equal(briefFor({ ran: 'partial', leftOut: [] }).changeSeeds.beforeCopy, 'partial');
+    assert.equal(briefFor({ ran: false, reason: 'no_runner' }).changeSeeds.beforeCopy, 'not_run');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
 });

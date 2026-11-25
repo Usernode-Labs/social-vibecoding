@@ -28,7 +28,9 @@ Code version. A new version changes the worker's reuse key. During quiet
 periods, dispatch the workflow to pick up a release without a source push.
 
 Pull request checks run in `kubernetes-pr-checks.yml`. The required Security
-merge gate covers its security and database jobs. The release can reuse a
+merge gate covers its security and database jobs. The image jobs build and
+scan when a change can reach an image's packages, and otherwise report success
+without building (`scripts/pr-image-inputs.js`; the job summary says which). The release can reuse a
 passing PostgreSQL 17/18 run for the merged PR when it tested the same Git
 tree. The planner checks the result from the exact run attempt. If the tree
 differs or the result is missing, expired, or unreadable, the release runs
@@ -75,8 +77,10 @@ check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
 
 Argo notices a new chart on its periodic reconcile, up to three minutes
-after the push. After a successful chart push, `refresh-kubernetes-release.yml`
-requests a hard refresh to bypass Argo's cached chart lookup. This workflow
+after the push. The publisher asks Argo once, as soon as the release tag has
+moved, without waiting for the answer. After a successful chart push,
+`refresh-kubernetes-release.yml` requests a hard refresh to bypass Argo's cached
+chart lookup, unless Argo has already started on the release. This workflow
 runs outside the release queue and reports refresh failures independently
 of the release result. Periodic reconciliation handles unused or failed
 refresh requests.

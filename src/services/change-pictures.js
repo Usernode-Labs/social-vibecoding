@@ -245,21 +245,25 @@ async function canRunShots(pool, { app, change, viewer, deps = {} }) {
 async function screenPictures(pool, { app, change, viewer, deps = {} }) {
   const view = viewOf(deps);
   const { rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1 AND app_id = $2', [Number(change.id), Number(app.id)]);
-  if (!session) return { none: true, canRun: false };
+  if (!session) return { none: true, canRun: false, impactNone: false };
   let shots = null;
   try {
     shots = await view.getForSession(pool, { ...session, app_slug: app.slug }, app.slug, { viewer });
   } catch (err) {
     log.warn('change-pictures', 'A change\'s shots could not be read', { sessionId: change.id, err: err.message });
   }
-  const canRun = !!session.shots_detail?.intent && await canRunShots(pool, { app, change, viewer, deps });
+  // A change that declares nothing a person sees has no shots to take, so
+  // offering a run would take nothing (request #7146).
+  const intent = session.shots_detail?.intent || null;
+  const impactNone = intent?.impact === 'none';
+  const canRun = !!intent && !impactNone && await canRunShots(pool, { app, change, viewer, deps });
   const artifacts = Array.isArray(shots?.artifacts) ? shots.artifacts : [];
   const captions = new Map((shots?.claims || []).map((claim) => [claim.id, claim.claim]));
   const order = ['desktop', 'mobile', 'tablet'];
   const focus = artifacts
     .filter((a) => ['base', 'head'].includes(a.side) && a.variant === 'focus' && a.media === 'png')
     .sort((a, b) => order.indexOf(a.viewport) - order.indexOf(b.viewport) || String(a.storyId).localeCompare(String(b.storyId)));
-  if (shots?.state !== 'verified' || !focus.length) return { none: true, canRun, slides: [] };
+  if (shots?.state !== 'verified' || !focus.length) return { none: true, canRun, impactNone, slides: [] };
   const images = focus.slice(0, MAX_PICTURES).map((a) => ({
     id: a.id,
     source: 'shot',
@@ -317,12 +321,35 @@ async function showChange(pool, config, ctx, args = {}) {
     })),
   ].slice(0, MAX_PICTURES);
 
+  // The request this change answers, if any: the plan offer goes on it.
+  const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
   if (!images.length && !(emails.images || []).length && !(screens.images || []).length) {
-    const nothing = what === 'screens'
-      ? 'It has no before/after shots yet.'
+    const screening = what !== 'emails';
+    // Nothing a person sees changes: say so plainly, and offer no run that
+    // would take nothing (request #7146).
+    if (screening && screens.impactNone) {
+      return {
+        ok: true, shown: 0, emails: [], screens: { none: true, canRun: false, impactNone: true },
+        said: 'This change says nothing a person sees changes, so there are no before and after shots to take.',
+      };
+    }
+    // No shots yet, and this viewer may take them: the offer rides under the
+    // reply, as it does in a change's own thread, whichever thread this is.
+    if (screening && screens.canRun) {
+      ctx.offer = { kind: 'run_shots', forUserId: user.id, args: { sessionId: Number(change.id), issueNumber: request } };
+      return {
+        ok: true, shown: 0, emails: [],
+        screens: { none: true, canRun: true },
+        request,
+        said: 'It has no before and after shots yet. The button under your reply takes them.',
+        screensNote: 'It has no before/after shots yet; the offer under your reply takes them.',
+      };
+    }
+    const nothing = screening
+      ? 'It has no before/after shots yet, and you may not take them.'
       : 'This change touches no emails.';
     return {
-      ok: true, shown: 0, emails: [], screens: screens.none ? { none: true, canRun: !!screens.canRun } : { none: true },
+      ok: true, shown: 0, emails: [], screens: screening ? { none: true, canRun: false } : { none: true },
       said: nothing,
     };
   }
@@ -334,7 +361,6 @@ async function showChange(pool, config, ctx, args = {}) {
     images,
   };
 
-  const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
   if (request) {
     ctx.offer = {
       kind: 'post_pictures_plan', forUserId: user.id,
@@ -366,7 +392,15 @@ async function showChange(pool, config, ctx, args = {}) {
         : ''),
     ...(request ? { note: `The offer under your reply posts these as a plan on request #${request}.` }
       : { note: 'This change answers no request, so a plan cannot go on it: the pictures stay in this thread. Say a plan goes on a request.' }),
-    ...(screens.none ? { screensNote: screens.canRun ? 'It has no before/after shots yet; the offer under your reply takes them.' : 'It has no before/after shots yet, and you may not take them.' } : {}),
+    ...(screens.none ? {
+      screensNote: screens.canRun
+        ? (request
+          // One reply carries one offer: this one posts the pictures as a
+          // plan, so the shots cannot be offered in words (request #7146).
+          ? 'It has no before/after shots yet. Do not offer to take them in words: the offer under your reply posts these as a plan. If they want the shots themselves, call show_change with what "screens".'
+          : 'It has no before/after shots yet; the offer under your reply takes them.')
+        : 'It has no before/after shots yet, and you may not take them.',
+    } : {}),
   };
 }
 

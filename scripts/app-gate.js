@@ -85,8 +85,11 @@ const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-
 // the sign-in hop work at all: the redirect that starts it sets the state
 // cookie, and the callback's sets the access cookie (every value, when
 // there are several). The frame door page (src/services/edge-gate.js) comes
-// with its own Content-Security-Policy, which says who may frame it.
-const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy'];
+// with its own Content-Security-Policy, which says who may frame it. A 401
+// on an app's agent path names, in WWW-Authenticate, where an assistant may
+// ask for a token (src/services/app-agent-oauth.js): without it a client
+// cannot find the approval page.
+const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy', 'www-authenticate'];
 
 function cleanHeaders(headers) {
   const out = {};

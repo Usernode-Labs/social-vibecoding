@@ -57,6 +57,7 @@ const {
 const usernames = require('../services/usernames');
 const accountEmail = require('../services/account-email');
 const socialIdentity = require('../services/social-identity');
+const { avatarUrlFor, generatedAvatarUrl } = require('../services/avatar-url');
 const {
   buildChallengeRow,
   DONE_EXPR,
@@ -159,6 +160,29 @@ const SUMMARY_CONTRIBUTIONS_SQL = `
     JOIN apps a ON a.id = cs.app_id
    WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged' AND cs.live_at IS NOT NULL
    ORDER BY cs.merged_at DESC NULLS LAST, cs.id DESC
+   LIMIT $2
+`;
+
+// "Projects you've helped build": one row per project where the viewer has a
+// change that is live, carrying that project's newest one. The contributions
+// list above is capped at five, so a person busy on one project would see only
+// that project's card; this read is one row per app, newest merge first.
+const SUMMARY_PROJECTS_LIMIT = 100;
+
+const SUMMARY_PROJECTS_SQL = `
+  SELECT latest.session_id, latest.pr_number, latest.pr_title, latest.session_title,
+         latest.merged_at, latest.created_at,
+         a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id, a.self_hosted
+    FROM (
+      SELECT DISTINCT ON (cs.app_id) cs.app_id, cs.id AS session_id, cs.pr_number,
+             cs.pr_title, cs.session_title, cs.merged_at, cs.created_at
+        FROM chat_sessions cs
+       WHERE cs.user_id = $1 AND cs.is_headless = FALSE
+         AND cs.status = 'merged' AND cs.live_at IS NOT NULL
+       ORDER BY cs.app_id, cs.merged_at DESC NULLS LAST, cs.id DESC
+    ) latest
+    JOIN apps a ON a.id = latest.app_id
+   ORDER BY latest.merged_at DESC NULLS LAST, latest.session_id DESC
    LIMIT $2
 `;
 
@@ -296,6 +320,28 @@ function shapeContribution(r) {
   };
 }
 
+// Pure (exported for tests): one projects row → its card on the profile. The
+// title fallback is shapeContribution's; a card opens the project, so it
+// carries no kudos.
+function shapeProject(r) {
+  const prNumber = r.pr_number != null ? Number(r.pr_number) : null;
+  const title = (r.pr_title && String(r.pr_title).trim())
+    || (r.session_title && String(r.session_title).trim())
+    || (prNumber ? `Proposal #${prNumber}` : 'Merged proposal');
+  const when = r.merged_at || r.created_at || null;
+  return {
+    sessionId: Number(r.session_id),
+    prNumber,
+    title,
+    appSlug: r.app_slug,
+    appName: r.app_name || r.app_slug,
+    appIconEmoji: r.icon_emoji || null,
+    appIconUrl: appIconUrl(r.icon_image_id),
+    platform: r.self_hosted === true,
+    mergedAt: when ? new Date(when).toISOString() : null,
+  };
+}
+
 // Pure (exported for tests): the week's merged read, its app rows and the
 // challenges completed in the window → the card's `week`.
 function shapeWeek(mergedRow, appRows, challengesDone) {
@@ -311,7 +357,7 @@ function shapeWeek(mergedRow, appRows, challengesDone) {
 
 // Pure (exported for tests): the three counts, the contributions and the
 // challenge totals → the response body.
-function shapeSummary({ counts, contributions, challenges, activity, week }) {
+function shapeSummary({ counts, contributions, projects, challenges, activity, week }) {
   const c = counts || {};
   return {
     merged: Number(c.merged) || 0,
@@ -328,6 +374,7 @@ function shapeSummary({ counts, contributions, challenges, activity, week }) {
         : null,
     },
     contributions: (contributions || []).map(shapeContribution),
+    projects: (projects || []).map(shapeProject),
     ...(activity ? { activity } : {}),
     ...(week ? { week } : {}),
   };
@@ -351,6 +398,8 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     mergedAt: new Date(now - d.days * 86400000).toISOString(),
     kudos: d.kudos,
   }));
+  // One card per project: the demo's own newest row, in the self app.
+  const newest = contributions[0];
   return {
     ...summary,
     merged: contributions.length,
@@ -358,6 +407,17 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     proposalsTotal: Math.max(summary.proposalsTotal, contributions.length),
     kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
     contributions,
+    projects: [{
+      sessionId: newest.sessionId,
+      prNumber: newest.prNumber,
+      title: newest.title,
+      appSlug: newest.appSlug,
+      appName: newest.appName,
+      appIconEmoji: newest.appIconEmoji,
+      appIconUrl: newest.appIconUrl,
+      platform: true,
+      mergedAt: newest.mergedAt,
+    }],
     // One demo row was merged today (its `days` is 0), so the week's own
     // figures show something to share. The challenges stay real.
     week: {
@@ -787,11 +847,20 @@ function parseProfileFields(body) {
 // Social links are passed separately because their only trusted source is the
 // OAuth-backed user_social_identities table. In particular, never fall back to
 // row.github / row.x: those legacy columns contain self-declared text.
-function shapeProfile(row, verifiedLinks = {}) {
+//
+// #7135: `avatarUrl` is always present for a known account — the uploaded
+// photo when there is one, else the picture generated from the account — so
+// the header, comments and lists need no fallback branch of their own.
+// `hasPhoto` is what the editor's "Remove photo" reads (a generated picture
+// is not a photo to remove), and `generatedAvatarUrl` is what the edit
+// preview shows while a removal is staged.
+function shapeProfile(row, verifiedLinks = {}, userId = null) {
   return {
     displayName: row?.display_name ?? null,
     bio: row?.bio ?? null,
-    avatarUrl: row?.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row?.avatar_id, userId),
+    hasPhoto: !!row?.avatar_id,
+    generatedAvatarUrl: generatedAvatarUrl(userId),
     links: {
       github: verifiedLinks?.github ?? null,
       x: verifiedLinks?.x ?? null,
@@ -982,7 +1051,7 @@ function profileRoutes(config) {
       ),
       socialIdentity.verifiedProfileLinks(pool, userId),
     ]);
-    return shapeProfile(rows[0], verifiedLinks);
+    return shapeProfile(rows[0], verifiedLinks, userId);
   }
 
   // ── PATCH /api/me/profile ────────────────────────────────────────────
@@ -1321,7 +1390,11 @@ function profileRoutes(config) {
         log.info('profile', 'Avatar uploaded', {
           userId: req.user.id, bytes: data.length, contentType: verdict.contentType,
         });
-        return res.json({ avatarUrl: `/avatars/${id}` });
+        return res.json({
+          avatarUrl: avatarUrlFor(id, req.user.id),
+          hasPhoto: true,
+          generatedAvatarUrl: generatedAvatarUrl(req.user.id),
+        });
       } catch (err) {
         log.error('profile', 'Avatar upload failed', {
           userId: req.user.id, err: err.message,
@@ -1344,7 +1417,14 @@ function profileRoutes(config) {
       try {
         await pool.query('DELETE FROM user_avatars WHERE user_id = $1', [req.user.id]);
         log.info('profile', 'Avatar removed', { userId: req.user.id });
-        return res.json({ avatarUrl: null });
+        // #7135: removing a photo brings the account's generated picture
+        // back, so the answer is the same three fields the read returns —
+        // never a bare null, which would make the client draw an initial.
+        return res.json({
+          avatarUrl: generatedAvatarUrl(req.user.id),
+          hasPhoto: false,
+          generatedAvatarUrl: generatedAvatarUrl(req.user.id),
+        });
       } catch (err) {
         log.error('profile', 'Avatar delete failed', {
           userId: req.user.id, err: err.message,
@@ -1455,9 +1535,10 @@ function profileRoutes(config) {
   // only the challenge totals wait, on the season they are scoped to.
   router.get('/api/me/summary', requireUser, async (req, res) => {
     try {
-      const [countRows, contributionRows, activityDays, activityApps, weekMerged, weekApps, season] = await Promise.all([
+      const [countRows, contributionRows, projectRows, activityDays, activityApps, weekMerged, weekApps, season] = await Promise.all([
         pool.query(SUMMARY_COUNTS_SQL, [req.user.id]),
         pool.query(SUMMARY_CONTRIBUTIONS_SQL, [req.user.id, SUMMARY_CONTRIBUTIONS_LIMIT]),
+        pool.query(SUMMARY_PROJECTS_SQL, [req.user.id, SUMMARY_PROJECTS_LIMIT]),
         pool.query(SUMMARY_ACTIVITY_DAYS_SQL, [req.user.id]),
         pool.query(SUMMARY_ACTIVITY_APPS_SQL, [req.user.id]),
         pool.query(SUMMARY_WEEK_MERGED_SQL, [req.user.id]),
@@ -1476,6 +1557,7 @@ function profileRoutes(config) {
       let summary = shapeSummary({
         counts: countRows.rows[0],
         contributions: contributionRows.rows,
+        projects: projectRows.rows,
         challenges: season
           ? { done: totals ? totals.done : 0, total: totals ? totals.total : 0, season }
           : null,
@@ -1564,6 +1646,7 @@ module.exports = {
   readChallengeTotals,
   readChallengesDoneSince,
   shapeContribution,
+  shapeProject,
   shapeSummary,
   shapeWeek,
   withDemoSummary,
@@ -1576,6 +1659,8 @@ module.exports = {
   DEMO_ACTIVITY_MINUTES,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
+  SUMMARY_PROJECTS_LIMIT,
+  SUMMARY_PROJECTS_SQL,
   shapeProposals,
   withDemoProposals,
   DEMO_PROPOSALS,

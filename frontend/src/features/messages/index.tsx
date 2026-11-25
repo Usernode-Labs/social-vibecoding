@@ -49,6 +49,7 @@ import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } f
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { InboxToEnd } from './inbox-to-end';
+import { ListDivider } from './list-divider';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
@@ -596,10 +597,11 @@ function NewMessageButton() {
 }
 
 /**
- * The list's heading (16 Oct 2026): People in small caps, and how many
- * messages from people are unread ("3 unread"). It was the second of two
- * headings until Agents left the list (16 Nov 2026), and it stays: it says
- * what the rows are, and carries the count. It does not fold.
+ * The list's heading (16 Oct 2026): DMs & groups in small caps (People until
+ * 24 Nov 2026, though it held group chats too), and how many messages from
+ * people are unread ("3 unread"). It was the second of two headings until
+ * Agents left the list (16 Nov 2026), and it stays: it says what the rows
+ * are, and carries the count. It does not fold.
  */
 function PeopleHead({ aside }: { aside: string | null }) {
   const t = useMessages('messages');
@@ -1025,6 +1027,10 @@ function ConversationList({ drawer = false }: {
         ) : null}
       </div>
       <InboxToEnd scroller={scrollRef} />
+      {/* Desktop polish 09: the line between the list and the pane beside
+          it is a handle (./list-divider.tsx). After the foot, which has to
+          stay the scroller's next sibling (app.css, the inbox's fade). */}
+      <ListDivider />
     </section>
   );
 
@@ -2391,6 +2397,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         ...inFlight);
     }
   }
+  // Phone review S6 (23 Nov 2026): A THREAD THE PERSON OPENED STARTS WITH
+  // THEIR OWN WORDS, NOT A REPLY. A new chat's thread hangs off the bot's
+  // "New thread." line, which is not drawn, so its first message is the
+  // person's, and it names the thread. Counted, a thread just sent said
+  // "1 reply" under its own title. It is not counted, and with nothing else
+  // in the thread yet (the bot has not answered) there is no count line.
   let previous: MergedRow | null = null;
   let newLineDrawn = false;
   // Which try each entry belongs to: one divider where a try begins.
@@ -2418,14 +2430,18 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   // line out too, #6250). The root still names the thread; it is only
   // not drawn.
   const rootRow = root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null;
+  // (S6, above: the root not drawn is that "New thread." line.)
+  const opensWithOwnWords = sheet && !!root && !rootRow
+    && merged[0]?.kind === 'reply' && merged[0].message.sender.id === meId;
+  const counted = merged.length - (opensWithOwnWords ? 1 : 0);
   const repliesPart = (
     <>
           {/* An error stands in place of the thread (#5219 review): with one,
               the count line would say "No replies yet", which is a different
               answer to the same question, so it waits. */}
-          {thread?.error ? null : (
+          {thread?.error || (opensWithOwnWords && !counted) ? null : (
             <div className="messages-reply-count" aria-hidden={!merged.length}>
-              <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+              <span>{counted ? t('messages:replies.count', { count: counted }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
             </div>
           )}
           {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}

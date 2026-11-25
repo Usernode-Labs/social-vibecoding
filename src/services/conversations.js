@@ -4,6 +4,7 @@ const sharedObjects = require('./shared-objects');
 const messageBookmarks = require('./message-bookmarks');
 const log = require('./logger');
 const contactPrivacy = require('./contact-privacy');
+const { avatarUrlFor } = require('./avatar-url');
 
 const MAX_ID = 2147483647;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -280,7 +281,7 @@ async function loadMembers(db, conversationId) {
   return rows.map((row) => ({
     id: row.id,
     username: row.username,
-    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.avatar_id, row.id),
     role: row.role,
     status: row.status,
     joinedAt: row.joined_at,
@@ -385,14 +386,14 @@ async function threadSummaries(db, user, rootIds) {
     participants: (row.participants || []).map((person) => ({
       id: person.id,
       username: person.username,
-      avatarUrl: person.avatarId ? `/avatars/${person.avatarId}` : null,
+      avatarUrl: avatarUrlFor(person.avatarId, person.id),
     })),
     lastReply: row.last_reply_id ? {
       id: row.last_reply_id,
       sender: {
         id: row.last_reply_sender_id || 0,
         username: row.last_reply_username || 'Deleted user',
-        avatarUrl: row.last_reply_avatar_id ? `/avatars/${row.last_reply_avatar_id}` : null,
+        avatarUrl: avatarUrlFor(row.last_reply_avatar_id, row.last_reply_sender_id),
       },
       content: snippet(row.last_reply_content),
       createdAt: row.last_reply_created_at,
@@ -536,7 +537,7 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
       sender: {
         id: row.sender_id || 0,
         username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
-        avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
+        avatarUrl: avatarUrlFor(row.sender_avatar_id, row.sender_id),
         ...(row.sender_is_synthetic && !system ? { bot: true, ...botName(row.sender_display_name) } : {}),
       },
       ...(system ? { system: true } : {}),
@@ -550,7 +551,7 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
         sender: {
           id: row.reply_sender_id || 0,
           username: row.reply_sender_username || 'Deleted user',
-          avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
+          avatarUrl: avatarUrlFor(row.reply_sender_avatar_id, row.reply_sender_id),
           ...(row.reply_sender_is_synthetic ? { bot: true, ...botName(row.reply_sender_display_name) } : {}),
         },
         content: row.reply_deleted_at ? '' : (row.reply_content || ''),
@@ -843,7 +844,7 @@ async function requestDiscussion(pool, user, root) {
       sender: {
         id: row.user_id,
         username: row.username || 'Deleted user',
-        avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+        avatarUrl: avatarUrlFor(row.avatar_id, row.user_id),
       },
       content: row.content,
       createdAt: row.created_at,
@@ -1045,7 +1046,7 @@ async function mentionCandidates(pool, user, conversationId, { q = '', limit } =
   return rows.map((row) => ({
     id: row.id,
     username: row.username,
-    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.avatar_id, row.id),
     ...(row.friend ? { friend: true } : {}),
   }));
 }
@@ -1187,13 +1188,13 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   const peer = accepted && row.peer_id ? {
     id: row.peer_id,
     username: row.peer_username,
-    avatarUrl: row.peer_avatar_id ? `/avatars/${row.peer_avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.peer_avatar_id, row.peer_id),
     ...(row.peer_is_synthetic ? { bot: true, ...botName(row.peer_display_name) } : {}),
   } : null;
   const requester = row.invited_by ? {
     id: row.invited_by,
     username: row.requester_username,
-    avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.requester_avatar_id, row.invited_by),
   } : null;
   // B5: the bot's DM is titled by its name, not its handle.
   const title = row.kind === 'direct'
@@ -2655,7 +2656,7 @@ async function listBlocks(pool, userId) {
   );
   return rows.map((row) => ({
     id: row.id, username: row.username,
-    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.avatar_id, row.id),
     createdAt: row.created_at,
   }));
 }

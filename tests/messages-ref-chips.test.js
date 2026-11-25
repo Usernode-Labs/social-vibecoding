@@ -131,8 +131,26 @@ test('in a message that names its project, #N is a link to that project\'s reque
   assert.doesNotMatch(html(none), /<a href="#app/);
 });
 
-test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
-  const { decorateRefs, personHref } = loadTsx(CHANNELS);
+test('#7066: a number the bot calls a change links to that change, keeping the words it used', () => {
+  const { decorateRefs } = loadTsx(CHANNELS);
+  const doc = makeDocument();
+  const msg = body(doc, 'Queued it on Change #7063, beside #14 ');
+  decorateRefs(msg, new Set(), 'ada', 'ear-trainer-9aee0d');
+  assert.match(html(msg),
+    /<a href="#app\/ear-trainer-9aee0d\/dev\/changes\/7063" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="7063">Change #7063<\/a>/,
+    'the blue change link opens change 7063, not the unrelated request 7063');
+  assert.match(html(msg),
+    /<a href="#app\/ear-trainer-9aee0d\/dev\/issues\/14" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14<\/a>/,
+    'a bare #N in the same message still opens the request');
+
+  const person = body(doc, 'on proposal #7063 and pull request #7');
+  decorateRefs(person, new Set(), 'ada');
+  assert.match(html(person), /<span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="7063">proposal #7063<\/span>/,
+    'with no project named, the labelled chip is a gc-ref-pr span');
+  assert.match(html(person), /<span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="7">pull request #7<\/span>/);
+});
+
+test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {  const { decorateRefs, personHref } = loadTsx(CHANNELS);
   assert.equal(personHref('ada'), '#leaderboard/users/ada', 'the address a project\'s contributors open');
   const doc = makeDocument();
   const msg = body(doc, 'ping @bob, @Homeroom bot and @homeroom_bot ');

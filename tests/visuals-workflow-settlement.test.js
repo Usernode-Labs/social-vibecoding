@@ -72,3 +72,63 @@ test('a run\'s media are held under its run id, never written where the session 
   assert.ok(result.visuals, 'the grouped ids come back, for visuals_ready');
   assert.ok(!h.writes.some((w) => /session_visuals/.test(w)), 'never session_visuals');
 });
+
+// A settled run gives its checks slot back. When the early unit suite it
+// adopted cannot be stopped, the slot used to stay taken until somebody
+// deleted the row by hand ("Keeping the checks slot until early unit Jobs
+// stop or expire", with nothing that came back for it): now it counts only
+// until those Jobs' deadline, and the queue's admission pass deletes it.
+function slotPool({ failUpdate = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+      if (failUpdate && /^UPDATE check_runs/.test(String(sql).trim())) throw new Error('db down');
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+const deletes = (pool) => pool.calls.filter((c) => /^DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql)).map((c) => c.params[0]);
+const lingers = (pool) => pool.calls.filter((c) => /^UPDATE check_runs SET manifest = manifest \|\| '\{"settled": true\}'/.test(c.sql)).map((c) => c.params[0]);
+
+test('a settled run with no early suite of its own frees its slot', async (t) => {
+  const cancel = t.mock.method(require('../src/services/kubernetes'), 'cancelPreviewChecks', async () => {});
+  const pool = slotPool();
+  assert.equal(await visuals.giveBackSettledSlot({}, pool, { sessionId: 7, runId: 'run-a' }), 'freed');
+  assert.deepEqual(deletes(pool), ['run-a']);
+  assert.equal(cancel.mock.callCount(), 0);
+});
+
+test('a settled run stops the early suite it adopted, then frees its slot', async (t) => {
+  const order = [];
+  const cancel = t.mock.method(require('../src/services/kubernetes'), 'cancelPreviewChecks', async () => { order.push('stopped'); });
+  const pool = slotPool();
+  const query = pool.query;
+  pool.query = async (sql, params) => { order.push('deleted'); return query(sql, params); };
+  assert.equal(await visuals.giveBackSettledSlot({}, pool, { sessionId: 7, runId: 'run-a', adoptedEarlyUnit: 'early-1' }), 'freed');
+  assert.deepEqual(cancel.mock.calls[0].arguments.slice(1), [7, 'early-1', { includeEarly: true }]);
+  assert.deepEqual(order, ['stopped', 'deleted'], 'its Pods stop before the slot goes');
+  assert.deepEqual(deletes(pool), ['run-a']);
+});
+
+test('a settled run whose early suite will not stop counts until the Jobs\' deadline, never for good', async (t) => {
+  t.mock.method(require('../src/services/kubernetes'), 'cancelPreviewChecks', async () => {
+    throw new Error('Preview checks still stopping: sv-unit-early-s7-x');
+  });
+  const pool = slotPool();
+  assert.equal(await visuals.giveBackSettledSlot({}, pool, { sessionId: 7, runId: 'run-a', adoptedEarlyUnit: 'early-1' }), 'lingering');
+  assert.deepEqual(lingers(pool), ['run-a'], 'marked settled: the queue holds it only while its Jobs may run');
+  assert.deepEqual(deletes(pool), [], 'the admission pass deletes it after their deadline');
+  // A lingering row as the queue reads it, within and past the Jobs' deadline.
+  const queue = require('../src/services/checks-queue');
+  assert.equal(queue.holdsSlot({ lingering: true, within_deadline: true, run_finished: true }, false), true);
+  assert.equal(queue.holdsSlot({ lingering: true, within_deadline: false }, false), false);
+  assert.equal(queue.sweepReason({ kind: 'proposal', lingering: true, within_deadline: false }, false), 'deadline');
+
+  // Not even marked (the database refused that too): the slot goes back
+  // rather than staying taken with nothing to clear it.
+  const refusing = slotPool({ failUpdate: true });
+  assert.equal(await visuals.giveBackSettledSlot({}, refusing, { sessionId: 7, runId: 'run-b', adoptedEarlyUnit: 'early-1' }), 'freed');
+  assert.deepEqual(deletes(refusing), ['run-b']);
+});

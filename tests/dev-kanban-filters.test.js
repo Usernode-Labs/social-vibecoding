@@ -1452,6 +1452,9 @@ test('the defaults carry stage: null, and an unknown value is not a filter', () 
   assert.equal(AppView._kanbanStageValue('open'), 'open');
   assert.equal(AppView._kanbanStageValue('unclaimed'), 'unclaimed');
   assert.equal(AppView._kanbanStageValue('shipped'), 'shipped');
+  // 24 Nov 2026: two of the Workshop path's stops narrow the board too.
+  assert.equal(AppView._kanbanStageValue('asked'), 'asked');
+  assert.equal(AppView._kanbanStageValue('votes'), 'votes');
   assert.equal(AppView._kanbanStageValue('bogus'), null, 'an older tab\'s stored value degrades to null');
   assert.equal(AppView._kanbanStageValue(undefined), null);
 });
@@ -1469,6 +1472,11 @@ test('a set stage is an active filter, and the chip names the figure', () => {
   assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageUnclaimed'));
   AppView._kanbanFilters = { ...none, stage: 'shipped' };
   assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageShipped'));
+  AppView._kanbanFilters = { ...none, stage: 'asked' };
+  assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageAsked'));
+  AppView._kanbanFilters = { ...none, stage: 'votes' };
+  assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageVotes'));
+  assert.equal(message('changes:board.filterChip.stageVotes'), 'Up for a vote');
   AppView._kanbanFilters = { ...none, stage: 'bogus' };
   assert.equal(AppView._kanbanFiltersActive(), false);
   assert.equal(AppView._kanbanActiveChips().length, 0, 'an unknown stage draws no chip');
@@ -1546,6 +1554,26 @@ test('_devCardInStage answers the figures\' own predicates', () => {
   assert.equal(AppView._devCardInStage('shipped', 'done', 'merged', stillGoingLive), false,
     'a merge still going live is left out');
   assert.equal(AppView._devCardInStage('shipped', 'open', 'issue', issue({})), false);
+  // 24 Nov 2026, the Workshop path: 'asked' is the open lane, whoever has taken
+  // a request there; 'votes' the review lane, every change and decision up for a vote.
+  assert.equal(AppView._devCardInStage('asked', 'open', 'issue', issue({})), true);
+  assert.equal(AppView._devCardInStage('asked', 'open', 'issue', issue({ assignee: { top: 'sam' } })), true, 'taken but not being built is still asked');
+  assert.equal(AppView._devCardInStage('asked', 'underway', 'issue', issue({})), false, 'being built is the next stop');
+  assert.equal(AppView._devCardInStage('asked', 'review', 'proposal', prop({})), false);
+  assert.equal(AppView._devCardInStage('votes', 'review', 'proposal', prop({})), true);
+  assert.equal(AppView._devCardInStage('votes', 'review', 'gov', { id: 4 }), true);
+  assert.equal(AppView._devCardInStage('votes', 'open', 'issue', issue({})), false);
+  assert.equal(AppView._devCardInStage('votes', 'done', 'merged', liveThisWeek), false);
+  // "Open the board" takes a stop's narrowing off and leaves a search alone.
+  let repainted = 0;
+  AppView._repaintBoardSurface = () => { repainted += 1; };
+  AppView._kanbanFilters = { ...none, q: 'dark', stage: 'asked' };
+  AppView.clearWorkshopStage();
+  assert.equal(AppView._kanbanFilters.stage, null);
+  assert.equal(AppView._kanbanFilters.q, 'dark');
+  assert.equal(repainted, 1);
+  AppView.clearWorkshopStage();
+  assert.equal(repainted, 1, 'nothing to take off: no repaint');
   // No stage — or an unknown one — matches everything.
   assert.equal(AppView._devCardInStage(null, 'done', 'merged', liveBeforeMonday), true);
   assert.equal(AppView._devCardInStage(undefined, 'done', 'merged', liveBeforeMonday), true);

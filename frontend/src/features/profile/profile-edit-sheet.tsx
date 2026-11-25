@@ -360,7 +360,8 @@ export function ProfileEditSheet({
   const [formError, setFormError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showRemove, setShowRemove] = useState(!!user.avatarUrl);
+  // A generated picture is not a photo to remove; only a real upload is (#7135).
+  const [showRemove, setShowRemove] = useState(!!user.hasPhoto);
 
   // Hand the card to the native kit, exactly once, and put it back before
   // React ever tries to remove it.

@@ -555,6 +555,61 @@
       "id": "bot-cards-draft-offers",
       "sha256": "fa9305d5a65bd1f86c297de24e91da44b73cd3a0a92a70480308126a4cd8da3e",
       "schemaSha256": "31a9051336203261d90f0775a1a45e60f18c7586c20e93f107afac657bc513bb"
+    },
+    {
+      "id": "social-account-created-at",
+      "sha256": "a2a48d09c57bbfd735dcdb34ee990027e0c9a9c89e4f9f72b8d61a966faefa19",
+      "schemaSha256": "688b8af7998594e3dd25024f17d587859648074154b242cc0d21e2334cffbb3c"
+    },
+    {
+      "id": "live-drafts-preview-followup",
+      "sha256": "0a8c41143d3521adbd9ec77af0d5a3943f257acf23e15dfa6251ade09a77b61b",
+      "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
+    },
+    {
+      "id": "live-drafts-propose-claim",
+      "sha256": "d0a64d4c669c62f541208f3be16da3ccb6b65d2c9048bcb0ab8ad8622891804a",
+      "schemaSha256": "9521bc6ef2764c2430c56e839bc6ae5d7b3c3656ce2467e07921278b10b682d8"
+    },
+    {
+      "id": "live-drafts-built-on",
+      "sha256": "14dbc0de5d32e951d9200e68f0e1ac6d0f8cc934c512a0c124ce464df4a241d0",
+      "schemaSha256": "489219b9bf76852e08c517c5e95db9a96eb3ade010639ef70e7a810c8ae991f8"
+    },
+    {
+      "id": "thread-mention-dismissals",
+      "sha256": "d4315f556738b7a2b1ed8d1e94d81f9e514473797c6da2e37a10ed21c511f1a3",
+      "schemaSha256": "40bd67b5de987ee2cb8d6a5ac9d1d483e9d7951b020913dd11fe203a2d6e2dfa"
+    },
+    {
+      "id": "ai-list-visits",
+      "sha256": "0cb9df213e66c41cd360399f6b81f5ce942c7ed6803f3a07fcec8c81ecd63f24",
+      "schemaSha256": "480929812e89b0eca887a83f65b142dd2021c84cea64509d1b5878c7953b9825"
+    },
+    {
+      "id": "first-version-pictures",
+      "sha256": "ff1f80e017dd95540f7f6219725d3e1de12f5c6030775c4f908d05c7136e2d8b",
+      "schemaSha256": "3e183e9b2878d187d26f727cb6aa21fd5962ba65bc9c6a8221a83e1952a59c43"
+    },
+    {
+      "id": "issue-files",
+      "sha256": "9fd570174ee5518d62a1574b737126dd4ecd665e42188f2848c920ed685af3d4",
+      "schemaSha256": "4d1a4e89d533b1bee56d0ca42cbaa88ed32e9df8b0438138bc4bcc60ddc6fc91"
+    },
+    {
+      "id": "app-access-tokens",
+      "sha256": "39066d0ba13af58381875d7fedc7a2a2b83e69cd9b2fef88f02514815500928d",
+      "schemaSha256": "1768a54e6eff72f92402ba47edbb1219aa49162d6e3b59789dbbe62ad42c8e38"
+    },
+    {
+      "id": "app-agent-grants",
+      "sha256": "b0f0c5bc2906374a111bb681ab2608c7eba43b3ac283a8daa61d436cbd27dd12",
+      "schemaSha256": "845e68d6f70421fb8b03ddeccfedf52bf2b7695bdc36ca5a5164d2b7724baf62"
+    },
+    {
+      "id": "conflict-resolution-main",
+      "sha256": "2b622537fcdccef8661efb467fae2ff54a558b5803f68c071370c048f42883b4",
+      "schemaSha256": "ce8da66b07bf7426f34ee0867422eeee0bffffd0613de7dc1ef2ddea3b9ff77b"
     }
   ]
 }

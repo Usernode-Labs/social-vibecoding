@@ -70,6 +70,28 @@ test('#11: an image icon shows the app\'s initial until the picture has drawn', 
   assert.match(list, /eager=\{i < 4\}/, 'the first cards ask at once');
 });
 
+test('#11: the picture paints above the initial, and the initial goes once it can be seen', () => {
+  const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');
+  // #7129: the img is `relative` and comes AFTER the absolutely positioned
+  // placeholder, so the picture is always painted over the letter.
+  const html = renderToHtml(createElement(AppIconContent, { app: { name: 'maps', icon_url: '/app-icons/7' } }));
+  const img = html.match(/<img[^>]*>/)[0];
+  assert.match(img, /class="relative [^"]*"|class="[^"]* relative[^"]*"/, 'the picture is positioned, so it paints above the letter');
+  assert.ok(html.indexOf('app-icon-wait') < html.indexOf('<img'), 'the placeholder is under the picture, never after it');
+  // The placeholder is also dropped as soon as the browser can paint the
+  // picture: decode() covers a load event that never reaches React.
+  const source = read('frontend/src/features/apps/app-card-view.tsx');
+  assert.match(source, /img\.decode\(\)\.then\(\(\) => setDrawn\(true\)/, 'decode() clears the letter');
+  assert.match(source, /onLoad=\{\(\) => setDrawn\(true\)\}/, 'and so does the load event');
+  // Nothing lifts the placeholder above the picture again.
+  const wait = read('public/css/app.css').match(/\.app-icon-wait \{[^}]*\}/)[0];
+  assert.doesNotMatch(wait, /z-index/, 'the letter has no layer of its own');
+  // A tile with no icon picture keeps its first letter.
+  const letter = renderToHtml(createElement(AppIconContent, { app: { name: 'notes' } }));
+  assert.equal(letter, 'N');
+  assert.doesNotMatch(letter, /app-icon-wait/);
+});
+
 // ── #12: the request page ───────────────────────────────────────────────
 
 test('#12: the track card\'s pictures hold their frames while they are read', () => {
@@ -163,8 +185,11 @@ test('#19: a channel loads in one state, the room\'s own', () => {
   assert.match(frame, /: opensOnOwnShape\(\) \? DEV_BODY_PLACE_INITIAL : DEV_BODY_WORKSHOP_INITIAL;/,
     'no card list in front of a place that draws its own loading shape');
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(workshop, /if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere\)\)\) \{/,
+  // 24 Nov 2026: nor does the Workshop's front page, under the standard look (front-page.tsx draws its own parts).
+  assert.match(workshop, /const frontHere = tab === 'workshop' && wipLook && !openWeek;\n\s+if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere && !frontHere\)\)\) \{/,
     'a channel waits for neither the board nor the record');
+  assert.match(frame, /if \(tab === 'workshop'\) return !document\.documentElement\.hasAttribute\('data-skin'\);/,
+    'and the host opens empty for it, as for the hub');
 });
 
 test('#19: a room\'s picture holds its box until it has drawn', () => {

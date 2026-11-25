@@ -38,6 +38,7 @@ const wakingDecisions = new Map();
 const appRequests = [];
 const silent = { error() {}, warn() {} };
 const frameDoorHtml = '<!doctype html><title>door</title>';
+const AGENT_CHALLENGE = 'Bearer resource_metadata="https://apex.example/.well-known/oauth-protected-resource/app/team.apps.example/mcp"';
 
 test.before(async () => {
   platform = http.createServer((req, res) => {
@@ -68,6 +69,11 @@ test.before(async () => {
       }
       res.writeHead(401, headers);
       return res.end(frameDoorHtml);
+    }
+    // An agent path's refusal (src/services/edge-gate.js): where to ask.
+    if (uri.startsWith('/agent-refused')) {
+      res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'www-authenticate': AGENT_CHALLENGE, 'x-secret': 'never relayed' });
+      return res.end('Unauthorized');
     }
     if (uri.startsWith('/redirect')) {
       res.writeHead(302, { location: 'https://apex.example/__access/authorize?x=1', 'set-cookie': ['__Host-usernode_access=new; Path=/; Secure; HttpOnly'], 'x-secret': 'never relayed' });
@@ -286,6 +292,15 @@ test('a private iframe receives readable sign-in HTML when the visitor accepts c
   assert.equal(door.headers['content-encoding'], undefined);
   assert.equal(door.headers['content-security-policy'], "default-src 'none'; frame-ancestors https://apex.example",
     'with the policy that says only the platform may frame it');
+  assert.deepEqual(appRequests, []);
+});
+
+test('an agent path’s 401 keeps the header that says where an assistant may ask', async () => {
+  const refused = await through('/agent-refused', { method: 'POST' });
+  assert.equal(refused.status, 401);
+  assert.equal(refused.text, 'Unauthorized');
+  assert.equal(refused.headers['www-authenticate'], AGENT_CHALLENGE);
+  assert.equal(refused.headers['x-secret'], undefined);
   assert.deepEqual(appRequests, []);
 });
 

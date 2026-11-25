@@ -60,6 +60,7 @@ import { CORNER_ATTR, panelEdge, STRIP_ATTR } from '../../lib/side-strip';
 import { isBotChatRoute } from '../ai/door';
 import { setListClosed, showsListButton, subscribeListClosed } from '../ai/list-closed';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
+import { backsToBot } from '../improve/improve-store.js';
 import {
   embeddedAllows,
   frameUrl,
@@ -103,6 +104,8 @@ export interface PanelHeadReport {
   kind: 'request' | 'change';
   pill: unknown | null;
   menuKey: string | null;
+  /** #7120: the title the page's bar draws in place of its plain one, or null. */
+  title?: string | null;
 }
 
 /** What the door says of the page it opens in the panel, for the column's header row. */
@@ -451,6 +454,36 @@ export function open(route: string, given?: PanelHint | null): void {
   if (ready) go(route);
 }
 
+/**
+ * 24 Nov 2026 (mobile 04): the page just put in the panel opens at one of
+ * its thread's messages, the one that named the viewer with @ (the Homeroom
+ * bot tab's Reply). The panel is its own document, so the request goes to
+ * that document's GroupChat (public/js/group-chat.js revealInThread), which
+ * waits for the thread that holds the message: now when the document is up,
+ * else once it has booted. A request not passed on within REVEAL_MS lapses.
+ */
+const REVEAL_MS = 20000;
+let reveal: { slug: string; id: number; at: number } | null = null;
+export function revealMessage(slug: string, messageId: number): void {
+  if (!slug || !(Number(messageId) > 0)) return;
+  reveal = { slug, id: Number(messageId), at: Date.now() };
+  passReveal();
+}
+function passReveal(): void {
+  if (!reveal || !ready) return;
+  const want = reveal;
+  if (Date.now() - want.at > REVEAL_MS) { reveal = null; return; }
+  try {
+    const gc = (sidePanelRefs.frame?.contentWindow as unknown as
+      { GroupChat?: { revealInThread?: (slug: string, id: number) => void } } | null)?.GroupChat;
+    if (!gc?.revealInThread) return;
+    reveal = null;
+    gc.revealInThread(want.slug, want.id);
+  } catch {
+    reveal = null;
+  }
+}
+
 /** Close: the panel only. The frame stays, so reopening is a navigation. */
 export function close(): void {
   stack = [];
@@ -510,9 +543,11 @@ export function back(): void {
 /**
  * Navigate the top window to `route` with its ordinary routing, as a real
  * history entry. Pushed and routed here rather than by assigning the hash, so
- * it runs once and at once instead of on a later hashchange.
+ * it runs once and at once instead of on a later hashchange. `replace` trades
+ * the entry on screen for `route` instead, for a page handed up from the
+ * panel that takes the place of the address it was opened from (#7140).
  */
-function navigateTop(route: string): void {
+function navigateTop(route: string, options?: { replace?: boolean }): void {
   const A = app();
   if (!A) return;
   bypass = true;
@@ -522,7 +557,8 @@ function navigateTop(route: string): void {
       return;
     }
     const url = typeof A._rootUrl === 'function' ? A._rootUrl(`#${route}`) : `/#${route}`;
-    window.history.pushState(null, '', url);
+    if (options && options.replace) window.history.replaceState(null, '', url);
+    else window.history.pushState(null, '', url);
     A._routeFromHash?.();
   } finally {
     bypass = false;
@@ -538,7 +574,19 @@ function navigateTop(route: string): void {
  */
 export function expand(): void {
   const route = sidePanelStore.get().route;
-  if (route) navigateTop(route);
+  if (route) {
+    // #7079: a page expanded from the Homeroom bot column goes back there, not
+    // to a Workshop the reader never visited. Record the bot page's address as
+    // the topic's origin first, as the column's title link already does
+    // (./side-panel.tsx), so `topicBackHref` answers the bot's thread and
+    // `topicWorkshopHref` puts the Workshop chip beside it. Any other address
+    // records nothing and keeps its ordinary back chip.
+    const hash = window.location.hash;
+    if (backsToBot(hash)) {
+      try { (window as any).Improve?.enterTopicFrom?.(hash); } catch { /* the page as it opens */ }
+    }
+    navigateTop(route);
+  }
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 
@@ -613,6 +661,9 @@ function embeddedReady(route: string, title: string): void {
     desired = route;
     publish(route);
   }
+  // Mobile 04: a message the page should open at, asked for while the
+  // panel's document was still booting.
+  passReveal();
 }
 
 /**
@@ -659,6 +710,18 @@ function embeddedBack(): void {
 }
 
 /**
+ * #7140: a page the panel's document must not draw — the Homeroom bot tab,
+ * whose list belongs to the top window — is handed up by the frame. The top
+ * REPLACES its own entry with it, so the thread takes the place of the
+ * address it was opened from and leaves no Back step of its own. On the top
+ * window's own turn, never inside the frame's call: that frame is dropped as
+ * the bot page's thread takes the column.
+ */
+function embeddedSwap(route: string): void {
+  window.setTimeout(() => navigateTop(route, { replace: true }), 0);
+}
+
+/**
  * The page on screen publishes what its column draws (#6431): its status pill
  * and its own ⋯ key. Taken only while the document can report at all, and
  * null for a page that has neither (a decision, a private thread), so the
@@ -668,7 +731,7 @@ function embeddedHead(route: string, report: PanelHeadReport | null): void {
   const s = sidePanelStore.get();
   if (!ready || !s.frameSrc || !route) return;
   head = report && (report.kind === 'request' || report.kind === 'change')
-    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, route }
+    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, title: typeof report.title === 'string' ? report.title : null, route }
     : null;
   sidePanelStore.set({ head });
 }
@@ -750,7 +813,20 @@ export function runPanelMenuRow(index: number, label: string, event?: Event | nu
     // `_menuActEvent`). The click here is the column's, which the frame's
     // document never sees, so the popover it opens stays up either way.
     av._menuActEvent = event || null;
-    it.act();
+    // #6988: run the row once the column's own menu has closed and focus has
+    // settled. Propose to close opens the frame's dialog, and opening it from
+    // inside the menu row's own click dispatch left the row looking like it
+    // only closed the menu.
+    const nextFrame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (fn: () => void) => setTimeout(fn, 0);
+    nextFrame(() => {
+      try {
+        it.act();
+      } catch {
+        /* the row owns its errors */
+      }
+    });
   } catch {
     /* the row owns its errors */
   }
@@ -763,6 +839,7 @@ export const embeddedApi = {
   openApp: embeddedOpenApp,
   leave: embeddedLeave,
   back: embeddedBack,
+  swap: embeddedSwap,
 };
 
 // ── The two chokepoints ──────────────────────────────────────────────────
@@ -853,6 +930,7 @@ export const SidePanel = {
   take,
   open,
   close,
+  revealMessage,
   showList,
   drop,
   back,

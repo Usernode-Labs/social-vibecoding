@@ -19,7 +19,7 @@
 
 import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
-import { LeaseLost } from '../kernel/index.ts';
+import { HandedBack, LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
@@ -340,12 +340,25 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         if (!awake.ok) return { outcome: 'blocked', reason: awake.detail, platformFault: true };
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const report: { uiAffecting?: boolean } = {};
+        // A run whose process drains (a release replaced it) and that could
+        // not get a database connection on its small pools is handed back,
+        // not settled: the process that replaced this one claims it at once,
+        // and its claim collects what the Jobs wrote, or runs it again in the
+        // place in line this one had (above), as for a claim whose process
+        // went. Its check_runs row, its place, is kept for that. Where it
+        // cannot be handed back, it is the platform's error it would have
+        // been (visuals.databaseBusyResult).
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {
           trigger: input.trigger,
           workflow: {
             runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
             unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report,
           },
+        }).catch((err: unknown) => {
+          if (!cancelled(ctx, err) && legacy('services/db-retry').handBackOnDrain(err)) {
+            throw new HandedBack(err, visuals().databaseBusyResult() as Json);
+          }
+          throw err;
         });
         const out = (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Record<string, Json>;
         return (report.uiAffecting ? { ...out, uiUndeclared: String(input.head).toLowerCase() } : out) as Json;

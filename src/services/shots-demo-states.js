@@ -28,7 +28,11 @@
 // by either revision under test, so a state a proposal adds here reaches
 // shots only once it has merged. Data a proposal needs for its own shots
 // belongs in its staging seeds (src/db/migrate.js), which each side runs for
-// its own revision.
+// its own revision. For Homeroom itself, the run also applies a change's own
+// seeds to the OTHER copy once both have booted (seed-other-copy.js), so
+// that data is on both copies when main's schema can hold it; a seed it
+// cannot hold is rolled back there and stays after-only, with a stated
+// reason. A child app has no shared seed step, so its copies keep their own.
 
 const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');
@@ -133,6 +137,14 @@ const DRAFT_PICTURE_ID = 'd62510000000000000000000000000a1';
 // The draft's own copy of it, as offer() copies the person's picture onto
 // the message the draft is drawn in.
 const DRAFT_PICTURE_COPY_ID = 'd62510000000000000000000000000a2';
+// #7136: a file the seeded draft carries onto its request, so the shots show
+// the "Files it carries" panel the real draft draws. An obviously fake zip
+// (its name says so), its own 32-hex id, 4 KB of placeholder bytes.
+const DRAFT_FILE_ID = 'd62510000000000000000000000000b1';
+const DRAFT_FILE = Buffer.concat([
+  Buffer.from('PK\x03\x04', 'latin1'),
+  Buffer.alloc(4092, 0x20),
+]);
 const DRAFT_PICTURE = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAPAAAACQCAIAAAC5w3GfAAABkElEQVR42u3dsQnAIBBAUXcNZGKLDCCkFrR3BpvkOB+8BdRf3mFp7YU0iitA0CBoEDQIGkGDoEHQIGgQNIIGQYOgQdAgaAQNggZBg6BB0AgaBA2CBkGDoEke9BiTw113j2zrLIJG0Aha0Aha0Aha0AgaQQsawtkOutYHviRoBC1oBA2CBkEjaEEjaEEjaBA0CBpBCxpBCxpBg6BB0Aha0Aga0m+sgKBB0CBoBO0WEDQIGgQNgkbQIGgQNMQJ2sdhRxE0ghY0ghY0ghY0gha0oAWNoAWNoAWNoAWNoAUtaEEjaEEjaEEjaEEjaG8saEEjaEEjaEEjaEEjaARt6xsEDYJG0CBoEDQIGgSNoEHQIGgQNAgaQYOgwTw05qEFjaAFjaAFLWhBI2hBI2hBI2hBI2hBC1rQCFrQCFrQCFrQCFrQghY0ghY0ghY0ghY0gkbQgkbQgkbQtr6x9Q2CBkGDoEHQCBoEDYIGQYOgETQIGgQNggbz0GaLBS1oQQsaQQta0Aha0Aha0IIWtKAFjaD/sQBl3hrNhMhZTgAAAABJRU5ErkJggg==',
   'base64',
@@ -1295,8 +1307,15 @@ const STATES = [
       // by the same pure function the real draft uses.
       const extras = {
         attachmentIds: [DRAFT_PICTURE_ID],
+        // #7136: and one file that is not a picture, which the draft lists by
+        // name and size and its build can save.
+        fileIds: [DRAFT_FILE_ID],
+        files: [{ id: DRAFT_FILE_ID, name: 'demo-site.zip', size: DRAFT_FILE.length }],
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
+        // What the draft leaves undecided, its own short list (its pane
+        // lists it beside the words: request-draft-pane.tsx).
+        undecided: ['Whether a week starts on Monday or on Sunday'],
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
         chatHref: '#homeroom-bot',
       };
@@ -1346,6 +1365,15 @@ const STATES = [
          ON CONFLICT DO NOTHING`,
         [DRAFT_PICTURE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_PICTURE.length, DRAFT_PICTURE]
       );
+      // #7136: the file they attached in the same message, as the chat keeps
+      // it: a chip under their words, which the draft carries.
+      await client.query(
+        `INSERT INTO conversation_message_attachments
+           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+         VALUES ($1, $2, $3, $4, 'binary', 'demo-site.zip', 'application/zip', $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [DRAFT_FILE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_FILE.length, DRAFT_FILE]
+      );
       // And the copy offer() writes onto the draft message, so the bot's
       // reply draws the thumbnail under its text too.
       await client.query(
@@ -1366,7 +1394,7 @@ const STATES = [
       const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Files it carries (demo-site.zip, 4 KB), Where (the insights page), Related (#6230 One detail column for plans and designs, build together), Still undecided (one question) and Done when (two checks), and File it (filled) and Not now waiting for your answer. A tap on the drafted request's card opens the whole draft beside the thread. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path,
         }],
       };

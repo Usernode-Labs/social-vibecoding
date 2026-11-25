@@ -37,7 +37,7 @@ function ui(): Ui | undefined {
   return (window as unknown as { PlatformUI?: Ui }).PlatformUI;
 }
 
-/** Pin it, or unpin it; four already says so rather than doing nothing. */
+/** Pin it, or unpin it; ten already says so rather than doing nothing. */
 export function togglePin(target: PinTarget): void {
   const viewer = navStore.get().viewer;
   if (isPinned(target.slug)) {

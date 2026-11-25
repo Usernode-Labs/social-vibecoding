@@ -104,7 +104,10 @@ test('in a side panel the thread is the same three cards, and the picture is one
   // 20 Nov 2026: a private thread in the bot tab's column is the same page, and its two cards the same cards.
   const priv = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread';
   assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\),\\n${esc(priv)} :is\\(\\[data-thread-page-post\\], \\[data-thread-page-replies\\]\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
-  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
+  // 25 Nov 2026 (#7122): the panel's sheet paints no ground, as a private
+  // thread's does: the cards lie on whatever is behind the panel.
+  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: transparent; \\}`));
+  assert.doesNotMatch(css, /--thread-ground-look/, 'no look names a ground for the thread sheet');
   // A private thread's page lies on the page's own ground, as a request
   // opened in the column (the side panel, which paints nothing) does: no
   // ground of its own, and the column's pane paints nothing round it.
@@ -113,7 +116,7 @@ test('in a side panel the thread is the same three cards, and the picture is one
   assert.match(css, /#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\.dev-private-thread\) \{\n  background: none;\n  border: 0;\n  border-radius: 0;\n\}/);
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
-  assert.match(brand, /\.dev-request \{ --thread-ground-look: var\(--bl-page\); \}/);
+  assert.doesNotMatch(brand, /--thread-ground-look/, 'the brand look no longer paints the sheet\'s ground');
   assert.match(brand, /\.in-side-panel\.side-panel-beside-ai body:has\(\.dev-thread-card\) \{ background: var\(--bl-page\) !important; \}/);
   // The picture: the size switch and the light and dark flip are the
   // expanded viewer's; the caption is one quiet line.
@@ -495,7 +498,7 @@ test('a request with a summary shows it on the card, says what it was written fr
   });
   const own = renderComponent(REQUEST, 'RequestHead', { r: view() });
   assert.match(own, /Settings is three taps away\./);
-  assert.match(own, /<p class="dev-thread-by" data-thread-by="asker"><span>maya’s own words\.<\/span><\/p>/);
+  assert.match(own, /<p class="dev-thread-by" data-thread-by="asker"><span>Written by maya\.<\/span><\/p>/);
   const withSummary = renderComponent(REQUEST, 'RequestHead', { r: view({ summary: { text: 'maya asked for a switch. <b>Homeroom bot</b> has a plan.', basis: 'plan' } }) });
   assert.match(withSummary, /<p>maya asked for a switch\. &lt;b&gt;Homeroom bot&lt;\/b&gt; has a plan\.<\/p>/, 'plain text, escaped');
   assert.doesNotMatch(withSummary, /Settings is three taps away\./, 'the asker\'s words are the Asked step\'s, not the card\'s');
@@ -677,7 +680,9 @@ test('a run that worked out its screens is drawn with the Needs you slider, not 
   // Phone review #27: the caption's strip and the switch's are part of the
   // picture's height, and the screen is placed between them.
   assert.match(picture, /return \{ height: room \+ CAP_STRIP \+ FOOT_STRIP, place: withinStrips\(placeBox\(screen, focus, \{ w: width, h: room \}, 1\)\) \};/);
-  assert.match(picture, /ground="var\(--messages-surface-2\)"/, 'the ground is the card\'s own, never a tint');
+  // The ground is the well's (app.css "WHERE THE PICTURE GOES"): the same box
+  // before the shots come in and around a screen narrower than the picture.
+  assert.match(picture, /ground="var\(--thread-well, var\(--messages-surface-2\)\)"/, 'the ground is the well\'s, never a tint');
   assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
   assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
   // The slider prints the page's own words for a change that is live or closed.

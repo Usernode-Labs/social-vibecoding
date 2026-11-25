@@ -45,13 +45,16 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.equal(message('project:hub.topics.title'), 'Topics');
 
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // At every width: a wide window draws it beside For you, in two columns.
+  // At every width.
   assert.match(ws, /\{slug \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
     'at every width, not the phone alone');
   const css = read('public/css/app.css');
-  assert.match(css, /@media \(min-width: 1100px\) \{\s*html:not\(\[data-skin\]\) #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1080px; \}/, 'a wider page on a wide window');
-  assert.match(css, /> \[data-ws-hub-for-you\] \+ \[data-ws-hub-topics\] \{ grid-column: 2; \}/, 'Topics beside For you');
-  assert.match(css, /> \.dev-ws-hero \+ \.dev-ws-invite-hero,/, 'the Invite card beside the hero');
+  // A wide window's hub is one centred column of at most 1132px, a request page's width (asked 24 Nov 2026):
+  // the one rule that says so, from 1281px. The older two-column block (1080px, request 6654) lost to the look's
+  // own rules and was removed with it.
+  assert.match(css, /@media \(min-width: 1281px\) \{\s*html:not\(\[data-skin\]\) body #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1132px; \}/, 'the hub stops at 1132px on a wide window');
+  assert.doesNotMatch(css, /max-width: 1080px/, 'no second width for the hub');
+  assert.doesNotMatch(css, /\[data-ws-hub-for-you\] \+ \[data-ws-hub-topics\] \{ grid-column: 2; \}/, 'the dead two-column block is gone');
   // The Invite card: a member's, where other people are in, opening the invite pane.
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);

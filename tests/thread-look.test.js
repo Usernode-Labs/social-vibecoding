@@ -82,7 +82,9 @@ test('how a selector reaches the portaled picker', () => {
 test('dev-card.tsx marks the picker only when its button stands inside the thread page', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf8');
   assert.match(src, /const threadLook = !!btnRef\.current\?\.closest\('#dev-topic-thread'\);/);
-  assert.equal((src.match(/data-vote-look=\{threadLook \? 'thread' : undefined\}/g) || []).length, 2,
+  assert.match(src, /const voteLook = threadLook \? 'thread' : \(boardLook \? 'board' : undefined\);/,
+    'the thread page\'s marker is chosen first; the All items board\'s is only the fallback');
+  assert.equal((src.match(/data-vote-look=\{voteLook\}/g) || []).length, 2,
     'the popover and the phone sheet both carry it');
 });
 

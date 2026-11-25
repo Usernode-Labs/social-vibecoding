@@ -57,6 +57,13 @@ import { KB_OPEN_CLASS } from './keyboard-open';
  * no style or class of the sheet's is touched and its own open and close
  * transitions compose with it), and none with reduced motion.
  *
+ * A sheet that names a sticky row at its foot (`foot`) has a field the
+ * keys leave under that row, or under its `head`, revealed in the same
+ * viewport event, without waiting for the keys to settle: the sheet shrinks
+ * first, and for a beat the feedback sheet's Cancel / Post request row sat
+ * over the very field being typed in (phone review #18, 23 Nov 2026). The
+ * settled reveal still follows.
+ *
  * Structural no-op on a desktop, without `visualViewport`, or without the
  * kit. Nothing is written to the DOM but the scroller's scrollTop and, for a
  * ride, a short-lived animation.
@@ -174,10 +181,25 @@ function fieldAt(target: unknown, scroller: Element, kit: KitLike): FieldLike | 
   }
 }
 
-/** The submit button of the field's form, when it is inside the scroller too. */
+/**
+ * A form drawn without a <form> (Settings' Change username and Change
+ * password, whose controls settings.js binds by id): the group is
+ * FORM_GROUP_CLASS and its row of buttons FORM_ACTIONS_CLASS, which the
+ * reveal chases as it chases a <form>'s submit button (phone review #14,
+ * 23 Nov 2026: New username took the keys with Change username and Cancel
+ * under them).
+ */
+export const FORM_GROUP_CLASS = 'kb-form';
+export const FORM_ACTIONS_CLASS = 'kb-form-actions';
+
+/** The submit button of the field's form, or its group's row of buttons, when it is inside the scroller too. */
 function actionOf(field: FieldLike, scroller: Element): Element | null {
   const form = field.form || (field.closest ? field.closest('form') : null);
-  const button = form ? form.querySelector('button[type="submit"], input[type="submit"]') : null;
+  let button = form ? form.querySelector('button[type="submit"], input[type="submit"]') : null;
+  if (!button && field.closest) {
+    const group = field.closest(`.${FORM_GROUP_CLASS}`);
+    button = group ? group.querySelector(`.${FORM_ACTIONS_CLASS}`) : null;
+  }
   return button && scroller.contains(button) ? button : null;
 }
 
@@ -190,11 +212,18 @@ export function attachKeyboardSurface(
   scroller: HTMLElement | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? (document as unknown as DocLike) : undefined,
-  options: { ride?: boolean; foot?: string; head?: number } = {},
+  options: { ride?: boolean; foot?: string; head?: number; when?: () => boolean } = {},
 ): () => void {
   const kit = win?.unNative;
   const vv = win?.visualViewport;
   if (!scroller || !win || !doc || !vv || !kit || kit.platform === 'desktop') return () => {};
+  // Whether the scroller is the one that scrolls right now. A screen that a
+  // phone browser pages through the document (#1518) is not: there its taps
+  // stay native, so the browser's own reveal moves the page.
+  const live = () => {
+    if (!options.when) return true;
+    try { return !!options.when(); } catch { return false; }
+  };
 
   let touch: { x: number; y: number; moved: boolean } | null = null;
   // The person dragged the scroller: their scroll stands over any reveal
@@ -235,7 +264,7 @@ export function attachKeyboardSurface(
   };
 
   const reveal = (field: FieldLike | null) => {
-    if (!field || doc.activeElement !== field || !scroller.contains(field)) return;
+    if (!field || doc.activeElement !== field || !scroller.contains(field) || !live()) return;
     const view = scroller.getBoundingClientRect();
     const box = field.getBoundingClientRect();
     const action = actionOf(field, scroller);
@@ -271,10 +300,35 @@ export function attachKeyboardSurface(
     });
     if (top === Math.round(scroller.scrollTop)) return;
     try {
-      scroller.scrollTo({ top, behavior: reduced() ? 'auto' : 'smooth' });
+      scroller.scrollTo({ top, behavior: revealNow || reduced() ? 'auto' : 'smooth' });
     } catch {
       scroller.scrollTop = top;
     }
+  };
+
+  // The keys have just moved a sheet that names its foot: a focused field
+  // its foot row or its covered head now hides is revealed at once, in this
+  // event (#18), and with no smooth scroll to wait on.
+  let revealNow = false;
+  const revealIfCovered = () => {
+    if (!options.foot) return;
+    const field = (pending || doc.activeElement) as FieldLike | null;
+    if (!field || doc.activeElement !== field || !scroller.contains(field)) return;
+    const view = scroller.getBoundingClientRect();
+    const top = view.top + (options.head && options.head > 0 ? options.head : 0);
+    let bottom = view.bottom;
+    const rows = scroller.querySelectorAll(options.foot);
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const rect = rows[i].getBoundingClientRect();
+      if (rect.width || rect.height) {
+        bottom = Math.min(bottom, rect.top);
+        break;
+      }
+    }
+    const box = field.getBoundingClientRect();
+    if (box.bottom <= bottom && box.top >= top) return;
+    revealNow = true;
+    try { reveal(field); } finally { revealNow = false; }
   };
 
   const clearTimers = () => {
@@ -319,6 +373,7 @@ export function attachKeyboardSurface(
     // A drag the person made is not a keyboard settling: nothing to reveal.
     if (!pending && scrolledByHand) return;
     if (!pending && !(active && scroller.contains(active))) return;
+    revealIfCovered();
     if (settle != null) win.clearTimeout(settle);
     settle = win.setTimeout(revealPending, SETTLE_MS);
   };
@@ -351,6 +406,7 @@ export function attachKeyboardSurface(
     touch = null;
     if (!t || t.moved || !e.cancelable) return;
     if (e.touches && e.touches.length) return;
+    if (!live()) return;
     try { if (kit.gestures?.owner?.('touch') != null) return; } catch { /* no arbiter */ }
     const field = fieldAt(e.target, scroller, kit);
     if (!field) return;
@@ -424,16 +480,21 @@ export function attachKeyboardSurface(
  * attachKeyboardSurface on whatever element `ref` holds, re-attached when
  * React hands it a new node (the sheet renders its panel only while open).
  */
-export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string; head?: number } = {}): void {
+export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string; head?: number; when?: () => boolean } = {}): void {
   const attached = useRef<{ el: HTMLElement; foot: string | undefined; head: number; detach: () => void } | null>(null);
   const ride = !!options.ride;
   const foot = options.foot;
   const head = options.head || 0;
+  // Read through a ref, so a new function each render does not re-attach.
+  const when = useRef(options.when);
+  when.current = options.when;
+  const hasWhen = !!options.when;
   useEffect(() => {
     const el = ref.current;
     if (attached.current && attached.current.el === el && attached.current.foot === foot && attached.current.head === head) return;
     attached.current?.detach();
-    attached.current = el ? { el, foot, head, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot, head }) } : null;
+    const guard = hasWhen ? () => !!when.current?.() : undefined;
+    attached.current = el ? { el, foot, head, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot, head, when: guard }) } : null;
   });
   useEffect(() => () => {
     attached.current?.detach();

@@ -148,6 +148,9 @@ export interface BotOfferView {
   retired?: string;
   /** A tap of this device's the server refused, and why: kept until the chat is left. */
   refused?: { code: string; reason?: string } | null;
+  /** #6988: a close offer's request, and the bot's own reason for closing it. */
+  issueNumber?: number;
+  why?: string;
 }
 
 /** #6305: one project's row on a many-project offer in a thread. */

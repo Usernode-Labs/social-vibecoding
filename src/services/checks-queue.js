@@ -31,7 +31,11 @@
 // (check-runs.ORPHAN_MS) is dead: a dead waiting row is not in line (the
 // harvest, or main-watch's sweep for a merge of main, re-drives it in the
 // place it had), and a dead admitted row holds its slot only until its Jobs'
-// deadlines must have ended them.
+// deadlines must have ended them. A row whose run is known to be over holds
+// nothing, alive or not, and the admission pass deletes it: its preview work
+// item reported, or its session ended (runOver, sweepReason). On 23 Nov 2026
+// one such row, its delete lost on a draining conductor, held one of four
+// slots for nine minutes after its run had settled.
 //
 // Order: main-watch's whole-tree check of main first, since it gates merges
 // for everyone; then promoted proposals, then submitted CLI hand-offs, then
@@ -46,6 +50,9 @@
 // fill the slots, would leave more of those merges unchecked for longer. So
 // the cluster holds at most CHECKS_MAX_CONCURRENT_RUNS proposal runs plus one
 // main-watch run, or more main-watch runs only in slots no proposal is using.
+// The overflow pilot can add one proposal-only slot alongside an existing
+// extra main-watch run. It keeps the four-proposal ceiling and requires the
+// dedicated pool's per-node capacity plan to support five shared slots.
 //
 // A pass is cheap (one small table, read under a lock) and any process may
 // run one: every waiter runs one each poll, and admits the head of the line
@@ -60,6 +67,7 @@ const checkRuns = require('./check-runs');
 const { CHECKS_QUEUE_LOCK } = require('./advisory-locks');
 
 const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+const PROPOSAL_OVERFLOW_PILOT_CAP = 4;
 const POLL_MS = Math.max(250, Number(process.env.CHECKS_QUEUE_POLL_MS) || 3000);
 // Dead main and early-unit rows stop counting well before cleanup.
 const ADMISSION_ROW_RETENTION_MS = 60 * 60 * 1000;
@@ -124,7 +132,9 @@ async function enqueue(pool, {
                     COALESCE((SELECT MIN(queued_at) FROM taken), NOW())),
               NULL
        ON CONFLICT (run_id) DO UPDATE
-         SET manifest = EXCLUDED.manifest, owner = EXCLUDED.owner, heartbeat_at = NOW()
+         SET manifest = CASE WHEN check_runs.manifest->>'proposalOverflow' = 'true'
+               THEN EXCLUDED.manifest || '{"proposalOverflow": true}'::jsonb ELSE EXCLUDED.manifest END,
+             owner = EXCLUDED.owner, heartbeat_at = NOW()
        RETURNING queued_at`,
       [runId, sessionId == null ? null : Number(sessionId), appId == null ? null : Number(appId),
         kind, commitSha || null, checkRuns.selfOwner(), JSON.stringify(manifest || {}),
@@ -180,14 +190,31 @@ function recordSlotGranted(pool, {
 // class is the session's as it stands now: the CLI hand-off rule is
 // staging-recovery.isStuckCheckRecoveryScope's (a submitted head, no upload
 // waiting on proposal_submit_build), so "submitted" means one thing.
+//
+// A preview machine's run (`workflow: true`) is also read against its work
+// item, the preview instance's checks.run under the manifest's runKey (one
+// lookup on wf_work's identity key): `run_status` is its status, and
+// `run_finished` says its handler has returned (reported or settled), or the
+// machine cancelled it and the clean-up that follows a cancel (checks.cancel)
+// has run. Such a run's Jobs are nobody's to read, whatever its heartbeat
+// or its admission says (planAdmission, sweepReason). `lingering` is a
+// settled run whose early unit Jobs may still be stopping
+// (check-runs.linger); `session_ended`, a proposal whose session merged, was
+// archived or is gone.
 const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
          cr.queued_at, cr.admitted_at, cr.heartbeat_at,
          (cr.manifest->>'earlyUnit' = 'true') AS early_unit,
+         (cr.manifest->>'proposalOverflow' = 'true') AS proposal_overflow,
          (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
          (cr.heartbeat_at < NOW() - ($3::int * INTERVAL '1 millisecond')) AS expired,
+         (cr.owner LIKE '%:exited') AS exited,
+         (cr.manifest->>'settled' = 'true') AS lingering,
+         (cr.kind = 'proposal' AND (cs.id IS NULL OR cs.status IN ('merged', 'archived'))) AS session_ended,
+         wk.status AS run_status,
+         (wk.status IN ('reported', 'settled') AND (NOT wk.cancelled OR wk.cancel_done)) AS run_finished,
          CASE
            WHEN cr.kind = 'main' THEN 1
            WHEN cs.status IN ('promoted', 'merging') THEN 2
@@ -201,15 +228,74 @@ const QUEUE_SQL = `
          END AS class
     FROM check_runs cr
     LEFT JOIN chat_sessions cs ON cs.id = cr.session_id
+    LEFT JOIN LATERAL (
+      SELECT w.status, COALESCE(w.result->>'cancelled' = 'true', FALSE) AS cancelled,
+             EXISTS (SELECT 1 FROM wf_work c
+                      WHERE c.machine = w.machine AND c.key = w.key AND c.kind = 'checks.cancel'
+                        AND c.work_key = 'cancel:' || w.work_key
+                        AND c.status IN ('reported', 'settled')) AS cancel_done
+        FROM wf_work w
+       WHERE cr.kind = 'proposal' AND cr.manifest->>'workflow' = 'true'
+         AND w.machine = 'preview' AND w.key = 'session:' || cr.session_id::text
+         AND w.kind = 'checks.run' AND w.work_key = cr.manifest->>'runKey'
+    ) wk ON TRUE
    ORDER BY class, cr.queued_at, cr.run_id`;
+
+// Pure: is the run a row stands for known to be over? Its work item says so
+// (QUEUE_SQL `run_finished`), or its owner is gone and its session merged,
+// was archived or is gone. Nobody reads such a run's Jobs, and the retire of
+// an ended session stops them.
+function runOver(row, alive) {
+  return row.run_finished === true || (row.session_ended === true && !alive);
+}
+
+// Pure: does an admitted row hold its slot? While its owner is alive or its
+// Jobs may still be on the cluster, unless its run is known to be over. A
+// lingering row (check-runs.linger) holds only until its Jobs' deadline.
+function holdsSlot(row, alive) {
+  if (row.lingering === true) return row.within_deadline === true;
+  if (runOver(row, alive)) return false;
+  return alive || row.within_deadline === true;
+}
+
+// At most this many rows go in one admission pass.
+const SWEEP_LIMIT = 50;
+
+// Pure: why the admission pass deletes a row, or null to keep it. Never a
+// main-watch row (main-watch's next attempt adopts it, and the hour-long
+// expiry below clears it), never a row whose owner is alive while its run is
+// going, and never one whose work item is still outstanding (queued or
+// running: its next claim comes back for the row, to collect its Jobs or to
+// ask for a slot in its place):
+//   finished   its work item reported or settled (runOver): its finally
+//              lost the delete, or a claim it outlived wrote it again;
+//   deadline   lingering past its Jobs' deadline;
+//   ended      its session merged, was archived or is gone, its owner gone
+//              (the session's retire stops its Jobs);
+//   abandoned  its owner gone (handed over on exit, or silent an hour) and
+//              past its Jobs' deadline.
+function sweepReason(row, alive) {
+  if (row.kind === 'main') return null;
+  if (row.lingering === true) return row.within_deadline === true ? null : 'deadline';
+  if (row.run_finished === true) return 'finished';
+  if (alive || row.run_status === 'queued' || row.run_status === 'running') return null;
+  if (row.session_ended === true) return 'ended';
+  if (row.within_deadline !== true && (row.exited === true || row.expired === true)) return 'abandoned';
+  return null;
+}
 
 // Pure: given every row (QUEUE_SQL's shape) and the cap, which waiting runs
 // get a slot now, and where every other waiting run stands. A row holds a
 // slot once admitted, while its owner is alive or its Jobs may still be on
-// the cluster. The line is strict: when the run at its head cannot have a
-// slot, nobody behind it gets one. `self` is the run asking, which counts as
-// alive whatever its last heartbeat says.
-function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available = true } = {}) {
+// the cluster, unless its run is known to be over (holdsSlot). The line is
+// strict for ordinary slots. A main-watch run waiting for one can be passed
+// only for the proposal-only pilot slot. `self` counts as alive and is never
+// over. `sweep` is the rows the pass deletes (sweepReason). The legacy pool
+// reports Infinity and cannot qualify for the pilot.
+function planAdmission(rows, {
+  cap = maxConcurrentRuns(), poolCap = Infinity, self = null, available = true, proposalOverflowPilot = false,
+} = {}) {
+  const sharedCap = Math.min(cap, poolCap);
   const runs = (rows || []).map((row) => ({
     runId: row.run_id,
     kind: row.kind === 'main' ? 'main' : 'proposal',
@@ -225,28 +311,48 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
     ahead: null,
     expired: row.expired === true && (row.kind === 'main' || row.early_unit === true) && row.run_id !== self,
   }));
+  const sweep = [];
   for (const [i, run] of runs.entries()) {
-    const admittedAt = rows[i].admitted_at;
-    if (admittedAt) run.holding = run.alive || rows[i].within_deadline === true;
-    else run.waiting = run.alive;
+    const row = rows[i];
+    const mine = self != null && run.runId === self;
+    const admittedAt = row.admitted_at;
+    if (admittedAt) run.holding = mine ? true : holdsSlot(row, run.alive);
+    else run.waiting = run.alive && (mine || !runOver(row, run.alive));
     run.admitted = !!admittedAt;
+    const why = mine ? null : sweepReason(row, run.alive);
+    if (why && sweep.length < SWEEP_LIMIT) sweep.push({ runId: run.runId, sessionId: run.sessionId, why });
   }
   let mains = runs.filter((r) => r.holding && r.kind === 'main').length;
   let proposals = runs.filter((r) => r.holding && r.kind === 'proposal').length;
   // The first main-watch run is in its own slot; any more use the shared ones.
   const sharedUsed = () => proposals + Math.max(0, mains - 1);
+  const pilotBudget = proposalOverflowPilot === true && cap === PROPOSAL_OVERFLOW_PILOT_CAP
+    && Number.isFinite(poolCap) && poolCap >= cap + 1;
+  const overflowHolders = runs.filter((r, i) =>
+    r.holding && r.kind === 'proposal' && rows[i].proposal_overflow === true).length;
+  // A granted pilot run keeps its own slot while the pool still supports it.
+  // An ordinary slot released meanwhile is available to the head of the line.
+  // If the pilot is turned off or capacity drops, count the holder as ordinary.
+  const overflowDiscount = pilotBudget && overflowHolders === 1 ? 1 : 0;
+  const canGrantOverflow = pilotBudget && overflowHolders === 0 && mains > 1;
   const admit = [];
+  let proposalOverflowRunId = null;
   for (const run of runs) {
     if (!run.waiting) continue;
-    if (available && (run.kind === 'main' ? (mains === 0 || sharedUsed() < cap) : sharedUsed() < cap)) {
-      if (run.kind === 'main') mains += 1; else proposals += 1;
-      run.waiting = false;
-      run.holding = true;
-      run.admitted = true;
-      admit.push(run.runId);
-      continue;
+    if (!available) break;
+    const mainRun = run.kind === 'main';
+    const hasOrdinarySlot = (mainRun && mains === 0)
+      || (sharedUsed() - overflowDiscount < sharedCap && (mainRun || proposals < sharedCap));
+    if (!hasOrdinarySlot) {
+      if (!canGrantOverflow || sharedUsed() !== sharedCap || proposals >= cap) break;
+      if (mainRun) continue;
+      proposalOverflowRunId = run.runId;
     }
-    break;
+    if (mainRun) mains += 1; else proposals += 1;
+    run.waiting = false;
+    run.holding = true;
+    run.admitted = true;
+    admit.push(run.runId);
   }
   let ahead = 0;
   for (const run of runs) {
@@ -255,9 +361,11 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
     ahead += 1;
   }
   return {
-    cap,
+    cap: sharedCap,
     admit,
+    proposalOverflowRunId,
     expired: runs.filter((r) => r.expired).map((r) => r.runId),
+    sweep,
     holding: { main: mains, proposal: proposals },
     waiting: ahead,
     runs,
@@ -266,13 +374,14 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
 }
 
 // One admission pass, under the lock: admit the runs planAdmission names,
-// and clear main and early unit rows long dead. Other proposal rows are
-// left for recovery to read.
+// clear main and early unit rows long dead, and delete the proposal rows
+// whose runs are over or abandoned (planAdmission `sweep`, at most
+// SWEEP_LIMIT a pass). A row a run's work item may still come back for is
+// left to it.
 // `self` also refreshes that run's heartbeat in the same transaction, so a
 // waiter is never mistaken for dead by its own pass. Returns the plan.
 async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
   const capacity = await require('./kubernetes').checkPoolCapacity();
-  cap = Math.min(cap, capacity.cap);
   const plan = await withAdmissionLock(pool, async (client) => {
     if (self) {
       await client.query(
@@ -281,11 +390,17 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
       );
     }
     const rows = await queueRows(client);
-    const plan = planAdmission(rows, { cap, self, available: capacity.available });
+    const plan = planAdmission(rows, {
+      cap, poolCap: capacity.cap ?? 0, self, available: capacity.available === true && capacity.cap != null,
+      proposalOverflowPilot: process.env.CHECKS_PROPOSAL_OVERFLOW_PILOT === 'true',
+    });
     if (plan.admit.length) {
       await client.query(
-        'UPDATE check_runs SET admitted_at = NOW() WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL',
-        [plan.admit]
+        `UPDATE check_runs SET admitted_at = NOW(),
+            manifest = CASE WHEN run_id = $2::uuid THEN manifest || '{"proposalOverflow": true}'::jsonb
+              ELSE manifest - 'proposalOverflow' END
+          WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL`,
+        [plan.admit, plan.proposalOverflowRunId]
       );
     }
     if (plan.expired.length) {
@@ -296,13 +411,27 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
         [plan.expired, ADMISSION_ROW_RETENTION_MS]
       );
     }
+    if (plan.sweep.length) {
+      const { rows: gone } = await client.query(
+        `DELETE FROM check_runs WHERE run_id = ANY($1::uuid[]) AND kind = 'proposal' RETURNING run_id`,
+        [plan.sweep.map((s) => s.runId)]
+      );
+      const removed = new Set(gone.map((r) => r.run_id));
+      plan.swept = plan.sweep.filter((s) => removed.has(s.runId));
+    }
     return plan;
   });
+  if (plan.swept?.length) {
+    log.info('checks-queue', 'Cleared the checks rows of runs that are over', {
+      removed: plan.swept.length, runs: plan.swept,
+    });
+  }
   if (plan.admit.length) {
     log.info('checks-queue', 'Admitted checks runs', {
       runs: plan.runs.filter((r) => plan.admit.includes(r.runId))
         .map((r) => ({ runId: r.runId, kind: r.kind, class: r.class, sessionId: r.sessionId, appId: r.appId })),
       holding: plan.holding, waiting: plan.waiting, cap: plan.cap,
+      ...(plan.proposalOverflowRunId ? { proposalOverflowRunId: plan.proposalOverflowRunId } : {}),
     });
   }
   return plan;
@@ -515,9 +644,9 @@ function isoOrNull(value) {
 //   holding  admitted, and its owner is alive or its Jobs may still run;
 //   waiting  in line, its owner alive (`place` 1 is next);
 //   stale    neither: in line with its owner gone (the harvest re-drives it
-//            in its place), or admitted and past its Jobs' deadlines with
-//            its owner gone. Listed last, so an admin sees what the harvest
-//            has not cleared yet.
+//            in its place), admitted and past its Jobs' deadlines with its
+//            owner gone, or a run known to be over (holdsSlot). Listed last,
+//            so an admin sees what the admission pass has not cleared yet.
 // Runs a pass would admit now are still waiting here, at the head of the
 // line: nothing has admitted them. Slots are counted as planAdmission counts
 // them: the first main-watch run has its own, every other run uses the
@@ -533,8 +662,8 @@ function describeQueue(rows, { cap = maxConcurrentRuns(), now = Date.now() } = {
     const admitted = !!row.admitted_at;
     const alive = row.alive === true;
     const state = admitted
-      ? (alive || row.within_deadline === true ? 'holding' : 'stale')
-      : (alive ? 'waiting' : 'stale');
+      ? (holdsSlot(row, alive) ? 'holding' : 'stale')
+      : (alive && !runOver(row, alive) ? 'waiting' : 'stale');
     const kind = row.kind === 'main' ? 'main' : 'proposal';
     if (state === 'holding') {
       if (kind === 'main') mains += 1; else proposals += 1;
@@ -625,6 +754,8 @@ module.exports = {
   jobHoldMs,
   enqueue,
   planAdmission,
+  holdsSlot,
+  sweepReason,
   admit,
   reserveEarlyUnitSlot,
   takeEarlyUnitSlot,

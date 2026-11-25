@@ -8,6 +8,7 @@
 // service persists that proof and nothing that can call the provider later.
 
 const crypto = require('crypto');
+const accountAge = require('./social-account-age');
 
 const PROVIDERS = Object.freeze(['github', 'x']);
 const PROVIDER_SET = new Set(PROVIDERS);
@@ -112,6 +113,9 @@ async function consumeOauthState(pool, { userId, provider, state }) {
   };
 }
 
+// `accountCreatedAt` is when the account was made on the provider, as the
+// provider reported it in the call that proved it (services/social-account-age.js);
+// null when it said nothing usable, which leaves a stored date as it was.
 function normalizeIdentity(identity) {
   const provider = requireProvider(identity && identity.provider);
   const subject = String(identity && identity.subject || '');
@@ -119,7 +123,10 @@ function normalizeIdentity(identity) {
   if (!SUBJECT_RE.test(subject) || !HANDLE_RE[provider].test(handle)) {
     throw new SocialIdentityError('invalid_provider_identity', 'Provider returned an invalid identity');
   }
-  return { provider, subject, handle };
+  const raw = identity && identity.accountCreatedAt;
+  const accountCreatedAt = raw instanceof Date ? accountAge.parseProviderDate(raw.toISOString())
+    : accountAge.parseProviderDate(raw);
+  return { provider, subject, handle, accountCreatedAt };
 }
 
 async function withTransaction(pool, fn) {
@@ -166,27 +173,36 @@ async function writeIdentity(client, userId, identity, options = {}) {
   if (replace) {
     result = await client.query(
       `INSERT INTO user_social_identities
-         (user_id, provider, provider_subject, handle, linked_at, last_verified_at, public_visible)
-       VALUES ($1, $2, $3, $4, NOW(), NOW(), $5)
+         (user_id, provider, provider_subject, handle, linked_at, last_verified_at, public_visible,
+          account_created_at, account_created_source)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6::timestamptz, CASE WHEN $6::timestamptz IS NULL THEN NULL ELSE 'provider' END)
        ON CONFLICT (user_id, provider) DO UPDATE SET
          provider_subject = EXCLUDED.provider_subject,
          handle = EXCLUDED.handle,
          linked_at = NOW(),
          last_verified_at = NOW(),
-         public_visible = EXCLUDED.public_visible
+         public_visible = EXCLUDED.public_visible,
+         account_created_at = EXCLUDED.account_created_at,
+         account_created_source = EXCLUDED.account_created_source
        RETURNING provider, handle, linked_at, last_verified_at, public_visible`,
-      [Number(userId), identity.provider, identity.subject, identity.handle, publicVisible]
+      [Number(userId), identity.provider, identity.subject, identity.handle, publicVisible, identity.accountCreatedAt]
     );
   } else {
     result = await client.query(
+      // The same account verified again: the provider's date replaces a
+      // derived one, and a call that reported none keeps what was stored.
       `INSERT INTO user_social_identities
-         (user_id, provider, provider_subject, handle, linked_at, last_verified_at)
-       VALUES ($1, $2, $3, $4, NOW(), NOW())
+         (user_id, provider, provider_subject, handle, linked_at, last_verified_at,
+          account_created_at, account_created_source)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), $5::timestamptz, CASE WHEN $5::timestamptz IS NULL THEN NULL ELSE 'provider' END)
        ON CONFLICT (user_id, provider) DO UPDATE SET
          handle = EXCLUDED.handle,
-         last_verified_at = NOW()
+         last_verified_at = NOW(),
+         account_created_at = COALESCE(EXCLUDED.account_created_at, user_social_identities.account_created_at),
+         account_created_source = CASE WHEN EXCLUDED.account_created_at IS NULL
+           THEN user_social_identities.account_created_source ELSE 'provider' END
        RETURNING provider, handle, linked_at, last_verified_at, public_visible`,
-      [Number(userId), identity.provider, identity.subject, identity.handle]
+      [Number(userId), identity.provider, identity.subject, identity.handle, identity.accountCreatedAt]
     );
   }
   await writeGithubCompatibility(client, userId, identity);
@@ -254,14 +270,15 @@ async function finishIdentityVerification(pool, userId, rawIdentity, rawIntent =
       const expiresAt = new Date(Date.now() + REPLACEMENT_TTL_MS);
       await client.query(
         `INSERT INTO social_identity_pending_replacements
-           (user_id, provider, provider_subject, handle, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, NOW(), $5)
+           (user_id, provider, provider_subject, handle, created_at, expires_at, account_created_at)
+         VALUES ($1, $2, $3, $4, NOW(), $5, $6)
          ON CONFLICT (user_id, provider) DO UPDATE SET
            provider_subject = EXCLUDED.provider_subject,
            handle = EXCLUDED.handle,
            created_at = NOW(),
-           expires_at = EXCLUDED.expires_at`,
-        [Number(userId), identity.provider, identity.subject, identity.handle, expiresAt]
+           expires_at = EXCLUDED.expires_at,
+           account_created_at = EXCLUDED.account_created_at`,
+        [Number(userId), identity.provider, identity.subject, identity.handle, expiresAt, identity.accountCreatedAt]
       );
       return {
         outcome: 'pending_replacement',
@@ -304,7 +321,7 @@ async function confirmIdentityReplacement(pool, userId, provider, publicVisible)
         throw new SocialIdentityError('not_linked', 'That account is no longer connected');
       }
       const { rows } = await client.query(
-        `SELECT provider_subject, handle
+        `SELECT provider_subject, handle, account_created_at
            FROM social_identity_pending_replacements
           WHERE user_id = $1 AND provider = $2 AND expires_at > NOW()
           FOR UPDATE`,
@@ -320,6 +337,7 @@ async function confirmIdentityReplacement(pool, userId, provider, publicVisible)
         provider,
         subject: rows[0].provider_subject,
         handle: rows[0].handle,
+        accountCreatedAt: rows[0].account_created_at,
       });
       const { rows: owners } = await client.query(
         `SELECT user_id

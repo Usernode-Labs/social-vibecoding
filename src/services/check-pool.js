@@ -14,13 +14,13 @@ function required(config) {
 }
 function budgets() {
   // Match unitSuiteShardCount/captureShardCount, including invalid input.
-  const count = (raw) => {
+  const count = (raw, fallback) => {
     const n = Number.parseInt(raw, 10);
-    return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : 3;
+    return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : fallback;
   };
-  const unit = count(process.env.UNIT_SUITE_SHARDS);
-  const capture = count(process.env.CAPTURE_SHARDS);
-  const unitCpu = Math.max(4, unit * quantity(process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '1500m'));
+  const unit = count(process.env.UNIT_SUITE_SHARDS, 5);
+  const capture = count(process.env.CAPTURE_SHARDS, 3);
+  const unitCpu = Math.max(4, unit * quantity(process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '900m'));
   const captureCpu = Math.max(4, capture * quantity(process.env.CAPTURE_SHARD_CPU_REQUEST || '2'));
   return { mainCpu: unitCpu, mainMemory: unit * Gi,
     cpu: unitCpu + captureCpu, memory: (unit + capture * 3) * Gi, pods: unit + capture };

@@ -789,33 +789,41 @@ function LiveItems({ view, items, groupIds }: {
   const ids = groupIds && groupIds.length ? groupIds : [view.id];
   // The tile's left edge lines up with the words above it (the row's tile is
   // 36px plus its 16px gap, inside the row's own 16px), so the list reads as
-  // part of the row. Each line may wrap to two and then ends in an ellipsis:
-  // on a phone a long request title must not scroll the panel sideways, and
-  // a line is a tap target, so it is at least 44px tall.
+  // part of the row. Each line is a chip with a light hairline (the card line
+  // the rest of the app uses) and room around its words; the title clamps to
+  // two lines inside a span, so a long one can never reach the edge. The full
+  // title stays as the chip's tooltip and on the request's page. A line is a
+  // tap target, so it is at least 44px tall. `ui-plain` keeps the look's own
+  // heavy button outline (its `:not(.ui-plain)` escape) off a chip that is
+  // not one of its buttons.
   return (
     <ul className="flex min-w-0 flex-col gap-1 ps-12">
-      {items.map((item) => (
-        <li key={item.id} className="min-w-0">
-          <button
-            type="button"
-            data-notif-live-item={item.id}
-            data-notif-live-unread={item.unread ? '' : undefined}
-            className={'block min-h-[44px] w-full rounded-xl bg-zinc-100 px-2.5 py-2 '
-              + 'text-start text-[13px] leading-snug line-clamp-2 break-words '
-              + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
-              + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
-              + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
-            onClick={(event) => {
-              event.stopPropagation();
-              controller()?.openGroupRow(item.id, ids);
-            }}
-          >
-            {item.number
-              ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
-              : t('notifications:row.group.liveItemUnnumbered', { title: item.title })}
-          </button>
-        </li>
-      ))}
+      {items.map((item) => {
+        const label = item.number
+          ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
+          : t('notifications:row.group.liveItemUnnumbered', { title: item.title });
+        return (
+          <li key={item.id} className="min-w-0">
+            <button
+              type="button"
+              data-notif-live-item={item.id}
+              data-notif-live-unread={item.unread ? '' : undefined}
+              title={label}
+              className={'ui-plain flex min-h-[44px] w-full items-center rounded-xl border-0 bg-zinc-100 px-3 py-2 '
+                + 'text-start text-[13px] leading-snug shadow-[inset_0_0_0_1px_var(--app-sheet-line)] '
+                + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
+                + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
+                + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+              onClick={(event) => {
+                event.stopPropagation();
+                controller()?.openGroupRow(item.id, ids);
+              }}
+            >
+              <span className="min-w-0 line-clamp-2 break-words">{label}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -2104,19 +2112,16 @@ export function NotificationsSheetView() {
       >
       {/*
           THE SHEET RISES ON THE LIFT a dev session does — the same radius,
-          hairline and two-layer shadow — on `.dc-lift-panel`, which is that
-          glass plus a third shadow layer: the modal dim, cast OUTWARD by this
-          element instead of painted behind it.
+          hairline and two-layer shadow — on `.dc-lift-panel`.
 
-          That inversion is the whole of why the sheet stopped looking dull.
-          The dim used to live on #notifications-sheet-overlay at `z-40`, under
-          the sheet at `z-50` — and `backdrop-filter` samples whatever is
-          painted behind, so the glass was frosting an already-dimmed page and
-          composited to #cac7c3. An OUTER box-shadow is clipped to outside the
-          border box, so it never enters this element's own backdrop: the sheet
-          frosts the undimmed page while the same declaration darkens
-          everything around it. The overlay is still there and still dismisses
-          on click; it just paints nothing now.
+          The modal dim is not one of its shadow layers. It is a paint layer
+          of its own, <OverlayScrim> at the end of this component
+          (lib/overlay-scrim.js): right after the sheet, at the sheet's
+          z-index, it paints the dim everywhere but a hole cut to the sheet's
+          rounded box, and fades with the overlay's opacity (why it is a
+          layer apart: lib/overlay-scrim.js and `.overlay-scrim` in app.css).
+          #notifications-sheet-overlay is still there and still dismisses on
+          click; it paints nothing.
 
           On top of that surface: a title row of its own — the name, Mark all
           read as a small pill (only on Unread, the tab whose list it empties),

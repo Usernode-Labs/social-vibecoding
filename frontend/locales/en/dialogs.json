@@ -427,6 +427,10 @@
     "text": "Proposal failed: {{reason}}",
     "description": "Error in the close-issue dialog when the request could not be sent. {{reason}} is the browser's own description of what went wrong."
   },
+  "closeIssue.error.noApp": {
+    "text": "Couldn’t tell which project this request belongs to. Reload and try again.",
+    "description": "Error in the close-issue dialog when it has neither a project from the page nor one from the request that opened it, so there is nowhere to file the vote."
+  },
   "allowance.title": {
     "text": "App slots",
     "description": "Label at the left of the allowance box shown in the make, import and Make your own forms, and the title of the App slots card on the viewer's profile: how many apps this person may still create. A \"slot\" is room for one app; the same words as the App slots row on the profile."
@@ -2726,6 +2730,10 @@
   "feedback.mode.hint": {
     "text": "Click on the page to comment",
     "description": "Small line beside the Form / Comment switch at the top of the \"Suggest an improvement\" dialog: in comment mode a click on the page leaves the comment there."
+  },
+  "feedback.mode.hintTouch": {
+    "text": "Tap the page to comment",
+    "description": "The same small line beside the Form / Comment switch of the \"Suggest an improvement\" dialog on a touch screen: in comment mode a tap on the page leaves the comment there."
   },
   "topics.title": {
     "text": "Topics",

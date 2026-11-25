@@ -305,12 +305,14 @@ test('the bar sits lower on iOS, and only there (#2766)', () => {
     'Android\'s inset is the navigation bar: borrowing from it puts the tabs under it');
 });
 
-test('an installed Android app spends the navigation bar\'s full height (#2755)', () => {
-  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android,\s*html\.un-android #app-view\[data-app-surface="platform"\] \{\s*--platform-safe-bottom: ([^;]+);/.exec(css);
-  assert.ok(block, 'standalone Android restates the inset on both the root and the platform surface');
+test('an installed Android app spends the navigation bar\'s full height (#2755, #7061)', () => {
+  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android:not\(\.un-kb\) \{\s*--un-safe-inset-bottom: ([^;]+);/.exec(css);
+  assert.ok(block, 'standalone Android writes the nav bar\'s max into the kit token');
   assert.equal(block[1],
-    'max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px))',
-    'the larger of the live inset and the navigation bar\'s full height, still in the kit form');
+    'max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px))',
+    'the larger of the live inset and the navigation bar\'s full height, in the token every bottom rule reads');
+  assert.match(css, /--platform-safe-bottom: var\(--un-safe-inset-bottom, env\(safe-area-inset-bottom, 0px\)\);/,
+    'the bar\'s own token still resolves through the kit token, so it inherits the max');
 });
 
 test('a drag that starts on the bar never pans the document (#2771)', () => {
@@ -1487,4 +1489,27 @@ test('the Tab key moves through the bar in its drawn order, on every layout (aud
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
   assert.match(src, /bar\.addEventListener\('keydown', onKey\);/, 'from the effect, never in the prerender');
   assert.doesNotMatch(src, /tabIndex=\{/, 'no tabindex rendered');
+});
+
+test('a phone tab\'s side padding steps down with the bar: 8px, then 6px up to 389.98px, then 3px below 375px (mobile polish 02)', () => {
+  // At 8px the five labels, the lit one's bold, the tabs' margins and the
+  // bar's own padding need 383px, so a 375px phone (iPhone mini, SE, X,
+  // 11 Pro) printed "Homeroom…" on every tab and "Communiti…" with
+  // Communities lit. Every step has the same scope: the standard look and
+  // the brand look, never the side strip, which stacks its tabs and pads
+  // them itself.
+  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const steps = [...css.matchAll(new RegExp(`${esc(scope)} \\{ padding-inline: (\\d+)px; \\}`, 'g'))].map((m) => {
+    const query = /^@media \(max-width: ([\d.]+px)\) \{/.exec(css.slice(css.lastIndexOf('@media', m.index)));
+    return [query && query[1], Number(m[1])];
+  });
+  // In this order, so the narrower query, later in the sheet, wins where two match.
+  assert.deepEqual(steps, [['767.98px', 8], ['389.98px', 6], ['374.98px', 3]]);
+  // The 6px step changes the padding and nothing else: the labels stay 11px
+  // down to 375px, and only the smallest phones drop half a point.
+  const at = css.indexOf('@media (max-width: 389.98px) {');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
+  assert.equal(block.split('\n').length, 2, 'one rule in the 6px step');
+  assert.doesNotMatch(block, /font-size|!important/);
 });

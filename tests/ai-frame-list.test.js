@@ -119,7 +119,10 @@ test('a project folds after its first rows behind its own Show more; what is new
   assert.match(work, /<div class="fr-rule" data-ai-earlier="">Earlier<\/div><button type="button" class="fr-row fr-sm fr-item fr-plain"/, 'the line between what is new and what was seen');
   assert.match(work, /<button type="button" class="fr-row fr-sm fr-more" aria-expanded="false" data-ai-group-more=""><span class="fr-tx"><span class="fr-t">Show 3 more<\/span><\/span><svg/);
   const src = read(LIST);
-  assert.match(src, /groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\)/, 'folded by the standard list\'s own rule, which never hides the row you are on');
+  // #7138: the busy list folds a row that is only new; a row that moved and
+  // the one you are on still lift.
+  assert.match(src, /groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, foldFresh \? false : foldNew \? 'moved' : true\)/, 'folded by the standard list\'s own rule, which never hides the row you are on');
+  assert.match(src, /<Groups lines=\{busyLines\}[^>]*foldNew/, 'In progress\'s list passes foldNew');
   assert.match(src, /const held = holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/, '#6245: the order holds under the pointer');
 });
 
@@ -238,7 +241,12 @@ test('the page draws this list in place of its own under a look, from the same r
   const list = read(LIST);
   assert.doesNotMatch(list, /\bfetch\(|useEffect\(/, 'nothing is read or kept in the list itself');
   assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/, 'the rows are the ones the standard list draws');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/);
+  // 24 Nov 2026: the standard list's three bands also hand it Done's kind
+  // chip (History's), which narrows this week's rows too; the look's list
+  // narrows History by its own chips and needs no more.
+  // 24 Nov 2026 (mobile 04): the standard list's rows also carry Dismiss, on a thread somebody named you in.
+  // Mobile polish 05: and the last visit, which the bands mark what is new since; the look's list draws no marks.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found, visit \}\);/);
 });
 
 test('the list\'s New chat opens the same new chat as the standard head\'s', () => {
@@ -279,7 +287,9 @@ test('what the first tour invented is gone: its words left the catalog, and the 
 test('s10: the column draws no head of its own: Main Chat\'s is gone, and a thread and a new chat bring theirs', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.doesNotMatch(src, /kit\('dhead'\)|data-ai-main-head|data-ai-main-close|ai-main-title|messages:ai\.main\./);
-  assert.match(src, /\{conversationUp \? <EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/> : null\}\n\s+<\/aside>/);
+  // 24 Nov 2026: the docked column says so to a new chat in it, which then
+  // has no ✕ (new-thread.tsx NewThreadDocked); it is still the column's last part.
+  assert.match(src, /\{conversationUp \? \(\s+<NewThreadDocked\.Provider value>\s+<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/>\s+<\/NewThreadDocked\.Provider>\s+\) : null\}\n\s+<\/aside>/);
 });
 
 test('s11: a request in the column stands under the kit\'s open-item head; on a phone its page keeps the two back chips', () => {

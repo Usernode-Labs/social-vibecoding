@@ -942,14 +942,15 @@ test('the staging preview\'s declared check follows the demo DM to the Homeroom 
   // no longer drawn: the tab's own lists say what needs you and what is in
   // progress. Its check follows the demo DM's Messages address to the tab.
   // 14 Nov 2026: there it finds no Main Chat row and no Main Chat head, and
-  // New chat, the labelled button beside search, in the page's head.
+  // New chat, the labelled button, in the page's head.
   const tests = JSON.parse(read('dapp.json')).tests;
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-main-chat-row'), 'and so is Main Chat\'s row\'s');
   const check = tests.find((t) => t.id === 'homeroom-bot-new-chat');
   assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
   assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):not\(:has\(\[data-ai-main-row\], \[data-ai-main-head\]\)\)/);
-  assert.match(check.expectSelector, /\[data-ai-hero\] > button\[data-ai-search-toggle\] \+ button\[data-ai-new-chat\]$/);
+  // 24 Nov 2026: New chat ends the head card's line; the search field is always on the line under it.
+  assert.match(check.expectSelector, /\[data-ai-sheet=head\]:has\(\[data-ai-tools\] input\[data-ai-search\]\) \[data-ai-hero\] > button\[data-ai-new-chat\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   assert.equal(check.expectText, 'New chat');
   for (const file of ['frontend/src/features/ai/**', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {

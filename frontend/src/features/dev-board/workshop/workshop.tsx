@@ -149,6 +149,9 @@ import {
 import { TopicSidePanel } from './side-panel';
 import { ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, weekDate } from './week-pages';
 import { YourWorkCard } from './your-work';
+import { WorkshopFront } from './front-page';
+import { PrivateRequestsPage } from './private-requests';
+import { EarlierWeeks } from './week-pages';
 import {
   commitDistance,
   swipeAxis,
@@ -1202,6 +1205,10 @@ export function sinceWeeks(
 export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
   return String(week.startMs);
 }
+
+/** The Workshop front page's Earlier weeks and Private requests, open in the tab as a week's page is (keys no week has). */
+export const EARLIER_WEEKS = '@earlier';
+export const PRIVATE_PAGE = '@private';
 
 /* ═══════════════════════════════════════════════════════════════════════
  * `Needs you` — a review feed of what other people submitted.
@@ -3132,7 +3139,13 @@ export function DevWorkshop(): ReactNode {
   // ("Earlier weeks" adds more), and the week whose page is open in the
   // tab, by its Monday (sinceWeekStateKey), or null for the tab itself.
   const [weeksShown, setWeeksShown] = useState(WEEKS_FIRST);
+  // 24 Nov 2026: under the standard look the Workshop's front page
+  // (./front-page.tsx) opens two more pages in the tab the same way, by a key
+  // no week has: Earlier weeks (EARLIER_WEEKS) and Private requests
+  // (PRIVATE_PAGE). `weekFromEarlier` says a week's page was opened from
+  // Earlier weeks, so its way back goes there.
   const [openWeek, setOpenWeek] = useState<string | null>(null);
+  const weekFromEarlier = useRef(false);
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
@@ -3168,9 +3181,6 @@ export function DevWorkshop(): ReactNode {
   const wipLook = isKitHome(useLiveSkin());
   // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
   const kitHub = isKitHome(useLiveSkin());
-  // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
-  // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
-  const boardDoor = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab(v.slug) || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3305,39 +3315,9 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab(v.slug) || 'status');
   }, [v.slug]);
-  // STANDARD (WIP): THE WORKSHOP'S DOOR OPENS ITS BOARD. Under that look a
-  // way into the Workshop (the places list, the hub's card, a
-  // `?ws=workshop` link) lands on All items, the board, and not on the
-  // Workshop's overview. One rule after every way in, so none of them
-  // changes: when the place becomes the Workshop, it is moved on to All
-  // items, before paint. The overview is still there one step up: All
-  // items' own way back opens it (a step from All items or the bot's slots
-  // is left alone), and so does Back or Forward onto an entry that was the
-  // overview (the router marks those `traversal`). Under that look alone
-  // (`boardDoor`): the standard look's Workshop opens on its overview.
-  const cameFrom = useRef<TabKey | null>(null);
-  const traversed = useRef(false);
-  useEffect(() => {
-    const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ tab: TabKey; traversal?: boolean } | null>).detail;
-      traversed.current = !!(door && door.traversal && door.tab === 'workshop');
-    };
-    window.addEventListener('usernode:workshop-tab', onDoor, true);
-    return () => window.removeEventListener('usernode:workshop-tab', onDoor, true);
-  }, []);
   // Standard (WIP), on the board: resting on a card draws what it is tied to
   // (./board-links.ts). Its layer is its own; nothing is written to the board.
   useEffect(() => (wipLook && tab === 'all' ? watchBoardLinks() : undefined), [wipLook, tab]);
-  useLayoutEffect(() => {
-    const was = cameFrom.current;
-    cameFrom.current = tab;
-    if (!boardDoor || tab !== 'workshop') return;
-    if (was === 'all' || was === 'bot') return;
-    if (traversed.current) { traversed.current = false; return; }
-    cameFrom.current = 'all';
-    setTab('all');
-    callAppView('_setWorkshopTab', 'all', v.slug);
-  }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
@@ -3474,7 +3454,9 @@ export function DevWorkshop(): ReactNode {
     let backed = false;
     const release = pushDismissible(() => {
       backed = true;
-      setOpenWeek(null);
+      const back = weekFromEarlier.current && openWeek !== EARLIER_WEEKS && openWeek !== PRIVATE_PAGE;
+      weekFromEarlier.current = false;
+      setOpenWeek(back ? EARLIER_WEEKS : null);
       callAppView('closeWorkshopWeek');
       return true;
     });
@@ -3711,7 +3693,10 @@ export function DevWorkshop(): ReactNode {
   // are in. The other places keep the card list, which is their shape.
   const pending = v.loading || communityPending(v.slug || '');
   const channelHere = isChannelPlace(tab);
-  if (pending && (!v.slug || (tab !== 'status' && !channelHere))) {
+  // The Workshop's front page draws its own shape while the board is read
+  // (./front-page.tsx): its words first, its numbers as they land.
+  const frontHere = tab === 'workshop' && wipLook && !openWeek;
+  if (pending && (!v.slug || (tab !== 'status' && !channelHere && !frontHere))) {
     return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
   }
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3849,10 +3834,26 @@ export function DevWorkshop(): ReactNode {
     scrollToHead(hostRef.current);
   };
   const closeWeekPage = () => {
-    setOpenWeek(null);
+    const back = weekFromEarlier.current;
+    weekFromEarlier.current = false;
+    setOpenWeek(back ? EARLIER_WEEKS : null);
     callAppView('closeWorkshopWeek');
     scrollToHead(hostRef.current);
   };
+  // The front page's two other pages (./front-page.tsx), and a week opened from Earlier weeks.
+  const openFrontPage = (key: typeof EARLIER_WEEKS | typeof PRIVATE_PAGE) => {
+    weekFromEarlier.current = false;
+    setOpenWeek(key);
+    scrollToHead(hostRef.current);
+  };
+  const closeFrontPage = () => {
+    weekFromEarlier.current = false;
+    setOpenWeek(null);
+    scrollToHead(hostRef.current);
+  };
+  const frontPage = openWeek === EARLIER_WEEKS || openWeek === PRIVATE_PAGE ? openWeek : null;
+  // Mark all seen, where the log is read now (the week's page, Earlier weeks), on a returning visit.
+  const markSeen = wipLook && v.since ? { any: sinceRows.length > 0, onClear: clearSince } : null;
   // What happened's new requests nobody has picked up (New for you's, until
   // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
   // request card's own act when that act is asking Homeroom bot to build
@@ -4286,8 +4287,8 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
-      {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
-          under it on a phone. See ./community-card.tsx InviteHeroCard. */}
+      {/* INVITE, AS A CARD (request 6654): under the hero. See
+          ./community-card.tsx InviteHeroCard. */}
       {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
@@ -4360,15 +4361,11 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* TOPICS, at every width (request 6654): each live topic's channel has
           a row here. It was the phone's alone (3 Nov 2026), a wide window
-          listing them in its sidebar only; now a wide window draws For you
-          and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
-          ./hub-cards.tsx TopicsCard. */}
+          listing them in its sidebar only. See ./hub-cards.tsx TopicsCard. */}
       {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* TOP CONTRIBUTORS (request 6837): who took part most, by name and a
-          count in words. After Topics in the page, so For you and Topics
-          stay a pair; a wide window puts it under For you, beside Topics
-          (app.css, "THE HUB IN TWO COLUMNS"). Nothing until two people have
-          taken part. See ./hub-cards.tsx ContributorsCard. */}
+          count in words, after Topics in the page. Nothing until two people
+          have taken part. See ./hub-cards.tsx ContributorsCard. */}
       {slug ? <ContributorsCard data={community} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
@@ -4439,9 +4436,54 @@ export function DevWorkshop(): ReactNode {
           openKey={sideKey}
           onOpen={openItem}
           onBack={closeWeekPage}
+          seen={markSeen}
         />
       ) : null}
-      {tab === 'workshop' && !weekUp ? (
+      {/* ── THE FRONT PAGE'S OTHER PAGES (24 Nov 2026) ── Earlier weeks (every
+          week before this one) and Private requests, each with "‹ Workshop"
+          back; the tab stays lit. ./week-pages.tsx, ./private-requests.tsx. */}
+      {tab === 'workshop' && frontPage === EARLIER_WEEKS ? (
+        <EarlierWeeks
+          weeks={pastWeeks}
+          firstWeek={firstWeek}
+          seen={markSeen}
+          onBack={closeFrontPage}
+          onWeek={(w) => { openWeekPage(sinceWeekStateKey(w)); weekFromEarlier.current = true; }}
+        />
+      ) : null}
+      {tab === 'workshop' && frontPage === PRIVATE_PAGE && slug ? <PrivateRequestsPage slug={slug} onBack={closeFrontPage} /> : null}
+      {/* ── THE WORKSHOP'S FRONT PAGE, under the standard look (24 Nov 2026) ──
+          The hero (the question, its box and starts, Your work), the path
+          a change travels, Lately and Live by week, and Private requests'
+          row for admins. ./front-page.tsx. The brand look keeps the tab
+          below, as it was. */}
+      {tab === 'workshop' && !weekUp && !frontPage && wipLook ? (
+        <WorkshopFront
+          slug={slug}
+          name={projectName}
+          loading={!!v.loading}
+          dash={v.dashboard || null}
+          mergedPending={!!v.mergedPending}
+          owed={owed}
+          viewer={!!(v.mine && v.mine.viewer)}
+          selfHosted={!!actions.selfHosted}
+          filtered={!!(v.meta && v.meta.filtered)}
+          since={!!v.since}
+          thisWeek={thisWeek}
+          pastWeeks={pastWeeks}
+          recentLive={v.recentLive || []}
+          openKey={sideKey}
+          onOpenItem={openItem}
+          onBoard={() => { callAppView('clearWorkshopStage'); openTab('all'); }}
+          onStage={(stage) => { callAppView('openWorkshopStage', stage); openTab('all'); }}
+          onBuilds={() => openTab('bot')}
+          onNeeds={() => openTab('needs')}
+          onWeek={(w) => openWeekPage(sinceWeekStateKey(w))}
+          onEarlier={() => openFrontPage(EARLIER_WEEKS)}
+          onPrivate={() => openFrontPage(PRIVATE_PAGE)}
+        />
+      ) : null}
+      {tab === 'workshop' && !weekUp && !frontPage && !wipLook ? (
       <>
       {/* ── OVERVIEW ── a label over the card, small caps (SectionHeader),
           the only uppercase on the page; the card's own heading is a

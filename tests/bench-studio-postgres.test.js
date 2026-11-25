@@ -2,14 +2,14 @@
 
 // The App bench studio (services/bench/studio.js, services/bench/scaffold.js,
 // services/bench/packs.js) against the FULL PostgreSQL schema: a launch
-// makes the host app once, a task per brief (the same brief, the same task),
-// and one trial per brief, model, pack and attempt; a watch reports what
-// changed since its cursor; a reference order waits for the run's first
-// commit and then hands it out; a reference handed in becomes a trial of its
-// own, a later one with the same label its next attempt; a re-run is the
-// arm's next attempt; per-trial reads of a run that is not a studio run wait
-// for the judge; and only a studio build can be previewed, at most four at
-// once, for a day.
+// makes the host app once, however many ask together, a task per brief (the
+// same brief, the same task), and one trial per brief, model, pack and
+// attempt; a watch reports what changed since its cursor; a reference order
+// waits for the run's first commit and then hands it out; a reference handed
+// in becomes a trial of its own, a later one with the same label its next
+// attempt; a re-run is the arm's next attempt; per-trial reads of a run that
+// is not a studio run wait for the judge; and only a studio build can be
+// previewed, at most four at once, for a day.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -21,6 +21,8 @@ const http = require('node:http');
 const express = require('express');
 const { Pool } = require('pg');
 const { asTransition } = require('./lib/as-transition');
+const { standInForMaking } = require('./lib/app-making');
+const { waitFor, within } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -39,7 +41,9 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 6 });
+  let making;
   t.after(async () => {
+    await making?.stop();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -51,25 +55,8 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
   const scaffold = require('../src/services/bench/scaffold');
 
   const { rows: [evan] } = await pool.query("INSERT INTO users (username, password, is_admin) VALUES ('evan', 'x', TRUE) RETURNING id");
-  // A project's making (src/workflow/app-creation/), stood in for: its
-  // insert starts it (a Started event), and its repository arrives a moment
-  // later.
-  const created = [];
-  let seenEvent = 0;
-  const making = setInterval(async () => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT id, app_id FROM wf_events WHERE machine = 'app-creation' AND type = 'Started' AND id > $1 ORDER BY id`, [seenEvent]);
-      for (const r of rows) {
-        seenEvent = Math.max(seenEvent, Number(r.id));
-        created.push(r.app_id);
-        await pool.query("UPDATE apps SET repo_url = 'https://github.com/usernode-bot/' || slug, status = 'running' WHERE id = $1", [r.app_id]);
-      }
-    } catch { /* the pool closing at the end */ }
-  }, 20);
-  t.after(() => clearInterval(making));
+  making = standInForMaking(pool);
   const deps = {};
-
 
   let pack;
   await t.test('a pack is saved as the next version of its name; a child keeps what it leaves out', async () => {
@@ -105,7 +92,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
       assert.match(out.error, re);
     }
     assert.equal((await studio.launch(pool, {}, { briefSet: 'starter', capUsd: 5, contextPackIds: [777] }, { actorId: evan.id, deps })).status, 404);
-    assert.equal(created.length, 0, 'nothing was made for a refused launch');
+    assert.deepEqual(await making.started(), [], 'nothing was made for a refused launch');
 
     launched = await studio.launch(pool, {}, {
       briefSet: 'starter', refs: ['bread', 'tier-list'],
@@ -113,7 +100,8 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
       models: ['today', 'z-ai/glm-5.3-flash'], contextPackIds: [0, pack.id], references: 1, capUsd: 20, note: 'first try',
     }, { actorId: evan.id, deps });
     assert.equal(launched.ok, true, launched.error);
-    assert.equal(created.length, 1, 'the host app is made once');
+    const host = await studio.hostRow(pool);
+    assert.deepEqual(await making.started(), [host.id], 'the host app is made once');
     assert.equal(launched.trials, 3 * 2 * 2);
     assert.deepEqual(launched.briefs.map((b) => b.ref), ['bread', 'tier-list', null]);
     run = launched.run;
@@ -122,7 +110,6 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(r.context_pack_ids, [0, pack.id]);
     assert.equal(r.references_per_brief, 1);
     assert.deepEqual(r.stages, ['first_version']);
-    const host = await studio.hostRow(pool);
     assert.equal(await studio.isHostApp(pool, host.id), true);
     const { rows: [{ n }] } = await pool.query(
       "SELECT COUNT(*)::int AS n FROM app_collaborators WHERE app_id = $1 AND status = 'member'", [host.id],
@@ -133,7 +120,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
 
     const again = await studio.launch(pool, {}, { briefs: [{ ref: 'bread' }], capUsd: 5 }, { actorId: evan.id, deps });
     assert.equal(again.briefs[0].taskId, launched.briefs[0].taskId, 'the same brief, the same task');
-    assert.equal(created.length, 1);
+    assert.deepEqual(await making.started(), [host.id], 'a second launch makes no host');
     await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [again.run.id]);
     const runs = await studio.listStudioRuns(pool);
     assert.deepEqual(runs.map((x) => x.id), [again.run.id, run.id]);
@@ -591,5 +578,35 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(ids, [...ids].sort((a, b) => b - a));
     const one = await studio.gallery(pool, { taskId: bread.taskId });
     assert.deepEqual(one.briefs.map((b) => b.taskId), [bread.taskId]);
+  });
+
+  await t.test('launches that all find no host make one between them', async () => {
+    // As a deleted host leaves it (ON DELETE SET NULL).
+    await pool.query('UPDATE bench_studio_hosts SET app_id = NULL');
+    const before = await making.started();
+    const holder = await pool.connect();
+    let asks;
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT pg_advisory_xact_lock(hashtext('bench_studio_host'))");
+      asks = Promise.all([1, 2, 3].map(() => studio.ensureHost(pool, {}, { deps, pollMs: 20 })));
+      asks.catch(() => {});
+      // Hold them where each has found no host and is about to make one,
+      // which a machine of any speed then reaches every time.
+      await waitFor(async () => {
+        const { rows: [waiting] } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`,
+        );
+        return waiting.n === 3;
+      }, { label: 'all three asks to have found no host and be waiting to make one', timeoutMs: 30000 });
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    const hosts = await within(asks, 30000, 'the three asks for a host');
+    const host = await studio.hostRow(pool);
+    assert.deepEqual(hosts.map((h) => h.app?.id), [host.id, host.id, host.id], JSON.stringify(hosts));
+    assert.deepEqual(await making.started(), [...before, host.id], 'the host app is made once');
   });
 });

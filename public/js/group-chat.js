@@ -1570,6 +1570,15 @@ const GroupChat = {
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
     const anyMember = bot.offer.forUserId == null && bot.offer.kind === 'close_request';
+    // #6988: a gone or expired close offer still lets its reader propose the
+    // close. The message says which request and why; an offer made before
+    // this change has neither, so the request's own thread supplies the
+    // number (and the reason box opens empty).
+    const thread = GroupChat.activeThread;
+    const offerNumber = Number(bot.offer.issueNumber);
+    const issueNumber = Number.isSafeInteger(offerNumber) && offerNumber > 0
+      ? offerNumber
+      : (thread && thread.type === 'issue' && Number(thread.ref) > 0 ? Number(thread.ref) : null);
     return {
       status,
       forMe: !!me && (anyMember ? !GroupChat._readOnly() : Number(bot.offer.forUserId) === me),
@@ -1579,6 +1588,8 @@ const GroupChat = {
       ...(status === 'retired' && typeof bot.offer.retired === 'string' ? { retired: bot.offer.retired.slice(0, 40) } : {}),
       ...(refused ? { refused } : {}),
       ...(rows ? { rows } : {}),
+      ...(issueNumber ? { issueNumber } : {}),
+      ...(typeof bot.offer.why === 'string' && bot.offer.why.trim() ? { why: bot.offer.why.slice(0, 500) } : {}),
     };
   },
 
@@ -2797,6 +2808,13 @@ const GroupChat = {
       { flush: !!(opts && opts.flush) },
     );
     el.dataset.loaded = st.loaded ? '1' : '';
+    // Mobile 04: a message the bot tab's Reply asked for, once the thread is
+    // read, after this render has placed the page (below).
+    if (st.loaded && GroupChat._pendingThreadReveal) {
+      const reveal = () => GroupChat._applyPendingThreadReveal();
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
+      else setTimeout(reveal, 0);
+    }
 
     // A catch-up (#4177) changes rows at the bottom and inside the newest
     // page, not above the reader: the "Load earlier" offset below would move
@@ -5522,6 +5540,113 @@ const GroupChat = {
     return true;
   },
 
+  // ── A thread's message, brought into view (24 Nov 2026, mobile 04) ────
+  //
+  // The Homeroom bot tab's Reply, on a thread somebody named you in, opens
+  // that thread's page (a request's, a change's or a decision's) AT the
+  // message that named you. revealMessage above is the app's discussion's;
+  // this is the open thread's stream. Its page opens at its top (#363), so
+  // once the thread's rows are drawn the message is brought to the middle of
+  // the page's scroller and flashed, as a quote's jump-to-original is. Only
+  // a message the thread's loaded page holds can be shown; anything else
+  // leaves the page where it opened. It waits for the thread that holds the
+  // message, and lapses after REVEAL_TTL_MS, as revealMessage's request does.
+  _pendingThreadReveal: null,
+  // Until when the revealed message is being held in view (_holdThreadReveal).
+  _threadRevealHeldUntil: 0,
+
+  // Whether a thread's page is to open at a message rather than at its top:
+  // asked for and not yet shown, or being held in view. A request's page
+  // holds its top while it settles (dev-board/topic/request-head.tsx), and
+  // leaves the scroller to this instead.
+  threadRevealAsked() {
+    return !!GroupChat._pendingThreadReveal || Date.now() < GroupChat._threadRevealHeldUntil;
+  },
+
+  revealInThread(appSlug, messageId) {
+    const id = Number(messageId);
+    if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
+    GroupChat._pendingThreadReveal = { slug: appSlug, id, at: Date.now() };
+    // Now, when that thread is the one already open and loaded.
+    GroupChat._applyPendingThreadReveal();
+  },
+
+  _applyPendingThreadReveal(attempt = 0) {
+    const want = GroupChat._pendingThreadReveal;
+    if (!want) return false;
+    if (Date.now() - want.at > GroupChat.REVEAL_TTL_MS) {
+      GroupChat._pendingThreadReveal = null;
+      return false;
+    }
+    const a = GroupChat.activeThread;
+    if (!a || GroupChat.appSlug !== want.slug) return false;
+    const st = GroupChat._threadState(a.type, a.ref);
+    const holds = st.messages.some((m) => Number(m && m.id) === want.id);
+    // Another thread (the one asked for may still be mounting), or not yet
+    // read: the request waits.
+    if (!st.loaded || !holds) return false;
+    const el = GroupChat._threadEl('gc-thread-messages');
+    const scroll = GroupChat._threadScrollEl();
+    const row = el && el.querySelector(`[data-msg-id="${want.id}"]`);
+    if (!row || !scroll) {
+      // Published batched (features/group-chat/mount.ts): the row lands a
+      // frame or so after the render.
+      if (attempt < 30 && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => GroupChat._applyPendingThreadReveal(attempt + 1));
+      } else {
+        GroupChat._pendingThreadReveal = null;
+      }
+      return false;
+    }
+    GroupChat._pendingThreadReveal = null;
+    GroupChat._centerInThread(scroll, row);
+    // Off the newest line, or a new message would carry the reader away.
+    GroupChat._threadPinned = false;
+    GroupChat._revealFlash = { id: want.id, until: Date.now() + 1500 };
+    GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
+    GroupChat._holdThreadReveal(want.id);
+    return true;
+  },
+
+  _centerInThread(scroll, row) {
+    const box = scroll.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    const by = (at.top - box.top) - (box.height - at.height) / 2;
+    if (Math.abs(by) > 2) scroll.scrollTop += by;
+  },
+
+  // The page's head (a request's card, its GitHub comments) can be drawn
+  // after the thread's rows, above them, and the page can put its scroller
+  // back at its top while it does: either takes the message out of view. So
+  // it is kept in the middle for a moment, frame by frame, until the page
+  // settles, the thread goes, or the reader scrolls, presses or types.
+  THREAD_REVEAL_HOLD_MS: 4000,
+  _holdThreadReveal(id) {
+    if (typeof requestAnimationFrame !== 'function') return;
+    const until = Date.now() + GroupChat.THREAD_REVEAL_HOLD_MS;
+    GroupChat._threadRevealHeldUntil = until;
+    const doc = typeof document !== 'undefined' ? document : null;
+    const inputs = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    let theirs = false;
+    const stop = () => { theirs = true; };
+    inputs.forEach((name) => doc?.addEventListener?.(name, stop, { capture: true, passive: true }));
+    const done = () => {
+      inputs.forEach((name) => doc?.removeEventListener?.(name, stop, { capture: true }));
+      if (GroupChat._threadRevealHeldUntil === until) GroupChat._threadRevealHeldUntil = 0;
+    };
+    const step = () => {
+      if (theirs || Date.now() > until) { done(); return; }
+      const scroll = GroupChat._threadScrollEl();
+      const el = GroupChat._threadEl('gc-thread-messages');
+      const row = el && el.querySelector(`[data-msg-id="${id}"]`);
+      if (!scroll || !row) { done(); return; }
+      GroupChat._centerInThread(scroll, row);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  },
+
   // The message a reveal is marking, and until when (#4417 follow-up: a
   // notification's message, in #general or a topic's channel). Its row is
   // built flashed while the mark lasts.
@@ -5709,12 +5834,22 @@ function refChipHref(isPr, num) {
 // no `#<digit>` or `#<letter>` after a permitted boundary (`"#app/…` sits
 // after `"`, which renderChannelChips excludes), so the later passes never
 // match inside it.
+// #7066: a number the words name as a change ("Change #N", "proposal #N",
+// "pull request #N") is a change, the same rule the server's
+// src/services/request-mentions.js applies. A bare `#N` stays a request.
+// `PR#N` keeps its short label; every other label keeps the writer's words.
+function refLabel(prefix, num) {
+  if (/^pr ?#$/i.test(prefix)) return `PR#${num}`;
+  if (prefix === '#') return `#${num}`;
+  return `${prefix}${num}`;
+}
+
 function renderRefChips(html) {
-  return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
-    const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
+  return html.replace(/(^|[^\w&])((?:change|proposal|pull request) ?#|pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
+    const isPr = prefix.length > 1; // anything but a bare `#`
     const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
     const type = isPr ? 'pr' : 'issue';
-    const label = isPr ? `PR#${num}` : `#${num}`;
+    const label = refLabel(prefix, num);
     const href = refChipHref(isPr, num);
     if (href) {
       return `${pre}<a class="${cls}" href="${href}" data-ref-type="${type}" data-ref-number="${num}">${label}</a>`;
@@ -5840,7 +5975,7 @@ function replaceTextWithSegments(textNode, segs) {
         el.setAttribute('role', 'link');
         el.setAttribute('tabindex', '0');
       }
-      el.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      el.textContent = seg.label || (seg.isPr ? `PR#${seg.num}` : `#${seg.num}`);
       frag.appendChild(el);
     }
   }
@@ -5861,7 +5996,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
   // never competes with `#123`. Only a handle in `channels` is one; any other
   // `#word` is left as text.
   // B9: "@Homeroom bot", the bot's display form, is one mention too.
-  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|((?:change|proposal|pull request) ?#|pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
   const known = channels || new Set();
   const segs = [];
   let pos = 0;
@@ -5882,7 +6017,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
     } else if (m[6] != null) {
       segs.push({ type: 'channel', handle: m[6].toLowerCase() });
     } else {
-      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
+      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5], label: refLabel(m[4], m[5]) });
     }
     pos = m.index + m[0].length;
   }

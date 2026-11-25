@@ -992,12 +992,12 @@
     "description": "Link beside the \"What should it do?\" label while a ready idea's sentence is shown: turns that sentence into plain text the member can edit freely. \"it\" is the description."
   },
   "firstSession.make.ownWordsLabel": {
-    "text": "Your own words",
+    "text": "Your idea",
     "description": "Accessible name of the small text field inside a ready idea's sentence, where the member types their own words for the blank."
   },
   "firstSession.make.finishLabel": {
-    "text": "Finish it in your own words",
-    "description": "Label of the box under the game sentence on the \"What do you want to make?\" screen, where a member describes a new project: the member types the rest of that sentence. \"it\" is the sentence."
+    "text": "Finish the sentence",
+    "description": "Label of the box under the game sentence on the \"What do you want to make?\" screen, where a member describes a new project: the member types the rest of that sentence."
   },
   "firstSession.make.choicesLabel": {
     "text": "Choices",

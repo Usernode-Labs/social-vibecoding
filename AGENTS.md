@@ -216,12 +216,13 @@ is no replay plan to write and nothing to verify locally.
   `focusTarget` locates the element to point at. Hints guide; they are never
   executed.
 - If a fresh staging copy lacks the state a change shows, seed it in the same
-  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches the
-  after copy, the side a new state needs. Seed rows for the shots' fixture
+  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches both
+  copies when main's schema can hold it. A seed that needs a table or column
+  main lacks reaches the after copy only. Seed rows for the shots' fixture
   accounts (`usernode-capture` is the member) and fake people, never a signal
   the code reads to decide something, and a bot's reply as the stored message,
-  never asked for. A change to a state that already existed needs it on both
-  sides: its seed merges first, in its own proposal.
+  never asked for. A change to a state that already existed can be seeded in
+  its own proposal too.
 - `impact: none` applies only when no user-visible state changes. Changed
   text, counts, loading, error, and status states need a `ui` change even if
   the code reuses existing markup and styles. If a required state can be
@@ -333,7 +334,7 @@ is no replay plan to write and nothing to verify locally.
   pinned; Edit lets each be pinned), New community, which starts a project,
   and a Discover card whose button opens Home at Communities to join. Its
   Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
-  Home has no Needs you card (Standard (WIP) and the brand look have the
+  Home has no Needs you card (the standard look and the brand look have the
   card on Home). The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
@@ -367,7 +368,7 @@ is no replay plan to write and nothing to verify locally.
   row's pin, before its count, keeps it at the top, and the header's name
   is only a name. **A sidebar pin is the account's**
   (`community_pins`, `services/community-pins.js`,
-  `/api/me/community-pins`), apart from Home's: a member's only, four at
+  `/api/me/community-pins`), apart from Home's: a member's only, ten at
   most, gone when they leave, made from a community's row (its pin, or
   right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
   (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour
@@ -771,6 +772,21 @@ carry most of them.
   `.hr-demo` in the same block. Everything a member sees once signed in
   keeps the rules above. `tests/guest-discover.test.js` and
   `tests/guest-communities.test.js` hold it.
+
+- **Settings and Profile wear the brand's editorial voice in the standard
+  look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
+  in Source Serif 4 (the supplied brand pack’s variable face, at weight 460), paper cards
+  with one thin outline, and a green row for the Settings page you are on.
+  These pages also tune their surrounding navigation to quiet ivory, use
+  the original sky and stars fading into the page, and share the labelled
+  name/bio editor between Profile and Settings (with distinct form ids).
+  It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
+  EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is
+  an `--ed-*` token declared once in light and dark. The two pages are the
+  exception to "a label over a card is small caps": a group's name on Profile
+  and a part's heading in Settings are serif headings there. The brand look
+  and the other screens keep the rules above.
+  `tests/editorial-settings-profile.test.js` holds it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is

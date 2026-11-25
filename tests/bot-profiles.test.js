@@ -176,7 +176,7 @@ test('the surfaces\' limits are their profiles\'', () => {
   const voice = require('../src/services/homeroom-bot-voice');
   assert.deepEqual([mayor.MAX_ROUNDS, mayor.MAX_OFFERS], [16, 3]);
   assert.equal(mayor.MAX_ROUNDS, profiles.CHAT_LIMITS.rounds);
-  assert.deepEqual([voice.MAX_ROUNDS, voice.MAX_READS_PER_TURN], [8, 4]);
+  assert.deepEqual([voice.MAX_ROUNDS, voice.MAX_READS_PER_TURN], [12, 8]);
   assert.equal(voice.MAX_ROUNDS, profiles.THREAD_LIMITS.rounds);
   for (const [file, name] of [
     ['src/services/homeroom-bot-mayor.js', 'CHAT_LIMITS'], ['src/services/homeroom-bot-voice.js', 'THREAD_LIMITS'],
@@ -236,4 +236,10 @@ test('the one entry runs each kind on its surface, and the callers use it', asyn
   assert.doesNotMatch(dm, /kind: 'design',|kind: 'draft',/, 'nothing routes a private thread to another speaker');
   assert.match(dm, /kind: require\('\.\/bot-profiles'\)\.kindInChat\(turnDeps\)/);
   assert.match(read('src/workflow/bot-voice/services.ts'), /legacy\('services\/thread-bot'\)\.answer\(pool, config, \{\s+kind: legacy\('services\/bot-profiles'\)\.kindOfPlace\(input\.place\)/);
+});
+
+test('24 Nov 2026: a draft turn reads where its preview stands three times at most, and has the history tools', () => {
+  assert.equal(profiles.DRAFT_LIMITS.statusPerTurn, 3);
+  assert.equal(require('../src/services/live-draft-bot').MAX_STATUS, profiles.DRAFT_LIMITS.statusPerTurn);
+  for (const name of ['preview_status', 'draft_changes']) assert.ok(profiles.DRAFT_TOOLS.includes(name), name);
 });

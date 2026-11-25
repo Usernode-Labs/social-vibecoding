@@ -89,11 +89,12 @@ test('the hub mounts it after Topics, and the route sends the list best-effort',
   assert.match(handler.slice(0, handler.indexOf('res.json(') + 4000), /\n\s+activity,\n\s+contributors,\n/);
 });
 
-test('a wide window puts it under For you, beside Topics; Standard (WIP) puts it last', () => {
+test('the standard look puts it last, across the hub', () => {
   const css = read('public/css/app.css');
+  // The older two-column placement (under For you, beside Topics) lost to the look's own grid and was removed
+  // with the hub's 1080px width (24 Nov 2026), so nothing places it there any more.
   const base = 'html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]';
-  assert.ok(css.includes(`${base}:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }`));
-  assert.ok(css.includes(`${base} + [data-ws-hub-contributors] { grid-column: 1; }`));
+  assert.ok(!css.includes(`${base} + [data-ws-hub-contributors] { grid-column: 1; }`));
   // The look's hub rules are scoped `html:not([data-skin])` since the standard look took the brand kit's hub (#6923).
   assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }'));
   // The count is the hub's muted count, never a pill.

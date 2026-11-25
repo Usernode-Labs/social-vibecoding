@@ -61,16 +61,133 @@ test('the preview\'s header says where the draft stands in one short line, and o
   assert.equal(liveDraftShown(draft({ state: 'proposed' })), false, 'one proposed before drafts survived Propose is not');
 });
 
-test('the controls are the preview header\'s, beside its way out; Close draft asks first', () => {
+test('a draft started on their own proposal says it is on that PR until it has a change of its own', () => {
+  const { draftHeadLine } = loadTsx(BAR);
+  const onTheirs = (over = {}) => draft({
+    state: 'proposed', editable: true, edits: 0,
+    proposal: { sessionId: 50, prNumber: 142, open: true, pending: 0, headSha: null },
+    builtOn: { sessionId: 50, prNumber: 142, open: true, merged: false, linked: true },
+    ...over,
+  });
+  assert.deepEqual(draftHeadLine(onTheirs()), { id: 'messages:liveDraft.head.onProposal', values: { number: 142 }, bad: false },
+    'not "Up for a vote with every change" before any change');
+  assert.equal(message('messages:liveDraft.head.onProposal').replace('{{number}}', '142'), 'On PR #142 · no changes yet');
+  // A change of its own, not in the proposal yet, then put in it.
+  assert.deepEqual(draftHeadLine(onTheirs({ edits: 1, proposal: { sessionId: 50, prNumber: 142, open: true, pending: 1, headSha: null } })),
+    { id: 'messages:liveDraft.head.pending', values: { count: 1 }, bad: false });
+  assert.deepEqual(draftHeadLine(onTheirs({ edits: 1 })), { id: 'messages:liveDraft.head.inProposal', bad: false });
+  // No number to say: no changes yet, which is still true.
+  assert.deepEqual(draftHeadLine(onTheirs({
+    proposal: { sessionId: 50, prNumber: null, open: true, pending: 0, headSha: null },
+    builtOn: { sessionId: 50, prNumber: null, open: true, merged: false, linked: true },
+  })), { id: 'messages:liveDraft.head.none', bad: false });
+  // On someone else's proposal the draft is open and linked to nothing: as before.
+  assert.deepEqual(draftHeadLine(draft({ builtOn: { sessionId: 60, prNumber: 150, open: true, merged: false, linked: false } })),
+    { id: 'messages:liveDraft.head.none', bad: false });
+  assert.deepEqual(draftHeadLine(onTheirs({ live: 'starting' })), { id: 'messages:liveDraft.head.starting', bad: false }, 'a start is still said first');
+});
+
+test('a draft\'s preview opens look-only and waits for a start, so it never lands on "isn\'t running"', () => {
+  const { draftPreviewOpts, openLivePreview } = loadTsx(BAR);
+  for (const live of ['starting', 'live', 'rebuilding']) {
+    assert.deepEqual(draftPreviewOpts(draft({ live })), { readOnly: true, app: { slug: 'gym' }, waitForStart: true }, live);
+  }
+  assert.deepEqual(draftPreviewOpts(draft({ live: 'failed' })), { readOnly: true, app: { slug: 'gym' } },
+    'one that could not start is not waited for: the header says it failed');
+
+  // Pressed in the Artifacts column: AppView.ensureStaging is asked with them.
+  const asked = [];
+  const had = { window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.window = { AppView: { ensureStaging: (...args) => { asked.push(args); return Promise.resolve(); } } };
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ draft: null }) });
+  try {
+    openLivePreview(draft({ live: 'starting', sessionId: 41 }));
+  } finally {
+    globalThis.window = had.window;
+    globalThis.fetch = had.fetch;
+  }
+  assert.deepEqual(asked, [[41, null, null, { readOnly: true, app: { slug: 'gym' }, waitForStart: true }]]);
+  assert.match(read(BAR), /void view\.ensureStaging\(draft\.sessionId, null, null, draftPreviewOpts\(draft\)\);/,
+    'the reload frame\'s open (draftPreviewStep \'open\') goes the same way');
+});
+
+test('a draft\'s header opens the change it names (request 7119)', () => {
+  const { draftChangeHref } = loadTsx(BAR);
+  assert.equal(draftChangeHref(draft()), '#app/gym/dev/proposals/5', 'the draft\'s own change');
+  assert.equal(draftChangeHref(draft({
+    state: 'proposed', editable: true,
+    proposal: { sessionId: 8, prNumber: 142, open: true, pending: 1, headSha: null },
+    builtOn: { sessionId: 7, prNumber: 141, open: true, merged: false, linked: false },
+  })), '#app/gym/dev/proposals/5', 'never the proposal it was started on or is up for a vote with');
+  assert.equal(draftChangeHref(draft({ sessionId: null })), null);
+  assert.equal(draftChangeHref(draft({ app: { slug: '', name: 'Gym Tracker' } })), null);
+  assert.equal(draftChangeHref(null), null);
+
+  const acts = { busy: null, error: null, act: async () => {}, discard: async () => {}, discardItem: null };
+  const header = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts });
+  assert.match(header, /data-live-draft-change=""/);
+  assert.equal(message('messages:liveDraft.openChange'), 'Open change');
+  assert.match(header, new RegExp(message('messages:liveDraft.openChange')));
+  assert.match(header, /data-live-draft-propose=""/);
+  assert.ok(header.indexOf('data-live-draft-change') < header.indexOf('data-live-draft-propose'),
+    'the way through comes before the header\'s one filled action');
+  // There is still a change to open with nothing to propose, and while the
+  // preview starts or could not start.
+  for (const live of ['live', 'starting', 'failed']) {
+    const idle = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 0, live }), acts });
+    assert.match(idle, /data-live-draft-change=""/, `still drawn: ${live}`);
+    assert.doesNotMatch(idle, /data-live-draft-propose=""/, `nothing to propose: ${live}`);
+  }
+  assert.equal(renderComponent(BAR, 'LiveDraftControls', { draft: null, acts }), '');
+
+  // An outlined button, and the preview goes before the page does.
+  const bar = read(BAR);
+  assert.match(bar, /className="staging-draft-quiet" data-live-draft-change=""/);
+  assert.match(bar, /if \(stagingStore\.get\(\)\.open\) \(window as any\)\.AppView\?\.closeStagingOverlay\?\.\(\);\s*window\.location\.hash = changeHref;/,
+    'the preview closes as its change page opens');
+});
+
+test('the controls are the preview header\'s, beside its way out; Discard draft is the title menu\'s and asks first', () => {
   const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(overlay, /const liveDraft = useDraftForSession\(state\.open \? state\.sessionId : null\);/);
-  assert.match(overlay, /<LiveDraftControls draft=\{liveDraft\} \/>\s*<div className="staging-tools">/);
+  assert.match(overlay, /const draftActs = useLiveDraftActs\(liveDraft\);/);
+  assert.match(overlay, /<LiveDraftControls draft=\{liveDraft\} acts=\{draftActs\} \/>\s*<div className="staging-tools">/);
   const bar = read(BAR);
   assert.match(bar, /data-live-draft-propose=""/);
   assert.match(bar, /data-live-draft-update=""/);
-  assert.match(bar, /data-live-draft-close=""/);
+  // 24 Nov 2026: beside Propose, "Close draft" read as the preview's ×, which
+  // only hides the preview. The header's row keeps its line and its one
+  // action; ending the draft is Discard draft, the title menu's last entry.
+  const acts = { busy: null, error: null, act: async () => {}, discard: async () => {}, discardItem: null };
+  const header = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts });
+  assert.match(header, /data-live-draft-propose=""/);
+  assert.doesNotMatch(header, /data-live-draft-close|Close draft|Discard draft/, 'no way to end the draft beside Propose');
+  assert.match(bar, /data: \{ 'data-live-draft-close': '' \},/, 'the check hook moves with it, to the menu entry');
+  assert.match(bar, /label: t\('messages:liveDraft\.discard'\),/);
   assert.match(bar, /const ok = await confirmAction\(\{\s*title: t\('messages:liveDraft\.closeConfirm\.title'\)/);
+  assert.match(bar, /confirmLabel: t\('messages:liveDraft\.close'\),\s*danger: true,/);
+  assert.match(bar, /await call\(`\/api\/live-drafts\/\$\{draft\.id\}\/close`, \{ method: 'POST' \}\);/, 'it ends the draft as Close draft did');
+  assert.equal(message('messages:liveDraft.discard'), 'Discard draft');
+  assert.equal(message('messages:liveDraft.close'), 'Discard draft', 'the confirm button says the menu entry\'s words');
+  assert.equal(message('messages:liveDraft.closeConfirm.title'), 'Discard this draft?');
+  // The menu is there whenever the preview is a draft's, beside a thread or
+  // in the whole window (a phone), where Discard draft is its only entry.
+  assert.match(overlay, /const menuHere = pickHere \|\| !!liveDraft;/);
+  assert.match(overlay, /return menuHere \? \(/);
+  assert.match(overlay, /end=\{draftActs\.discardItem\}>/);
+  const card = read('frontend/src/features/detail/detail-card.tsx');
+  assert.match(card, /<div className="detail-card-menu-end" data-alone=\{rows\.length \? undefined : ''\}>/);
+  assert.match(card, /role="menuitem"[\s\S]{0,200}data-danger=\{end\.danger \? '' : undefined\}[\s\S]{0,200}\{\.\.\.end\.data\}/);
   assert.match(read('frontend/src/features/staging/placement.ts'), /sessionId: Number\(input\.sessionId\) \|\| null,/);
+});
+
+test('a refusal on the header\'s line goes once the draft is proposed (24 Nov 2026: two Proposes at once)', () => {
+  // The Propose under the bot's reply and this one, tapped together: this one
+  // is told the draft is being put up for a vote, and that line goes once the
+  // other has proposed it, rather than standing in for "Up for a vote".
+  assert.match(read(BAR), /useEffect\(\(\) => \{ setError\(null\); \}, \[draft\?\.id, draft\?\.state\]\);/);
+  const acts = { busy: null, error: 'It is being put up for a vote right now.', act: async () => {}, discard: async () => {}, discardItem: null };
+  assert.match(renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts }), /It is being put up for a vote right now\./);
 });
 
 test('the messages pane reads the draft on an open thread of theirs, with no bar; a newly opened draft brings its preview up', () => {
@@ -78,7 +195,58 @@ test('the messages pane reads the draft on an open thread of theirs, with no bar
   assert.doesNotMatch(pane, /<LiveDraftBar/);
   assert.match(pane, /import \{ useLiveDraft \} from '\.\/live-draft-bar';/);
   assert.match(pane, /const liveDraft = useLiveDraft\(privateMine && privateRoot && privateWhere\?\.state === 'open' \? privateRoot : null\);/);
-  assert.match(read(BAR), /if \(detail\.opened && shown\) openPreview\(next\);/);
+  const { draftPreviewStep } = loadTsx(BAR);
+  const step = (over) => draftPreviewStep({ draft: draft(), last: null, paneHere: false, framed: false, ...over });
+  assert.equal(step({ opened: true, draft: draft({ live: 'starting' }) }), 'open');
+  assert.equal(step({ opened: true, draft: draft({ state: 'closed' }) }), null, 'not one that is closed');
+  const bar = read(BAR);
+  assert.match(bar, /const step = draftPreviewStep\(\{[\s\S]{0,200}paneHere: paneOn\(next\.sessionId\), framed: frameShowsPreview\(\),\s*\}\);/);
+  assert.match(bar, /if \(step === 'open'\) openPreview\(next\);\s*else if \(step === 'reload'\) void reloadPreview\(next\.sessionId, next\.app\.slug\);/);
+});
+
+// 24 Nov 2026: a cleared frame's `src` property reads back as Homeroom's own
+// page, so the old "has it a src" guard never fired. Only an address on the
+// preview's own origin is a preview in the frame.
+test('a frame shows a preview only when its src attribute is an address on another origin', () => {
+  const { showsPreview } = loadTsx(BAR);
+  const HOME = 'https://app.onhomeroom.com';
+  assert.equal(showsPreview(null, HOME), false, 'no attribute');
+  assert.equal(showsPreview('', HOME), false, 'cleared');
+  assert.equal(showsPreview('about:blank', HOME), false);
+  assert.equal(showsPreview('https://app.onhomeroom.com/', HOME), false, 'Homeroom\'s own page');
+  assert.equal(showsPreview('https://app.onhomeroom.com/app/gym/dev?x=1#chat', HOME), false);
+  assert.equal(showsPreview('/app/gym', HOME), false, 'a path is Homeroom\'s own');
+  assert.equal(showsPreview('javascript:void(0)', HOME), false);
+  assert.equal(showsPreview('https://gym--s41.onhomeroom.dev/?token=x', HOME), true);
+  assert.equal(showsPreview('http://localhost:4100/', 'http://localhost:3000'), true, 'a local preview on its own port');
+  assert.equal(showsPreview('not a url', HOME), false);
+  const bar = read(BAR);
+  assert.match(bar, /showsPreview\(frame\.getAttribute\('src'\), home\)/, 'the attribute is read, never the property');
+  assert.doesNotMatch(bar, /frame\.src\b/);
+  // reloadPreview never points the frame at Homeroom's own page.
+  assert.match(bar, /if \(!frame \|\| !frameShowsPreview\(frame\)\) return;\s*let src = frame\.getAttribute\('src'\) as string;/);
+});
+
+test('a preview still starting when its pane opened comes up by itself when it goes live', () => {
+  const { draftPreviewStep } = loadTsx(BAR);
+  const step = (over) => draftPreviewStep({ draft: draft(), last: 'live', paneHere: true, framed: true, ...over });
+  // The pane opened on a dead end, or a loader: the frame holds no preview.
+  assert.equal(step({ last: 'starting', reload: true, framed: false }), 'open', 'deployed: the pane is opened on it again');
+  assert.equal(step({ last: 'starting', framed: false }), 'open', 'starting to live, with no reload asked');
+  assert.equal(step({ last: 'rebuilding', framed: false }), 'open');
+  assert.equal(step({ reload: true, framed: false }), 'open', 'a saved edit while the frame holds none');
+  // The frame shows the preview: it is reloaded, as before.
+  assert.equal(step({ reload: true }), 'reload');
+  assert.equal(step({ last: 'rebuilding' }), 'reload', 'built again');
+  assert.equal(step({ last: 'starting' }), 'reload');
+  // Not on this draft's pane: the reload is left to reloadPreview's own guard.
+  assert.equal(step({ last: 'starting', reload: true, paneHere: false, framed: false }), 'reload');
+  // Nothing came up and nothing was asked.
+  assert.equal(step({}), null);
+  assert.equal(step({ last: 'starting', draft: draft({ live: 'starting' }), framed: false }), null);
+  assert.equal(step({ last: 'live', draft: draft({ live: 'rebuilding' }), framed: false }), null);
+  assert.equal(step({ last: 'starting', draft: draft({ live: 'failed' }), framed: false }), null);
+  assert.equal(step({ reload: true, framed: false, draft: draft({ state: 'closed' }) }), 'reload', 'a closed draft is never opened again');
 });
 
 test('app.js hands the draft\'s socket frame on as the bar\'s window event', () => {
@@ -87,7 +255,7 @@ test('app.js hands the draft\'s socket frame on as the bar\'s window event', () 
   assert.match(app, new RegExp(`case 'live_draft_changed':\\s*(//[^\\n]*\\n\\s*)*window\\.dispatchEvent\\(new CustomEvent\\('${LIVE_DRAFT_EVENT}', \\{ detail: data \\}\\)\\);`));
 });
 
-test('New chat offers "I want to change an app live…" once a project of its own is picked', () => {
+test('New chat offers "I want to make changes to a live preview of…" once a project of its own is picked', () => {
   const NEW = 'frontend/src/features/messages/new-thread.tsx';
   const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf } = loadTsx(NEW);
   assert.equal(offersLive('', {}), false, 'not for Any project');
@@ -101,18 +269,23 @@ test('New chat offers "I want to change an app live…" once a project of its ow
   assert.equal(offersLive('other-self', { 'other-self': { selfHosted: true } }, { platformSlug: 'homeroom', isAdmin: true }), false,
     'another self-hosted app is never offered, admins included');
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }, { platformSlug: 'homeroom', isAdmin: true }), true);
-  const words = message(LIVE_START.text);
-  assert.equal(words, 'I want to change an app live');
-  assert.equal(message(LIVE_START.label).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
+  const words = message(LIVE_START.text, { app: 'Gym' });
+  assert.equal(words, 'I want to make changes to a live preview of Gym');
+  assert.equal(message(LIVE_START.label, { app: 'Gym' }).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
   assert.equal(LIVE_START.kind, 'any');
   assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
-  const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text) }));
-  assert.equal(startOf('I want to change an app live: make the button bigger', starts).key, 'live');
+  const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text, { app: 'Gym' }) }));
+  assert.equal(startOf('I want to make changes to a live preview of Gym: make the button bigger', starts).key, 'live');
+  assert.equal(startOf('I want to change an app live: make the button bigger', starts), null, 'the old words are no longer a start');
   assert.match(read(NEW), /offersLive\(project, scope\.info[\s\S]*?platformSlug: platformSlug\(\),[\s\S]*?isAdmin: typeof window !== 'undefined' && !!\(window as any\)\.App\?\.user\?\.isAdmin,/);
+  // The pill and the box say the picked project's name, falling back to its slug.
+  assert.match(read(NEW), /const appName = \(project && scope\.info\[project\]\?\.name\) \|\| project \|\| '';/);
+  assert.match(read(NEW), /text: t\(start\.text, \{ app: appName \}\)/);
+  assert.match(read(NEW), /<RichMessage id=\{start\.label\} values=\{\{ app: appName \}\}/);
   // Homeroom bot is what opens it: the chat's tool, named for that start.
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
-  assert.match(tool.description, /I want to change an app live/);
+  assert.match(tool.description, /I want to make changes to a live preview of/);
   // Step 6 (#6864): opening it loads the draft's tools into the same turn,
   // so the change they asked for is made then, and replied to.
   assert.match(tool.description, /It gives you the draft's tools for the rest of this turn: when they asked for a change, make it then, and reply\./);

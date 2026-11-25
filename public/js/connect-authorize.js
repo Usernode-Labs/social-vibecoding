@@ -27,6 +27,9 @@
     codeChallenge: params.get('code_challenge') || '',
     codeChallengeMethod: params.get('code_challenge_method') || '',
     responseType: params.get('response_type') || '',
+    // The address the token is for (RFC 8707). An app's own address means
+    // the approval is for that app alone; the server decides.
+    resource: params.get('resource') || '',
   };
 
   var entry = document.getElementById('entry');
@@ -78,6 +81,7 @@
       redirect_uri: request.redirectUri,
     });
     if (request.scope) query.set('scope', request.scope);
+    if (request.resource) query.set('resource', request.resource);
 
     var resp;
     try {
@@ -141,8 +145,9 @@
       return;
     }
 
-    document.getElementById('intro').textContent =
-      data.client_name + ' is asking to connect to your Homeroom account.';
+    document.getElementById('intro').textContent = data.app
+      ? data.client_name + ' is asking to act as you in ' + data.app.name + ', an app on Homeroom.'
+      : data.client_name + ' is asking to connect to your Homeroom account.';
     document.getElementById('confirm-client').textContent = data.client_name;
     document.getElementById('confirm-origin').textContent = data.redirect_origin;
     document.getElementById('confirm-user').textContent = data.username;
@@ -182,6 +187,7 @@
           redirect_uri: request.redirectUri,
           scope: request.scope,
           state: request.state,
+          resource: request.resource,
           code_challenge: request.codeChallenge,
           code_challenge_method: request.codeChallengeMethod,
         }),

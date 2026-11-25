@@ -93,3 +93,61 @@ test('a request\'s summary is written from its visible changes, stored once, and
     await root.end().catch(() => {});
   }
 });
+
+test('a change attached by its link, by the request it started from, or by its thread is read', async (t) => {
+  const root = new Client({ connectionString: DSN });
+  try { await root.connect(); }
+  catch (err) {
+    await root.end().catch(() => {});
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`Local test database unavailable: ${err.code}`);
+  }
+  const database = `request_summary_attach_${crypto.randomBytes(6).toString('hex')}`;
+  let pool;
+  try {
+    await root.query(`CREATE DATABASE ${database}`);
+    const url = new URL(DSN); url.pathname = `/${database}`;
+    pool = new Pool({ connectionString: url.toString() });
+    pool.on('error', () => {});
+    await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+    const owner = (await pool.query(`INSERT INTO users (username, password) VALUES ('summary-owner', 'x') RETURNING id`)).rows[0];
+    const app = (await pool.query(
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by)
+       VALUES ('Attach test', 'attach-test', 'running', 'public', $1) RETURNING id`,
+      [owner.id]
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by) VALUES ($1, 12, 'Dark mode switch', 'Settings is three taps away.', $2)`,
+      [app.id, owner.id]
+    );
+    const { thread_id: ownThread } = (await pool.query('SELECT thread_id FROM requests WHERE app_id = $1 AND number = 12', [app.id])).rows[0];
+    assert.ok(ownThread, 'the request has a thread');
+    const otherThread = (await pool.query(
+      `INSERT INTO threads (app_id, number, kind) VALUES ($1, 99, 'work') RETURNING id`, [app.id]
+    )).rows[0].id;
+    const insert = (title, status, extra = {}) => pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, pr_title, status, promoted_at, linked_issues, created_from_issue_number, thread_id)
+       VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8) RETURNING id`,
+      [app.id, owner.id, `b-${crypto.randomBytes(4).toString('hex')}`, title, status,
+        extra.issues || [], extra.from || null, extra.thread || null]
+    );
+
+    // Named by the request, started from it, or sitting on its thread.
+    const byLink = (await insert('Linked', 'promoted', { issues: [12] })).rows[0].id;
+    const byFrom = (await insert('Started from it', 'promoted', { from: 12 })).rows[0].id;
+    const byThread = (await insert('On its thread', 'promoted', { thread: ownThread })).rows[0].id;
+    // Not attached at all, and one still in somebody's workspace.
+    await insert('Another request', 'promoted', { issues: [13] });
+    const otherThreadChange = (await insert('Another thread', 'promoted', { thread: otherThread })).rows[0].id;
+    await insert('Still private', 'active', { thread: ownThread });
+
+    const ids = (await summary.visibleChanges(pool, app.id, 12)).map((c) => c.id).sort((a, b) => a - b);
+    assert.deepEqual(ids, [Number(byLink), Number(byFrom), Number(byThread)].sort((a, b) => a - b));
+    assert.ok(!ids.includes(Number(otherThreadChange)));
+  } finally {
+    if (pool) await pool.end().catch(() => {});
+    await root.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`).catch(() => {});
+    await root.end().catch(() => {});
+  }
+});
+

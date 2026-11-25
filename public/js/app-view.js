@@ -5429,6 +5429,16 @@ const AppView = {
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
       AppView._clearTopicHeadBody();
+      // 24 Nov 2026: a live draft that has not been proposed is no change.
+      // Its old change address opens the thread its draft bar is in, in
+      // place (no Back entry), and no change page is drawn.
+      const draftHome = await AppView._draftHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (draftHome) {
+        AppView._devTopic = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
@@ -5808,7 +5818,16 @@ const AppView = {
   // lives on, or null when it keeps its own page (routes/threads.js, the
   // change's home). Asked once per change and app; a read that fails or
   // takes too long is "its own page", so the page still opens.
+  //
+  // 24 Nov 2026: the same read also says whether the session is a live app
+  // draft that has not been proposed. Such a session is no change at all: it
+  // has no page, and its old address opens the thread its draft bar is in
+  // (`_draftHomeOf`).
   _changeHomes: new Map(),
+  // The same read's other answer (24 Nov 2026): the thread an unproposed
+  // live draft's old change address opens, or null. Both maps are filled by
+  // the one fetch below, so asking either costs no second read.
+  _draftHomes: new Map(),
   CHANGE_HOME_WAIT_MS: 4000,
   async _requestHomeOf(id) {
     const slug = App.currentApp || AppView.appData?.slug;
@@ -5819,8 +5838,12 @@ const AppView = {
       const read = fetch(`/api/apps/${encodeURIComponent(slug)}/threads/change/${n}${AppView._demoQS()}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
+          if (!data) { AppView._draftHomes.delete(key); return null; }
           const home = Number(data && data.request);
-          return Number.isInteger(home) && home > 0 ? home : null;
+          const request = Number.isInteger(home) && home > 0 ? home : null;
+          const draft = Number(data && data.draft && data.draft.threadRootId);
+          AppView._draftHomes.set(key, Number.isInteger(draft) && draft > 0 ? draft : null);
+          return request;
         })
         .catch(() => null);
       AppView._changeHomes.set(key, read);
@@ -5834,6 +5857,40 @@ const AppView = {
     } finally {
       clearTimeout(timer);
     }
+  },
+  // The thread an unproposed live draft's old change address opens, or null.
+  // Shares `_requestHomeOf`'s one cached read (above).
+  async _draftHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._draftHomes.has(key)) await AppView._requestHomeOf(id);
+    const draft = Number(AppView._draftHomes.get(key));
+    return Number.isInteger(draft) && draft > 0 ? draft : null;
+  },
+
+  // 24 Nov 2026: a live draft that has not been proposed has no change page.
+  // Its old address opens the thread its draft bar is in, in place of the
+  // change address (no Back entry), as a change's request home does.
+  _openDraftThread(threadRootId) {
+    const root = Number(threadRootId);
+    if (!Number.isInteger(root) || root <= 0) return false;
+    // #7140: in the side panel's framed document there is no bot page to
+    // draw — its list belongs to the top window, and drawing it here put a
+    // second, narrower copy beside the real one. Hand the thread up instead,
+    // which replaces the top's entry with it and drops this frame with the
+    // panel. Nothing here moves or reveals a screen.
+    if (typeof App !== 'undefined' && App.embeddedPanel) {
+      window.UsernodeReact?.sidePanelEmbed?.handTop?.('homeroom-bot/thread/' + root);
+      return true;
+    }
+    try {
+      history.replaceState(null, '', `#homeroom-bot/thread/${root}`);
+    } catch (err) { /* opaque origin: the page still opens below */ }
+    if (typeof App !== 'undefined' && App.navigateToAi) App.navigateToAi();
+    window.UsernodeReact?.ai?.openAt?.({ threadRootId: root, focusMessageId: null });
+    return true;
   },
 
   // 6 Nov 2026 (#6439): a vote to close a request is decided on the
@@ -7888,8 +7945,8 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
-      note = why ? `${title} ${why}` : title;
+      const phase = AppView._checksPhaseCopy(item.check_phase, item);
+      note = why ? `${phase.sentence} ${why}` : phase.title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
       // change" (#1771).
@@ -8327,6 +8384,9 @@ const AppView = {
       // (src/services/work-state.js). The foot words its headline and line
       // from it, so this page and the Homeroom bot tab cannot disagree.
       work: item && item.work && typeof item.work === 'object' ? item.work : null,
+      // #7117 discussion: an update after the first is an event on the
+      // timeline, as the Discussion line it wrote is (src/routes/votes.js).
+      updates: item && Array.isArray(item.updates) ? item.updates : [],
       // The last run's counts and its failures by name, for the layer See
       // what failed opens over the card (change-head.tsx ChecksSummary).
       checks: AppView._checksSummary(item),
@@ -9274,8 +9334,9 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
-      // #6122: a queued run also says how long its wait should be.
-      const note = [copy.title];
+      // #6122: a queued run also says how long its wait should be. Its
+      // place in line is the note's first sentence, so it ends as one.
+      const note = [copy.sentence];
       if (phase === 'queued') {
         const eta = AppView._checksEta(item);
         if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
@@ -9376,7 +9437,13 @@ const AppView = {
         retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
       };
     }
-    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    if (running) {
+      // 23 Nov 2026: a run Homeroom takes again because it was too busy to
+      // get a database connection says that, still under way, rather than
+      // that the screenshots are being taken.
+      const busy = view.retrying && shots.failureCode === 'database_busy';
+      return { state: view.state, html: '', line: busy ? view.sentence : PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    }
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
@@ -10498,6 +10565,15 @@ const AppView = {
     if (kind === 'proposal' || kind === 'session') {
       const asked = { kind, id };
       AppView._devTopicAsked = asked;
+      // 24 Nov 2026: an unproposed live draft has no change page: its
+      // address opens its thread, as `_renderTopicSubView` does.
+      const draftHome = await AppView._draftHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      if (draftHome) {
+        AppView._devTopicAsked = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(id);
       if (AppView._devTopicAsked !== asked) return;
       AppView._devTopicAsked = null;
@@ -15567,8 +15643,28 @@ const AppView = {
     // Page-counted numbers are floors; server counts never are. The walk
     // marks its own figures with this for the same reason the tiles do.
     const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
+    // 24 Nov 2026: the Workshop's path (features/dev-board/workshop/
+    // front-page.tsx) counts its Asked stop with the same lane test the
+    // board narrows to (`_devCardInStage('asked')`), and marks the stops
+    // where the viewer has threads (`_devCardIsYours`, the Yours filter's
+    // reading of "yours": the Homeroom bot tab's threads), each a part of
+    // what its stop counts. The front page asks for this project's list
+    // (`_loadYours`) while it is up, not every page built from this view,
+    // and the page is drawn again when it lands.
+    const yoursIn = (pick) => entries.filter((e) => pick(e) && AppView._devCardIsYours(e.kind === 'my-session' || e.kind === 'shared-session' ? 'session' : e.kind, e.item)).length;
+    const shippedEntry = (e) => e.kind === 'merged' && AppView._devCardInStage('shipped', e.lane, e.kind, e.item);
     const dashboard = {
       open: openEntries.length,
+      asked: openEntries.filter((e) => e.lane === 'open').length,
+      // The digest the weeks are read from has not answered yet (it may
+      // still fail: a failed read is an answer). The Workshop's Live by week
+      // holds its place meanwhile rather than arriving after the rest.
+      weeksPending: !(AppView._workshopThemes && AppView._workshopThemes.slug === slug),
+      mine: meId != null ? {
+        asked: yoursIn((e) => e.lane === 'open'),
+        votes: yoursIn((e) => e.lane === 'review'),
+        live: yoursIn(shippedEntry),
+      } : null,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
       // #4745: the votes figure is tappable. It opens the one waiting item's
@@ -16751,9 +16847,11 @@ const AppView = {
   },
 
   // The stored `stage` filter, or null for anything that is not one of the
-  // three values a figure sets (#5369) — an older tab's storage included.
+  // values a figure sets (#5369) — an older tab's storage included. 24 Nov
+  // 2026: and two of the Workshop path's stops (features/dev-board/workshop/
+  // front-page.tsx), Asked and Up for a vote.
   _kanbanStageValue(stage) {
-    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' ? stage : null;
+    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' || stage === 'asked' || stage === 'votes' ? stage : null;
   },
 
   // The Overview figures' own predicates, shared with the narrowing they
@@ -16772,10 +16870,17 @@ const AppView = {
   //               still going live is left out, the same as the figure) and
   //               merged since Monday 00:00 UTC, the week `shippedWeek`
   //               counts.
+  //   'asked'     the path's first stop (24 Nov 2026): the OPEN lane, every
+  //               request nobody is building and that is not up for a vote,
+  //               taken or not — the dashboard's `asked`.
+  //   'votes'     its third: the changes and group decisions up for a vote,
+  //               the review lane the dashboard's `votesWaiting` counts.
   _devCardInStage(stage, lane, kind, item) {
     const wanted = AppView._kanbanStageValue(stage);
     if (!wanted) return true;
     if (wanted === 'open') return lane !== 'done' && lane !== 'shipped';
+    if (wanted === 'asked') return lane === 'open';
+    if (wanted === 'votes') return lane === 'review';
     if (wanted === 'unclaimed') return lane === 'open' && kind === 'issue' && AppView._issueUnclaimed(item);
     // 'shipped': decided by date, not by the lane — the Workshop's shipped
     // lane is a trailing seven days (#1787) where the figure is the calendar
@@ -16843,6 +16948,8 @@ const AppView = {
         for (const n of body.sessions || []) mine.sessions.add(Number(n));
         for (const n of body.decisions || []) mine.decisions.add(Number(n));
         if (AppView._kanbanFilters && AppView._kanbanFilters.yours && App.currentApp === slug) AppView._repaintBoardSurface();
+        // The Workshop's path marks the stops where these are (_workshopView's `mine`).
+        else if (App.currentApp === slug && typeof document !== 'undefined' && document.getElementById('dev-workshop')) AppView._rerenderWorkshop();
       })
       .catch(() => { /* what you started still reads as yours */ });
   },
@@ -17266,6 +17373,8 @@ const AppView = {
     open: 'changes:board.filterChip.stageOpen',
     unclaimed: 'changes:board.filterChip.stageUnclaimed',
     shipped: 'changes:board.filterChip.stageShipped',
+    asked: 'changes:board.filterChip.stageAsked',
+    votes: 'changes:board.filterChip.stageVotes',
   },
   // #5369: an Overview figure's tap — open items, nobody on them, live this
   // week. All items is narrowed to exactly what the figure counts: the
@@ -17274,6 +17383,16 @@ const AppView = {
   // the box the way clearing the Search chip does. The chip's × dismisses it
   // like any other filter; `applyKanbanFilters` spreads the current set, so
   // the dialog's Done keeps it.
+  // 24 Nov 2026: the Workshop path's "Open the board" (features/dev-board/
+  // workshop/front-page.tsx) opens All items with no stage filter: one a
+  // stop set earlier is taken off, and a search or a filter of the
+  // person's own stays (the dot on the door says one is on, #2915).
+  clearWorkshopStage() {
+    const f = AppView._kanbanFilters;
+    if (!f || !AppView._kanbanStageValue(f.stage)) return;
+    AppView._kanbanFilters = { ...f, stage: null };
+    AppView._repaintBoardSurface();
+  },
   openWorkshopStage(stage) {
     if (!AppView._kanbanStageValue(stage)) return;
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage };
@@ -22073,19 +22192,30 @@ const AppView = {
 
   // `pr` is optional: a queued run's title says how many runs are ahead of
   // it when the row carries that (checks_progress.queue.ahead).
+  //
+  // `sentence` is the title as the first sentence of a note that goes on
+  // (the Testing card's "About 6 minutes until it starts.", the trigger in
+  // Details). A queued run's title is a heading, with no full stop, so the
+  // note reads it as a sentence of its own, in every language, rather than
+  // "Waiting for a checks slot (2 ahead) This wait is longer than usual."
+  // (23 Nov 2026). The other phases' titles already end as sentences do.
   _checksPhaseCopy(phase, pr) {
     const ids = AppView.CHECKS_PHASE_COPY[phase] || AppView.CHECKS_PHASE_OTHER_COPY;
-    const copy = { title: PlatformI18n.t(ids.title), detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
+    const title = PlatformI18n.t(ids.title);
+    const copy = { title, sentence: title, detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
     if (phase !== 'queued') return copy;
     // The title with the place in line is a whole message per case.
     const q = pr && pr.checks_progress && pr.checks_progress.queue;
     const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
-    if (ahead === null) return copy;
+    if (ahead === null) return { ...copy, sentence: PlatformI18n.t('changes:checks.phase.queued.sentence') };
     return {
       ...copy,
       title: ahead === 0
         ? PlatformI18n.t('changes:checks.phase.queued.titleNext')
         : PlatformI18n.t('changes:checks.phase.queued.titleAhead', { count: ahead }),
+      sentence: ahead === 0
+        ? PlatformI18n.t('changes:checks.phase.queued.sentenceNext')
+        : PlatformI18n.t('changes:checks.phase.queued.sentenceAhead', { count: ahead }),
     };
   },
 
@@ -23205,9 +23335,26 @@ const AppView = {
   // reading each other's ids out of the document. This entry point stays
   // because the issue rows in the Dev feed and the topic head both call
   // `AppView.promptCloseIssue(n)`; it forwards to the island's controller.
-  promptCloseIssue(issueNumber) {
-    if (!AppView.appData) return;
-    dialogIsland('closeIssue')?.open(issueNumber);
+  promptCloseIssue(issueNumber, reason) {
+    // The request's own page has appData; the side panel's column runs this
+    // in a page that may not have recorded the project yet, so fall back to
+    // the open app's slug rather than returning silently (#6988).
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null) || null;
+    const controller = dialogIsland('closeIssue');
+    if (!controller) {
+      // A failed bundle is the one case the dialog cannot open at all. Say
+      // so instead of leaving the row looking like it did nothing.
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.closeFailed'), { error: true });
+      }
+      return;
+    }
+    controller.open({
+      issueNumber,
+      reason: typeof reason === 'string' ? reason : '',
+      ...(slug ? { slug } : {}),
+    });
   },
 
   // #6000: "Propose reopening", the mirror of promptCloseIssue. Forwards to
@@ -26127,12 +26274,18 @@ const AppView = {
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
             : shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
-              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+              : shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:badge.reason.shots.retryingBusyDetail')
+                : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots)
-            // #6598: never quote GitHub's own error page here.
+            // #6598: never quote GitHub's own error page here, nor (23 Nov
+            // 2026) the database driver's words for a connection it could
+            // not give in time.
             : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:shots.sentence.githubDown')
-              : shots.failureReason)
+              : shots.state === 'failed' && shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:shots.sentence.busy')
+                : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -27007,6 +27160,12 @@ const AppView = {
         ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
+        // 23 Nov 2026: no database connection in time. The driver's own
+        // words are never shown; the line says what Homeroom does next.
+        : e.failureCode === 'database_busy'
+        ? (e.automaticRetryPending === true
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retryingBusy.detail')]
+          : [t('changes:shots.state.couldNot.label'), t('changes:shots.state.busy.detail')])
         : e.automaticRetryPending === true
           ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
             ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
@@ -27057,6 +27216,14 @@ const AppView = {
         return e.automaticRetryPending === true
           ? t('changes:shots.sentence.retryingGithub')
           : t('changes:shots.sentence.githubDown');
+      }
+      // 23 Nov 2026: Homeroom could not get a database connection in time
+      // (a release's draining process, say). Nothing the proposal did; the
+      // driver's own words are never quoted.
+      if (e.failureCode === 'database_busy') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingBusy')
+          : t('changes:shots.sentence.busy');
       }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason
@@ -30317,6 +30484,10 @@ const AppView = {
   //                caller that is not on that app's screen (Homeroom bot's
   //                ready card). Defaults to the app on screen.
   //   opts.readOnly — overrides AppView.readOnly for that caller.
+  //   opts.waitForStart — a live draft's preview, which may still be
+  //                starting (features/messages/live-draft-bar.tsx): an
+  //                answer that it is not up yet is a wait, not a dead end
+  //                (_waitForStagingStart).
   _finishStagingTelemetry(attemptId, outcome, detail) {
     if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcome, detail);
     if (AppView._stagingTelemetryAttempt === attemptId) AppView._stagingTelemetryAttempt = null;
@@ -30343,6 +30514,16 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const readOnly = AppView._stagingReadOnly(opts);
+    // Asked again for a live draft's preview while it is waiting for that
+    // preview to start (the draft's reload frame does): the wait stands and
+    // the server is asked once more, rather than the open starting over.
+    const parked = AppView._pendingStagingPreview;
+    if (opts && opts.waitForStart && parked && parked.waitForStart
+        && parked.sessionId === sessionId && parked.slug === slug
+        && parked.loadId === AppView._stagingLoadId
+        && typeof staging.isOpen === 'function' && staging.isOpen()) {
+      return AppView._recheckStagingStart(parked);
+    }
     const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
     const telemetryAttempt = inheritedTelemetryAttempt
       || window.UITelemetry?.attempt?.('preview_open', {
@@ -30378,15 +30559,33 @@ const AppView = {
     // whole window) while the server is asked.
     staging.open();
     AppView._stagingHeader(sessionId, app, opts);
-    // The preview's own address (?preview=<slug>/<id>), written in place, so
-    // a reload or a copied link reopens it (restorePreviewFromAddress).
-    AppView._writePreviewAddress(slug, sessionId);
+    // The preview's own address (?preview=<slug>/<id>) and the layout it was
+    // in (?preview-at=...), written in place, so a reload or a copied link
+    // reopens it (restorePreviewFromAddress).
+    AppView._writePreviewAddress(slug, sessionId, opts && opts.layout);
     // A preview reopened from its address waits a moment for the page's
     // column, which may not be drawn yet.
     // With its project and whether it is read only, so the thread it stands
     // beside can ask for it again when it is come back to (detail.ts).
+    staging.setHandlers({
+      onBack: () => AppView.closeStagingOverlay(),
+      // Where the preview stands, kept beside it in the address so a refresh
+      // comes back in the same layout. Only the preview that is open writes.
+      onLayout: (layout) => {
+        const pv = AppView._stagingPreview;
+        if (!pv || Number(pv.sessionId) !== Number(sessionId)) return;
+        AppView._writePreviewAddress(pv.slug || slug, sessionId, layout);
+      },
+    });
     if (typeof staging.place === 'function') {
-      staging.place({ sessionId, wide: false, settle: !!(opts && opts.settle), slug: slug || null, readOnly });
+      staging.place({
+        sessionId,
+        wide: false,
+        settle: !!(opts && opts.settle),
+        slug: slug || null,
+        readOnly,
+        layout: (opts && opts.layout) || null,
+      });
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
@@ -30404,7 +30603,6 @@ const AppView = {
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.opening'), sub: '' });
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     // #3413: every terminal failure below covers the page with the loader, so
     // the card's own "Retry preview" (swapToStagingForSession → this function)
     // sits unreachable under it. Offer the same action inside the loader: re-
@@ -30507,6 +30705,15 @@ const AppView = {
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
+    // A live draft's preview that is still starting: the server answers
+    // missing until its address is written, and unhealthy or edge while it
+    // comes up. That is a wait, parked like a rebuild's, so the preview
+    // opens by itself once it is up.
+    if (data.status === 'unavailable' && opts && opts.waitForStart
+        && AppView.STAGING_START_REASONS.includes(data.reason)) {
+      AppView._waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts });
+      return;
+    }
     if (data.status === 'unavailable') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       // Stopped (previews stop after a while unused): it says so, and how
@@ -30557,6 +30764,9 @@ const AppView = {
       telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      // A live draft's preview woken here keeps waiting if it is not quite
+      // up when its staging_awake lands, rather than showing a dead end.
+      ...(opts && opts.waitForStart ? { waitForStart: true, rechecks: 0 } : {}),
     };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
@@ -30571,6 +30781,99 @@ const AppView = {
         offerShots: true,
       });
     }, 180000);
+  },
+
+  // What preview-status answers about a preview that is still starting
+  // (src/routes/sessions.js inspectPreview): no address yet, or up but not
+  // yet answering, itself or through its public address.
+  STAGING_START_REASONS: ['missing', 'unhealthy', 'edge'],
+  STAGING_START_GIVE_UP_MS: 180000,
+  // Asked again on its own, in case its staging_ready is missed: every ten
+  // seconds, for as long as the give-up time.
+  STAGING_START_RECHECK_MS: 10000,
+  STAGING_START_RECHECKS: 18,
+  _stagingStartTimer: null,
+
+  // A live draft's preview is starting (ensureStaging's opts.waitForStart).
+  // The loader says so, and the marker is parked as for a rebuild (the same
+  // fields, read-only kept), so staging_ready / staging_awake bring it back
+  // through ensureStaging's ready gate. The same bounded give-up as a
+  // rebuild's, with words that are true for a start, and the marker stays
+  // parked after it.
+  _waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts }) {
+    AppView._setStagingLoader(true, {
+      title: PlatformI18n.t('changes:frame.loader.starting'),
+      sub: PlatformI18n.t('changes:frame.loader.startingSub'),
+      offerShots: true,
+    });
+    const pending = {
+      sessionId, slug, testing, loadId, retry,
+      telemetryAttempt,
+      app: opts && opts.app ? opts.app : null,
+      readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      waitForStart: true,
+      rechecks: 0,
+    };
+    AppView._pendingStagingPreview = pending;
+    if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
+    AppView._stagingRebuildTimer = setTimeout(() => {
+      if (loadId !== AppView._stagingLoadId || AppView._pendingStagingPreview !== pending) return;
+      AppView._setStagingLoader(true, {
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowStart'),
+        ...AppView._offerStagingPreviewRetry(retry),
+        offerShots: true,
+      });
+    }, AppView.STAGING_START_GIVE_UP_MS);
+    AppView._scheduleStagingStartRecheck(pending);
+  },
+
+  _scheduleStagingStartRecheck(pending) {
+    if (AppView._stagingStartTimer) clearTimeout(AppView._stagingStartTimer);
+    AppView._stagingStartTimer = null;
+    if ((pending.rechecks || 0) >= AppView.STAGING_START_RECHECKS) return;
+    AppView._stagingStartTimer = setTimeout(() => {
+      AppView._stagingStartTimer = null;
+      if (AppView._pendingStagingPreview !== pending) return;
+      pending.rechecks = (pending.rechecks || 0) + 1;
+      AppView._recheckStagingStart(pending);
+    }, AppView.STAGING_START_RECHECK_MS);
+  },
+
+  // Asks preview-status once more about a preview still starting. Still not
+  // up: the wait goes on. Any other answer goes through ensureStaging again,
+  // whose branches decide, ready or not.
+  async _recheckStagingStart(pending) {
+    const current = () => AppView._pendingStagingPreview === pending && pending.loadId === AppView._stagingLoadId;
+    if (!current()) return;
+    let data = null;
+    try {
+      let demo = '';
+      try { demo = AppView._demoQS(); } catch { demo = ''; }
+      const res = await fetch(`/api/sessions/${pending.sessionId}/preview-status${demo}`);
+      data = res.ok ? await res.json().catch(() => null) : null;
+    } catch { data = null; }
+    if (!current()) return;
+    const stillStarting = !data || data.status === 'rebuilding'
+      || (data.status === 'unavailable' && AppView.STAGING_START_REASONS.includes(data.reason));
+    if (stillStarting) {
+      AppView._scheduleStagingStartRecheck(pending);
+      return;
+    }
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    AppView._pendingStagingPreview = null;
+    return AppView._reopenParkedStaging(pending, data.url || null);
+  },
+
+  // The parked open again, with what it was asked with.
+  _reopenParkedStaging(pending, url) {
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
+    return AppView.ensureStaging(pending.sessionId, url, pending.testing, {
+      telemetryAttempt: pending.telemetryAttempt,
+      ...(pending.app ? { app: pending.app } : {}),
+      ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
+      ...(pending.waitForStart ? { waitForStart: true } : {}),
+    });
   },
 
   // #439: terminal loader state when a rebuild can't proceed (no changes,
@@ -30614,6 +30917,7 @@ const AppView = {
       return;
     }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
       AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
@@ -30630,11 +30934,8 @@ const AppView = {
       // not prove the new runtime still answers by the time this browser
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
-      return AppView.ensureStaging(sessionId, url, pending.testing, {
-        telemetryAttempt: pending.telemetryAttempt,
-        ...(pending.app ? { app: pending.app } : {}),
-        ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
-      });
+      // A live draft's start keeps waiting if it is not up by then.
+      return AppView._reopenParkedStaging(pending, url);
     }
     AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
     AppView._showStagingUnavailable(pending.loadId, PlatformI18n.t('changes:frame.unavailable.noAddress'), pending.retry);
@@ -31550,42 +31851,62 @@ const AppView = {
    * address's query, `?preview=<slug>/<session id>`, beside whatever page it
    * stands over, so a reload, a copied link or Back onto the entry reopens
    * it, on the same change and in the place that page gives it
-   * (features/staging/placement.ts). Written in place: opening a preview is
-   * not a step for Back. The router keeps every query parameter as it goes
-   * (App._routeSearch), so the name stays while the preview is up and goes
-   * when it closes. Never in the side panel's framed copy (the top window
-   * draws the preview) or on a shot route.
+   * (features/staging/placement.ts). Since the preview's layout is remembered
+   * too (`preview-at`), a refresh comes back where the preview stood: beside
+   * the thread, in the side panel, or covering the window, docked or not.
+   * Written in place: opening a preview is not a step for Back. The router
+   * keeps every query parameter as it goes (App._routeSearch), so the name
+   * stays while the preview is up and goes when it closes. Never in the side
+   * panel's framed copy (the top window draws the preview) or on a shot route.
    */
   PREVIEW_PARAM: 'preview',
+  PREVIEW_LAYOUT_PARAM: 'preview-at',
+  // Where the preview stands, as placement.ts names it; anything else is
+  // ignored as if the address carried no layout at all.
+  PREVIEW_LAYOUTS: ['full', 'column', 'panel', 'column-full', 'panel-full'],
 
-  // Pure: the preview a query names ({ slug, sessionId }), or null.
+  // Pure: a remembered preview layout, or null for anything else.
+  _previewLayoutAt(value) {
+    const v = String(value == null ? '' : value);
+    return AppView.PREVIEW_LAYOUTS.includes(v) ? v : null;
+  },
+
+  // Pure: the preview a query names ({ slug, sessionId }, and its `layout`
+  // when the address remembers one), or null.
   _previewAddressAt(search) {
-    let value = null;
-    try { value = new URLSearchParams(String(search || '')).get(AppView.PREVIEW_PARAM); } catch (_) { value = null; }
+    let params = null;
+    try { params = new URLSearchParams(String(search || '')); } catch (_) { params = null; }
+    const value = params ? params.get(AppView.PREVIEW_PARAM) : null;
     const match = /^([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})$/.exec(String(value || ''));
     if (!match) return null;
     const sessionId = Number(match[2]);
-    return sessionId > 0 ? { slug: match[1], sessionId } : null;
+    if (!(sessionId > 0)) return null;
+    const layout = params ? AppView._previewLayoutAt(params.get(AppView.PREVIEW_LAYOUT_PARAM)) : null;
+    return layout ? { slug: match[1], sessionId, layout } : { slug: match[1], sessionId };
   },
 
   // Pure: `search` with the preview named (or, with no slug, not named),
-  // every other parameter kept byte for byte.
-  _previewSearch(search, slug, sessionId) {
+  // every other parameter kept byte for byte. Its layout rides beside it.
+  _previewSearch(search, slug, sessionId, layout) {
     const raw = String(search || '').replace(/^\?/, '');
+    const dropped = [AppView.PREVIEW_PARAM, AppView.PREVIEW_LAYOUT_PARAM];
     const kept = raw ? raw.split('&').filter((part) => {
       if (!part) return false;
       const key = part.split('=', 1)[0].replace(/\+/g, ' ');
-      try { return decodeURIComponent(key) !== AppView.PREVIEW_PARAM; } catch (_) { return true; }
+      try { return !dropped.includes(decodeURIComponent(key)); } catch (_) { return true; }
     }) : [];
     const id = Number(sessionId);
     if (slug && /^[a-z0-9][a-z0-9-]{0,254}$/.test(String(slug)) && Number.isInteger(id) && id > 0) {
       kept.push(`${AppView.PREVIEW_PARAM}=${slug}/${id}`);
+      const at = AppView._previewLayoutAt(layout);
+      if (at) kept.push(`${AppView.PREVIEW_LAYOUT_PARAM}=${at}`);
     }
     return kept.length ? `?${kept.join('&')}` : '';
   },
 
-  // Name the open preview in the address, or (no slug) stop naming it.
-  _writePreviewAddress(slug, sessionId) {
+  // Name the open preview in the address, and the layout it is in, or (no
+  // slug) stop naming it.
+  _writePreviewAddress(slug, sessionId, layout) {
     if (typeof window === 'undefined' || !window.history || !window.location) return false;
     if (typeof App !== 'undefined' && App && App.embeddedPanel) return false;
     const loc = window.location;
@@ -31593,7 +31914,7 @@ const AppView = {
       try { if (new URLSearchParams(loc.search || '').get('shot')) return false; } catch (_) { return false; }
     }
     const here = AppView._hereAddress();
-    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId)}${loc.hash || ''}`;
+    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId, layout)}${loc.hash || ''}`;
     if (to === here) return true;
     try {
       window.history.replaceState(window.history.state, '', to);
@@ -31623,6 +31944,8 @@ const AppView = {
     AppView.ensureStaging(at.sessionId, null, (AppView._sessionTesting || {})[at.sessionId] || null, {
       app: sameApp ? AppView.appData : { slug: at.slug },
       settle: true,
+      // The layout it was in when the address was written, if any.
+      layout: at.layout || null,
       ...(sameApp ? {} : { lookOnlyIfRefused: true }),
     });
     return true;
@@ -31651,6 +31974,7 @@ const AppView = {
     }
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     // #816: drop the iframe-load watch + its safety timeout so a late load
     // event from the preview being torn down here can't re-touch the loader.
     if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
@@ -31871,18 +32195,21 @@ const AppView = {
     }
   },
 
-  // TRUE only on Android in an installed (standalone / fullscreen) context:
-  // the same two conditions the #2755 CSS rule gates on. `un-android` is set
-  // by the kit's native.js at first paint; iOS never gets it, and a browser
-  // tab is not standalone (there the max value is the collapsed browser
-  // chin, and reserving it would double the gap).
+  // TRUE on Android where the page really owns the bottom edge: an installed
+  // (standalone / fullscreen) app, or the native WebView (#7061). These are
+  // the same conditions the #2755 / #7061 CSS rules gate on. `un-android` is
+  // set by the kit's native.js at first paint; iOS never gets it, and a
+  // browser tab is neither standalone nor native (there the max value is the
+  // collapsed browser chin, and reserving it would double the gap).
   _isAndroidStandalone() {
-    if (typeof document === 'undefined' || typeof window === 'undefined'
-      || typeof window.matchMedia !== 'function') {
-      return false;
-    }
+    if (typeof document === 'undefined') return false;
     const docEl = document.documentElement;
     if (!docEl || !docEl.classList || !docEl.classList.contains('un-android')) return false;
+    if (docEl.classList.contains('in-native-webview')
+      && !docEl.classList.contains('web-browser-chrome')) return true;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
     try {
       return window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
     } catch {
@@ -32197,12 +32524,25 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    // The part of the frame the platform header does not cover (#74).
-    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
     const keyboard = AppView._keyboardInset();
+    // With the keys up, what is on screen is the band of the LAYOUT viewport
+    // from iOS's pan down to the keys (phone review #1, 23 Nov 2026), and the
+    // shell lays the frame on that band (app.css, "THE SHELL HOLDS STILL").
+    // So the frame is measured against the band: its top against the pan,
+    // where the status bar now is, and the keyboard against the band's foot,
+    // which the frame ends on. `innerHeight` cannot stand in for the layout
+    // viewport there: iOS collapses it to the visual viewport (the kit's
+    // #1938 table), and the keyboard read off it came out as nearly the
+    // whole frame. At rest nothing here changes.
+    const pan = keyboard > 0 ? AppView._viewportPan() : 0;
+    const layout = keyboard > 0 ? (AppView._layoutViewportHeight() || window.innerHeight) : window.innerHeight;
+    const viewport = { width: window.innerWidth, height: layout };
+    // The part of the frame the platform header does not cover (#74), read
+    // where both are laid out (the layout viewport), then moved into the band.
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
+    const seen = pan > 0 ? AppView._shiftRect(visible, -pan) : visible;
     const raw = AppView._readRootInsets();
     raw.bottom = AppView._rootBottomInset({
       bottom: raw.bottom,
@@ -32210,12 +32550,35 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, visible, viewport);
+    const insets = AppView._frameInsets(raw, seen, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(visible, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(seen, viewport, keyboard);
     return insets;
+  },
+
+  // Pure. A DOMRect-alike moved down by `dy` px (up when negative).
+  _shiftRect(rect, dy) {
+    const d = Number(dy) || 0;
+    return {
+      top: rect.top + d, bottom: rect.bottom + d,
+      left: rect.left, right: rect.right,
+      width: rect.width, height: rect.height,
+    };
+  },
+
+  // How far iOS has panned the visual viewport down the layout viewport to
+  // reveal a focused field, in whole px. 0 while pinch-zoomed (a zoom's
+  // offset is not a pan) and wherever nothing pans. The same reading
+  // lib/visual-viewport.ts publishes as `--platform-vv-top`.
+  _viewportPan() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    const scale = Number(vv.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const top = Number(vv.offsetTop);
+    return Number.isFinite(top) && top > 0 ? Math.round(top) : 0;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -33396,6 +33759,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('orientationchange', onViewportChange, { passive: true });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
+    // iOS's pan arrives in its own event, after the resize, and moves where
+    // the shell lays the frame (safeAreaForFrame).
+    window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
   }
 }
 

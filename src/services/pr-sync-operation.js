@@ -177,6 +177,9 @@ async function syncTitle(pool, sessionId) {
 // is, and by this operation's `create`. Returns applyPrMetadata's answer.
 async function openMissingPr({ config, pool, session, owner, repo, from }) {
   if (!owner || !repo || session.pr_number) return null;
+  // 24 Nov 2026: a live app draft gets no pull request of its own before it
+  // is proposed (live-drafts.js). Never adopt one opened for its branch.
+  if (await require('./live-drafts').isDraftSession(pool, session.id)) return null;
   const pm = prMetadata();
   const broadcast = from === 'staging'
     ? (event, data) => require('./ws').broadcastGlobal({ ...data, type: 'session_event', sessionId: session.id, event })
@@ -227,6 +230,10 @@ async function openMissingPr({ config, pool, session, owner, repo, from }) {
 async function create({ config, pool }, request) {
   const s = await load(pool, request.input.sessionId);
   if (!s) throw permanent('The change is gone');
+  // 24 Nov 2026: a live app draft gets its change when it is proposed.
+  if (await require('./live-drafts').isDraftSession(pool, s.id)) {
+    return { ok: false, status: 409, error: 'A live draft gets its change when it is proposed' };
+  }
   if (s.pr_number) return { prNumber: Number(s.pr_number), prUrl: s.pr_url || null, created: false };
   const { owner, repo } = repoRef.ownerRepo(s.repo_url) || {};
   if (!owner || !repo) return { ok: false, status: 400, error: 'This change has no repository to open a pull request against' };

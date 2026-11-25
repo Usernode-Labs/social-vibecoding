@@ -16,17 +16,33 @@ import { useMessages } from '../../lib/i18n/react';
 import { tabLacks, useTabBuild } from '../../lib/tab-build';
 import { rowKey } from './column';
 import { botTabAddress } from './door';
-import { byMonth, historyGlyph, historyTooltip, historyWords, type HistoryRow, type HistoryState } from './history';
+import type { HistoryKind } from './filter-address';
+import { byMonth, historyGlyph, historyTooltip, historyWords, shortDay, type HistoryRow, type HistoryState } from './history';
 import {
   changeOnGithub, freshByProject, freshCount, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { cleanQuery, foundDay, markParts, type Found, type MarkPart } from './search';
+import {
+  arrivedInDone, arrivedInNeeds, movedInProgress, newCount, newFirst, sinceWords, threadIdentity, type LastVisit,
+} from './visit';
 
 /** What a row's glyph shows, by name. */
 export type Glyph =
   | 'chat' | 'play' | 'hand' | 'check' | 'again' | 'warning' | 'lock' | 'ballot'
   | 'upload' | 'eye' | 'cog' | 'reply' | 'code' | 'clock' | 'camera' | 'x' | 'bubble';
+
+/**
+ * The one thing at the end of a row on the standard list's three bands
+ * (24 Nov 2026, ./lists.tsx): what the person does in Needs you (`act`, a
+ * verb), where it stands in In progress (`state`), and in Done a tick for
+ * what went live (`tick`, its text the spoken name) or the word History says
+ * for how anything else ended (`word`).
+ */
+export interface LineEnd {
+  kind: 'act' | 'state' | 'tick' | 'word';
+  text: string;
+}
 
 export interface Line {
   key: string;
@@ -52,13 +68,41 @@ export interface Line {
   fresh?: boolean;
   /** 18 Nov 2026: it moved while the page was up (./model.ts movedSince), so it is not folded. */
   moved?: boolean;
+  /**
+   * Mobile polish 05 (24 Nov 2026): new since your last visit (./visit.ts):
+   * it arrived in its band, moved stage in In progress, or has unread
+   * messages. Its row has the dot, sits above its band's line and counts in
+   * its heading's "2 new". Never on a first visit.
+   */
+  isNew?: boolean;
   open: () => void;
   /** #6159: a private thread's row: its ⋯ has Mark done. */
   done?: { rootId: number; mark: () => void } | null;
+  /**
+   * 24 Nov 2026 (mobile 04): a thread somebody named you in: its Dismiss,
+   * beside Reply at the row's end, which waves the @ off.
+   */
+  dismiss?: (() => void) | null;
+  /** Mobile 04: a thread you only wrote or were named in, which In progress draws below your own. */
+  tookPart?: boolean;
   /** History: a row in a private community the person left (its project's name says so). */
   left?: boolean;
   /** When it started needing the viewer, for the day its row is grouped under. */
   at?: string | null;
+  /*
+   * The three bands' row (24 Nov 2026, ./lists.tsx). The look's list
+   * (./frame-list.tsx) draws the fields above and never these.
+   */
+  /** The project's name, or Only you for a private thread in no project. */
+  project?: string;
+  /** Its number as the list writes it (#6277, PR 7077); Only you for a private thread; else ''. */
+  ref?: string;
+  /** The second line: its reason and its time, joined by a middle dot. */
+  sub?: string;
+  /** The one thing at the row's end. */
+  end?: LineEnd;
+  /** Done: which of History's kinds it is, for Done's kind chips (`thread` is All's alone). */
+  past?: HistoryKind | 'thread';
 }
 
 /**
@@ -96,6 +140,8 @@ function needGlyph(row: WorkRow): Glyph {
   if (kind === 'fix_yours') return 'warning';
   if (kind === 'bot_fix_failed') return 'warning';
   if (kind === 'private') return 'lock';
+  // Mobile 04: somebody named you; you reply.
+  if (kind === 'named') return 'reply';
   return 'ballot';
 }
 /** In progress's glyph, by its stage. */
@@ -150,6 +196,107 @@ export function dayHeading(at: string | null | undefined, t: Say, locale: string
   return d.toLocaleDateString(locale, inZone({ weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
+/**
+ * THE THREE BANDS' ROW (24 Nov 2026, Evan's review of the thread list). A
+ * Needs you row ends in what the person does, said as a verb: the pill the
+ * model gives it where that is one already, and these where it is not. The
+ * look's list keeps the model's own words (`right`).
+ */
+const VERBS: Readonly<Record<string, string>> = {
+  'messages:ai.pill.answer': 'messages:ai.pill.reply',
+  'messages:ai.pill.decide': 'messages:ai.pill.reply',
+  // #6389: your own change waits on your fix; its reason line says which.
+  'messages:ai.pill.testsFailing': 'messages:ai.pill.fixIt',
+  'messages:ai.pill.conflicts': 'messages:ai.pill.fixIt',
+  // Mobile 04: somebody named you with @.
+  'messages:ai.pill.named': 'messages:ai.pill.reply',
+};
+
+/** A Needs you row's verb: its pill's (VERBS where that is no verb), or Read for a private thread. */
+export function verbOf(pill: Phrase | null): string {
+  if (!pill) return 'messages:ai.pill.read';
+  return VERBS[pill.id] || pill.id;
+}
+
+/**
+ * A private thread's reason, the part of its line after "Only you · Garden
+ * club", which its row's project column already says.
+ */
+const PRIVATE_REASON: Readonly<Record<string, string>> = {
+  'messages:ai.row.privateDraft': 'messages:ai.reason.notPosted',
+  'messages:ai.row.privateFiled': 'messages:ai.reason.filed',
+  'messages:ai.row.privatePosted': 'messages:ai.reason.posted',
+  'messages:ai.row.privatePutAway': 'messages:ai.reason.putAway',
+  'messages:ai.row.privateIdea': 'messages:ai.reason.noCommunity',
+  'messages:ai.row.privateAbout': 'messages:ai.reason.about',
+  'messages:ai.row.privateAboutChange': 'messages:ai.reason.aboutChange',
+  'messages:ai.row.privateAboutChangePr': 'messages:ai.reason.aboutChangePr',
+};
+
+/** The Needs you feed's kinds that are a vote, whose reason is "Up for a vote" where nothing else says one. */
+const VOTE_KINDS = new Set(['proposal', 'governance', 'ballot']);
+
+/**
+ * Pure: a Needs you row's reason, from what it already says (never a new
+ * summary): its second line where it has one (whyOf), a private thread's
+ * state, or, for a vote with none, its stage's words.
+ */
+export function needReason(row: WorkRow): Phrase | null {
+  const why = whyOf(row);
+  if (why) return why;
+  if (row.rootId) {
+    const id = PRIVATE_REASON[row.sub.id];
+    return id ? { id, values: row.sub.values } : null;
+  }
+  const kind = row.key.startsWith('need:') ? row.key.split(':')[1] : '';
+  return VOTE_KINDS.has(kind) ? { id: 'core:work.stage.upForVote' } : null;
+}
+
+/**
+ * Pure: a row's day, in the reader's zone and the interface's language:
+ * today, yesterday, the weekday within the week, else the date ("Nov 3",
+ * with the year when it is another one). `alone` starts a line ("Today");
+ * otherwise it follows other words ("Went live today").
+ */
+export function dayWord(at: string | null | undefined, t: Say, locale: string | undefined, alone: boolean): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  const today = new Date(Date.now());
+  const days = dayNumber(today) - dayNumber(d);
+  if (days <= 0) return t(alone ? 'messages:ai.short.today' : 'messages:ai.when.today');
+  if (days === 1) return t(alone ? 'messages:ai.short.yesterday' : 'messages:ai.when.yesterday');
+  if (days < 7) return d.toLocaleDateString(locale, inZone({ weekday: 'long' }));
+  if (zonedDay(d).year !== zonedDay(today).year) {
+    return d.toLocaleDateString(locale, inZone({ month: 'short', day: 'numeric', year: 'numeric' }));
+  }
+  return shortDay(at, locale);
+}
+
+/**
+ * Pure (24 Nov 2026, mobile 04): your own threads first, then the ones you
+ * only wrote or were named in (`tookPart`), each run in the order it came.
+ */
+export function ownFirst<T extends { tookPart?: boolean }>(rows: readonly T[]): T[] {
+  return [...rows.filter((row) => !row.tookPart), ...rows.filter((row) => row.tookPart)];
+}
+
+/** Pure: rows newest first by `at`; a row with no readable time keeps its order after the rest. */
+export function newestFirst<T extends { at?: string | null }>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, i) => ({ row, i, at: new Date(String(row.at || '')).getTime() }))
+    .sort((a, b) => {
+      const ha = Number.isFinite(a.at);
+      const hb = Number.isFinite(b.at);
+      if (ha !== hb) return ha ? -1 : 1;
+      return ha && hb && a.at !== b.at ? b.at - a.at : a.i - b.i;
+    })
+    .map(({ row }) => row);
+}
+
+/** How many rows each band shows before its Show more, and how many more Done's adds each time. */
+export const BAND_FIRST = { needs: 6, busy: 5, done: 5 } as const;
+export const DONE_STEP = 20;
+
 /** What the page hands its list, whichever face draws it (./lists.tsx AiLists says each). */
 export interface AiLinesInput {
   query?: string;
@@ -163,17 +310,27 @@ export interface AiLinesInput {
   openRow: (row: WorkRow) => void;
   openThread: (t: AiThread) => void;
   onDone?: (rootId: number) => void;
+  /** Mobile 04: Dismiss on a thread somebody named you in. */
+  onDismiss?: (row: WorkRow) => void;
   picked?: readonly string[];
   onPick?: (slugs: string[]) => void;
   appFor?: (slug: string) => AiApp | null;
   history?: HistoryState | null;
   openHistory?: (row: HistoryRow) => void;
+  /** Done's kind chip (History's): the three bands' Done keeps only that kind, this week's rows too. */
+  historyKind?: HistoryKind | null;
   /**
    * What the search in messages answered (./search.ts useBotSearch): null
    * while the first answer is on its way. Left out by a caller that has no
    * such search, for which only the threads are searched.
    */
   found?: Found | null;
+  /**
+   * Mobile polish 05: the last visit the marks are measured from
+   * (./use-visit.ts); null on a first visit, or left out by a face that
+   * draws no marks.
+   */
+  visit?: LastVisit | null;
 }
 
 /**
@@ -190,10 +347,21 @@ export function showsPicked(picked: readonly string[]): (app: AiApp | null) => b
  * hook only because it reads the catalog and this tab's build (#6233).
  */
 export function useAiLines({
-  query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone,
-  picked: pickedIn = [], onPick, appFor, history = null, openHistory, found,
+  query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss,
+  picked: pickedIn = [], onPick, appFor, history = null, openHistory, historyKind = null, found, visit = null,
 }: AiLinesInput) {
   const t = useMessages('messages');
+  const locale = getDateLocale();
+  // The three bands' row (VERBS above): the project's name, its number as
+  // the list writes it, and the second line, its reason then its time.
+  const projectOf = (app: AiApp | null) => (app ? app.name || app.slug : t('messages:ai.short.private'));
+  // A private thread in no project is Only you by its project's name already.
+  const refOf = (number: number | null, pr: boolean, solo: boolean, app: AiApp | null = null) => (solo
+    ? (app ? t('messages:ai.short.private') : '')
+    : number ? t(pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number }) : '');
+  const lineOf = (reason: string | null, when: string, alone: string) => (reason
+    ? (when ? t('messages:ai.row.reasonWhen', { reason, when }) : reason)
+    : alone);
   const say = (p: Phrase | null): string | null => {
     if (!p) return null;
     // A stage's words inside a row's line are translated first.
@@ -239,47 +407,74 @@ export function useAiLines({
   const freshShown = freshCount(needRowsShown);
   const freshProjects = freshByProject(needRowsShown);
 
-  const needLines: Line[] = kept(needRowsShown.map((row) => ({
-    key: row.key,
-    kind: row.key.startsWith('need:') ? 'need' : row.key.split(':')[0],
-    app: row.app,
-    glyph: needGlyph(row),
-    number: Number(row.sub.values?.number) || null,
-    pr: row.sub.id === 'messages:ai.row.privateAboutChangePr',
-    title: row.title,
-    // B07 (audit 2 Nov 2026): a private idea in no project sits under the
-    // Only you heading already, so its row does not say it again.
-    right: row.pill ? say(row.pill)! : row.app ? t('messages:ai.short.private') : '',
-    tooltip: say(row.sub)!,
-    why: say(whyOf(row)),
-    owe: !!row.pill,
-    lit: !!lit && rowKey(row) === lit,
-    fresh: row.unread > 0,
-    open: () => openRow(row),
-    done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
-    at: row.at,
-  })));
-  const threadLine = (glyph: (th: AiThread) => Glyph) => (th: AiThread): Line => ({
-    key: String(th.threadId),
-    kind: th.work.stage,
-    app: th.app,
-    glyph: glyph(th),
-    number: th.number,
-    pr: changeOnGithub(th),
-    title: th.title || '',
-    requests: th.requests || 0,
-    right: say(shortWords(th))!,
-    tooltip: say(nextWords(th))!,
-    why: say(threadWhy(th)),
-    owe: false,
-    // #6153: a request filed from a private thread opens that thread, and
-    // is where you are while it is in the column.
-    lit: !!lit && rowKey(th) === lit,
-    fresh: (th.unread || 0) > 0,
-    moved: th.moved === true,
-    open: () => openThread(th),
-    at: th.at,
-  });
+  const needLines: Line[] = kept(needRowsShown.map((row) => {
+    const number = Number(row.sub.values?.number) || null;
+    const pr = row.sub.id === 'messages:ai.row.privateAboutChangePr' || /Pr$/.test(row.sub.id);
+    return {
+      key: row.key,
+      kind: row.key.startsWith('need:') ? 'need' : row.key.split(':')[0],
+      app: row.app,
+      glyph: needGlyph(row),
+      number,
+      pr: row.sub.id === 'messages:ai.row.privateAboutChangePr',
+      title: row.title,
+      // B07 (audit 2 Nov 2026): a private idea in no project sits under the
+      // Only you heading already, so its row does not say it again.
+      right: row.pill ? say(row.pill)! : row.app ? t('messages:ai.short.private') : '',
+      tooltip: say(row.sub)!,
+      why: say(whyOf(row)),
+      owe: !!row.pill,
+      lit: !!lit && rowKey(row) === lit,
+      fresh: row.unread > 0,
+      isNew: !!visit && (row.unread > 0 || arrivedInNeeds(visit, row)),
+      open: () => openRow(row),
+      done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
+      dismiss: row.named && onDismiss ? () => onDismiss(row) : null,
+      at: row.at,
+      project: projectOf(row.app),
+      // A private thread is Only you there, whatever it is about (its reason says that).
+      ref: refOf(number, pr, !!row.rootId, row.app),
+      sub: lineOf(say(needReason(row)), dayWord(row.at, t, locale, false), dayWord(row.at, t, locale, true)),
+      end: { kind: 'act', text: t(verbOf(row.pill)) },
+    };
+  }));
+  const threadLine = (glyph: (th: AiThread) => Glyph) => (th: AiThread): Line => {
+    const still = notMoving(th);
+    const day = dayWord(th.at, t, locale, false);
+    return {
+      key: String(th.threadId),
+      kind: th.work.stage,
+      app: th.app,
+      glyph: glyph(th),
+      number: th.number,
+      pr: changeOnGithub(th),
+      title: th.title || '',
+      requests: th.requests || 0,
+      right: say(shortWords(th))!,
+      tooltip: say(nextWords(th))!,
+      why: say(threadWhy(th)),
+      owe: false,
+      // #6153: a request filed from a private thread opens that thread, and
+      // is where you are while it is in the column.
+      lit: !!lit && rowKey(th) === lit,
+      fresh: (th.unread || 0) > 0,
+      moved: th.moved === true,
+      isNew: !!visit && ((th.unread || 0) > 0 || movedInProgress(visit, th)),
+      tookPart: th.tookPart === true,
+      open: () => openThread(th),
+      at: th.at,
+      project: projectOf(th.app),
+      ref: refOf(th.number, changeOnGithub(th), false),
+      // #6158: a thread nobody is moving stays in In progress, its state
+      // Not moving; its reason then says where it stopped.
+      sub: lineOf(
+        say(threadWhy(th)) || (still ? say(shortWords(th)) : null),
+        day ? t('messages:ai.when.since', { day }) : '',
+        day ? t('messages:ai.when.sinceAlone', { day }) : '',
+      ),
+      end: { kind: 'state', text: still ? t('messages:ai.state.notMoving') : say(shortWords(th))! },
+    };
+  };
   const progressShown = progress.filter((x) => shows(x.app));
   const waitingShown = waiting.filter((x) => shows(x.app));
   // 2 Nov 2026 (#6160): under way and waiting are one card of their own, in
@@ -303,6 +498,8 @@ export function useAiLines({
     if (th.kind === 'private' && th.work.stage === 'closed') {
       // #6271: a private thread marked done this week: a lock, its title, the
       // day it closed, and no number. It opens the thread, where Reopen is.
+      // In Done it ends as History says a done thread ended.
+      const ended = t('messages:ai.history.done');
       return {
         key: `closed:${th.rootId}`,
         kind: 'closed',
@@ -318,16 +515,34 @@ export function useAiLines({
         owe: false,
         lit: !!lit && rowKey(th) === lit,
         open: () => openThread(th),
+        at: th.at,
+        project: projectOf(th.app),
+        ref: refOf(null, false, true, th.app),
+        sub: lineOf(ended, dayWord(th.at, t, locale, false), ended),
+        end: { kind: 'word', text: ended },
+        past: 'solo',
+        // Mobile polish 05: marked done since the last visit.
+        isNew: arrivedInDone(visit, threadIdentity(th), th.at, true),
       };
     }
     // #6233: Live, but this tab runs the build before it: the row asks for
-    // the reload rather than a day the reader still cannot see.
+    // the reload rather than a day the reader still cannot see. (The three
+    // bands keep its tick: Done's line under its first rows asks for the
+    // reload, once for every row this tab is older than.)
     const lacks = tabLacks({ liveAt: th.at, mergedAt: th.mergedAt, id: th.changeId, appSlug: th.app?.slug }, tab);
     return {
       ...threadLine(() => 'check')(th),
       right: lacks ? t('messages:ai.short.reload') : dayOf(th.at, t),
       owe: lacks,
       tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
+      sub: t('messages:ai.done.wentLive', { day: dayWord(th.at, t, locale, false) }),
+      end: { kind: 'tick', text: t('core:work.stage.live') },
+      // This week's rows are filed as History will file them: a decision is
+      // a vote, anything else that went live a change.
+      past: th.kind === 'decision' ? 'vote' : 'change',
+      // Mobile polish 05: it went live since the last visit, or has
+      // messages you have not read.
+      isNew: !!visit && ((th.unread || 0) > 0 || arrivedInDone(visit, threadIdentity(th), th.at, true)),
     };
   }));
   const liveBehind = liveLines.some((line) => line.owe);
@@ -338,18 +553,23 @@ export function useAiLines({
   // HISTORY (5 Nov 2026, ./history.ts): what has finished, by month, then by
   // project, in the quiet rows Live this week draws. Narrowed by the chips
   // above, as every list is; its own chips pick a kind.
-  const locale = getDateLocale();
   const historyLines = kept((history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
     const glyph = historyGlyph(row);
+    const pr = !!row.change && !!row.app?.changesOnGithub;
+    // Done: what went live ends in a tick and says so; anything else ends
+    // in the word History has always said for it, said again with its day.
+    const wentLive = row.outcome === 'live' || row.outcome === 'shipped';
+    const ended = say(historyWords(row, locale))!;
+    const day = dayWord(row.at, t, locale, false);
     return {
       key: row.key,
       kind: `history-${row.kind}`,
       app: row.app,
       glyph: HISTORY_GLYPH[glyph],
       number: row.number,
-      pr: !!row.change && !!row.app?.changesOnGithub,
+      pr,
       title: row.title || '',
-      right: say(historyWords(row, locale))!,
+      right: ended,
       tooltip: say(historyTooltip(row))!,
       why: null,
       owe: false,
@@ -357,9 +577,60 @@ export function useAiLines({
       open: () => openHistory?.(row),
       left: !!row.left,
       at: row.at,
+      project: projectOf(row.app),
+      ref: refOf(row.number, pr, row.kind === 'solo', row.app),
+      // A private community the person left says so, as its project's head did.
+      sub: ((line: string) => (row.left ? t('messages:ai.row.left', { line }) : line))(
+        wentLive ? t('messages:ai.done.wentLive', { day }) : lineOf(ended, day, ended),
+      ),
+      end: wentLive ? { kind: 'tick', text: t('core:work.stage.live') } : { kind: 'word', text: ended },
+      past: row.kind,
+      // Mobile polish 05: finished since the last visit, which had only
+      // this week's rows in view (./visit.ts arrivedInDone).
+      isNew: arrivedInDone(visit, row.rootId ? `root:${row.rootId}` : `thread:${row.threadId}`, row.at, false),
     };
   }));
   const historyMonths = byMonth(historyLines);
+  // THE THREE BANDS (24 Nov 2026, ./lists.tsx). Every thread is in one of
+  // three places, newest first in each, with no project or day headings.
+  // In progress is everything under way and everything waiting, the rows
+  // nobody is moving among them, each saying so (`end`). 24 Nov 2026
+  // (mobile 04): your own first, then the ones you only wrote or were named
+  // in, so commenting widely never buries what you asked for or build.
+  // Mobile polish 05: what is new since your last visit before all of it,
+  // each run in that order.
+  const progressLines: Line[] = newFirst(ownFirst(newestFirst(kept([
+    ...progressShown.map(threadLine(nextGlyph)),
+    ...waitingShown.map(waitingLine),
+  ]))));
+  // Done is the whole past: this week's rows (what went live, a private
+  // thread marked done), then History's, each thread once, narrowed to the
+  // kind its chips pick. History is read newest first and reads that kind
+  // on its own; its rows are narrowed here too, so a page read before the
+  // pick cannot show another kind while the next is on its way.
+  const liveIds = new Set(live.map((th) => (th.kind === 'private' ? `root:${th.rootId}` : `thread:${th.threadId}`)));
+  const pastIds = new Map((history?.rows || []).map((row) => [row.key, row.rootId ? `root:${row.rootId}` : `thread:${row.threadId}`]));
+  const ofKind = (line: Line) => !historyKind || line.past === historyKind;
+  // Mobile polish 05: newest first puts what finished since your last visit
+  // at the top already; new first lifts only a seen row's unread messages.
+  const doneLines: Line[] = newFirst([
+    ...newestFirst(liveLines).filter(ofKind),
+    ...historyLines.filter((line) => !liveIds.has(pastIds.get(line.key) || '') && ofKind(line)),
+  ]);
+  // Mobile polish 05: how many of each band's rows are new, as its heading's
+  // pill says it ("2 new"), folded or not, through the filter and a search
+  // as the band's own rows are; and the time its line names.
+  const needNew = newCount(needLines);
+  const progressNew = newCount(progressLines);
+  const doneNew = newCount(doneLines);
+  const newSince = visit ? sinceWords(visit.since, locale) : '';
+  // The header's counts, as the bands' are when no search narrows them: what
+  // the project filter shows. A search does not narrow them (#6744), so they
+  // do not jump while you type.
+  const needCount = needRowsShown.length;
+  const progressCount = progressShown.length + waitingShown.length;
+  // Done's aside: what finished this week, not the archive's size.
+  const weekCount = liveLines.filter(ofKind).length;
   // #6398: the Needs you count over its rows is how many of them match; with
   // no project picked the heading still counts everything, unless a search
   // narrows it.
@@ -409,6 +680,10 @@ export function useAiLines({
     // #6744: the counts the project filter shows, for anything that summarises
     // the lists (the hero under the bot's name asks the same question).
     progressShown: progressShown.length,
+    // The three bands (./lists.tsx).
+    progressLines, doneLines, needCount, progressCount, weekCount,
+    // Mobile polish 05: what is new since the last visit, band by band.
+    needNew, progressNew, doneNew, newSince,
   };
 }
 

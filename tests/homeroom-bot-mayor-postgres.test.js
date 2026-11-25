@@ -638,6 +638,18 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.notEqual(meta.mirrors, true, 'nothing about an offer is public yet');
     assert.equal(created.length, 0, 'nothing filed yet');
 
+    // #7125: a past offer reads back as its lead, its heading and what
+    // became of its card (bot_cards, read in one query), never as the whole
+    // draft in the bot's own words.
+    const waiting = await mayor.historyMessages(pool, { conversationId: opened.conversationId, botId: bot.id, upToId: offered.messageId });
+    assert.equal(waiting.at(-1).content, [
+      'Want me to file this on Note board?',
+      '',
+      '**Note board** · new request: Add a search box',
+      '[Homeroom: under this reply, offer_request put a File it card for "Add a search box" on Note board. It is still waiting for their answer.]',
+    ].join('\n'));
+    assert.doesNotMatch(waiting.at(-1).content, /Search notes by their text|Done when/);
+
     const tap = await say('File it', { reply_to_id: offered.messageId });
     const ack = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} });
     assert.equal(created.length, 1);
@@ -666,6 +678,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const offerAfter = await read(offered);
     assert.equal(offerAfter.metadata.homeroomBot.status, 'answered');
     assert.equal(offerAfter.metadata.homeroomBot.answer, 'File it');
+    const filedBack = await mayor.historyMessages(pool, { conversationId: opened.conversationId, botId: bot.id, upToId: offered.messageId });
+    assert.equal(filedBack.at(-1).content, [
+      'Want me to file this on Note board?',
+      '',
+      '**Note board** · new request: Add a search box',
+      '[Homeroom: under this reply, offer_request put a File it card for "Add a search box" on Note board. They tapped File it, and it was filed as #41.]',
+    ].join('\n'));
 
     const again = await say('File it', { reply_to_id: offered.messageId });
     const second = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: again, deps: {} });

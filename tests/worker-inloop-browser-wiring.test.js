@@ -95,6 +95,29 @@ test('Dockerfile gives the browser a system-ui font with real weights (Inter)', 
   assert.equal(fonts.wrongFaces({ ...good, 400: ['Inter|Inter-Regular', 'DejaVu Sans|DejaVuSans'] }).length, 1);
 });
 
+test('Claude Code refreshes preserve cached worker tools and rerun the runtime checks', () => {
+  const df = read('Dockerfile');
+  const version = df.indexOf('\nARG CLAUDE_CODE_VERSION=');
+  const bust = df.indexOf('\nARG CLAUDE_CODE_CACHE_BUST=');
+  assert.ok(version > 0 && bust > version);
+  for (const instruction of [
+    'RUN initdb -U postgres',
+    'RUN npm install -g @openai/codex@',
+    'COPY --from=esbuild-build /out/esbuild',
+    'npx playwright install --with-deps chromium',
+    'RUN node /usr/local/bin/patch-playwright-mcp.js',
+  ]) {
+    const beforePin = df.indexOf(instruction);
+    assert.ok(beforePin > 0 && beforePin < version, instruction);
+  }
+  const install = df.indexOf('npm install -g "@anthropic-ai/claude-code@');
+  assert.ok(install > bust);
+  assert.ok(df.indexOf('codex debug models --bundled >') > install);
+  assert.ok(df.indexOf('COPY worker-run.sh') > install);
+  assert.ok(df.indexOf('RUN node /usr/local/bin/verify-shots-browser-mcp.js') > install);
+  assert.ok(df.indexOf('RUN node /usr/local/bin/verify-shots-browser-auth.js') > install);
+});
+
 // ── worker-run.sh: seed the MCP config at bootstrap ──────────────────────
 
 test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json restore', () => {
