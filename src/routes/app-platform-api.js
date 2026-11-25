@@ -9,6 +9,7 @@ const userDirectory = require('../services/user-directory');
 const communities = require('../services/communities');
 const appAccess = require('../services/app-access');
 const accessTokens = require('../services/app-access-tokens');
+const appAgent = require('../services/app-agent-oauth');
 const { listPublicApps } = require('../services/public-app-directory');
 const log = require('../services/logger');
 const { countedVotePredicateSql } = require('../services/pr-vote-revision');
@@ -331,6 +332,9 @@ function appPlatformApiRoutes(config) {
         const vis = await appAccess.getHostVisibility(pool, appSlug);
         res.json({
           tokens: await accessTokens.list(pool, { appId, userId }),
+          // Assistants this member approved in a browser
+          // (services/app-agent-oauth.js): no token to show, only who.
+          connections: await appAgent.list(pool, { appId, userId }),
           paths: vis?.agentPaths || [],
           max: accessTokens.MAX_PER_MEMBER,
         });
@@ -364,6 +368,18 @@ function appPlatformApiRoutes(config) {
         res.set('Cache-Control', 'no-store');
         return res.status(201).json({ token: made.token, ...made.row, paths: vis.agentPaths });
       } catch (err) { return tokenFail(res, appId, 'Access token create failed', err); }
+    });
+
+  // Disconnect an assistant this member approved. Like a token's revoke, it
+  // needs no member check: somebody who has left can still end their own.
+  router.delete(v1Paths('/access-tokens/connections/:id'), tokenAuth, tokenLimiter,
+    async (req, res) => {
+      const { appId, userId } = req.appPlatform;
+      try {
+        const done = await appAgent.revoke(pool, { appId, userId, id: req.params.id });
+        if (!done) return res.status(404).json({ ok: false, code: 'not_found' });
+        return res.json({ ok: true });
+      } catch (err) { return tokenFail(res, appId, 'Assistant disconnect failed', err); }
     });
 
   router.delete(v1Paths('/access-tokens/:id'), tokenAuth, tokenLimiter,

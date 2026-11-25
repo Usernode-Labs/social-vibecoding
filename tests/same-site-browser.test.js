@@ -134,6 +134,7 @@ const EXEMPT = new Map([
   ['app-llm-proxy.js POST `${ROUTE_PREFIX}*`', TOKEN],
   ['app-platform-api.js POST v1Paths(\'/access-tokens\')', TOKEN],
   ['app-platform-api.js DELETE v1Paths(\'/access-tokens/:id\')', TOKEN],
+  ['app-platform-api.js DELETE v1Paths(\'/access-tokens/connections/:id\')', TOKEN],
   ['app-storage.js POST /api/app-storage/files', TOKEN],
   ['approvers.js POST /api/apps/:slug/approver-invites', JSON_FIELD],
   ['apps.js POST /api/apps', JSON_FIELD],

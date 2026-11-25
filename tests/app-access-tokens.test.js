@@ -71,6 +71,8 @@ const live = (t) => !t.revoked_at;
 const fakePool = {
   async query(sql, params = []) {
     const s = String(sql);
+    // Assistants approved in a browser (services/app-agent-oauth.js): none here.
+    if (/app_agent_(?:grants|tokens)/.test(s)) return { rows: [], rowCount: 0 };
     if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(s)) {
       const app = APPS[params[0]];
       return { rows: app ? [{ id: app.id, view_visibility: app.view_visibility, agent_paths: app.agent_paths }] : [] };
@@ -209,7 +211,9 @@ async function makeToken(appId = 7, userId = MEMBER, name = 'Laptop') {
 function assertBare401(r) {
   assert.equal(r.status, 401);
   assert.equal(r.body, 'Unauthorized');
-  assert.equal(r.headers['www-authenticate'], 'Bearer');
+  // On a declared path the 401 also names where an assistant may ask for a
+  // token (tests/app-agent-oauth-postgres.test.js); anywhere else it is bare.
+  assert.match(r.headers['www-authenticate'], /^Bearer(?: resource_metadata="https:\/\/[a-z0-9.-]+\/\.well-known\/oauth-protected-resource\/app\/[a-z0-9.-]+\/mcp")?$/);
   assert.equal(r.headers['x-usernode-identity'], undefined);
 }
 

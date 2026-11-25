@@ -600,6 +600,11 @@
       "id": "app-access-tokens",
       "sha256": "39066d0ba13af58381875d7fedc7a2a2b83e69cd9b2fef88f02514815500928d",
       "schemaSha256": "1768a54e6eff72f92402ba47edbb1219aa49162d6e3b59789dbbe62ad42c8e38"
+    },
+    {
+      "id": "app-agent-grants",
+      "sha256": "b0f0c5bc2906374a111bb681ab2608c7eba43b3ac283a8daa61d436cbd27dd12",
+      "schemaSha256": "845e68d6f70421fb8b03ddeccfedf52bf2b7695bdc36ca5a5164d2b7724baf62"
     }
   ]
 }

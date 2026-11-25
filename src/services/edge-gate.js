@@ -116,6 +116,12 @@ const { readSessionCookie } = require('./browser-session-cookies');
 // app stays closed to everybody else, and the app itself never meets a
 // caller Homeroom has not vouched for. Any refusal is one bare 401.
 //
+// The same path opens to an assistant its owner approved in a browser
+// (services/app-agent-oauth.js): the 401 on a declared path names the
+// document, on Homeroom's own address, that says where to ask; the member
+// approves on Homeroom; and the assistant's hour-long token (`hrao_…`) is
+// checked here like a personal one.
+//
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
 // identity from the cookie, no guests, the chromeless view for a direct visit
 // to a private app) while keeping everything else.
@@ -162,11 +168,15 @@ const platformJwt = require('./platform-jwt');
 const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
 const accessTokens = require('./app-access-tokens');
+const appAgent = require('./app-agent-oauth');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
 const { appHostIsIsolated } = require('./browser-site-isolation');
 
 const CALLBACK_PATH = '/__usernode_access';
+// Where a client may look for the document naming who gives out tokens for
+// an address (RFC 9728).
+const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
 const STORAGE_SETUP_PATH = '/__usernode_access/storage';
 const STORAGE_COOKIE = '__Host-usernode_embed';
 // Appended when the gate redirects to itself to set a cookie from an iframe
@@ -971,15 +981,46 @@ async function handleAccess(pool, req, res) {
   // on as that member, with the identity a signed-in visit carries. Every
   // refusal is the same bare 401, so a caller learns nothing from it: not
   // whether the app exists as an agent endpoint, nor what was wrong.
-  const agentPath = isProduction && accessTokens.onAgentPath(vis.agentPaths, uriPath(uri));
+  const requestPath = uriPath(uri);
+  const agentPath = isProduction && accessTokens.onAgentPath(vis.agentPaths, requestPath);
+  // The declared path the request is on or under: the address an assistant
+  // was given, and the one an approval is for.
+  const declaredPath = agentPath
+    ? vis.agentPaths.find((p) => requestPath === p || requestPath.startsWith(p + '/'))
+    : null;
+  const metadataUrl = (path) => `https://${USERNODE_DOMAIN}${appAgent.metadataPath(host, path)}`;
+  // On a declared path the 401 also says where an assistant may ask for a
+  // token (RFC 9728): Homeroom, where its owner approves it in a browser
+  // (services/app-agent-oauth.js). The same answer whatever was wrong.
   const refuseAgent = () => {
-    res.set('WWW-Authenticate', 'Bearer');
+    res.set('WWW-Authenticate', declaredPath
+      ? `Bearer resource_metadata="${metadataUrl(declaredPath)}"`
+      : 'Bearer');
     return res.status(401).type('text/plain').send('Unauthorized');
   };
-  const bearer = accessTokens.bearerOf(header(req.headers, 'authorization'));
-  if (bearer) {
+  // A client that looks for that document on the app's own address, as the
+  // rule lets it, is sent to it. The door can pass a request to the app or
+  // answer it, never serve a page here, so the document is Homeroom's.
+  if (isProduction && method === 'GET' && vis.agentPaths?.length
+      && (requestPath === PROTECTED_RESOURCE_PATH || requestPath.startsWith(PROTECTED_RESOURCE_PATH + '/'))) {
+    const suffix = requestPath.slice(PROTECTED_RESOURCE_PATH.length);
+    const named = suffix
+      ? (vis.agentPaths.includes(suffix) ? suffix : null)
+      : (vis.agentPaths.length === 1 ? vis.agentPaths[0] : null);
+    if (named) return redirect(metadataUrl(named));
+  }
+  // Two tokens open a declared path, and the door asks the same of both: a
+  // personal one the member copied from the app (`hrat_…`), and one an
+  // assistant was given when the member approved it on Homeroom (`hrao_…`,
+  // an hour long). Each is looked up in its own table.
+  const header_ = header(req.headers, 'authorization');
+  const personal = accessTokens.bearerOf(header_);
+  const approved = personal ? null : appAgent.bearerOf(header_);
+  if (personal || approved) {
     if (!agentPath || ws) return refuseAgent();
-    const held = await accessTokens.resolve(pool, bearer);
+    const held = personal
+      ? await accessTokens.resolve(pool, personal)
+      : await appAgent.resolveAccess(pool, approved);
     if (!held || held.appId !== vis.appId) return refuseAgent();
     // A member since before the token was made: somebody who left and was
     // let back in does not get an old token back, even if nothing called
@@ -987,7 +1028,9 @@ async function handleAccess(pool, req, res) {
     const member = await accessTokens.heldSinceJoining(pool, held)
       && await appAccess.isViewMember(pool, vis.appId, held.userId);
     if (!member) {
-      await accessTokens.revokeAllFor(pool, { appId: vis.appId, userId: held.userId });
+      const gone = { appId: vis.appId, userId: held.userId };
+      await accessTokens.revokeAllFor(pool, gone);
+      await appAgent.revokeAllFor(pool, gone);
       log.warn('edge-gate', 'Access token refused', { host, reason: 'not_a_member' });
       return refuseAgent();
     }
@@ -997,7 +1040,8 @@ async function handleAccess(pool, req, res) {
     // takes it.
     const identity = await mintIdentity(pool, vis.appId, held.userId, { agent: true, publicApp: !vis.viewPrivate });
     if (!identity) return refuseAgent();
-    accessTokens.touch(pool, held.id);
+    if (personal) accessTokens.touch(pool, held.id);
+    else appAgent.touch(pool, held.id);
     return allow({ identityFor: held.userId, cacheApp: false, agent: true });
   }
 
