@@ -35997,7 +35997,6 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: var(--thread-ffffff); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-opt-look { color: var(--bl-sky); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-bot-answers button:not(.messages-bot-primary, .messages-bot-tint, .messages-bot-done, .messages-bot-on, [aria-pressed="true"]) { box-shadow: var(--bl-raise-edge); }
-html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-request { --thread-ground-look: var(--bl-page); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot[data-thread-foot="failed"] .dev-thread-foot-acts .dev-vote-btn { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts [data-thread-foot-next] :is(button, a) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.messages-bubble, .gc-bubble) { background: var(--bl-page); }
@@ -36179,8 +36178,9 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 /* IN A PANEL TOO (17 Nov 2026): the Workshop's side panel, the column
    beside Homeroom bot's list and the page with the reader open beside it
    drew the same page as one flat sheet, with the timeline a tinted block
-   inside it. They are the same three cards there, on the panel's own
-   ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
+   inside it. They are the same three cards there, lying on whatever is
+   behind the panel as a private thread's do: the sheet paints no ground
+   of its own and no look names one. `#dev-topic-thread`
    is in the scope so the replies' card outranks the thread's own rules. */
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)),
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
@@ -36189,7 +36189,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
   --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
   --thread-card-r: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: transparent; }
 html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail),
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread :is([data-thread-page-post], [data-thread-page-replies]) {
@@ -38715,7 +38715,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   --detail-card: var(--bl-card);
   --detail-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request { --thread-ground-look: var(--bl-page); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])).in-side-panel.side-panel-beside-ai body:has(.dev-thread-card) { background: var(--bl-page) !important; }
 /* Failed tests: the foot's one sun pill is what moves it on (Fix it, or the
    re-run), and Vote steps back to a white pill beside See what failed. */
