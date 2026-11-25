@@ -79,7 +79,7 @@ const RULES = Object.freeze({
       // on a request a person holds, a reply turn's "on it", what a "tell me
       // when" owed, a newer plan someone posted taken up, the voice's
       // pointer from another request.
-      answer: Object.freeze(['reply', 'going_ahead', 'held_by_person', 'followup_working', 'followup_told', 'newer_plan',
+      answer: Object.freeze(['reply', 'going_ahead', 'held_by_person', 'followup_working', 'followup_ended', 'followup_told', 'newer_plan',
         'overlap_link']),
       // Homeroom's line naming what a person did there.
       line: Object.freeze(['close_proposed', 'moved', 'copied']),

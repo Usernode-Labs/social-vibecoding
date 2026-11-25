@@ -6101,6 +6101,20 @@ async function runFollowUp(pool, config, {
     }
     if (!refund) await requeueAsks();
   };
+  // Request #7146: "Homeroom bot is working on it…" never stands alone. These
+  // say whether this turn posted that line (onStart) and whether anything
+  // was said after it (a reply, a failure note, a wait), so a turn that ends
+  // without an answer says how it ended.
+  let workingPosted = false;
+  let answered = false;
+  const settleWorking = async ({ why = null, runId = null } = {}) => {
+    if (!workingPosted || answered || !deps.ws) return false;
+    answered = true;
+    return postThreadNote({
+      pool, ws: deps.ws, app, issueNumber, runId, kind: 'followup_ended',
+      text: followup.workingEndedText(why), bot, sessionId: noteSessionId,
+    });
+  };
   const fail = async (error, extra = {}, opts = {}) => {
     const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
@@ -6123,13 +6137,17 @@ async function runFollowUp(pool, config, {
       await asksFailed(error, {
         refund: (!!opts.infra && !capped) || REFUSAL_ERRORS.has(error) || out?.reason === 'credit', why,
       });
-      if (!others.length) return out;
+      if (!others.length) {
+        await settleWorking({ why: opts.infra && !capped ? 'platform' : null, runId: out?.runId || null });
+        return out;
+      }
     }
     // #4610: a reply turn that failed used to post nothing, so the person
     // who wrote heard nothing at all. A wait (a refusal) is said where it
     // happens, and a platform fault is retried on its own row: neither is
     // this. One plain line, and whether it tries again on its own.
     if ((!opts.infra || capped) && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
+      answered = true;
       await postThreadNote({
         pool, ws: deps.ws, app, issueNumber, runId: out.runId || null, kind: 'followup_failed', bot, sessionId: noteSessionId,
         text: followup.replyFailedText({
@@ -6137,6 +6155,9 @@ async function runFollowUp(pool, config, {
         }),
       });
     }
+    // Nothing was said after the working line: say how it ended instead of
+    // leaving that line alone (request #7146).
+    await settleWorking({ why: opts.infra && !capped ? 'platform' : null, runId: out?.runId || null });
     return out;
   };
 
@@ -6394,10 +6415,14 @@ async function runFollowUp(pool, config, {
     steps: look.steps, owner: look.owner, key: 'reply',
     // #4610: once the turn is really going ahead, the person hears so. An
     // ask was told so by the voice when it was queued.
-    onStart: deps.ws && !asks.length ? () => postThreadNote({
-      pool, ws: deps.ws, app, issueNumber, kind: 'followup_working', text: followup.workingText(), bot,
-      sessionId: noteSessionId,
-    }) : null,
+    onStart: deps.ws && !asks.length ? async () => {
+      const said = await postThreadNote({
+        pool, ws: deps.ws, app, issueNumber, kind: 'followup_working', text: followup.workingText(), bot,
+        sessionId: noteSessionId,
+      });
+      if (said) workingPosted = true;
+      return said;
+    } : null,
   });
   // #4610: and when it has to wait for another turn on the change, why.
   if (turn.routed?.error === 'session_busy' && deps.ws && !asks.length) {
@@ -6465,6 +6490,8 @@ async function runFollowUp(pool, config, {
   let runId = null;
   let targets;
   const say = async (kind, text, postedAt, extra = {}) => {
+    // A line after the working line: it no longer stands alone (#7146).
+    answered = true;
     // The people on the issue and the proposal, as a verdict's posts tag them.
     if (targets === undefined) {
       targets = await live.mentionTargets({
@@ -6535,6 +6562,7 @@ async function runFollowUp(pool, config, {
       proposalSessionId: session.id,
     }).catch(() => {});
     await requeueChecks();
+    await settleWorking({ runId });
     return { ran: true, verdict: 'failed', runId };
   }
 

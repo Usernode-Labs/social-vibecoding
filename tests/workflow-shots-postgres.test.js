@@ -1122,4 +1122,111 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     await settle();
     assert.deepEqual((await row(s)).shots_detail.previous, { runId: run.id, headSha: SHA('a') });
   });
+  // Request #7146: a declaration covers the whole change against main, never
+  // one turn's commit. A later build turn that changes nothing a person sees
+  // declares "none", and that "none" is held over the standing declaration.
+  const declareGuarded = (s, intent, head = null) => send(s, 'Declared', { intent, head, guard: true }, route);
+  const laterHead = async (s, head) => {
+    await asTransition((c) => c.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, head]));
+    await send(s, 'HeadMoved', { head });
+    await settle();
+  };
+  const eventReply = async (id) => (await pool.query('SELECT reply FROM wf_events WHERE id = $1', [id])).rows[0].reply;
+
+  await t.test('S36 a later turn\'s "none" is held over a standing ui or motion declaration', async () => {
+    for (const impact of ['ui', 'motion']) {
+      defaults();
+      const s = await proposal();
+      await declare(s, INTENT(impact));
+      await settle();
+      let r = await row(s);
+      assert.equal(r.shots_detail.intent.impact, impact);
+      assert.equal(r.shots_detail.declaredOnHead, SHA('a'), 'the turn head the declaration was made on');
+      await laterHead(s, SHA('b'));
+      const kept = await declareGuarded(s, INTENT('none'));
+      await settle();
+      const reply = await eventReply(kept);
+      assert.equal(reply.kept, true, `${impact}: the declaration was kept`);
+      assert.match(reply.reason, /already declares what a person sees/);
+      assert.match(reply.reason, /whole change against main/);
+      r = await row(s);
+      assert.equal(r.shots_detail.intent.impact, impact, `${impact}: the standing declaration stands`);
+      assert.equal(r.shots_detail.claims.length, 1);
+      assert.equal(r.shots_detail.declaredOnHead, SHA('a'), 'nor does the turn it came from move');
+      assert.equal((await instance(s)).state, 'waiting_for_preview', 'and it still waits for the new head to be shot');
+      assert.equal((await runs(s)).length, 0);
+    }
+  });
+
+  await t.test('S37 a "none" that says the visible part is gone replaces it, and so does a redeclare', async () => {
+    defaults();
+    const s = await proposal();
+    await declare(s, INTENT('ui'));
+    await settle();
+    await laterHead(s, SHA('b'));
+    const removed = INTENT('none');
+    removed.rationale = 'Visible part removed: the feature is gone.';
+    const out = await declareGuarded(s, removed);
+    await settle();
+    assert.notEqual((await eventReply(out)).kept, true, 'a turn that removes the visible part may replace it');
+    assert.equal((await row(s)).shots_detail.impact, 'none');
+    assert.equal((await instance(s)).state, 'not_needed');
+
+    // A redeclare round declares what people see, so it is never held.
+    defaults();
+    const again = await proposal();
+    await declare(again, INTENT('ui', 'The card shows the old badge'));
+    await settle();
+    await laterHead(again, SHA('b'));
+    await declareGuarded(again, INTENT('ui', 'The card shows the new badge'));
+    await settle();
+    const r = await row(again);
+    assert.equal(r.shots_detail.claims[0].claim, 'The card shows the new badge');
+    assert.equal(r.shots_detail.declaredOnHead, SHA('b'), 'declared on this turn\'s head');
+  });
+
+  await t.test('S38 two declarations on the same turn head replace each other; an unguarded "none" still replaces', async () => {
+    defaults();
+    const s = await proposal();
+    await declareGuarded(s, INTENT('ui'));
+    await settle();
+    const second = INTENT('none');
+    second.rationale = 'Still server only.';
+    const secondId = await declareGuarded(s, second);
+    await settle();
+    assert.notEqual((await eventReply(secondId)).kept, true);
+    assert.equal((await row(s)).shots_detail.impact, 'none', 'the first build turn may correct itself');
+
+    // The platform's own "cannot be shown on a copy" record is never held.
+    defaults();
+    const other = await proposal();
+    await declare(other, INTENT('ui'));
+    await settle();
+    await laterHead(other, SHA('b'));
+    await declare(other, INTENT('none'));
+    await settle();
+    assert.equal((await row(other)).shots_detail.impact, 'none');
+  });
+
+  await t.test('S39 after a kept "none", the standing declaration is shot on the new head', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    await declare(s, INTENT('ui'));
+    await settle();
+    assert.equal((await instance(s)).state, 'published');
+    await laterHead(s, SHA('b'));
+    await declareGuarded(s, INTENT('none'));
+    await settle();
+    assert.equal((await row(s)).shots_detail.intent.impact, 'ui');
+    // The new version's preview is ready: its shots are the standing change's.
+    await asTransition((c) => c.query('UPDATE chat_sessions SET staging_commit_sha = $2, staging_url = $3 WHERE id = $1',
+      [s.id, SHA('b'), 'https://preview.test']));
+    await send(s, 'HeadReady', { head: SHA('b') }, fromPreview);
+    await settle();
+    const all = await runs(s);
+    assert.equal(all.length, 2, 'the kept declaration is shot again on the new version');
+    assert.equal(all.at(-1).head_sha, SHA('b'));
+    assert.equal(all.at(-1).intent.impact, 'ui');
+    assert.equal((await instance(s)).state, 'published');
+  });
 });

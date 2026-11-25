@@ -1365,3 +1365,23 @@ test('a skip no seed can fix is not a reason to look again', async (t) => {
   assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
   assert.equal(h.calls.exec.length, 0);
 });
+
+// Request #7146: a declaration covers the whole change against main, never
+// this turn's commit, so a checks fix that changes nothing a person sees
+// leaves the declared changes and their diagram alone.
+test('#7146: a code fix round is told the declaration covers the whole change; a shots round is not', () => {
+  const { failing, total } = followup.failingChecks(results());
+  const fix = followup.checksFixPrompt({ seed: 'SEED', failing, total });
+  assert.match(fix, /declared visible changes and diagram describe the whole change against main, never one turn's commit/);
+  assert.match(fix, /call neither declare_visible_changes nor declare_diagram/);
+  assert.match(fix, /Visible part removed:/);
+
+  // A round that is only the shots (a redeclare of an existing screen) has
+  // its own instructions and no need of this one.
+  const redeclare = followup.checksFixPrompt({
+    seed: 'SEED',
+    skipped: [{ claim: 'The invite sheet', baseState: 'present', reason: 'The after copy has no "[Mock] Invite" row' }],
+  });
+  assert.match(redeclare, /- "redeclare": call declare_visible_changes again with the same changes/);
+  assert.doesNotMatch(redeclare, /whole change against main/);
+});
