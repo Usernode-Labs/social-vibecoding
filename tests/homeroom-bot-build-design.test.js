@@ -308,9 +308,9 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
     // A state new in the change is seeded in it: the after copy is the side
     // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
-    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches the after copy, which is the side a new state needs\./);
+    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches both copies when main's schema can hold it, and a seed that needs a table or column main lacks reaches the after copy only\./);
     assert.match(declare.replace(/\n/g, ' '), /fake people, never a signal your code reads to decide something, and a reply as the stored message, never asked for\./);
-    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed needs it on both copies, which a seed in this change cannot give/);
+    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed can be seeded in its own change too when main's schema can hold it; otherwise make it with hints\.setup steps\./);
     // What the copies cannot do at all, from the one shared list, and the
     // two ways out (18 Nov 2026: 31% of the platform's own shots runs failed,
     // most on one of these).

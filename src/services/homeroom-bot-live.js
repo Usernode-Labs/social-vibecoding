@@ -3096,11 +3096,11 @@ function buildVisibleChangesLines(locale = null) {
   'for something and wait for its reply. Start from a state that already holds the reply: a ready-made state the',
   'tool\'s answer lists, or a message the app\'s staging seed writes.',
   'When a fresh staging copy lacks the state a change shows, add an idempotent, obviously fake staging seed for it in',
-  'this same change: it reaches the after copy, which is the side a new state needs. Seed rows for the shots\' own',
+  'this same change: it reaches both copies when main\'s schema can hold it, and a seed that needs a table or column',
+  'main lacks reaches the after copy only. Seed rows for the shots\' own',
   'accounts (usernode-capture is the member) and fake people, never a signal your code reads to decide something,',
-  'and a reply as the stored message, never asked for. A change to a state that already existed needs it on both',
-  'copies, which a seed in this change cannot give: make it with hints.setup steps, or say in your summary that its',
-  'seed must merge first, in its own change.',
+  'and a reply as the stored message, never asked for. A change to a state that already existed can be seeded in its',
+  'own change too when main\'s schema can hold it; otherwise make it with hints.setup steps.',
   ...copyLimitsLines(),
   ];
 }

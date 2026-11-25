@@ -132,14 +132,12 @@ test('seedStagingTopochain is a strict no-op outside staging (gate is the first 
     'the staging gate must be the very first statement in the function body');
 });
 
-test('migrate() calls seedStagingTopochain(pool, config) inside the staging seed run', () => {
-  assert.match(src, /await seedStagingTopochain\(pool, config\);/);
-  // It must be called alongside the other seedStaging* calls, before the
-  // backfills/sweeps that follow in migrate().
-  const migrateStart = src.indexOf('async function migrate(config)');
-  const migrateBody = src.slice(migrateStart, src.indexOf('\n}', migrateStart));
-  assert.match(migrateBody, /await seedStagingTopochain\(pool, config\);/,
-    'the call must live inside migrate(), not just exist somewhere in the file');
+test('the staging seed list calls seedStagingTopochain(pool, config) in its run', () => {
+  // #7139 moved the boot's seed calls into STAGING_SEEDS so the before & after
+  // shots runner can run them against the pair's other copy.
+  assert.match(src, /stagingSeed\('seedStagingTopochain', \(pool, config\) => seedStagingTopochain\(pool, config\)\)/);
+  assert.match(src, /await runStagingSeeds\(pool, config, \{ onPhase: finishPhase \}\);/,
+    'migrate() runs the list in the same place the seeds ran');
 });
 
 test('best-effort: the whole seed body is wrapped in try/catch with log.warn on failure', () => {
@@ -922,6 +920,6 @@ test('the First challenges seed: staging only, idempotent, four ONBOARDING rows 
   [[900720, 900508, 1], [900721, 900509, 2], [900722, 900510, 3], [900723, 900511, 4]],
   'fixed ids clear of the viewer window, in the list\'s order');
   // And it runs after the fixture it hangs off.
-  const boot = src.indexOf('await seedStagingTopochain(pool, config);');
-  assert.ok(boot > 0 && src.indexOf('await seedStagingFirstChallenges(pool);', boot) > boot);
+  const boot = src.indexOf("stagingSeed('seedStagingTopochain'");
+  assert.ok(boot > 0 && src.indexOf("stagingSeed('seedStagingFirstChallenges'", boot) > boot);
 });
