@@ -5429,6 +5429,16 @@ const AppView = {
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
       AppView._clearTopicHeadBody();
+      // 24 Nov 2026: a live draft that has not been proposed is no change.
+      // Its old change address opens the thread its draft bar is in, in
+      // place (no Back entry), and no change page is drawn.
+      const draftHome = await AppView._draftHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (draftHome) {
+        AppView._devTopic = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
@@ -5808,7 +5818,16 @@ const AppView = {
   // lives on, or null when it keeps its own page (routes/threads.js, the
   // change's home). Asked once per change and app; a read that fails or
   // takes too long is "its own page", so the page still opens.
+  //
+  // 24 Nov 2026: the same read also says whether the session is a live app
+  // draft that has not been proposed. Such a session is no change at all: it
+  // has no page, and its old address opens the thread its draft bar is in
+  // (`_draftHomeOf`).
   _changeHomes: new Map(),
+  // The same read's other answer (24 Nov 2026): the thread an unproposed
+  // live draft's old change address opens, or null. Both maps are filled by
+  // the one fetch below, so asking either costs no second read.
+  _draftHomes: new Map(),
   CHANGE_HOME_WAIT_MS: 4000,
   async _requestHomeOf(id) {
     const slug = App.currentApp || AppView.appData?.slug;
@@ -5819,8 +5838,12 @@ const AppView = {
       const read = fetch(`/api/apps/${encodeURIComponent(slug)}/threads/change/${n}${AppView._demoQS()}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
+          if (!data) { AppView._draftHomes.delete(key); return null; }
           const home = Number(data && data.request);
-          return Number.isInteger(home) && home > 0 ? home : null;
+          const request = Number.isInteger(home) && home > 0 ? home : null;
+          const draft = Number(data && data.draft && data.draft.threadRootId);
+          AppView._draftHomes.set(key, Number.isInteger(draft) && draft > 0 ? draft : null);
+          return request;
         })
         .catch(() => null);
       AppView._changeHomes.set(key, read);
@@ -5834,6 +5857,31 @@ const AppView = {
     } finally {
       clearTimeout(timer);
     }
+  },
+  // The thread an unproposed live draft's old change address opens, or null.
+  // Shares `_requestHomeOf`'s one cached read (above).
+  async _draftHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._draftHomes.has(key)) await AppView._requestHomeOf(id);
+    const draft = Number(AppView._draftHomes.get(key));
+    return Number.isInteger(draft) && draft > 0 ? draft : null;
+  },
+
+  // 24 Nov 2026: a live draft that has not been proposed has no change page.
+  // Its old address opens the thread its draft bar is in, in place of the
+  // change address (no Back entry), as a change's request home does.
+  _openDraftThread(threadRootId) {
+    const root = Number(threadRootId);
+    if (!Number.isInteger(root) || root <= 0) return false;
+    try {
+      history.replaceState(null, '', `#homeroom-bot/thread/${root}`);
+    } catch (err) { /* opaque origin: the page still opens below */ }
+    if (typeof App !== 'undefined' && App.navigateToAi) App.navigateToAi();
+    window.UsernodeReact?.ai?.openAt?.({ threadRootId: root, focusMessageId: null });
+    return true;
   },
 
   // 6 Nov 2026 (#6439): a vote to close a request is decided on the
@@ -10505,6 +10553,15 @@ const AppView = {
     if (kind === 'proposal' || kind === 'session') {
       const asked = { kind, id };
       AppView._devTopicAsked = asked;
+      // 24 Nov 2026: an unproposed live draft has no change page: its
+      // address opens its thread, as `_renderTopicSubView` does.
+      const draftHome = await AppView._draftHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      if (draftHome) {
+        AppView._devTopicAsked = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(id);
       if (AppView._devTopicAsked !== asked) return;
       AppView._devTopicAsked = null;

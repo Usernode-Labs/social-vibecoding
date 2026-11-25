@@ -57,6 +57,29 @@ test('describe says the proposal and how many changes are not in it yet', () => 
   assert.equal(liveDrafts.describe({ ...proposed, root_message_id: 9, proposal_status: 'merged' }).proposal.open, false);
 });
 
+// 24 Nov 2026: a draft that has not been proposed is not a change, so it has
+// no number of its own even when its working session was numbered before
+// this shipped.
+test('describe gives an unproposed draft no number of its own', () => {
+  const openWith = (extra = {}) => liveDrafts.describe({
+    ...open, root_message_id: 9, session_id: 5, state: 'open', pr_number: 145, ...extra,
+  });
+  assert.equal(openWith().prNumber, null, 'an old numbered draft is not a change any more');
+  assert.equal(openWith({ pr_number: null }).prNumber, null);
+  // A draft on someone else's proposal names that proposal, never its own row.
+  const onTheirs = liveDrafts.describe({
+    ...open, root_message_id: 9, session_id: 5, state: 'open', pr_number: 145,
+    built_on_session_id: 60, built_on_status: 'promoted', built_on_pr_number: 320, built_on_branch: 'dev/sam-320',
+  });
+  assert.equal(onTheirs.prNumber, null);
+  assert.equal(onTheirs.builtOn.prNumber, 320);
+});
+
+test('draftSessionSql names the table predicate every list adds, for its own alias', () => {
+  assert.equal(liveDrafts.draftSessionSql(), 'EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = cs.id)');
+  assert.match(liveDrafts.draftSessionSql('c'), /ld\.session_id = c\.id/);
+});
+
 // ── 20 Nov 2026 (live-draft review, C): Propose and Update proposal as a card ──
 //
 // The bot offers the tap under its reply (offer_propose_draft); only the tap

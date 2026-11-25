@@ -287,6 +287,37 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
   const theDraft = async () => liveDrafts.describe(await liveDrafts.byId(pool,
     (await pool.query("SELECT id FROM live_drafts WHERE user_id = $1 AND state = 'open' ORDER BY id LIMIT 1", [person.id])).rows[0].id));
 
+  // 24 Nov 2026: a draft that has not been proposed is not a change. Its
+  // working session is kept off every change path, and its old change address
+  // leads back to its thread, for its author only.
+  await t.test('an unproposed draft is not a change: no number, off the list, its address goes to its thread', async () => {
+    const draft = await theDraft();
+    assert.equal(await liveDrafts.isDraftSession(pool, draft.sessionId), true);
+    assert.equal(await liveDrafts.isDraftSession(pool, 999999), false);
+    assert.equal(await liveDrafts.isDraftSession({ query: async () => { throw new Error('down'); } }, draft.sessionId), false,
+      'a failed read answers false, so nothing breaks');
+    assert.equal(await liveDrafts.isDraftSession(pool, null), false);
+    // An old draft that carries a number still has none of its own to show.
+    await pool.query('UPDATE chat_sessions SET pr_number = 145 WHERE id = $1', [draft.sessionId]);
+    assert.equal(liveDrafts.describe(await liveDrafts.byId(pool, draft.id)).prNumber, null);
+    // Its old change address opens its thread, and only for its author.
+    assert.deepEqual(await liveDrafts.draftHomeOf(pool, { appId: project.id, sessionId: draft.sessionId, viewerId: person.id }),
+      { threadRootId: draft.rootId });
+    const stranger = await user();
+    assert.equal(await liveDrafts.draftHomeOf(pool, { appId: project.id, sessionId: draft.sessionId, viewerId: stranger.id }), null);
+    assert.equal(await liveDrafts.draftHomeOf(pool, { appId: project.id, sessionId: draft.sessionId, viewerId: null }), null);
+    assert.equal(await liveDrafts.draftHomeOf(pool, { appId: project.id + 1, sessionId: draft.sessionId, viewerId: person.id }), null,
+      'another project has no such draft');
+    // It is not in the viewer's own list, nor in the Workshop's Your work
+    // and counts, which read the same predicate.
+    const workshop = require('../src/routes/workshop-overview');
+    const mine = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM chat_sessions cs WHERE ${workshop.MY_SESSIONS_WHERE}`, [person.id]);
+    assert.equal(mine.rows[0].n, 0, 'the draft is not one of the viewer\'s changes');
+    await pool.query('UPDATE chat_sessions SET pr_number = NULL WHERE id = $1', [draft.sessionId]);
+  });
+
+
   await t.test('a draft\'s preview starts the supervisor with the draft\'s secret; any other preview as before', async () => {
     const draft = await theDraft();
     // runtimeFor reads the platform's own pool (db/pool.js): point it at this database.

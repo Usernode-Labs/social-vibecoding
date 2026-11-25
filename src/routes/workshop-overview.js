@@ -85,6 +85,7 @@ const { threadsInSql } = require('../services/ai-work');
 const { updateComingSql } = require('../services/homeroom-bot-progress');
 const { awaitingYesSql } = require('../services/vote-ready');
 const communities = require('../services/communities');
+const { draftSessionSql } = require('../services/live-drafts');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
 
@@ -136,7 +137,9 @@ const DEMO_COUNTS = {
 // below refuse one outright rather than relying on the SQL to degrade.
 const MY_SESSIONS_WHERE = `cs.user_id = $1
        AND cs.status IN ('active', 'paused')
-       AND cs.is_headless = FALSE`;
+       AND cs.is_headless = FALSE
+       -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+       AND NOT ${draftSessionSql('cs')}`;
 
 // #4538: a change Homeroom bot built from a request made for the viewer is
 // that viewer's work in flight too, even though `cs.user_id` is the bot's —

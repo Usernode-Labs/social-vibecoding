@@ -603,7 +603,16 @@ test('D2: a change built for a request lands on the request\'s page, at it; one 
   assert.match(open, /return AppView\.openTopic\('issue', Number\(number\), options\.replaceRoute \? \{ replaceRoute: true \} : undefined\);/);
   assert.match(view, /if \(options && options\.replaceRoute\) return App\.switchTab\('dev', ref, 'topic', \{ replaceRoute: true \}\);/,
     'in place of the change\'s address, so Back does not bounce');
-  const panel = view.slice(view.indexOf('  async openTopicInPanel(kind, id) {'), view.indexOf('  async openTopicInPanel(kind, id) {') + 900);
+  // 24 Nov 2026: an unproposed live draft is no change. Its old address is
+  // replaced in place with its thread, and read BEFORE the request home.
+  assert.match(sub, /const draftHome = await AppView\._draftHomeOf\(ref\.id\);[\s\S]{0,200}?AppView\._openDraftThread\(draftHome\);/);
+  assert.ok(sub.indexOf('_draftHomeOf') > -1 && sub.indexOf('_draftHomeOf') < sub.indexOf('_requestHomeOf'),
+    'the draft home is read first');
+  assert.match(view, /history\.replaceState\(null, '', `#homeroom-bot\/thread\/\$\{root\}`\)/);
+  const panel = view.slice(view.indexOf('  async openTopicInPanel(kind, id) {'), view.indexOf('  async openTopicInPanel(kind, id) {') + 1400);
+  // 24 Nov 2026: an unproposed live draft's address opens its thread instead.
+  assert.match(panel, /const draftHome = await AppView\._draftHomeOf\(id\);/);
+  assert.match(panel, /if \(draftHome\) \{[\s\S]{0,120}?AppView\._openDraftThread\(draftHome\);/);
   assert.match(panel, /if \(home\) return AppView\._openChangeOnRequest\(home, id, \{ panel: true \}\);/, 'the Workshop\'s side panel too');
   const changes = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(changes, /if \(!card \|\| !takeVotesInView\(id\)\) return;/, 'the change\'s section takes the ask');
