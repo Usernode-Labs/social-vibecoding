@@ -22,6 +22,7 @@ const log = require('../services/logger');
 const usernames = require('../services/usernames');
 const socialIdentity = require('../services/social-identity');
 const friends = require('../services/friends');
+const { avatarUrlFor } = require('../services/avatar-url');
 const { optionalSessionAuth } = require('../middleware/topochain-auth');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -67,7 +68,7 @@ function publicShape(row, verifiedLinks = {}) {
     username: row.username,
     displayName: row.display_name || null,
     bio: row.bio || null,
-    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row.avatar_id, row.id),
     links: {
       github: verifiedLinks.github ?? null,
       x: verifiedLinks.x ?? null,

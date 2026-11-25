@@ -150,17 +150,14 @@ test('Profile opens on who you are, across the page', () => {
     assert.ok(view.includes(hook), `the card carries ${hook}`);
     assert.ok(b.includes(`.${hook}`) || hook === 'profile-id-sub', `and the block reads ${hook}`);
   }
-  // #7109: the brand pair is clipped to the editorial square by the same
-  // avatar class and its own overflow, so it never spills past the radius.
-  assert.match(view, /profile-id-avatar profile-id-pair[^"`]*overflow-hidden/, 'the pair stays inside the square');
-  // …and each portrait fills its half of that square, so the pair fills it at
-  // --ed-face-phone / --ed-face rather than sitting letterboxed inside it.
-  const pairHalves = view.match(/<img\s+src="\/brand\/groups\/avatar-[mf]3\.webp"[^>]*>/g) || [];
-  assert.equal(pairHalves.length, 2, 'both brand portraits are drawn');
-  for (const img of pairHalves) {
-    assert.match(img, /className="w-1\/2 h-full object-cover"/, 'each portrait takes half the square, cropped to it');
-    assert.match(img, /alt=""/, 'the pair is decoration, as the initial was');
-  }
+  // #7135: the picture is the uploaded photo or the account's generated one,
+  // clipped to the editorial square by the same avatar class and its own
+  // overflow, so it never spills past the radius.
+  assert.match(view, /profile-id-avatar[^"`]*rounded-full[^"`]*object-cover/,
+    'a real picture keeps the round frame and its crop');
+  assert.match(view, /profile-id-avatar[^"`]*overflow-hidden/,
+    'the empty frame still clips itself to the radius');
+  assert.doesNotMatch(view, /\/brand\/groups\/avatar-/, 'the two-person drawing no longer stands in for a photo');
   assert.match(b, /#profile-identity-card #profile-edit-btn \{[^}]*background: var\(--wip-btn-1-bg\);/, 'Edit profile is the main action');
 });
 
@@ -228,4 +225,16 @@ test('recent activity links real changes and leaves out unknown times', () => {
   assert.match(html, /A &lt;change&gt;/);
   assert.doesNotMatch(html, /<time/);
   assert.equal(renderToHtml(createElement(ProfileRecentActivity, { changes: [] })), '');
+  // #7134: the Activity tab asks for up to five; the overview keeps three.
+  const many = Array.from({ length: 6 }, (_, i) => ({
+    sessionId: i + 1, title: `Change ${i + 1}`, appSlug: 'garden', appName: 'Garden', mergedAt: null,
+  }));
+  assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many })).match(/<li>/g) || []).length, 3);
+  assert.equal((renderToHtml(createElement(ProfileRecentActivity, { changes: many, limit: 5 })).match(/<li>/g) || []).length, 5);
+  // #7134 review: the Activity tab keeps its heading and says so in the card
+  // when there is nothing to list; the overview still renders nothing.
+  const none = renderToHtml(createElement(ProfileRecentActivity, { changes: [], empty: true }));
+  assert.match(none, /id="profile-recent-activity"/);
+  assert.match(none, /profile:recent\.title/);
+  assert.match(none, /<ul><li class="profile-recent-empty">messages:ai\.history\.empty<\/li><\/ul>/);
 });

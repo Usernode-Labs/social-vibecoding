@@ -11131,7 +11131,7 @@ html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) 
   html:not([data-skin]) #profile-root #profile-identity-card { grid-column: 1 / -1; grid-row: 1; }
   html:not([data-skin]) #profile-root #profile-stats { grid-column: 1 / -1; grid-row: 2; }
   html:not([data-skin]) #profile-root #profile-activity { grid-column: 2; grid-row: 4; }
-  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3; }
+  html:not([data-skin]) #profile-root > div > #profile-main { grid-column: 2; grid-row: 3; }
   html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 3 / span 2; }
 }
 /* The reference's identity sits ON the landscape, rather than below an
@@ -11480,18 +11480,26 @@ html:not([data-skin]) #settings-section-content :is(#settings-username-section, 
 }
 html:not([data-skin]) #profile-root #profile-recent-activity { margin: 1.5rem 0; padding-top: 1.25rem; border-top: 1px solid var(--ed-rule); }
 html:not([data-skin]) #profile-recent-activity .profile-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
-html:not([data-skin]) #profile-recent-activity h2 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.035em; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) h2 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.035em; }
 html:not([data-skin]) #profile-recent-activity .profile-recent-heading > a { color: var(--accent); font-size: 0.8125rem; }
-html:not([data-skin]) #profile-recent-activity ul { list-style: none; padding: 0 1rem; margin: 0; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
-html:not([data-skin]) #profile-recent-activity li > a { display: flex; align-items: center; gap: 0.75rem; min-height: 3rem; padding: 0.5rem 0; }
-html:not([data-skin]) #profile-recent-activity li + li { border-top: 1px solid var(--ed-rule); }
-html:not([data-skin]) #profile-recent-activity .profile-recent-icon { display: flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: none; border-radius: 0.5rem; background: var(--ed-lit-bg); }
-html:not([data-skin]) #profile-recent-activity .profile-recent-icon svg { width: 1.25rem; height: 1.25rem; }
-html:not([data-skin]) #profile-recent-activity .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
-html:not([data-skin]) #profile-recent-activity .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) ul { list-style: none; padding: 0 1rem; margin: 0; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) li > :is(a, span) { display: flex; align-items: center; gap: 0.75rem; min-height: 3rem; padding: 0.5rem 0; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) li + li { border-top: 1px solid var(--ed-rule); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-icon { display: flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: none; border-radius: 0.5rem; background: var(--ed-lit-bg); }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-icon svg { width: 1.25rem; height: 1.25rem; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
+html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
 html:not([data-skin]) #profile-recent-activity time { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-empty { min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.875rem; }
+html:not([data-skin]) #profile-history { margin: 0 0 1.5rem; }
+html:not([data-skin]) #profile-history h2 { margin: 0 0 0.75rem; }
+html:not([data-skin]) #profile-history .profile-history-end { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+html:not([data-skin]) #profile-history .profile-history-state { display: flex; align-items: center; gap: 0.5rem; min-height: 3rem; padding: 0.5rem 0; color: var(--ed-muted); font-size: 0.9375rem; }
+html:not([data-skin]) #profile-history .profile-history-more { color: var(--ed-muted); font-size: 0.9375rem; margin: 0.75rem 0 0; }
+html:not([data-skin]) #profile-history .profile-history-more button,
+html:not([data-skin]) #profile-history .profile-history-again { color: var(--accent); font-size: 0.8125rem; background: none; border: 0; padding: 0; cursor: pointer; }
 @media (max-width: 639.98px) {
-  html:not([data-skin]) #profile-recent-activity .profile-recent-copy > span { display: block; }
+  html:not([data-skin]) :is(#profile-recent-activity, #profile-history) .profile-recent-copy > span { display: block; }
 }
 /* Align the desktop pages to the original 1536px references. The sky is
    the full content pane's backdrop, with the paper cards flowing over it. */
