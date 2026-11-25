@@ -78,6 +78,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-bot-laid-out-reply-v1', 'your chat with Homeroom bot, ending in a laid-out reply with a heading, list and table',
     ['member']],
+  ['shots-demo-member-bot-live-draft-v1', 'your thread with Homeroom bot holding a live draft up for a vote, in the column',
+    ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
   ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
