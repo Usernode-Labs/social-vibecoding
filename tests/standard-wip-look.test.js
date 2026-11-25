@@ -241,6 +241,35 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
+test('the pin on the lit row is drawn in the row\'s dark ink, not the panel\'s white', () => {
+  const all = rules(menuBlock());
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-on-pin-hover:/.test(r.body));
+  assert.ok(tokens, 'the menu declares the pin\'s hover ground');
+  assert.match(tokens.body,
+    /--wip-nav-on-pin-hover:\s*color-mix\(in srgb, var\(--wip-nav-on-ink\) 12%, transparent\);/,
+    'a tint of the lit row\'s own ink');
+
+  // The pin is the lit link's sibling, not its child, so it needs a rule of its own.
+  const ROW = '.platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin';
+  const pinRules = all.filter((r) => r.selector.includes(ROW));
+  assert.ok(pinRules.length >= 1, 'the lit row\'s pin has a rule of its own');
+  const base = pinRules.find((r) => /--lit-tint:/.test(r.body));
+  assert.ok(base, 'the rule that sets the pin\'s tokens');
+  assert.match(base.selector, /^html:not\(\[data-skin\]\) #platform-tabs /);
+  assert.match(base.body, /color:\s*var\(--wip-nav-on-ink\);/, 'its glyph is the row\'s ink');
+  assert.match(base.body, /--lit-ink:\s*var\(--wip-nav-on-ink\);/, 'hover and pressed take that ink');
+  assert.match(base.body, /--lit-tint:\s*var\(--wip-nav-on-pin-hover\);/, 'its ground is the ink\'s tint');
+  assert.match(base.body, /--accent:\s*var\(--wip-nav-on-ink\);/, 'and its focus ring');
+  assert.ok(pinRules.some((r) => r.selector.endsWith(':is(:hover, [aria-pressed="true"], :focus-visible)') && /color:\s*var\(--wip-nav-on-ink\);/.test(r.body)),
+    'the hovered, pressed and focused pin is that ink too');
+  // No white ink is left on the sun row.
+  for (const r of pinRules) {
+    assert.doesNotMatch(r.body, /--wip-nav-ink\b|--wip-nav-ink-strong|--wip-nav-hover\b/,
+      `${r.selector} still reads the panel's white`);
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own`);
+  }
+});
+
 test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s, on every page (20 Nov 2026)', () => {
   const all = rules(menuBlock());
   const line = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header::after`);

@@ -111,6 +111,42 @@ test('a draft\'s preview opens look-only and waits for a start, so it never land
     'the reload frame\'s open (draftPreviewStep \'open\') goes the same way');
 });
 
+test('a draft\'s header opens the change it names (request 7119)', () => {
+  const { draftChangeHref } = loadTsx(BAR);
+  assert.equal(draftChangeHref(draft()), '#app/gym/dev/proposals/5', 'the draft\'s own change');
+  assert.equal(draftChangeHref(draft({
+    state: 'proposed', editable: true,
+    proposal: { sessionId: 8, prNumber: 142, open: true, pending: 1, headSha: null },
+    builtOn: { sessionId: 7, prNumber: 141, open: true, merged: false, linked: false },
+  })), '#app/gym/dev/proposals/5', 'never the proposal it was started on or is up for a vote with');
+  assert.equal(draftChangeHref(draft({ sessionId: null })), null);
+  assert.equal(draftChangeHref(draft({ app: { slug: '', name: 'Gym Tracker' } })), null);
+  assert.equal(draftChangeHref(null), null);
+
+  const acts = { busy: null, error: null, act: async () => {}, discard: async () => {}, discardItem: null };
+  const header = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts });
+  assert.match(header, /data-live-draft-change=""/);
+  assert.equal(message('messages:liveDraft.openChange'), 'Open change');
+  assert.match(header, new RegExp(message('messages:liveDraft.openChange')));
+  assert.match(header, /data-live-draft-propose=""/);
+  assert.ok(header.indexOf('data-live-draft-change') < header.indexOf('data-live-draft-propose'),
+    'the way through comes before the header\'s one filled action');
+  // There is still a change to open with nothing to propose, and while the
+  // preview starts or could not start.
+  for (const live of ['live', 'starting', 'failed']) {
+    const idle = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 0, live }), acts });
+    assert.match(idle, /data-live-draft-change=""/, `still drawn: ${live}`);
+    assert.doesNotMatch(idle, /data-live-draft-propose=""/, `nothing to propose: ${live}`);
+  }
+  assert.equal(renderComponent(BAR, 'LiveDraftControls', { draft: null, acts }), '');
+
+  // An outlined button, and the preview goes before the page does.
+  const bar = read(BAR);
+  assert.match(bar, /className="staging-draft-quiet" data-live-draft-change=""/);
+  assert.match(bar, /if \(stagingStore\.get\(\)\.open\) \(window as any\)\.AppView\?\.closeStagingOverlay\?\.\(\);\s*window\.location\.hash = changeHref;/,
+    'the preview closes as its change page opens');
+});
+
 test('the controls are the preview header\'s, beside its way out; Discard draft is the title menu\'s and asks first', () => {
   const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(overlay, /const liveDraft = useDraftForSession\(state\.open \? state\.sessionId : null\);/);

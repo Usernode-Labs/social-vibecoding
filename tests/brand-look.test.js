@@ -381,6 +381,24 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
     'the faint bar beside a community\'s nested rows');
 });
 
+test('the pin on the lit row is ink on the sun, not the bar\'s white', () => {
+  // The pin is the lit link's sibling, so the "YOU ARE HERE" rules never reach
+  // it: without this rule it kept the bar's white and could not be read on the sun.
+  const ROW = '.platform-rail-row:has(> .platform-rail-community:not([data-rail-open])[aria-current="page"]) > .platform-rail-pin';
+  const pinRules = ruleFor(ROW).filter((rule) => rule.selectors.every((sel) => sel.startsWith(EITHER) && sel.includes('#platform-tabs')));
+  const pin = pinRules.find((rule) => valueOf(rule.body, '--lit-tint'));
+  assert.ok(pin, 'the lit row\'s pin has a rule of its own');
+  assert.equal(valueOf(pin.body, 'color'), 'var(--bl-on-sun)', 'its glyph is the row\'s ink');
+  assert.equal(valueOf(pin.body, '--lit-ink'), 'var(--bl-on-sun)', 'hover and pressed take that ink');
+  assert.equal(valueOf(pin.body, '--accent'), 'var(--bl-on-sun)', 'and its focus ring');
+  assert.match(valueOf(pin.body, '--lit-tint'), /^color-mix\(in srgb, var\(--bl-on-sun\) 12%, transparent\)$/,
+    'its ground is a tint of that ink');
+  for (const rule of pinRules) {
+    assert.doesNotMatch(rule.body, /#fff\b|#ffffff|rgba\(255,\s*255,\s*255/,
+      `${rule.selectors.join(', ')} still reads the bar’s white`);
+  }
+});
+
 test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps its own colour', () => {
   const painted = lookRules().filter((rule) => rule.selectors.some((sel) => /#platform-header#platform-header(::before)?$/.test(sel)));
   assert.ok(painted.length >= 2, 'the top-level bar is restyled');

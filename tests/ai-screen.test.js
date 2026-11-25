@@ -2364,10 +2364,15 @@ test('one column state: where each row goes, the row it lights and its address',
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
   // 5 Nov 2026: the column's address carries the filter the chips set
   // (./filter-address.ts), and the chips write it back in place: two writers,
-  // the column's and the filter's, besides its definition.
-  assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
+  // the column's and the filter's, besides its definition. 24 Nov 2026
+  // (#7103): Waiting on you writes its own address when it opens and the
+  // bare tab's when All threads closes it.
+  assert.match(src, /const base = waitingOpen && href === BOT_TAB \? waitingAddress\(\) : href;/);
+  assert.match(src, /showAddress\(withFilter\(base, \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
   assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
-  assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
+  assert.match(src, /showAddress\(waitingAddress\(picked\)\);/);
+  assert.match(src, /showAddress\(withFilter\('#homeroom-bot', \{ projects: picked \}\)\);/);
+  assert.equal((src.match(/showAddress\(/g) || []).length, 5, 'the column\'s writer, the filter\'s, and Waiting on you\'s open and close, besides its definition');
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });
