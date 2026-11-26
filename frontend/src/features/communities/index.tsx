@@ -75,7 +75,9 @@ import { CommunitiesToJoin, readDirectory } from '../home/communities-to-join';
 import type { GuestApp } from '../guest/guest-data';
 import { SectionHeading } from '../home/panels/ui';
 import { ActionTile, HEAD_ACTION, NeedsTile, PinTile } from '../home/pinned-communities';
-import { rankCommunities } from '../home/use-home-query';
+// `matchesQuery` is still what main's directory-empty check asks (#7161); a
+// merge of this change with it must not leave that name unimported.
+import { matchesQuery, rankCommunities } from '../home/use-home-query';
 import { WipCard, WipCta, WipHeadMore } from '../home/wip-kit';
 import { communityScopeStore } from '../workshop/community-scope';
 import { CommunityPageCard, type CardCommunity } from './card';
