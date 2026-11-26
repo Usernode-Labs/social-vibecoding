@@ -83,8 +83,10 @@ const IDS = Object.freeze({
   // proposed as. The draft row itself takes its own serial id.
   liveDraftSession: 990887,
   liveDraftProposal: 990888,
-  // A request's own open vote to close it.
-  closeVote: 990889,
+  // 22 Nov 2026 (#6989): a request's own open vote to close it. 990889 is
+  // #7137's guest project app, which took the next id while this was being
+  // reviewed.
+  closeVote: 990890,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
