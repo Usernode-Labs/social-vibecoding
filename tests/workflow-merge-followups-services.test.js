@@ -83,6 +83,42 @@ test('a merge\'s first look that leaves a linked request to GitHub reports it wa
     ['acme', 'shop', 8, 2, pool]);
 });
 
+// Homeroom's git host applies no closing keywords, so the watcher closes the
+// linked requests at the first look there (#7214). The look is told which
+// host the owner names, the same way github.getPR and closeIssue read it.
+test('a merge\'s look is told its repository\'s host: the git host\'s organisation, or GitHub', async () => {
+  watch.asked = [];
+  watch.result = { closed: [], skipped: [], stillOpen: [4], waiting: true, targets: [] };
+  await run({ ...base, linkedIssues: [4], closeOnly: false, look: 1 });
+  const saved = { url: process.env.GIT_HOST_URL, org: process.env.GIT_HOST_ORG };
+  process.env.GIT_HOST_URL = 'https://git.example.test';
+  process.env.GIT_HOST_ORG = 'apps';
+  try {
+    await run({ ...base, owner: 'apps', linkedIssues: [4], closeOnly: false, look: 1 });
+  } finally {
+    const set = (key, value) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
+    set('GIT_HOST_URL', saved.url); set('GIT_HOST_ORG', saved.org);
+  }
+  assert.deepEqual(watch.asked.map((a) => [a.owner, a.hosted]), [['acme', false], ['apps', true]]);
+});
+
+test('a hosted first look that leaves a linked request open throws, so the first look is retried', async () => {
+  watch.asked = [];
+  watch.result = { closed: [], skipped: [], stillOpen: [4], waiting: false, targets: [] };
+  const saved = { url: process.env.GIT_HOST_URL, org: process.env.GIT_HOST_ORG };
+  process.env.GIT_HOST_URL = 'https://git.example.test';
+  process.env.GIT_HOST_ORG = 'apps';
+  try {
+    await assert.rejects(run({ ...base, owner: 'apps', linkedIssues: [4], closeOnly: false, look: 1 }),
+      /Linked request #4 still open on Homeroom's git host/);
+  } finally {
+    const set = (key, value) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
+    set('GIT_HOST_URL', saved.url); set('GIT_HOST_ORG', saved.org);
+  }
+  assert.equal(watch.asked.length, 1);
+  assert.deepEqual([watch.asked[0].look, watch.asked[0].hosted], [1, true], 'no second look to fall back on');
+});
+
 test('recording a close is part of the work: a database failure there is retried (review finding, second pass)', async () => {
   gh.closes = new Map();
   records.fail = true;

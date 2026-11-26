@@ -243,7 +243,8 @@ test('the rows that moved to Settings are not on Me any more', () => {
   // Admin & moderation went to Settings and came back (#5281): a place an
   // admin goes, not one of their settings. Only for admins; the whole
   // contract is pinned in tests/admin-console-entry-row.test.js.
-  assert.match(CODE, /id="profile-row-admin"/);
+  // It is a button at the head of Me now, not a row at its foot.
+  assert.match(CODE, /id="profile-admin-btn"/);
 });
 
 test('it renders the data\'s lines, and quiet fallbacks without them', () => {

@@ -44,7 +44,6 @@ import { cn } from '@/lib/utils';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -78,11 +77,11 @@ import {
 } from './sign-in-sheet';
 import { COMMUNITIES_PATH, Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
-import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestCommunities } from '../guest/guest-communities';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
+import { menuIsPopover, VisitorAppMenu, VisitorMark, VisitorSuggestPrompt } from '../guest/visitor-app-menu';
 import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -1003,13 +1002,21 @@ export function LandingScreen() {
   // show, i.e. after hydration.
   const [session, setSession] = useState(false);
   const [openApp, setOpenApp] = useState<{ slug: string; name: string } | null>(null);
-  // #6433: what this device has pinned while signed out (features/guest/
-  // device-pins.ts), for the bar's Pin while an app is open. A visitor has no
-  // app menu and no About pane, so the bar is where an app is pinned; Home's
-  // Pinned apps reads the same store. Loaded in an effect, so the first
-  // render is the prerender's.
-  const devicePins = useStoreState(devicePinsStore);
-  useEffect(() => { loadDevicePins(); }, []);
+  // THE HOMEROOM MARK'S MENU while an app is open for a visitor (../guest/
+  // visitor-app-menu.tsx): open or not, and whether it opened as the popover
+  // (from 640px) or the sheet, decided as it opens. Then the pop-up its
+  // Suggest an improvement asks to sign up in. Neither is in the first
+  // render (`openApp` starts null), so hydration is unaffected. The mark
+  // took Pin's place in the bar (#6433's Pin): a visitor pins a project
+  // from Discover, whose store loads itself.
+  const [appMenu, setAppMenu] = useState<{ popover: boolean } | null>(null);
+  const [suggestPrompt, setSuggestPrompt] = useState(false);
+  const appMarkRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (openApp) return;
+    setAppMenu(null);
+    setSuggestPrompt(false);
+  }, [openApp]);
   // The public directory (loadLandingApps), for the guest Discover and the
   // guest project pages: null until it has been read, and `appsFailed` when
   // it could not be.
@@ -1721,6 +1728,34 @@ export function LandingScreen() {
     location.hash = to;
   }, [st, appDiscover, guestProject]);
   const plainLanding = !openApp && !guestProject;
+  // The open app's row of the public directory, for its menu's About and
+  // whether its pop-up says it is played or used.
+  const openAppRow = openApp && apps ? apps.find((a) => a.slug === openApp.slug) ?? null : null;
+  const closeAppMenu = useCallback(() => setAppMenu(null), []);
+  // The menu's "Go to community": out of the app and onto its signed-out
+  // page. When that page is what is under the app (it was opened from
+  // there), closing the app is the whole of it. Otherwise the page is opened
+  // once the viewer's own history entry has been unwound (closeLandingApp's
+  // Back), so that Back does not undo it; a timer stands in if that Back
+  // never lands.
+  const goToCommunity = useCallback((slug: string) => {
+    const target = projectHash(slug);
+    const underneath = guestProject?.slug === slug;
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      window.removeEventListener('popstate', go);
+      if (!underneath && location.hash !== target) location.hash = target;
+    };
+    const unwinds = !!(history.state && history.state.svAnonAppViewer);
+    if (unwinds) {
+      window.addEventListener('popstate', go);
+      window.setTimeout(go, 700);
+    }
+    live.current.closeLandingApp();
+    if (!unwinds) go();
+  }, [guestProject]);
   useEffect(() => {
     try {
       document.title = headerTitle;
@@ -1810,14 +1845,15 @@ export function LandingScreen() {
             phone the box is 101px and the mark 109, and the box clipped it to
             "Homeroon" ("Ho" at the largest text size).
 
-            While an app is open for a visitor, Pin sits beside Sign in over
-            the trailing box (below). The two are 110px wide (137px once it
-            reads "Pinned"), and `px-10` with the trailing box ends a name
-            80px short of where they end, room for Sign in alone: the name ran
-            under Pin. With Pin in the bar the name keeps 112px clear at its
-            end instead, and a long one ends in an ellipsis before the
-            buttons. Pixels, not rems: the buttons hardly grow with the text
-            size, and at the largest one 7rem left the name no room at all.
+            While an app is open for a visitor, the Homeroom mark sits after
+            Sign in over the trailing box (below). The two are about 110px
+            wide, and `px-10` with the trailing box ends a name 80px short of
+            where they end, room for Sign in alone: the name ran under the
+            next control (it was Pin's, #6433). With the mark in the bar the
+            name keeps 112px clear at its end instead, and a long one ends in
+            an ellipsis before the buttons. Pixels, not rems: the buttons
+            hardly grow with the text size, and at the largest one 7rem left
+            the name no room at all.
 
             Not a heading (polish N10): the page under it has its own <h1>
             (the story's or the pitch's headline), and a second one in the
@@ -1825,7 +1861,7 @@ export function LandingScreen() {
         */}
         <div
           id="landing-header-title"
-          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start [#landing-header:has([data-landing-pin-app])_&]:pe-[112px]"
+          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start [#landing-header:has([data-landing-app-menu])_&]:pe-[112px]"
         >
           {openApp ? headerTitle : <Wordmark className="h-7 w-auto max-w-full inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
@@ -1846,7 +1882,7 @@ export function LandingScreen() {
             (tests/header-height-parity.test.js), and placed over the
             trailing box rather than in the row, so the mark stays on the
             bar's true centre; the title's `px-10` keeps a long project name
-            from running under it (112px at its end when Pin is beside it).
+            from running under it (112px at its end when the mark is beside it).
             Making an account is still the body's Continue, under the
             sentence that says what this place is.
             Not for a waiting-room session, which is signed in already.
@@ -1865,23 +1901,6 @@ export function LandingScreen() {
           data-landing-actions=""
           className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 end-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
         >
-          {/* #6433: an app open for a visitor is pinned HERE, to this device,
-              because a visitor has no app menu or About pane. The same quiet
-              button as Sign in beside it, drawn at the row's 28px with a 44px
-              touch box, so the bar keeps its height. Not in the first render
-              (`openApp` starts null), so hydration is unaffected. */}
-          {openApp && !session ? (
-            <button
-              type="button"
-              data-landing-pin-app={openApp.slug}
-              aria-pressed={devicePins.apps.includes(openApp.slug)}
-              aria-label={t('auth:landing.pinAppNamed', { app: openApp.name })}
-              className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300"
-              onClick={() => { toggleDevicePin('apps', openApp.slug); }}
-            >
-              {devicePins.apps.includes(openApp.slug) ? t('auth:landing.pinnedApp') : t('auth:landing.pinApp')}
-            </button>
-          ) : null}
           <button
             type="button"
             data-landing-sign-in=""
@@ -1905,6 +1924,20 @@ export function LandingScreen() {
                 other half of two names for one thing. */}
             {accountsWait ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.header.signUp')}
           </Button>
+          {/* THE HOMEROOM MARK, LAST, as it ends a member's bar: after Join
+              the waitlist on a computer, after Sign in on a phone (where the
+              bar's Sign up is not drawn). Its menu is a running app's, less
+              what needs an account (../guest/visitor-app-menu.tsx). Only
+              while an app is open and there is no session; not in the first
+              render (`openApp` starts null), so hydration is unaffected. */}
+          {openApp && !session ? (
+            <VisitorMark
+              app={openApp}
+              open={!!appMenu}
+              buttonRef={appMarkRef}
+              onToggle={() => setAppMenu((m) => (m ? null : { popover: menuIsPopover() }))}
+            />
+          ) : null}
         </div>
       </header>
       {/*
@@ -2403,6 +2436,34 @@ export function LandingScreen() {
         <InviteJoinBar preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} />
       ) : null}
       <ViewerRegion />
+      {openApp && !session && appMenu ? (
+        <VisitorAppMenu
+          app={{ slug: openApp.slug, name: openApp.name || openApp.slug, row: openAppRow }}
+          popover={appMenu.popover}
+          anchorRef={appMarkRef}
+          onClose={closeAppMenu}
+          actions={{
+            onSuggest: () => { setAppMenu(null); setSuggestPrompt(true); },
+            onCommunity: () => { setAppMenu(null); goToCommunity(openApp.slug); },
+            // A report is made by an account (POST /api/reports answers 401
+            // without one), so the row leads to signing in rather than hiding.
+            onReport: () => { setAppMenu(null); noteSignUpFrom('header_sign_in'); setSheet('signin'); },
+            privacyHref: waitlistPayload?.privacy_link || null,
+            termsHref: waitlistPayload?.terms_link || null,
+          }}
+        />
+      ) : null}
+      {openApp && !session && suggestPrompt ? (
+        <VisitorSuggestPrompt
+          appName={openApp.name || openApp.slug}
+          game={openAppRow?.category === 'games'}
+          onClose={() => setSuggestPrompt(false)}
+          // The bar's own two ways in: Sign up is the sheet the bar's Sign up
+          // (or Join the waitlist, while new accounts wait) opens.
+          onSignUp={() => { setSuggestPrompt(false); noteSignUpFrom('header_sign_up'); setSheet('start'); }}
+          onSignIn={() => { setSuggestPrompt(false); noteSignUpFrom('header_sign_in'); setSheet('signin'); }}
+        />
+      ) : null}
       {/*
           The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
           Rendered nothing until then, so the interior's first commit is the

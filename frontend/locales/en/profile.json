@@ -7,6 +7,14 @@
     "text": "Edit profile",
     "description": "Button on the viewer's own profile screen: opens the sheet where they change their photo, name and bio."
   },
+  "identity.signOut": {
+    "text": "Sign out",
+    "description": "Red button at the head of the viewer's own profile screen, beside Edit profile: signs the person out of Homeroom on this device."
+  },
+  "identity.signingOut": {
+    "text": "Signing out…",
+    "description": "Label of the Sign out button on the viewer's own profile screen while the sign-out is in progress."
+  },
   "identity.editName": {
     "text": "Edit name",
     "description": "Name of the small pencil button beside the viewer's name on their own profile. Opens a box there to change the name other people see."
@@ -371,17 +379,9 @@
     "text": "Account, alerts, keys, wallet",
     "description": "Small line under \"Settings\" on the viewer's profile, for a person who has a wallet: what is in there. \"Keys\" are API keys."
   },
-  "admin.heading": {
-    "text": "Admin",
-    "description": "Small heading on the viewer's own profile over the row that opens the administration console, shown only to platform administrators. Short for administration."
-  },
   "admin.console.title": {
-    "text": "Admin & moderation",
-    "description": "Row on the viewer's own profile, shown only to platform administrators: opens the administration and moderation console."
-  },
-  "admin.console.hint": {
-    "text": "Reports, people and platform settings",
-    "description": "Small line under \"Admin & moderation\" on an administrator's own profile: what the console holds."
+    "text": "Admin",
+    "description": "Button at the head of the viewer's own profile, beside Edit profile, shown only to platform administrators: opens the administration and moderation console."
   },
   "settings.heading": {
     "text": "Settings",

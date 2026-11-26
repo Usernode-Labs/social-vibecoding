@@ -11824,7 +11824,7 @@ html:root #profile-root .profile-section-links > [aria-current="page"] { border-
 html:root #profile-root :is(section[id^="profile-"] > h2, #profile-activity h2) { padding: 0; margin: 0 0 0.625rem; font-size: 1.5rem; font-weight: 460; }
 html:root #profile-root section[id^="profile-"] > .ui-glist,
 html:root #profile-root #profile-activity { background: var(--ed-paper); border-radius: 1rem; box-shadow: inset 0 0 0 1px var(--ed-line); }
-html:root #profile-root :is(#profile-work, #profile-account, #profile-settings, #profile-admin, #profile-rewards) { margin-top: 1.5rem; }
+html:root #profile-root :is(#profile-work, #profile-account, #profile-settings, #profile-rewards) { margin-top: 1.5rem; }
 html:root #profile-root #profile-work .ui-lrow { padding-block: 0.625rem; }
 html:root #profile-root #profile-work .ui-icon-tile { border-radius: 0.625rem; }
 html:root #profile-root #profile-activity { margin-top: 1.5rem; padding: 1.25rem; }
@@ -36441,6 +36441,21 @@ html:root.dark #profile-screen #profile-identity-card #profile-edit-btn:hover,
 html:root.dark :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:hover { background: var(--one-sun); filter: brightness(1.05); }
 html:root #profile-screen #profile-identity-card #profile-edit-btn:active,
 html:root :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+/* The head's three actions (26 Nov 2026): Edit profile, an admin's way in to
+   the console, and Sign out, in one group where Edit profile stood alone. The
+   group takes the place and the margins the one button had; the two beside it
+   are the secondary and the destructive level at the main one's height. */
+html:root #profile-screen #profile-identity-card #profile-id-actions { flex: none; justify-content: flex-start; }
+html:root #profile-screen #profile-identity-card #profile-id-actions #profile-edit-btn { margin: 0; }
+html:root #profile-screen #profile-identity-card #profile-id-actions .one-btn { height: 44px; padding-inline: 18px; font-size: 16px; }
+@media (max-width: 639.98px) { html:root #profile-screen #profile-identity-card #profile-id-actions { margin-inline-start: 0; } }
+/* Three buttons are wider than one: between a phone and a wide screen they
+   go under the picture and the text, where the one button had room beside. */
+@media (min-width: 640px) and (max-width: 1279.98px) {
+  html:root #profile-screen #profile-identity-card > div:first-child { flex-direction: column; align-items: stretch; }
+  html:root #profile-screen #profile-identity-card #profile-id-actions { margin-top: 0.25rem; }
+}
+@media (min-width: 1280px) { html:root #profile-screen #profile-identity-card #profile-id-actions { margin-top: 1rem; justify-content: flex-end; } }
 html:root #profile-screen #profile-activity #profile-activity-share {
   height: 30px;
   min-height: 0;
@@ -36508,6 +36523,16 @@ html:root #profile-live-projects .profile-project-card:nth-child(3n) { --pp-band
 html:root #profile-live-projects .profile-project-card:is(:nth-child(3n+1), :nth-child(3n+2), :nth-child(3n)) { background: linear-gradient(var(--one-surface), var(--one-surface)) center bottom / 100% calc(100% - 4.5rem) no-repeat, var(--pp-band); background-origin: border-box; }
 html:root #profile-live-projects .profile-project-card h3 { margin-top: 1.375rem; }
 html:root #profile-live-projects .profile-project-icon { background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-hair); }
+/* Smaller cards (26 Nov 2026): three to a row filled the first screen with
+   six projects. A shorter band, a smaller icon and name, and as many columns
+   as fit at 11rem each, so a wide screen shows four or five to a row. */
+html:root #profile-live-projects .profile-project-grid { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 1rem; }
+html:root #profile-live-projects .profile-project-card { min-height: 0; padding: 0.75rem 0.875rem 0.875rem; border-radius: 16px; }
+html:root #profile-live-projects .profile-project-grid > .profile-project-card:is(:nth-child(3n+1), :nth-child(3n+2), :nth-child(3n)) { background: linear-gradient(var(--one-surface), var(--one-surface)) center bottom / 100% calc(100% - 3.25rem) no-repeat, var(--pp-band); background-origin: border-box; }
+html:root #profile-live-projects .profile-project-icon { width: 2rem; height: 2rem; border-radius: 0.5rem; font-size: 1.125rem; }
+html:root #profile-live-projects .profile-project-card h3 { margin: 1rem 0 0.25rem; font-size: 1.125rem; letter-spacing: -0.02em; }
+html:root #profile-live-projects .profile-project-card p { font-size: 0.8125rem; line-height: 1.4; }
+@media (max-width: 639.98px) { html:root #profile-live-projects .profile-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; } }
 /* Recent activity: rows on the ramp, the row's title over its second line,
    its icon the discussion's green tile. */
 html:root #profile-recent-activity ul { padding: 0 14px; }

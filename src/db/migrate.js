@@ -614,6 +614,10 @@ const STAGING_SEEDS = Object.freeze([
   // #7170: one fake request in an emoji project, so a thread header's tile can
   // be shot with an emoji in it. Obviously fake, idempotent.
   stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
+  // The signed-out project page's shots (26 Nov 2026): one obviously fake
+  // public project busy enough to show who is around, changes approved by
+  // several people and by its creator alone, and Top contributors.
+  stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -9382,6 +9386,128 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// THE SIGNED-OUT PROJECT PAGE, BUSY (26 Nov 2026): what a visitor with no
+// account sees of a public project (frontend/src/features/guest/
+// guest-project.tsx) only says who is around from 25 members and 10 people
+// active this week, says who approved a change that went live from its
+// counted yeses (services/public-project.js approvedBy), and lists Top
+// contributors from two people (GET /api/public/apps/:slug/top-contributors).
+// A fresh staging copy has no public project with any of that, so this makes
+// one, obviously fake: "[Mock] Busy public project" (a game, public to see
+// and to join, its app answering a guest as #7128's fixture does), its
+// creator and thirty members, four changes that went live (one approved by
+// three people, one by its creator alone, one by two people, and an older
+// one with no vote, as a first version goes live) and two up for a vote
+// with recent yeses, which make the week's people.
+//
+// Ids sit in the 9013xx block. Idempotent: rows are inserted with ON
+// CONFLICT DO NOTHING, and on every boot the yeses are stamped within the
+// week again so "active this week" holds on a long-lived copy (a change's
+// merge time is the merge machine's to write, so it keeps its first stamp).
+// The accounts cannot sign in. Strictly a no-op outside staging.
+async function seedStagingGuestProjectPage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const OWNER_ID = 901300;
+  const APP_ID = 901300;
+  const SLUG = 'staging-guest-page-busy';
+  const MEMBER_IDS = Array.from({ length: 30 }, (_, i) => 901301 + i);
+  const SHA = 'f'.repeat(40);
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES ($1, 'staging-guest-page-owner', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`,
+      [OWNER_ID]
+    );
+    for (const [i, id] of MEMBER_IDS.entries()) {
+      await pool.query(
+        `INSERT INTO users (id, username, password)
+         VALUES ($1, $2, 'staging-demo-not-a-login')
+         ON CONFLICT DO NOTHING`,
+        [id, `staging-guest-member-${String(i + 1).padStart(2, '0')}`]
+      );
+    }
+    await pool.query(
+      `INSERT INTO apps
+         (id, name, slug, status, created_by, collab_visibility, view_visibility, icon_emoji,
+          manifest_snapshot, last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at, created_at)
+       VALUES ($1, '[Mock] Busy public project', $2, 'running', $3, 'public', 'public', '🧮',
+               jsonb_build_object('secrets', '[]'::jsonb, 'category', 'games',
+                 'description', 'Sample data: a busy public project for the signed-out page.'),
+               NOW() - INTERVAL '1 day', 'gated', 'public', NOW() + INTERVAL '1 year',
+               NOW() - INTERVAL '60 days')
+       ON CONFLICT DO NOTHING`,
+      [APP_ID, SLUG, OWNER_ID]
+    );
+    // The app is ours only if it carries our slug: a cloned row in the block
+    // would be somebody else's.
+    const { rows: [app] } = await pool.query('SELECT id FROM apps WHERE id = $1 AND slug = $2', [APP_ID, SLUG]);
+    if (!app) return;
+    // Members join by the collaborators' trigger (communities.js), never by
+    // writing community_members.
+    for (const id of [OWNER_ID, ...MEMBER_IDS]) {
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '30 days')
+         ON CONFLICT DO NOTHING`,
+        [APP_ID, id]
+      );
+    }
+    // [id, title, author, hours ago, yes from]: live changes, then two up for a vote.
+    const live = [
+      [901300, 'Sample: resume a half-played game instead of dealing a new board', MEMBER_IDS[0], 1, MEMBER_IDS.slice(1, 4)],
+      [901301, 'Sample: add an Undo button that takes back the last move', OWNER_ID, 3, [OWNER_ID]],
+      [901302, 'Sample: explain why a hint failed and let it work on an empty row', MEMBER_IDS[4], 5, MEMBER_IDS.slice(5, 7)],
+      [901303, 'Sample: the first version', OWNER_ID, 24 * 40, []],
+    ];
+    for (const [id, title, author, hours] of live) {
+      await pool.query(
+        `INSERT INTO chat_sessions (id, app_id, user_id, status, pr_title, reviewed_head_sha, created_at, merged_at)
+         VALUES ($1, $2, $3, 'merged', $4, $5, NOW() - make_interval(hours => $6::int + 2), NOW() - make_interval(hours => $6::int))
+         ON CONFLICT DO NOTHING`,
+        [id, APP_ID, author, title, SHA, hours]
+      );
+    }
+    const open = [
+      [901310, 'Sample: show moves, time and highest tile on the win card', MEMBER_IDS[7], MEMBER_IDS.slice(7, 15)],
+      [901311, 'Sample: keep the Play button pinned to the bottom of the screen', MEMBER_IDS[15], MEMBER_IDS.slice(15, 19)],
+    ];
+    for (const [id, title, author] of open) {
+      await pool.query(
+        `INSERT INTO chat_sessions (id, app_id, user_id, status, pr_title, reviewed_head_sha, created_at, promoted_at)
+         VALUES ($1, $2, $3, 'promoted', $4, $5, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+         ON CONFLICT DO NOTHING`,
+        [id, APP_ID, author, title, SHA]
+      );
+    }
+    for (const [id, , , , yes] of live) {
+      for (const voter of yes) {
+        await pool.query(
+          `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes') ON CONFLICT DO NOTHING`,
+          [id, voter]
+        );
+      }
+    }
+    for (const [id, , , yes] of open) {
+      for (const voter of yes) {
+        await pool.query(
+          `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes') ON CONFLICT DO NOTHING`,
+          [id, voter]
+        );
+      }
+    }
+    // Within the week on every boot, so the week's people hold.
+    await pool.query(
+      `UPDATE pr_votes SET created_at = NOW() - INTERVAL '6 hours'
+        WHERE session_id = ANY($1::int[])`,
+      [[...live.map((r) => r[0]), ...open.map((r) => r[0])]]
+    );
+    log.info('db', 'Staging guest project page fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging guest project page seeding failed', { message: err.message });
   }
 }
 
