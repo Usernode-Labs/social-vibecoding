@@ -22,22 +22,26 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # The four krb5 libraries are named so this layer rebuilds and takes Debian's
 # patched release instead of a cached one (audit of 23 Nov 2026:
 # 1.21.3-5+deb13u2 or later). The check below fails the build if the mirror
-# still ships anything older. libzstd1 is named and checked the same way
-# (audit of 26 Nov 2026: 1.5.7+dfsg-1+deb13u1 or later).
+# still ships anything older. libexpat1 is named for the same reason (audit of
+# 26 Nov 2026: trixie's 2.7.1-2 or later). libzstd1 is named and checked the
+# same way (audit of 26 Nov 2026: 1.5.7+dfsg-1+deb13u1 or later).
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     ffmpeg ca-certificates \
     fonts-inter fonts-liberation fonts-noto-color-emoji \
     libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
-    libzstd1 \
+    libexpat1 libzstd1 \
   && for p in libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0; do \
        v="$(dpkg-query -W -f='${Version}' "$p")"; \
        dpkg --compare-versions "$v" ge 1.21.3-5+deb13u2 \
          || { echo "$p $v is older than 1.21.3-5+deb13u2" >&2; exit 1; }; \
      done \
-  && v="$(dpkg-query -W -f='${Version}' libzstd1)"; \
-     dpkg --compare-versions "$v" ge 1.5.7+dfsg-1+deb13u1 \
-       || { echo "libzstd1 $v is older than 1.5.7+dfsg-1+deb13u1" >&2; exit 1; } \
+  && v="$(dpkg-query -W -f='${Version}' libexpat1)" \
+  && { dpkg --compare-versions "$v" ge 2.7.1-2 \
+       || { echo "libexpat1 $v is older than 2.7.1-2" >&2; exit 1; }; } \
+  && v="$(dpkg-query -W -f='${Version}' libzstd1)" \
+  && { dpkg --compare-versions "$v" ge 1.5.7+dfsg-1+deb13u1 \
+       || { echo "libzstd1 $v is older than 1.5.7+dfsg-1+deb13u1" >&2; exit 1; }; } \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
