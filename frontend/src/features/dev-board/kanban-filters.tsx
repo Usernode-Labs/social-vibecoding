@@ -39,6 +39,7 @@
 
 import { useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 
+import { useRailFade } from '@/components/ui/chip';
 import { AdjustmentsIcon, UserCheckIcon, UserIcon, type IconProps } from '@/components/ui/icons';
 
 import {
@@ -232,6 +233,13 @@ export function KanbanFiltersView({
 }: KanbanFiltersState) {
   const t = useMessages('project');
   const rowRef = useRef<HTMLDivElement | null>(null);
+  // Request 7029: under 640px All items' head lays the chips out as one row
+  // that scrolls sideways (app.css `.dev-ws-allbar #dev-filter-chips`), and
+  // with a few filters on it ran off the edge with nothing to say so. The
+  // chip rail's own fade says it. Anywhere else this span is `display:
+  // contents`, measures nothing, and gets no fade.
+  const chipsRef = useRef<HTMLSpanElement | null>(null);
+  const chipsFade = useRailFade(chipsRef).style;
   const measuredFits = useQuickFiltersFit(rowRef, !!quick);
   // S12 (phone review, 23 Nov 2026): on a phone All items' head has one
   // Filters button, in words, and the two quick toggles are in its sheet,
@@ -266,7 +274,7 @@ export function KanbanFiltersView({
       {/* #4486: the chips, one group: `display: contents` here, so they are
           the row's own items as they always were, and one wrapping item in
           All items' one-row head (app.css `.dev-ws-allbar`). */}
-      <span id="dev-filter-chips" className="contents">
+      <span id="dev-filter-chips" ref={chipsRef} className="contents" style={chipsFade}>
         <button
           id="dev-kanban-filters-btn"
           type="button"

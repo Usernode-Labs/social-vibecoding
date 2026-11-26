@@ -4259,6 +4259,14 @@
     "text": "Screenshot details",
     "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Screenshot\" names one of the pictures."
   },
+  "card.pill.approvals_one": {
+    "text": "{{yes}} of {{count}} approval",
+    "description": "Status bar of a change that merges once a fixed number of members approve it, after a vote saved on this page was counted in. {{yes}} is how many yes votes it has and {{count}} how many it needs, for example \"1 of 1 approval\". The singular form is used when {{count}} is 1."
+  },
+  "card.pill.approvals_other": {
+    "text": "{{yes}} of {{count}} approvals",
+    "description": "Status bar of a change that merges once a fixed number of members approve it, after a vote saved on this page was counted in. {{yes}} is how many yes votes it has and {{count}} how many it needs, for example \"2 of 3 approvals\"."
+  },
   "card.pill.goesLiveIn": {
     "text": "Goes live in {{time}}",
     "description": "Status bar on a proposal's card while its approval window counts down: the change will be merged and go live when the time runs out. {{time}} is the time left, already abbreviated, for example ~2h 5m."
@@ -4402,6 +4410,10 @@
   "card.vote.sheet.notThisTimeTally": {
     "text": "✕  Not this time ({{tally}})",
     "description": "Row in the phone's action sheet when the person voted Yes on an earlier version of the proposal: votes No on the new version. {{tally}} is where the No side stands, for example 1/3. Keep the cross and the two spaces first."
+  },
+  "card.vote.alreadyYes": {
+    "text": "Your yes is already recorded.",
+    "description": "Short message at the bottom of the screen when someone presses Yes on a change they have already voted Yes on. Nothing is sent; it says the vote is already saved."
   },
   "card.vote.face.approved": {
     "text": "Approved",

@@ -59,7 +59,8 @@ test('B5: every place Messages names the bot names it, with an AI badge beside i
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.equal(message('messages:inbox.aiBadge'), 'AI');
-  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer, \{ bare: true \}\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}/, 'the list row');
+  assert.match(screen, /const rowName = conversation\.kind === 'direct' && peer \? senderName\(peer, \{ bare: true \}\) : conversation\.title;/);
+  assert.match(screen, /title=\{<>\{rowName\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge[^"]*">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}<\/>\}/, 'the list row');
   assert.equal(message('messages:header.aiBadge'), 'AI');
   assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">\{t\('messages:header\.aiBadge'\)\}<\/span>/, 'the header');
   assert.match(read('frontend/src/features/messages/composer.tsx'), /t\('messages:composer\.replyingTo', \{ name: senderName\(reply\.sender, \{ bare: active\.kind === 'direct' \}\) \}\)/);

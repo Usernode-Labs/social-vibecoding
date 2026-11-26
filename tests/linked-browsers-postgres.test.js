@@ -14,6 +14,13 @@
 //     anyone else's, alone;
 //   - signing out another account's browser, a phone, a malformed id or one
 //     already gone changes nothing and answers 0 (the route's 404).
+//   - #7159: the page shows one row per device. Every sign-in from one
+//     browser on one system is one device with its count and its newest
+//     dates, sessions with no readable class are one device together, and
+//     the device in hand comes first;
+//   - signing a device out deletes every one of its rows of this account
+//     and nothing else, and an unknown key or a device with no rows changes
+//     nothing and answers 0.
 //
 // Run with: TEST_DATABASE_URL=... node --test tests/linked-browsers-postgres.test.js
 
@@ -26,6 +33,7 @@ const { Client, Pool } = require('pg');
 
 const {
   listLinkedBrowsers, signOutBrowser, isBrowserSessionId, classifyUserAgent,
+  groupLinkedBrowsers, signOutBrowserDevice, isBrowserDeviceKey, browserDeviceKey,
 } = require('../src/services/linked-browsers');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -174,3 +182,107 @@ test('signing out deletes that browser of this account only, and says when it wa
     assert.deepEqual(rows.map((r) => r.token).sort(), [phone, theirs].sort(), 'the phone and the other account stay');
   });
 });
+
+test('a device key is a browser and a system this build knows', () => {
+  assert.equal(isBrowserDeviceKey('chrome-mac'), true);
+  assert.equal(isBrowserDeviceKey('other-other'), true);
+  assert.equal(isBrowserDeviceKey('chrome-amiga'), false);
+  assert.equal(isBrowserDeviceKey('chrome'), false);
+  assert.equal(isBrowserDeviceKey('-mac'), false);
+  assert.equal(isBrowserDeviceKey('0123456789abcdef'), false, 'never a session id');
+  assert.equal(isBrowserDeviceKey(undefined), false);
+  assert.equal(browserDeviceKey({ browser: 'chrome', os: 'mac' }), 'chrome-mac');
+  assert.equal(browserDeviceKey({ browser: null, os: 'mac' }), 'other-mac');
+  assert.equal(browserDeviceKey({ browser: null, os: null }), 'other-other');
+});
+
+test('several sign-ins of one browser on one system are one device (#7159)', async (t) => {
+  await withDatabase(t, async (pool) => {
+    await addUser(pool, 1);
+    const here = await signIn(pool, { userId: 1, userAgent: CHROME_MAC, daysAgo: 20, seenDaysAgo: 0 });
+    await signIn(pool, { userId: 1, userAgent: CHROME_MAC, daysAgo: 3, seenDaysAgo: 2 });
+    await signIn(pool, { userId: 1, userAgent: CHROME_MAC, daysAgo: 50, seenDaysAgo: 40 });
+    await signIn(pool, { userId: 1, userAgent: SAFARI_IPHONE, daysAgo: 1, seenDaysAgo: 1 });
+    await signIn(pool, { userId: 1, userAgent: null, daysAgo: 10 });
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at, created_at, user_agent_class)
+       VALUES ($1, 1, NOW() + INTERVAL '1 day', NOW() - INTERVAL '12 days', 'netscape/amiga')`,
+      [crypto.randomBytes(32).toString('hex')],
+    );
+
+    const browsers = await listLinkedBrowsers(pool, 1, { currentToken: here });
+    assert.equal(browsers.length, 6, 'the per-sign-in list is unchanged');
+    const devices = groupLinkedBrowsers(browsers);
+    assert.deepEqual(devices.map((d) => [d.key, d.browser, d.os, d.count, d.current]), [
+      ['chrome-mac', 'chrome', 'mac', 3, true],
+      ['safari-ios', 'safari', 'ios', 1, false],
+      ['other-other', null, null, 2, false],
+    ], 'this device first, then by its newest use; unread classes are one device');
+    for (const device of devices) {
+      assert.deepEqual(Object.keys(device).sort(),
+        ['browser', 'count', 'current', 'key', 'lastUsedAt', 'os', 'signedInAt']);
+    }
+    const chrome = devices[0];
+    assert.ok(Date.parse(chrome.lastUsedAt) > Date.now() - 86400e3, 'last used at its newest use');
+    assert.ok(Date.parse(chrome.signedInAt) > Date.now() - 4 * 86400e3, 'signed in at its newest sign-in');
+    assert.ok(Date.parse(chrome.signedInAt) < Date.now() - 2 * 86400e3);
+
+    // Without the cookie nothing is current, and the order is by last use.
+    assert.deepEqual(
+      groupLinkedBrowsers(await listLinkedBrowsers(pool, 1)).map((d) => [d.key, d.current]),
+      [['chrome-mac', false], ['safari-ios', false], ['other-other', false]],
+    );
+    assert.deepEqual(groupLinkedBrowsers([]), []);
+  });
+});
+
+test('signing a device out ends every sign-in of it, of this account only', async (t) => {
+  await withDatabase(t, async (pool) => {
+    await addUser(pool, 1);
+    await addUser(pool, 2);
+    const here = await signIn(pool, { userId: 1, userAgent: CHROME_MAC });
+    await signIn(pool, { userId: 1, userAgent: CHROME_MAC });
+    await signIn(pool, { userId: 1, userAgent: CHROME_MAC, expired: true });
+    const firefox = await signIn(pool, { userId: 1, userAgent: FIREFOX_WINDOWS });
+    await signIn(pool, { userId: 1, userAgent: FIREFOX_WINDOWS });
+    const legacy = await signIn(pool, { userId: 1, userAgent: null });
+    const phone = await signIn(pool, { userId: 1, userAgent: CHROME_MAC, native: true });
+    const theirs = await signIn(pool, { userId: 2, userAgent: CHROME_MAC });
+    const count = async () => (await pool.query('SELECT count(*)::int AS n FROM sessions')).rows[0].n;
+
+    // A key nobody has, a malformed one, a session id: nothing.
+    assert.deepEqual(await signOutBrowserDevice(pool, 1, 'safari-ios'), { signedOut: 0, current: false });
+    assert.deepEqual(await signOutBrowserDevice(pool, 1, 'chrome/mac'), { signedOut: 0, current: false });
+    assert.deepEqual(await signOutBrowserDevice(pool, 1, idOf(here)), { signedOut: 0, current: false });
+    assert.deepEqual(await signOutBrowserDevice(pool, 2, 'firefox-windows'), { signedOut: 0, current: false });
+    assert.equal(await count(), 8);
+
+    assert.deepEqual(
+      await signOutBrowserDevice(pool, 1, 'firefox-windows', { currentToken: here }),
+      { signedOut: 2, current: false },
+    );
+    assert.deepEqual(
+      groupLinkedBrowsers(await listLinkedBrowsers(pool, 1, { currentToken: here })).map((d) => [d.key, d.count]),
+      [['chrome-mac', 2], ['other-other', 1]],
+    );
+    // Already gone: the route's 404.
+    assert.deepEqual(await signOutBrowserDevice(pool, 1, 'firefox-windows'), { signedOut: 0, current: false });
+    assert.equal(await isGone(pool, firefox), true);
+
+    // The device in hand: its live and its expired rows go, and it says so.
+    assert.deepEqual(
+      await signOutBrowserDevice(pool, 1, 'chrome-mac', { currentToken: here }),
+      { signedOut: 3, current: true },
+    );
+    const { rows } = await pool.query('SELECT token FROM sessions ORDER BY token');
+    assert.deepEqual(rows.map((r) => r.token).sort(), [legacy, phone, theirs].sort(),
+      'the unnamed browser, the phone and the other account stay');
+
+    assert.deepEqual(await signOutBrowserDevice(pool, 1, 'other-other'), { signedOut: 1, current: false });
+    assert.equal(await count(), 2);
+  });
+});
+
+async function isGone(pool, token) {
+  return (await pool.query('SELECT 1 FROM sessions WHERE token = $1', [token])).rowCount === 0;
+}

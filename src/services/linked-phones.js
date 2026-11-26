@@ -71,4 +71,87 @@ async function unlinkPhone(client, userId, phoneId) {
   return credentialsRevoked > 0;
 }
 
-module.exports = { isPhoneId, listLinkedPhones, unlinkPhone };
+// #7159: one row per device. The platform keeps no name or hardware id for a
+// phone: an installation is one install of the app, and a reinstall is a new
+// one, so a person who reinstalled saw the same phone many times. The only
+// thing two installs of one phone share on the server is their kind, so a
+// device is every install of one kind: 'ios', 'android', or 'phone' when the
+// kind is unknown (the install never registered for notifications). Two
+// different iPhones are therefore one row too, which the page's note says.
+const PHONE_DEVICE_KEYS = new Set(['ios', 'android', 'phone']);
+
+function isPhoneDeviceKey(value) {
+  return typeof value === 'string' && PHONE_DEVICE_KEYS.has(value);
+}
+
+function phoneDeviceKey(phone) {
+  return phone && (phone.platform === 'ios' || phone.platform === 'android') ? phone.platform : 'phone';
+}
+
+function newest(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+// The devices of a listLinkedPhones result: `count` is how many installs the
+// device holds, the dates are the newest among them, and `current` is true
+// when any of them is the phone in hand. The device in hand first, then by
+// last use, then by key.
+function groupLinkedPhones(phones) {
+  const byKey = new Map();
+  for (const phone of phones || []) {
+    const key = phoneDeviceKey(phone);
+    const device = byKey.get(key);
+    if (!device) {
+      byKey.set(key, {
+        key,
+        platform: key === 'phone' ? null : key,
+        count: 1,
+        linkedAt: phone.linkedAt || null,
+        lastUsedAt: phone.lastUsedAt || null,
+        current: phone.current === true,
+      });
+    } else {
+      device.count += 1;
+      device.linkedAt = newest(device.linkedAt, phone.linkedAt);
+      device.lastUsedAt = newest(device.lastUsedAt, phone.lastUsedAt);
+      device.current = device.current || phone.current === true;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => (
+    Number(b.current) - Number(a.current)
+    || (Date.parse(b.lastUsedAt) || 0) - (Date.parse(a.lastUsedAt) || 0)
+    || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+  ));
+}
+
+// Unlink every install of one device of the account. The installs are read
+// inside the caller's transaction and each is revoked as unlinkPhone revokes
+// one, so an install made after the page loaded goes too. Answers how many
+// installs went (0 for an unknown key or a device with none, the route's
+// 404) and whether the phone in hand was one of them.
+async function unlinkPhoneDevice(client, userId, key, { currentCredential = null } = {}) {
+  if (!isPhoneDeviceKey(key)) return { unlinked: 0, current: false };
+  const phones = (await listLinkedPhones(client, userId, { currentCredential }))
+    .filter((phone) => phoneDeviceKey(phone) === key);
+  let unlinked = 0;
+  for (const phone of phones) {
+    const { credentialsRevoked } = await revokeInstallationNativeSessionCredentials(client, {
+      userId,
+      installationId: phone.id,
+    });
+    if (credentialsRevoked > 0) unlinked += 1;
+  }
+  return { unlinked, current: unlinked > 0 && phones.some((phone) => phone.current) };
+}
+
+module.exports = {
+  isPhoneId,
+  listLinkedPhones,
+  unlinkPhone,
+  isPhoneDeviceKey,
+  phoneDeviceKey,
+  groupLinkedPhones,
+  unlinkPhoneDevice,
+};

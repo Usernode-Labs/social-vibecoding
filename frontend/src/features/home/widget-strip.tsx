@@ -47,6 +47,7 @@ function TileIcon({ icon }: { icon: IconView }) {
         src={icon.src}
         alt=""
         loading="lazy"
+        decoding="async"
         draggable={false}
         className="w-full h-full rounded-lg object-cover"
       />

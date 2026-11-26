@@ -90,6 +90,37 @@ test('the chips are All, Votes that decide and Advisory, their counts beside the
   assert.match(html, /aria-label="Advisory, 6 votes"/);
 });
 
+// Request 7029 (and the phone audit, request 7164): on a narrow phone the
+// three chips are wider than the screen. They keep their own width with a gap
+// between them, the row scrolls sideways and fades at the end that has more,
+// and a chip is pressed at 44px.
+test('on a narrow phone the chips scroll in a rail that fades, and each is pressed at 44px', () => {
+  const html = renderToHtml(createElement(filter.VoteTypeChips, {
+    tallies: { all: 7, deciding: 1, advisory: 6 }, pressed: 'advisory', onPress: noop,
+  }));
+  const rail = /<div[^>]*data-needs-vote-chips=""[^>]*>/.exec(html)[0];
+  assert.match(rail, /class="[^"]*\bflex\b[^"]*\boverflow-x-auto\b[^"]*"/, 'one row that scrolls sideways, never a pile');
+  assert.match(rail, /\[scrollbar-width:none\]/, 'with no scrollbar drawn');
+  assert.match(rail, /class="[^"]*\bgap-2\b[^"]*"/, 'a gap between chips');
+  assert.match(rail, /class="[^"]* -mt-1 [^"]*\bpt-1\b[^"]*"/, 'room above the chips for their hit box, pulled back up');
+  assert.doesNotMatch(rail, /mask-image|data-fade/, 'nothing fades until an effect has measured the row');
+  const chips = html.match(/<button[^>]*data-needs-vote-chip="[^"]*"[^>]*>/g);
+  assert.equal(chips.length, 3);
+  for (const chip of chips) {
+    assert.match(chip, /class="[^"]*\bshrink-0\b[^"]*"/, 'a chip keeps its own width');
+    assert.match(chip, /class="[^"]*\bh-9\b[^"]*\bun-touch-target\b[^"]*"/, 'drawn 36px, pressed at 44');
+  }
+  // The rail is the shared one, whose hook fades the end with more and
+  // brings the pressed chip into view.
+  const CHIP = read('frontend/@/components/ui/chip.tsx');
+  assert.match(CHIP, /export function ChipRail\([^)]*\) \{\s*const ref = useRef<HTMLDivElement \| null>\(null\);\s*const \{ edges, style: fade \} = useRailFade\(ref\);/);
+  assert.match(CHIP, /export const FadeRail = ChipRail;/, 'one rail: every chip row fades');
+  assert.match(CHIP, /const end = at \+ el\.clientWidth < el\.scrollWidth - 1;/, 'the fade goes at the end of the scroll');
+  assert.match(CHIP, /const pressed = el\.querySelector<HTMLElement>\('\[aria-pressed="true"\]'\);/);
+  assert.match(CHIP, /else if \(chip\.right > rail\.right\) el\.scrollLeft \+= chip\.right - \(rail\.right - FADE\);/, 'the row is scrolled, never the page');
+  assert.match(read('public/usernode-native/v1/native.css'), /\.un-touch-target::after \{[^}]*height: max\(100%, 44px\);/);
+});
+
 test('the chips are not drawn when the feed holds only one kind of vote', () => {
   const draw = (tallies) => renderToHtml(createElement(filter.VoteTypeChips, { tallies, pressed: 'all', onPress: noop }));
   assert.equal(draw({ all: 3, deciding: 3, advisory: 0 }), '', 'no advisory votes: nothing to choose between');

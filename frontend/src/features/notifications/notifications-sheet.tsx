@@ -109,7 +109,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
-import { SectionHeader } from '@/components/ui/grouped-list';
+import { ListRow, ListRowMeta, SectionHeader } from '@/components/ui/grouped-list';
+import { Skeleton } from '@/components/ui/skeleton';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, NewspaperIcon, SearchIcon, XIcon,
@@ -320,12 +321,18 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
 /**
  * #6785: one row of the Recent threads tab. It is the tab's whole content:
  * the project's own tile on the left (the tile notification rows from
- * Homeroom bot already wear), then what the thread is (Request #N, Change #N
- * or Decision), its title, and the project and when something last happened
- * in it. The row opens the thread's page and closes the sheet, as a
- * notification row does. It carries none of a notification's own controls —
- * no unread dot, no bookmark, no swipe — because it stands for a discussion,
- * not a row sent to the viewer.
+ * Homeroom bot already wear), then the thread's title over what it is
+ * (Request #N, Change #N or Decision) and its project, and when something
+ * last happened in it on the trailing edge. The row opens the thread's page
+ * and closes the sheet, as a notification row does. It carries none of a
+ * notification's own controls (no unread dot, no bookmark, no swipe)
+ * because it stands for a discussion, not a row sent to the viewer.
+ *
+ * It is the shared row (ListRow, @/components/ui/grouped-list.tsx), whose
+ * time over nothing is ListRowMeta, as the Messages inbox's is. It was a
+ * three-line row of its own (the kind, the title, then the project and the
+ * time) drawn with this sheet's hairline rule; the kind and the project are
+ * one line now, under the title, and the time is the row's trailing fact.
  */
 function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
   const t = useMessages('notifications');
@@ -338,16 +345,22 @@ function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
     icon_emoji: thread.appIconEmoji || null,
   };
   const number = thread.number != null ? String(thread.number) : '';
+  const project = thread.appName || '';
   const kind = thread.kind === 'request'
     ? t('notifications:sheet.threads.kind.request', { number })
     : thread.kind === 'change'
       ? t('notifications:sheet.threads.kind.change', { number })
       : t('notifications:sheet.threads.kind.decision');
+  const line = thread.kind === 'request'
+    ? t('notifications:sheet.threads.line.request', { number, project })
+    : thread.kind === 'change'
+      ? t('notifications:sheet.threads.line.change', { number, project })
+      : t('notifications:sheet.threads.line.decision', { project });
   return (
-    <button
-      type="button"
+    <ListRow
+      as="button"
       data-thread-id={thread.threadId}
-      className="notifications-row w-full text-start ps-4 pe-4 py-3.5 hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4"
+      chevron={false}
       onClick={(event) => {
         // Stopped like every handler in this sheet: the click navigates and
         // dismisses, and an outside-click listener must not also answer it.
@@ -355,27 +368,22 @@ function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
         window.location.hash = thread.href;
         NotificationsSheet.close();
       }}
-    >
-      <span
-        aria-hidden="true"
-        data-icon={appIconKind(app)}
-        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
-      >
-        <AppIconContent app={app} />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{kind}</span>
-        {/* A thread with no title of its own is called what it is (services/recent-threads.js). */}
-        <span className="block text-[15px] font-[650] text-zinc-800 dark:text-zinc-100 truncate">{thread.title || kind}</span>
-        <span className="block text-[13px] text-zinc-500 dark:text-zinc-400 truncate">
-          <RichMessage
-            id="notifications:sheet.threads.meta"
-            values={{ project: thread.appName || '', when }}
-            components={[<time title={whenTitle} />]}
-          />
+      leading={(
+        <span
+          aria-hidden="true"
+          data-icon={appIconKind(app)}
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+        >
+          <AppIconContent app={app} />
         </span>
-      </span>
-    </button>
+      )}
+      // A thread with no title of its own is called what it is
+      // (services/recent-threads.js), and its line is then its project.
+      title={thread.title || kind}
+      tooltip={thread.title || kind}
+      subtitle={thread.title ? line : project}
+      trailing={<ListRowMeta top={<time title={whenTitle}>{when}</time>} />}
+    />
   );
 }
 
@@ -1656,6 +1664,41 @@ function RunCount({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
+/**
+ * Request 7164 (the phone audit of 25 Nov 2026): on a phone the list loads
+ * its next page when the person reaches its end, as a native list does. A
+ * mark one pixel tall sits just above the pager's button, and when it comes
+ * within 200px of the scroller's foot the button's own request is made.
+ *
+ * The button stays, for the keyboard, for a screen reader, for a browser
+ * without IntersectionObserver, and for a page that failed: `rows` is how
+ * many rows the list draws, and one count is tried once. So a load that
+ * failed, or that brought nothing this filter shows, is not asked for again
+ * on its own, and a short list fills the screen and then stops. The pager's
+ * own guard (`loadOlder` while a page is in flight) covers the rest. From
+ * 768px it does nothing: the audit was of the phone, and the panel there
+ * keeps its press.
+ */
+function LoadAtEnd({ active, rows, onReach }: { active: boolean; rows: number; onReach: () => void }) {
+  const mark = useRef<HTMLDivElement | null>(null);
+  const tried = useRef<number | null>(null);
+  const reach = useRef(onReach);
+  reach.current = onReach;
+  useEffect(() => {
+    const node = mark.current;
+    if (!active || !node || typeof IntersectionObserver !== 'function') return undefined;
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 767px)').matches) return undefined;
+    const watcher = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting) || tried.current === rows) return;
+      tried.current = rows;
+      reach.current();
+    }, { root: node.closest('[data-notif-scroller]'), rootMargin: '0px 0px 200px 0px' });
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, [active, rows]);
+  return <div ref={mark} data-notif-load-at-end="" aria-hidden="true" className="h-px" />;
+}
+
 export function NotificationsSheetView() {
   const { open, adopted, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
@@ -2290,7 +2333,7 @@ export function NotificationsSheetView() {
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll" data-notif-scroller="">
       {/*
           Saved messages + collaborator invites, pinned above the rows — they
           moved here with the list from the drawer's notifications block.
@@ -2373,16 +2416,16 @@ export function NotificationsSheetView() {
       {/* #6785: the first page's wait is the list's own placeholders, the
           same row shape it fills with, so nothing jumps when it arrives. */}
       {!searching && isThreads && threadsPending && !threadsError ? (
-        <div id="notifications-threads-list" aria-busy="true">
+        <div id="notifications-threads-list" aria-busy="true" className="animate-pulse">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="notifications-row w-full ps-4 pe-4 py-3.5 flex items-center gap-4 animate-pulse">
-              <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl bg-zinc-200 dark:bg-zinc-700" />
-              <span className="flex-1 min-w-0">
-                <span className="block h-3 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
-                <span className="mt-2 block h-3.5 w-3/4 rounded bg-zinc-200 dark:bg-zinc-700" />
-                <span className="mt-2 block h-3 w-1/3 rounded bg-zinc-200 dark:bg-zinc-700" />
-              </span>
-            </div>
+            <ListRow
+              key={i}
+              chevron={false}
+              leading={<Skeleton shape="block" className="w-11 h-11 shrink-0 rounded-xl" />}
+              title={<Skeleton className="w-3/4" />}
+              subtitle={<Skeleton shape="muted" className="w-1/3" />}
+              trailing={<Skeleton shape="muted" className="w-10 self-start" />}
+            />
           ))}
         </div>
       ) : null}
@@ -2458,6 +2501,7 @@ export function NotificationsSheetView() {
         <>
           {snap.screenCanLoadMore ? (
             <div className="px-4 py-3">
+              <LoadAtEnd active={!!open} rows={shown.length} onReach={() => controller()?.loadOlder()} />
               <button
                 id="notifications-load-older"
                 type="button"
@@ -2482,6 +2526,7 @@ export function NotificationsSheetView() {
         </>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
+          <LoadAtEnd active={!!open} rows={shown.length} onReach={() => controller()?.loadOlder()} />
           <button
             id="notifications-load-older"
             type="button"
@@ -2496,6 +2541,11 @@ export function NotificationsSheetView() {
         // #6785: the same "load more as you scroll to the bottom" footer the
         // All tab wears, on the threads tab's own cursor.
         <div className="px-4 py-3">
+          <LoadAtEnd
+            active={!!open && !threadsLoading}
+            rows={threads ? threads.length : 0}
+            onReach={() => { if (threadsNext) void loadThreads(threadsNext); }}
+          />
           <button
             id="notifications-load-more-threads"
             type="button"

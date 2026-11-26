@@ -615,3 +615,42 @@ test('the scheme is part of the canvas-tile marker only', () => {
     'image icons keep one scheme-independent marker'
   );
 });
+
+// ── Pictures below the first screenful wait (request #7165, point 5) ──
+// An app's icon is 100 to 140 KB and a community's picture up to 936 KB, and
+// Home asked for every one of them at once, the ones far down the page and in
+// screens not open yet included. A lazy picture is asked for when it is near
+// the screen, and decoded off the main thread. The first two rows of the
+// pinned grid stay as they were: they are on screen when Home first draws.
+test('the pinned grid\'s first two rows load at once and every later tile is lazy', () => {
+  const grid = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/home/app-grid.tsx'), 'utf8');
+  assert.match(grid, /export const EAGER_TILES = 8;/, 'two rows of four');
+  assert.match(grid, /state\.items\.map\(\(item, i\) => \(\s*<AppCardTile\s*key=\{`card:\$\{item\.app\.slug\}`\}\s*eager=\{i < EAGER_TILES\}/);
+  assert.match(grid, /<AppIcon icon=\{app\.icon\} eager=\{eager\} \/>/);
+  const icon = grid.slice(grid.indexOf('function AppIcon('), grid.indexOf("if (icon.kind === 'emoji')"));
+  assert.match(icon, /return eager\s*\? <img src=\{icon\.src\} alt="" draggable=\{false\} className="w-full h-full object-cover" \/>\s*: <img src=\{icon\.src\} alt="" loading="lazy" decoding="async" draggable=\{false\} className="w-full h-full object-cover" \/>;/,
+    'the eager picture is the markup it was; the lazy one fills the same fixed tile, so nothing moves when it arrives');
+});
+
+test('the other lists of icons and pictures are lazy and decode off the main thread', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  assert.match(read('frontend/src/features/home/add-apps-sheet.tsx'),
+    /<img src=\{icon\.src\} alt="" loading="lazy" decoding="async" draggable=\{false\} className="w-full h-full object-cover" \/>/, 'the Add apps sheet');
+  const discover = read('frontend/src/features/home/panels/discover.tsx');
+  assert.match(discover, /<img src=\{art\.url\} alt="" loading="lazy" decoding="async" draggable=\{false\}/, 'a card\'s illustration');
+  assert.match(discover, /<img src=\{art\.darkUrl!\} alt="" loading="lazy" decoding="async" draggable=\{false\}/, 'and its dark twin');
+  assert.match(discover, /loading="lazy"\s*decoding="async"\s*draggable=\{false\}\s*className="home-discover-art-img"/);
+  assert.match(read('frontend/src/features/home/widget-strip.tsx'), /loading="lazy"\s*decoding="async"\s*draggable=\{false\}\s*className="w-full h-full rounded-lg object-cover"/);
+  // The shared icon and the community picture keep their `eager` switch: an
+  // eager picture is decoded as it always was, with the frame that shows it.
+  assert.match(read('frontend/src/features/apps/app-card-view.tsx'), /loading=\{eager \? 'eager' : 'lazy'\}\s*decoding=\{eager \? undefined : 'async'\}/);
+  assert.equal(read('frontend/src/features/communities/card.tsx').split("loading={eager ? 'eager' : 'lazy'} decoding={eager ? undefined : 'async'}").length
+    + read('frontend/src/features/communities/card.tsx').split(/loading=\{eager \? 'eager' : 'lazy'\}\n\s*decoding=\{eager \? undefined : 'async'\}/).length, 4, 'the picture and its dark twin');
+  const format = read('frontend/src/features/messages/format.tsx');
+  assert.match(format, /<img src=\{user\.avatarUrl\} alt="" loading="lazy" decoding="async" className=/, 'a person\'s picture on a Messages row');
+  assert.match(format, /className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" \/>/, 'a shared project\'s icon in a message');
+  const tile = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) } });
+  assert.match(tile, /<img src="\/app-icons\/a{32}" alt="" loading="lazy" decoding="async" draggable="false"/);
+  const first = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) }, eager: true });
+  assert.match(first, /<img src="\/app-icons\/a{32}" alt="" loading="eager" draggable="false"/);
+});
