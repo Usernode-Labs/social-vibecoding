@@ -146,37 +146,35 @@ test('the demo feed’s shopping-list card is the advisory one', () => {
   assert.deepEqual(ordered, [-103, -105, -107, -108, -109, -106, -104], 'the advisory card last, behind the approval card');
 });
 
-// ── The reel and the sheet: the flags reach the card and the picker ───
+// ── The reel's rows: the flags reach the row's Yes, and the picker ───
 
 const { reelRows } = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-const WORKSHOP = fs.readFileSync(path.join(root, 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+const { VotePicker } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
 const FLOW = fs.readFileSync(path.join(root, 'frontend/src/features/review-flow/review-flow.tsx'), 'utf8');
 
 const noop = () => {};
-const sheetForm = (over = {}) => {
+// The row's Yes and No, drawn by the one vote picker (the change page's own),
+// with the flags the row's Yes carries.
+const picker = (over = {}) => {
   const [reelRow] = reelRows([item(over)]);
-  return renderToHtml(createElement(NeedsVoteForm, {
-    row: reelRow, side: 'yes', line: '',
-    onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+  const spec = (side) => ({ key: side, label: side, act: reelRow[side] && reelRow[side].act });
+  return renderToHtml(createElement(VotePicker, {
+    yes: spec('yes'), no: spec('no'), prior: null, side: 'yes', line: '', reasonId: 'vote-x',
+    tally: () => '', withLine: true,
+    advisory: !!reelRow.yes.advisory, uncounted: !!reelRow.yes.uncounted,
+    onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
   }));
 };
 
-test('the reel carries the flags onto the row’s Yes, and the sheet’s picker shows the line', () => {
+test('the reel carries the flags onto the row’s Yes, and the picker shows the line', () => {
   const [plain] = reelRows([item()]);
   assert.ok(!(plain.yes.advisory || plain.yes.uncounted), 'an unmarked item’s Yes is bare');
-  const html = sheetForm({ advisory: true });
+  const html = picker({ advisory: true });
   assert.match(html, /data-vote-uncounted="">Your vote is advisory: it’s recorded, but it doesn’t decide this change\./,
     'the same line the change’s own card shows');
   assert.doesNotMatch(html, /Test account/);
-  const uncounted = sheetForm({ uncounted: true });
-  assert.match(uncounted, /Test account: this vote won’t count\./, 'the test-account line wins on the sheet, as on the card');
-});
-
-test('the item’s eyebrow reads the new catalog entry for a marked row', () => {
-  assert.equal(message('project:needsYou.eyebrow.changeAdvisory'), 'Change · Your vote is advisory');
-  assert.match(WORKSHOP, /needsYou\.eyebrow\.changeAdvisory/, 'FeedItem names the id where the eyebrow is drawn');
-  assert.match(WORKSHOP, /row\.yes && \(row\.yes\.advisory \|\| row\.yes\.uncounted\)/, 'on a change row whose Yes carries a flag');
+  const uncounted = picker({ uncounted: true });
+  assert.match(uncounted, /Test account: this vote won’t count\./, 'the test-account line wins, as on the card');
 });
 
 // #6199: the run opens at the first change waiting on you, never on a

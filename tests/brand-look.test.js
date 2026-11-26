@@ -884,11 +884,11 @@ test('a vote to close is drawn with the page\'s card and the foot\'s two buttons
   // The card was white on the white thread card, with no edge, and Yes was
   // the sky (the generic Vote face) beside a quiet grey patch: neither is
   // what the page's own buttons look like.
+  // Since the change page's Vote became the one vote control, the close
+  // vote and the decision page draw the page's bar and that Vote instead of
+  // their own faces (thread-changes.tsx decisionVoteSpecs).
   const src = read('frontend', 'src', 'features', 'dev-board', 'topic', 'thread-changes.tsx');
-  assert.doesNotMatch(src, /style=\{sending \? \{ minWidth/, 'neither face carries an inline colour');
-  assert.match(src, /className=\{act \? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'\}/);
-  assert.equal((src.match(/const act = !sending && \(on \|\| \(!mine && side === 'up'\)\);/g) || []).length, 2,
-    'the request\'s close vote and the decision page\'s card');
+  assert.doesNotMatch(src, /dev-vote-btn-act|dev-vote-btn-quiet/, 'no faces of their own');
   const gate = ruleAt(`${EITHER} .dev-change-pair .dev-change-gate`);
   assert.ok(gate, 'the card is the look\'s own, in both modes');
   assert.match(gate.body, /background:\s*var\(--bl-card\);/);
@@ -906,8 +906,6 @@ test('a vote to close is drawn with the page\'s card and the foot\'s two buttons
   // The standard look's thread page carries the same rules (scripts/thread-look.js).
   const css = read('public', 'css', 'app.css');
   assert.match(css, /:where\(#dev-topic-thread\) \.dev-change-gate-act \.dev-vote-btn-act \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
-  // Every look keeps the quiet face's old fill, in the base rules.
-  assert.match(css, /\.dev-vote-btn-quiet, \.dev-vote-btn-quiet:hover \{ background: var\(--state-neutral-bg\); color: var\(--text-primary\); \}/);
   // Both faces keep even sides, so neither label sits flush with its edge
   // (the base button's 8px end is the caret's room, and these carry no
   // caret).

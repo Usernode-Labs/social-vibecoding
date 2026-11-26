@@ -79,24 +79,6 @@ test('the board\'s card draws the stored row\'s words, and keeps the vote\'s cou
   assert.equal(merging.pill.row, undefined);
 });
 
-test('Needs you says the row\'s word after the count, in its facts and under its question', () => {
-  const AppView = appView();
-  const { factsFor, VoteSub } = loadTsx(WORKSHOP);
-  const row = (work) => ({
-    t: 'card', key: 'vote:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    card: plain(AppView._proposalCardModel(proposal({ work }))),
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [7, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [7, 'no'] } },
-    askAbout: { kind: 'proposal', ref: 7 },
-  });
-  const says = (work) => factsFor(row(work), null).map((f) => `${f.key}:${f.text}`);
-  assert.deepEqual(says(shots()), ['tally:0 of 2 approvals', 'state:Taking screenshots']);
-  assert.deepEqual(says(syncing()), ['tally:0 of 2 approvals', 'state:Syncing with main']);
-  assert.deepEqual(says(upForVote()), ['tally:0 of 2 approvals'], 'up for a vote: the count alone, as before');
-  assert.deepEqual(says(null), ['tally:0 of 2 approvals']);
-  const sub = renderToHtml(createElement(VoteSub, { row: row(shots()), voted: null }));
-  assert.match(sub, /Taking screenshots/);
-});
-
 test('a change\'s line under a request wears the row\'s pill, never "Vote · 0/2"', () => {
   const AppView = appView();
   AppView._placedCategoryFor = () => null;

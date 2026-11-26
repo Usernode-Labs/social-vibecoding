@@ -130,8 +130,10 @@ test('header: the platform\'s Vote, as the chat\'s vote card says it: See the vo
   assert.equal(overlay.previewVoteLabel({ ...open, myVote: 'no' }), 'Vote');
   assert.equal(overlay.previewVoteLabel({ ...open, status: 'merging' }), 'See the vote');
   assert.equal(overlay.previewVoteLabel({ ...open, status: 'merged' }), 'See the vote');
+  // The chat's vote card follows the same rule: the change page's Vote while
+  // the vote is open, See the vote once it is decided.
   assert.match(read('frontend/src/features/group-chat/vote-card.tsx'),
-    /const settled = !!vote && vote\.status !== 'promoted';[\s\S]*?settled \? t\('chat:group\.voteCard\.seeVote'\) : t\('chat:group\.voteCard\.vote'\)/,
+    /const settled = !!vote && vote\.status !== 'promoted';[\s\S]*?const specs = vote && !settled \? changeVoteSpecs\(sessionId\) : null;[\s\S]*?t\('chat:group\.voteCard\.seeVote'\)/,
     'the same rule as the chat\'s vote card');
   const src = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(src, /id="staging-vote-btn"[\s\S]*?onClick=\{\(\) => stagingHandlers\.onVote\?\.\(\)\}/,

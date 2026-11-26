@@ -1110,8 +1110,4 @@ test('the feed shapes a run\'s frames onto its screens, and outlines only its ar
   const view = src.slice(src.indexOf('const outlines = (screen, side) => {'), src.indexOf('const cropOf = (screen) => {'));
   assert.doesNotMatch(view, /frames/, 'a frame is never drawn as an outline');
   assert.match(src, /const framed = framesOn\(which\);\n\s+const rects = framed\.length \? framed :/);
-  // The Workshop's picture crops to frames first, and outlines regions only.
-  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);
-  assert.match(ws, /const outlines = \(which: Side\) => \(place \? screen\.regions\.map\(/);
 });

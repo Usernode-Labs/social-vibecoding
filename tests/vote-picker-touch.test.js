@@ -238,7 +238,7 @@ test('the answers are small rounded buttons, the picked one in the No tint, tap-
   assert.match(rule('.dev-vote-why-opt'), /border-radius: 10px/);
   assert.match(CSS, /\.dev-vote-why-opt\[aria-checked="true"\] \{ background: var\(--state-blocked-bg\); color: var\(--state-blocked\); border-color: transparent; \}/,
     'the picked answer takes the No side\'s tint, as its send button does');
-  assert.match(CSS, /\.dev-vote-sheet \.dev-vote-why-opt, \.dev-ws-vote-form \.dev-vote-why-opt \{ height: 44px;/, 'tap-target rows in the sheets');
+  assert.match(CSS, /\.dev-vote-sheet \.dev-vote-why-opt \{ height: 44px;/, 'tap-target rows in the sheet');
 });
 
 // ── Test accounts ─────────────────────────────────────────────────────
@@ -340,11 +340,9 @@ test('the counts come from the spec\'s own tally, whatever the label says and ho
   assert.match(odd, /<span class="dev-vote-n">5<\/span>/);
   assert.doesNotMatch(odd, /<span class="dev-vote-n">really<\/span>/);
   const card = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
-  const tab = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
-  for (const src of [card, tab]) {
+  for (const src of [card]) {
     assert.doesNotMatch(src, /exec\(a\.label/, 'no count is parsed out of a label');
     assert.doesNotMatch(src, /\/\^Vote\\b\//, 'and no state is recognised by an English word');
   }
-  assert.match(tab, /st\.label && !st\.plainVote/);
 });
 

@@ -4,8 +4,7 @@
 // the viewer drags and zooms it inside the circle, and accepts or cancels,
 // before anything is staged.
 //
-// The arithmetic is EXECUTED (tests/lib/render-tsx.js `loadTsx`, the harness
-// tests/workshop-swipe-vote.test.js uses for its gesture maths): which way a
+// The arithmetic is EXECUTED (tests/lib/render-tsx.js `loadTsx`): which way a
 // drag moves the square, what zoom keeps still, where the edges stop it, and
 // what reaches the canvas. Each of those wrong is a photo cut from somewhere
 // the viewer did not choose, and nothing on screen would say so until the

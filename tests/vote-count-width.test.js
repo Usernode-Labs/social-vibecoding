@@ -87,8 +87,8 @@ test('the Yes and No counts hold a two-digit slot and the switch does not wrap',
   assert.match(tally, /color:\s*var\(--text-muted\)/);
 });
 
-test('the sheet and Needs you sizes still win, changing only the font size', () => {
-  for (const scope of ['.dev-vote-sheet', '.dev-ws-vote-form']) {
+test('the sheet\'s size still wins, changing only the font size', () => {
+  for (const scope of ['.dev-vote-sheet']) {
     const rule = bodies(`${scope} .dev-vote-switch-opt .dev-vote-n`, (r) => r.context === '')[0].body;
     assert.match(rule, /font-size:\s*12\.5px/);
     assert.doesNotMatch(rule, /min-width|display|flex:/,

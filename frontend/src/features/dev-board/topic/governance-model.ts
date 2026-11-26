@@ -42,6 +42,8 @@ export type GovernanceContent =
 
 export interface GovernanceVotes {
   yes: number;
+  /** The No votes, for the picker's No side. */
+  no: number;
   need: number;
   mine: 'yes' | 'no' | null;
   /** Still counting: the card offers Yes and No and never an ending. */
@@ -153,11 +155,12 @@ export function governanceContent(row: any, appName = ''): GovernanceContent {
 }
 
 /** The tally the Votes card draws: the qualified count where the rule keeps one. Pure. */
-function tally(row: any): { yes: number; need: number; mine: 'yes' | 'no' | null } {
+function tally(row: any): { yes: number; no: number; need: number; mine: 'yes' | 'no' | null } {
   const yes = Number(row && row.qualified_yes_count != null ? row.qualified_yes_count : row && row.up_count) || 0;
+  const no = Number(row && row.qualified_no_count != null ? row.qualified_no_count : row && row.down_count) || 0;
   const need = Math.max(1, Number(row && row.approvals_required != null ? row.approvals_required : row && row.votes_required) || 1);
   const mine = row && row.my_vote === 'up' ? 'yes' : row && row.my_vote === 'down' ? 'no' : null;
-  return { yes, need, mine };
+  return { yes, no, need, mine };
 }
 
 export interface GovernanceViewer {

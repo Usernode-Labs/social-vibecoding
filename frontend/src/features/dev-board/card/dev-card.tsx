@@ -655,6 +655,10 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // votes on does. Anything else demoted into this button (there is nothing
   // today) keeps the plain panel and the spec's own call.
   const isVote = yes.act?.fn === 'castVote' || yes.act?.fn === 'castIssueVote';
+  // #6990: a decision's vote (a vote to close a request, a governance vote)
+  // keeps the side already chosen: the server takes the same side back when
+  // it is sent again, so the picker sends nothing for it.
+  const taken: 'yes' | 'no' | null = yes.act?.fn === 'castIssueVote' ? mine : null;
   // #3984: this vote on its way (cards-store.ts voteSendingStore), from this
   // button or any other surface: the card, the change's page, a notification.
   const sendKey = `${yes.act?.fn}:${String(yes.act?.args?.[0] ?? '')}`;
@@ -706,6 +710,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // presented at all.
   const pickTouch = (a: ActionSpec) => {
     shut();
+    if (taken && a === (taken === 'yes' ? yes : no)) return;
     call(a.act);
   };
   // The touch picker: a kit bottom sheet holding the same panel. The element
@@ -849,6 +854,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // picked, and carries that answer (with the line, if one was written).
   const submit = () => {
     if (!isVote) { send(spec, null); return; }
+    if (taken && side === taken) { shut(); return; }
     if (side === 'no') {
       if (!noChoice) return;
       send(no, composeNoReason(whyTexts(t)[noChoice], line,
@@ -881,6 +887,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       withLine={isVote}
       solo={!!yes.solo}
       approve={approve}
+      taken={taken}
       onSide={setSide}
       onLine={setLine}
       onNoChoice={setNoChoice}
@@ -981,7 +988,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, uncounted = false, advisory = false, side, line, noChoice = null, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onNoChoice, onBoxKey, onCancel, onSend,
+  yes, no, prior, uncounted = false, advisory = false, side, line, noChoice = null, reasonId, boxRef, tally, withLine, solo, approve = false, taken = null, onSide, onLine, onNoChoice, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
@@ -1001,6 +1008,8 @@ export function VotePicker({
   solo?: boolean;
   /** B7, #3977: the Yes is the viewer's approval (`ActionSpec.approve`). */
   approve?: boolean;
+  /** #6990: a decision's side the viewer already chose, which is not sent again. */
+  taken?: 'yes' | 'no' | null;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
   onNoChoice: (choice: NoChoice) => void;
@@ -1108,8 +1117,9 @@ export function VotePicker({
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
-          // The line is optional on a Yes. A No needs its answer first.
-          disabled={withLine && !yesOn && !noChoice}
+          // The line is optional on a Yes. A No needs its answer first. A
+          // decision's side already chosen is kept, not sent again.
+          disabled={(withLine && !yesOn && !noChoice) || (!!taken && side === taken)}
           onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >
