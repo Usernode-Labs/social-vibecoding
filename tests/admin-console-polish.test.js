@@ -113,3 +113,16 @@ test('with room the open tabs stay on one line, and never scroll sideways', () =
   assert.match(css, /\.admin-tab-strip > \[data-admin-tab\] \{ flex: 0 1 auto; min-width: 4\.75rem; \}/);
   assert.doesNotMatch(consoleJs, /overflow-x-(auto|scroll)/);
 });
+
+test('the console runs the window\'s width, and its menu folds to icons', () => {
+  assert.match(css, /#admin-screen #admin-root \{ max-width: none; padding-inline: 12px; \}/, 'one small gutter');
+  assert.doesNotMatch(css, /#admin-root \{ max-width: 1800px/);
+  assert.match(css, /\.admin-console-layout:has\(\.admin-sidebar\.is-folded\) \{ grid-template-columns: 64px minmax\(0, 1fr\); \}/,
+    'the page takes the room the folded menu gives back');
+  const bar = consoleJs.slice(consoleJs.indexOf('  _topBarHtml() {'), consoleJs.indexOf('  _tabStripHtml() {'));
+  assert.match(bar, /data-admin-nav-fold="" aria-expanded="\$\{folded \? 'false' : 'true'\}" aria-label="\$\{foldLabel\}"/);
+  assert.match(bar, /title="\$\{label\}" class="admin-sidebar-row/, 'a folded row is named by its tooltip');
+  assert.match(consoleJs, /localStorage\.setItem\(NAV_FOLDED_KEY, on \? '1' : '0'\)/, 'the choice is kept for this browser');
+  assert.match(block, /\.admin-sidebar\.is-folded \[data-admin-group\]\.hidden \{ display: block !important; \}/,
+    'folded, a collapsed group still shows its tools');
+});

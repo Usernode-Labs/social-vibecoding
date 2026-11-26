@@ -3950,9 +3950,13 @@ html[data-browser-scroller^="auth-"] :is(
   body:has(#admin-screen:not(.hidden)) { --platform-rail-w: 0px !important; }
   body:has(#admin-screen:not(.hidden)) #platform-tabs { display: none !important; }
   body:has(#admin-screen:not(.hidden)) #admin-screen {
-    padding-inline: clamp(18px, 2.5vw, 40px) !important;
+    padding-inline: 0 !important;
   }
-  #admin-root { max-width: 1800px; margin-inline: auto; }
+  /* The console runs the window's width, with one small gutter (#7181). */
+  #admin-screen #admin-root { max-width: none; padding-inline: 12px; }
+  /* The menu folded to its icons: the page takes the room it gives back. */
+  .admin-console-layout:has(.admin-sidebar.is-folded) { grid-template-columns: 64px minmax(0, 1fr); }
+  .admin-console-layout { column-gap: 16px; }
   .admin-console-layout { min-height: calc(100dvh - var(--platform-header-h, 72px) - 32px); }
   #admin-nav-desktop { align-self: stretch; }
   .admin-sidebar { position: sticky; top: 16px; max-height: calc(100dvh - var(--platform-header-h, 72px) - 32px); overflow: auto; overscroll-behavior: contain; padding: 14px !important; border-radius: 20px !important; }
@@ -4076,6 +4080,27 @@ html[data-app-tone="dark"] #admin-screen {
 .admin-sidebar-tools { display: grid; gap: 8px; border-top: 1px solid var(--adm-rule); margin-top: 14px; padding: 13px 8px 3px; }
 .admin-sidebar-search, .admin-sidebar-view-site { display: flex; min-height: 32px; align-items: center; justify-content: space-between; color: var(--adm-muted); font-size: 0.8125rem; }
 .admin-sidebar-search:hover, .admin-sidebar-view-site:hover { color: var(--adm-ink); }
+
+/* Its fold button, and the menu folded: icons alone, each row's name its
+   tooltip, every tool's icon shown whatever group is collapsed. */
+.admin-sidebar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.admin-sidebar-heading > div { min-width: 0; }
+.admin-sidebar-fold { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 10px; color: var(--adm-muted); }
+.admin-sidebar-fold:hover { background: var(--adm-well); color: var(--adm-ink); }
+.admin-sidebar-fold:focus-visible { outline: 2px solid var(--adm-link); outline-offset: 1px; }
+.admin-sidebar-fold svg { width: 20px; height: 20px; }
+#admin-screen .admin-sidebar.is-folded { padding: 10px 8px !important; scrollbar-width: none; }
+.admin-sidebar.is-folded .admin-sidebar-heading { justify-content: center; padding: 0 0 8px; margin-bottom: 8px; }
+.admin-sidebar.is-folded .admin-sidebar-heading > div,
+.admin-sidebar.is-folded .admin-sidebar-row > span,
+.admin-sidebar.is-folded .admin-sidebar-all-label,
+.admin-sidebar.is-folded .admin-sidebar-group-toggle,
+.admin-sidebar.is-folded .admin-sidebar-tools { display: none; }
+.admin-sidebar.is-folded .admin-sidebar-row { justify-content: center; min-height: 40px; padding: 8px 0; }
+.admin-sidebar.is-folded .admin-sidebar-group [data-admin-section] { padding-inline-start: 0; }
+.admin-sidebar.is-folded .admin-sidebar-group [data-admin-section] svg { width: 20px; height: 20px; }
+.admin-sidebar.is-folded [data-admin-group].hidden { display: block !important; }
+.admin-sidebar.is-folded .admin-sidebar-group { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--adm-rule); }
 
 /* The page's head: its name, one sentence, and Refresh. */
 #admin-dashboard { color: var(--adm-ink); }

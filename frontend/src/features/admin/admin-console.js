@@ -222,6 +222,7 @@ import { TABS_KEY, parseStoredTabs, addTab, closeTab, searchSections } from './a
 // what keeps every future section visible to someone whose store predates it.
 // It also makes "all four expanded on a first visit" the empty-store default.
 const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v1';
+const NAV_FOLDED_KEY = 'admin:nav-folded:v1';
 
 const AdminConsole = {
   _open: false,
@@ -1004,6 +1005,28 @@ const AdminConsole = {
   // Enter/Space come for free and no keydown handler is needed, with the
   // aria-expanded/aria-controls pair and the platform's chevron idiom
   // (down when open, right when closed — home-panels.js's rotation trick).
+  // The menu folded to its icons (#7181): one choice per browser, kept
+  // beside the collapsed groups. Folded, every tool's icon shows, whatever
+  // group is collapsed, and its name is the row's tooltip.
+  _navFolded: null,
+
+  _isNavFolded() {
+    if (AdminConsole._navFolded === null) {
+      let on = false;
+      try { on = typeof localStorage !== 'undefined' && localStorage.getItem(NAV_FOLDED_KEY) === '1'; } catch { /* private window */ }
+      AdminConsole._navFolded = on;
+    }
+    return AdminConsole._navFolded;
+  },
+
+  _setNavFolded(on) {
+    AdminConsole._navFolded = !!on;
+    try { localStorage.setItem(NAV_FOLDED_KEY, on ? '1' : '0'); } catch { /* the choice lasts for this visit */ }
+    AdminConsole._renderShell();
+    const btn = document.querySelector('#admin-nav-desktop [data-admin-nav-fold]');
+    if (btn) btn.focus();
+  },
+
   _groupToggleHtml(name, domId, collapsed, cls) {
     const label = `${collapsed ? 'Expand' : 'Collapse'} ${name}`;
     const chevron = `<svg data-admin-group-chevron aria-hidden="true"
@@ -1147,7 +1170,7 @@ const AdminConsole = {
       ['reports', 'Moderation'], ['analytics', 'Analytics'], ['settings', 'Settings'],
     ].filter(([key]) => visible.some((s) => s.key === key));
     const row = (key, label) => `<button type="button" data-admin-section="${key}"${active === key ? ' aria-current="page"' : ''}
-      class="admin-sidebar-row${active === key ? ' is-active' : ''}">${AdminConsole.NAV_ICONS[key] || ''}<span>${label}</span>${key === 'reports' ? '<span class="admin-sidebar-count" data-admin-moderation-count hidden></span>' : ''}</button>`;
+      title="${label}" class="admin-sidebar-row${active === key ? ' is-active' : ''}">${AdminConsole.NAV_ICONS[key] || ''}<span>${label}</span>${key === 'reports' ? '<span class="admin-sidebar-count" data-admin-moderation-count hidden></span>' : ''}</button>`;
     const primaryRows = primary.map(([key, label]) => row(key, label)).join('');
     const groups = AdminConsole._groupedSections().map((g) => {
       const items = g.items.filter((s) => s.key !== 'overview' && !primary.some(([key]) => key === s.key));
@@ -1158,8 +1181,11 @@ const AdminConsole = {
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}" class="${collapsed ? 'hidden' : ''}">${items.map((s) => row(s.key, AdminConsole.esc(s.label))).join('')}</div></section>`;
     }).join('');
     const keys = AdminConsole._isMac() ? '⌘K' : 'Ctrl K';
-    return `<nav data-admin-topnav="" aria-label="Admin sections" class="admin-sidebar ${AdminUI.card}">
-      <div class="admin-sidebar-heading"><h1>Admin</h1><p>Platform workspace</p></div>
+    const folded = AdminConsole._isNavFolded();
+    const foldLabel = folded ? 'Show the menu' : 'Hide the menu';
+    const fold = `<button type="button" data-admin-nav-fold="" aria-expanded="${folded ? 'false' : 'true'}" aria-label="${foldLabel}" title="${foldLabel}" class="admin-sidebar-fold"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><rect x="3.75" y="4.5" width="16.5" height="15" rx="2.25"/><path stroke-linecap="round" d="M9 4.5v15"/></svg></button>`;
+    return `<nav data-admin-topnav="" aria-label="Admin sections" class="admin-sidebar${folded ? ' is-folded' : ''} ${AdminUI.card}">
+      <div class="admin-sidebar-heading"><div><h1>Admin</h1><p>Platform workspace</p></div>${fold}</div>
       <div class="admin-sidebar-primary">${primaryRows}</div>
       <div class="admin-sidebar-all-label">All tools</div>${groups}
       <div class="admin-sidebar-tools">${AdminConsole._envLabelHtml()}<button type="button" data-admin-search-open="" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K" class="admin-sidebar-search">Search tools <kbd class="${AdminUI.kbd}">${keys}</kbd></button>
@@ -1497,6 +1523,8 @@ const AdminConsole = {
       AdminConsole._wireSectionButtons(sideHost);
       AdminConsole._wireGroupToggles(sideHost);
       AdminConsole._wireTopBar(sideHost);
+      const foldBtn = sideHost.querySelector('[data-admin-nav-fold]');
+      if (foldBtn) foldBtn.addEventListener('click', () => AdminConsole._setNavFolded(!AdminConsole._isNavFolded()));
     }
     const tabHost = document.getElementById('admin-open-tabs');
     if (tabHost) {
