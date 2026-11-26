@@ -2167,6 +2167,10 @@
     "text": "Formatting",
     "description": "Accessible name of the row of formatting buttons above a community channel's message box; it groups the six buttons that format the message being written."
   },
+  "composer.format.toggle": {
+    "text": "Formatting",
+    "description": "Tooltip and accessible name of a button beside a community channel's message box on a phone. Pressing it shows or hides the row of formatting buttons (bold, italic, link and so on) above the box."
+  },
   "composer.format.bold": {
     "text": "Bold",
     "description": "Tooltip and accessible name of a formatting button above a channel's message box: makes the selected text bold, or starts bold text at the cursor. Pressing it again removes the bold."

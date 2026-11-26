@@ -184,6 +184,36 @@ test('the composer shows the row only for a channel, named from the catalog', ()
   }
 });
 
+test('on a phone the row waits behind one named button beside the box', () => {
+  // Request #7164 (phone audit): under 768px a channel's box stands alone.
+  // The button is a channel's alone, closed to begin with, says whether the
+  // row is open and which row it opens, and is named from the catalog.
+  assert.match(COMPOSER, /const \[formatOpen, setFormatOpen\] = useState\(false\);/);
+  assert.match(COMPOSER, /\{isChannel \? \(\s*<button type="button" className="messages-composer-action messages-format-toggle"/);
+  assert.match(COMPOSER, /onClick=\{\(\) => setFormatOpen\(\(open\) => !open\)\}/);
+  assert.match(COMPOSER, /aria-expanded=\{formatOpen\} aria-controls=\{formatBarId\} aria-label=\{t\('messages:composer\.format\.toggle'\)\}/);
+  assert.match(COMPOSER, /role="toolbar" id=\{formatBarId\} data-open=\{formatOpen \? '' : undefined\}/);
+  assert.equal(message('messages:composer.format.toggle'), 'Formatting');
+  // Nothing but that button closes it: a send leaves the row as it was.
+  assert.equal(COMPOSER.match(/setFormatOpen\(/g).length, 1);
+  // It sits beside the box, after the "+" and before the field.
+  const toggleAt = COMPOSER.indexOf('messages-format-toggle');
+  assert.ok(toggleAt > COMPOSER.indexOf('className="messages-composer-add"') && toggleAt < COMPOSER.indexOf('<textarea ref={inputRef}'));
+  // The shortcuts do not ask whether the row is open.
+  const keys = COMPOSER.slice(COMPOSER.indexOf('function onFormatKey('), COMPOSER.indexOf('function formatSelected('));
+  assert.doesNotMatch(keys, /formatOpen/);
+
+  // The fold is the stylesheet's, and a phone's alone: the row is hidden
+  // under 768px until opened, and from 768px the button is never drawn.
+  const CSS = read('public/css/app.css');
+  const at = CSS.indexOf('.messages-format-toggle[data-open]');
+  const block = CSS.slice(at, CSS.indexOf('/* #6653', at));
+  assert.match(block, /@media \(max-width: 767px\) \{\s*\.messages-format-bar:not\(\[data-open\]\) \{ display: none; \}/);
+  assert.match(block, /@media \(min-width: 768px\) \{\s*html \.messages-composer-row > \.messages-format-toggle\.messages-composer-action \{ display: none; \}/);
+  // The 44px tap target is the one every composer button has on a phone.
+  assert.match(CSS, /\.messages-composer-action::after,\s*\.messages-send::after \{ content: ''; position: absolute; inset: -4px; \}/);
+});
+
 test('a press keeps the field focused and takes Ctrl/Cmd+B and I', () => {
   assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => \(kind === 'link' \? openLinkField\(\) : formatSelected\(kind\)\)\}/);
   assert.match(COMPOSER, /input\.focus\(\{ preventScroll: true \}\)/);
