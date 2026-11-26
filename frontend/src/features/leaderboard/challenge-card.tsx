@@ -129,6 +129,9 @@ const META: Record<PartSize, string> = {
 };
 const META_REWARD = 'text-amber-800 dark:text-amber-300';
 const META_EARNED = 'text-emerald-700 dark:text-emerald-400';
+// #7220: points still being counted are a wait, not a reward, so they are not
+// amber. The muted grey the page's notes use.
+const META_PENDING = 'text-zinc-500 dark:text-zinc-400';
 // The artwork's face: whatever `--tint-art` the registry's tone class sets.
 // The `dark:` twin is not a second colour — the tone class already switches
 // the property in dark mode — it is what displaces IconTile's own
@@ -217,14 +220,18 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
 
 // The detail page's points line under its title: the reward on offer, the
 // viewer's points so far, or with `earned` what the viewer earned, in emerald.
+// `pending` is a finished challenge whose points the scorer has not added yet:
+// the same line, in plain grey, saying they are still being counted (#7220).
 // Nothing to say is no line at all.
-export function ChallengeMeta({ text = null, earned = false, size = 'md' }: {
+export function ChallengeMeta({ text = null, earned = false, pending = false, size = 'md' }: {
   text?: string | null;
   earned?: boolean;
+  pending?: boolean;
   size?: PartSize;
 }): ReactNode {
   if (!text) return null;
-  return <div className={`${META[size]} ${earned ? META_EARNED : META_REWARD}`}>{text}</div>;
+  const tone = earned ? META_EARNED : pending ? META_PENDING : META_REWARD;
+  return <div className={`${META[size]} ${tone}`}>{text}</div>;
 }
 
 // The 5rem artwork tile. A challenge whose template names an illustration

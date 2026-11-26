@@ -255,6 +255,18 @@
     "text": "<0>{{points}}</0> · {{done}} of {{count}} done",
     "description": "The summary line over the Challenges tab's grid, e.g. \"3,500 pts · 4 of 11 done\". <0> wraps the points, drawn in bold. {{points}} is the viewer's points, already written out (\"3,500 pts\"); {{done}} is how many challenges they finished and {{count}} how many there are."
   },
+  "progress.updating_one": {
+    "text": "{{done}} of {{count}} done · points updating",
+    "description": "The summary over the Challenges tab's grid while the viewer's points are still being loaded or a challenge they finished has not been credited yet, instead of a total that would leave that challenge out. {{done}} is the number finished and {{count}} how many there are."
+  },
+  "progress.updating_other": {
+    "text": "{{done}} of {{count}} done · points updating",
+    "description": "The summary over the Challenges tab's grid while the viewer's points are still being loaded or a challenge they finished has not been credited yet, instead of a total that would leave that challenge out. {{done}} is the number finished and {{count}} how many there are."
+  },
+  "challenges.counting": {
+    "text": "Points still being counted",
+    "description": "Under the title of a challenge the viewer finished whose points have not been added yet, in place of the reward on offer so it does not read as points already earned."
+  },
   "challenges.detail.header": {
     "text": "Challenge",
     "description": "Title in the app's header while one challenge's page is open. A noun."

@@ -63,6 +63,9 @@ function build({ challenges, mine }) {
   const { pane } = loadController();
   pane._challenges = challenges;
   pane._mine = mine;
+  // The summary shows a total only once the viewer's own read has landed
+  // (#7220); a hand-built map stands in for that read.
+  pane._mineState = 'ready';
   return { pane, view: pane.historyView(pane._ordered()) };
 }
 
@@ -87,7 +90,7 @@ test('History groups Done then In progress, and leaves out a challenge with no p
   assert.equal(view.done[0].points, '500 pts', 'a finished challenge says what it earned');
   assert.equal(view.progressGroup[0].points, '250 pts so far');
   assert.equal(view.done[1].points, null, 'nothing earned, nothing said');
-  assert.deepEqual({ ...view.progress }, { done: 2, total: 4, points: 750 });
+  assert.deepEqual({ ...view.progress }, { done: 2, total: 4, points: 750, updating: false });
 });
 
 test('every action behind a challenge is listed newest first, the ones that did not count too', () => {

@@ -210,12 +210,79 @@ test('a weekly challenge’s counted rail says this week; a yes-or-no one keeps 
 test('the summary counts every challenge on the tab, and the viewer’s points once they are known', () => {
   const { pane, store } = loadPane({ challenges: MIXED });
   pane._renderGrid();
-  assert.deepEqual({ ...gridOf(store).progress }, { done: 2, total: 8, points: null },
+  assert.deepEqual({ ...gridOf(store).progress }, { done: 2, total: 8, points: null, updating: false },
     'before the viewer’s own rows land (or signed out) the points are unknown, not 0');
   pane._mine = new Map([[1, { activities_total: 500 }], [4, { activities_total: 3000 }], [9, { activities_total: 99 }]]);
+  pane._mineState = 'ready';
   pane._renderGrid();
-  assert.deepEqual({ ...gridOf(store).progress }, { done: 2, total: 8, points: 3500 },
+  assert.deepEqual({ ...gridOf(store).progress }, { done: 2, total: 8, points: 3500, updating: false },
     'the points the viewer earned on the challenges in view, and only those');
+});
+
+// #7220: the summary and the cards are one set of figures. While the viewer's
+// own rows are out, or a challenge they finished has not been credited yet,
+// the line says points are updating instead of a total that leaves it out.
+test('the summary waits for points a finished challenge has not been credited', () => {
+  const finished = (id, reward, extra = {}) => ch(id, 'PERSISTENT', {
+    progress: { done: true }, card_preview: { goal: `Challenge ${id}`, reward }, ...extra,
+  });
+  const render = (challenges, mine = new Map()) => {
+    const { pane, store } = loadPane({ challenges });
+    pane._mine = mine;
+    pane._mineState = 'ready';
+    pane._renderGrid();
+    return { pane, progress: gridOf(store).progress };
+  };
+
+  const waiting = render([finished(1, '500'), ch(2, 'WEEKLY')], new Map([[1, { activities_total: 0 }]]));
+  assert.deepEqual({ ...waiting.progress }, { done: 1, total: 2, points: 0, updating: true },
+    'a finished challenge with a numeric reward and no credit yet: no total, still updating');
+
+  const credited = render([finished(1, '500')], new Map([[1, { activities_total: 500 }]]));
+  assert.deepEqual({ ...credited.progress }, { done: 1, total: 1, points: 500, updating: false },
+    'once the credit lands the total is back');
+
+  const organiser = render([ch(1, 'PERSISTENT', { completed: true, card_preview: { goal: 'Closed', reward: '500' } })]);
+  assert.equal(organiser.progress.updating, false,
+    'an organiser’s archive flag is not the viewer finishing it');
+
+  const prose = render([finished(1, 'A badge')], new Map([[1, { activities_total: 0 }]]));
+  assert.equal(prose.progress.updating, false, 'a reward that is not points has no figure to wait for');
+
+  const zero = render([finished(1, '0')], new Map([[1, { activities_total: 0 }]]));
+  assert.equal(zero.progress.updating, false, 'a zero reward has nothing to count');
+
+  // While the personal read is out, the line says so whatever the cards show.
+  const { pane: loading, store } = loadPane({ challenges: [finished(1, '500'), ch(2, 'WEEKLY')] });
+  loading._mineState = 'loading';
+  loading._renderGrid();
+  const progress = gridOf(store).progress;
+  assert.equal(progress.points, null, 'no total from rows that are on their way');
+  assert.equal(progress.updating, true);
+});
+
+test('the summary’s done count is the cards the Done group holds', () => {
+  const { pane, store } = loadPane({ challenges: MIXED });
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.equal(grid.progress.done, groupOf(grid, 'done').cards.length,
+    'one figure for the line and the group under it');
+  assert.equal(grid.progress.total, Array.from(grid.groups).reduce((n, g) => n + g.cards.length, 0));
+});
+
+test('a finished challenge without its credit says its points are still being counted', () => {
+  const c = { id: 1, progress: { done: true }, card_preview: { goal: 'Try three apps', reward: '500' } };
+  const { pane } = loadPane({ challenges: [c] });
+  pane._mine = new Map([[1, { activities_total: 0 }]]);
+  pane._mineState = 'ready';
+  pane._detailChallenge = c;
+  const page = pane.detailView();
+  assert.deepEqual({ ...page.amount }, {
+    text: message('leaderboard:challenges.counting'), earned: false, pending: true,
+  }, 'the counting message, not the reward it would read as earned');
+
+  pane._mine = new Map([[1, { activities_total: 500 }]]);
+  assert.equal(pane.detailView().amount.text, '500 pts', 'once credited, the points the viewer earned');
 });
 
 // ─── The pane ───────────────────────────────────────────────────────────

@@ -181,7 +181,7 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, points: null },
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, points: null, updating: false },
     'the summary counts the viewer’s own completion; no scope of its own');
   // 2026-10-01: what a new account finishes is its Getting started list.
   assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
@@ -775,16 +775,19 @@ test('card and page descriptors carry the illustration tone only when it is tone
 test('the grid opens on its summary: the tally, and never the event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null },
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null, updating: false },
     'the tally; the points unknown until the viewer’s own rows land');
   assert.equal(message('leaderboard:progress.plainLabel', { done: 2, count: 3 }), '2 of 3 done');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null },
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null, updating: false },
     'a selected event changes nothing: the summary names no season and no event');
   pane._mine = new Map([[900511, { id: 900511, activities_total: 1000 }]]);
+  // The total is shown once the viewer's own read has landed (#7220); a
+  // hand-built map stands in for that read.
+  pane._mineState = 'ready';
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: 1000 });
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: 1000, updating: false });
   assert.equal(message('leaderboard:progress.summary', { points: '1,000 pts', done: 2, count: 3 }),
     '<0>1,000 pts</0> · 2 of 3 done');
   delete context.selectedEvent;

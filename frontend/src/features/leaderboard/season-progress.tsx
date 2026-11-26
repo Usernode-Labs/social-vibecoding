@@ -12,7 +12,10 @@
  * The caller decides which challenges count and what the points are; this
  * file only says it. The line is one catalog message (the points as its one
  * numbered tag), so a translator sees the whole sentence. Without a points
- * figure (`points` null) the line is the count alone.
+ * figure (`points` null) the line is the count alone. While `updating` is
+ * true — the viewer's own rows are still out, or a challenge they finished
+ * has not been credited yet — the line says so instead of a total that would
+ * leave a challenge out (#7220).
  *
  * The bar is violet while challenges are left and the cards' emerald once
  * every one is done: there the end is the good news (AGENTS.md, "Type and
@@ -31,6 +34,8 @@ export interface SeasonProgressView {
   total: number;
   /** The points the viewer has earned on them, or null when unknown. */
   points?: number | null;
+  /** Points are still on their way: say so instead of showing a total. */
+  updating?: boolean;
 }
 
 const ROW = 'min-w-0 truncate text-sm leading-5 text-zinc-500 dark:text-zinc-400';
@@ -54,7 +59,8 @@ export function SeasonProgress({
   return (
     <div className={className ? `flex flex-col gap-2 ${className}` : 'flex flex-col gap-2'}>
       <p id={id} className={ROW}>
-        {points == null ? t('leaderboard:progress.plainLabel', counts) : (
+        {view.updating ? t('leaderboard:progress.updating', counts)
+          : points == null ? t('leaderboard:progress.plainLabel', counts) : (
           <RichMessage
             id="leaderboard:progress.summary"
             values={{
