@@ -120,9 +120,9 @@ export const AdminUI = Object.freeze({
   // Surfaces — a floating card: no border, no shadow, the language's radius.
   // The language separates by FIGURE/GROUND, so the card is the surface and
   // the hairline it used to trace is what the ground now does.
-  card: 'bg-white dark:bg-zinc-900 rounded-2xl',
+  card: 'adm-card bg-white dark:bg-zinc-900 rounded-2xl',
   cardHeader: 'flex items-center justify-between gap-2 mb-4',
-  cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  cardTitle: 'adm-title text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
   // Tables — topochain data-table. NOTE: deliberately no sideways-scroll
   // utility on the wrapper — nothing in the console scrolls horizontally
@@ -134,7 +134,7 @@ export const AdminUI = Object.freeze({
   // No fill on the head: the column labels are already uppercase and muted,
   // and a tinted band inside a floating card reads as a second surface.
   thead: 'border-b border-zinc-200 dark:border-zinc-800',
-  th: 'px-6 py-3 text-start align-middle text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
+  th: 'adm-th px-6 py-3 text-start align-middle text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
   td: 'px-6 py-4 align-middle',
   trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
   // Buttons — topochain's canonical button strings. Each filled one carries
@@ -145,7 +145,7 @@ export const AdminUI = Object.freeze({
   // literals, like every class here: Tailwind finds classes by reading this
   // file as text.
   btn: Object.freeze({
-    primary: 'bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-600',
+    primary: 'adm-btn adm-b1 bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-600',
     // `outline` keeps its KEY and stops being an outline. The language draws
     // no outlined control — a filled neutral is its secondary, the same shape
     // the profile screen's buttons and every dialog's Cancel now take. The
@@ -155,33 +155,33 @@ export const AdminUI = Object.freeze({
     // zinc-100, not white: these sit ON a card, and white on white is the
     // invisible half of this palette. (On the page ground it is the reverse —
     // see the note on the browse detail page's pill.)
-    outline: 'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800',
-    destructive: 'bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600',
-    ghost: 'font-medium transition-colors text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
-    link: 'font-medium transition-colors text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300',
-    primarySm: 'bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-600',
-    outlineSm: 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800',
-    destructiveSm: 'bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600',
+    outline: 'adm-btn adm-b2 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800',
+    destructive: 'adm-btn adm-bd bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600',
+    ghost: 'adm-b3 font-medium transition-colors text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+    link: 'adm-linkbtn font-medium transition-colors text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300',
+    primarySm: 'adm-btn adm-b1 adm-sm bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-600',
+    outlineSm: 'adm-btn adm-b2 adm-sm inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800',
+    destructiveSm: 'adm-btn adm-bd adm-sm bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600',
   }),
   // Form controls — topochain's canonical input string (+ dark translation).
-  input: 'w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
-  select: 'w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
-  textarea: 'w-full min-h-[80px] border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
+  input: 'adm-field w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
+  select: 'adm-field w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
+  textarea: 'adm-field w-full min-h-[80px] border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
   label: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
   // Badges — topochain's ring-tinted rounded-full pills.
   badge: Object.freeze({
-    default: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-zinc-50 text-zinc-600 ring-1 ring-inset ring-zinc-500/10 dark:bg-zinc-500/10 dark:text-zinc-300 dark:ring-zinc-400/20',
-    secondary: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-700/10 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-400/20',
-    outline: 'inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
-    destructive: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-700/10 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20',
-    success: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-700/10 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
-    warn: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
+    default: 'adm-badge inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-zinc-50 text-zinc-600 ring-1 ring-inset ring-zinc-500/10 dark:bg-zinc-500/10 dark:text-zinc-300 dark:ring-zinc-400/20',
+    secondary: 'adm-badge is-vote inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-700/10 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-400/20',
+    outline: 'adm-badge inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
+    destructive: 'adm-badge is-fail inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-700/10 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20',
+    success: 'adm-badge is-live inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-700/10 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
+    warn: 'adm-badge is-build inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
   }),
   // Overlay — topochain modal: black/50 backdrop, xl-rounded white panel.
   dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4',
-  dialogPanel: 'w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-6 shadow-xl',
+  dialogPanel: 'adm-card adm-dialog w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-6 shadow-xl',
   // Typography / misc.
-  sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  sectionTitle: 'adm-title text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   muted: 'text-sm text-zinc-500 dark:text-zinc-400',
   // Loading — ONE spelling of "waiting for data" for the whole console. The
   // eleven programme screens draw a shaped placeholder (topochain/ui.tsx's
@@ -198,7 +198,7 @@ export const AdminUI = Object.freeze({
   // a wait and not a result, at the two densities the console draws at.
   loading: 'inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 animate-pulse',
   separator: 'border-t border-zinc-200 dark:border-zinc-800',
-  kbd: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:text-zinc-100',
+  kbd: 'adm-kbd rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:text-zinc-100',
 });
 
 // Still published on the global, though nothing reads it there now: every

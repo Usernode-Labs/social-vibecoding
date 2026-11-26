@@ -809,6 +809,20 @@ did not load is named in `#admin-dashboard-error`, and no control is drawn
 that changes nothing. Its icons are the menu's own (`AdminConsole.NAV_ICONS`),
 never a text glyph. `tests/admin-console-polish.test.js` holds it.
 
+**Every page of the console is drawn in option A, "Sticker" (#7181).** An
+action is a pill with a thin dark outline and a hard edge under it (the
+sun for the main one, white for the second, none for a quiet one, red for
+one that cannot be undone); a card is white with the same outline and
+edge; a field is white with the outline; a status is a solid pill; a
+heading is in the serif. The recipes carry the hooks (`adm-card`,
+`adm-title`, `adm-btn` with `adm-b1`, `adm-b2`, `adm-bd` and `adm-sm`,
+`adm-b3`, `adm-linkbtn`, `adm-field`, `adm-badge`, `adm-th`) in `AdminUI`
+and `topochain/tokens.ts`, and one block of `public/css/app.css` ("THE
+CONSOLE IN OPTION A") draws them from `--stk-*` tokens, in light and dark.
+A section that draws with the recipes is aligned for free; the block also
+reads what a section wrote by hand, by the utility it used, so prefer a
+recipe to a new hand-written button, card or badge.
+
 ### The console is React — add a section the same way
 
 **Every admin section renders from React.** `admin-console.js` is a chassis

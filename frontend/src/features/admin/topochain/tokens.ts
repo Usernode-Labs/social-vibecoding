@@ -32,28 +32,28 @@ import { AdminUI } from '../admin-console.js';
 // pointer-sized control at sm: and up, where a mouse is likely and
 // vertical space is worth more. `touch-manipulation` drops the 300ms
 // double-tap delay that otherwise makes the small row chips feel dead.
-export const BTN_BASE = 'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium '
+export const BTN_BASE = 'adm-btn inline-flex items-center justify-center gap-1.5 rounded-lg font-medium '
   + 'transition-colors touch-manipulation focus:outline-none focus-visible:ring-2 '
   + 'focus-visible:ring-violet-500 disabled:opacity-40 disabled:pointer-events-none';
 export const BTN_MD = 'min-h-[44px] sm:min-h-[36px] px-4 py-2 text-sm';
-export const BTN_SM = 'min-h-[44px] sm:min-h-[34px] px-3 py-1.5 text-sm';
-export const BTN_ROW = 'min-h-[36px] sm:min-h-[30px] px-2.5 py-1 text-xs';
+export const BTN_SM = 'adm-sm min-h-[44px] sm:min-h-[34px] px-3 py-1.5 text-sm';
+export const BTN_ROW = 'adm-sm min-h-[36px] sm:min-h-[30px] px-2.5 py-1 text-xs';
 export const BTN = {
   // Page/panel-level primary + secondary (Save, Cancel, Run, Send).
-  primary: `${BTN_BASE} ${BTN_MD} bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
-  secondary: `${BTN_BASE} ${BTN_MD} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
+  primary: `${BTN_BASE} ${BTN_MD} adm-b1 bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
+  secondary: `${BTN_BASE} ${BTN_MD} adm-b2 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
   // Toolbar variants — same colours, one size down.
-  primarySm: `${BTN_BASE} ${BTN_SM} bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
-  secondarySm: `${BTN_BASE} ${BTN_SM} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
-  dangerSm: `${BTN_BASE} ${BTN_SM} bg-red-600 hover:bg-red-500 text-white`,
-  warnSm: `${BTN_BASE} ${BTN_SM} border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
+  primarySm: `${BTN_BASE} ${BTN_SM} adm-b1 bg-violet-600 hover:bg-violet-700 text-white shadow-sm`,
+  secondarySm: `${BTN_BASE} ${BTN_SM} adm-b2 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
+  dangerSm: `${BTN_BASE} ${BTN_SM} adm-bd bg-red-600 hover:bg-red-500 text-white`,
+  warnSm: `${BTN_BASE} ${BTN_SM} adm-b2 border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
   // Row actions. Chips, not bare text links: a bordered box is a target
   // you can see and hit, and it wraps predictably inside both the table
   // cell and the card footer _list() renders them into.
-  row: `${BTN_BASE} ${BTN_ROW} border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-800 dark:hover:text-violet-300`,
-  rowPrimary: `${BTN_BASE} ${BTN_ROW} border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
-  rowDanger: `${BTN_BASE} ${BTN_ROW} border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40`,
-  rowWarn: `${BTN_BASE} ${BTN_ROW} border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
+  row: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-800 dark:hover:text-violet-300`,
+  rowPrimary: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
+  rowDanger: `${BTN_BASE} ${BTN_ROW} adm-bd border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40`,
+  rowWarn: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
   // Full-width list entry in a reference sidebar (SQL templates, schema
   // tables). Left-aligned rather than centred, and tall enough to hit.
   sidebar: 'flex w-full items-center min-h-[36px] rounded-lg px-2.5 py-1.5 text-start text-xs '
@@ -68,12 +68,12 @@ export const BTN = {
 
 // Text inputs / selects / textareas. Same 44px-then-36px rule as the
 // buttons so a field and the button beside it line up at every width.
-export const FIELD_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
+export const FIELD_CLS = 'adm-field w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
   + 'px-3 py-2 text-sm min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 '
   + 'focus:ring-violet-500 focus:border-transparent disabled:opacity-60';
 // Textareas set their height from `rows`, so they take everything but
 // the min-height.
-export const TEXTAREA_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
+export const TEXTAREA_CLS = 'adm-field w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
   + 'px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent';
 
 // Panel and card surfaces, shared by every form, picker and detail view.

@@ -158,3 +158,35 @@ test('the pages opened lately are badges: small pills, the sun on the one you ar
   assert.match(block, /\[data-admin-tab\]\[aria-current="page"\] \{ background: var\(--adm-sun\);/);
   assert.match(block, /> \[data-admin-tab-close\] \{ width: 20px; height: 20px;/, 'the close button stays inside the badge');
 });
+
+test('every page of the console is drawn in option A, from hooks on the shared recipes', () => {
+  const at = css.indexOf('/* THE CONSOLE IN OPTION A, "STICKER" (#7181).');
+  const sticker = css.slice(at, css.indexOf('/* END OF THE CONSOLE IN OPTION A. */'));
+  assert.ok(at > 0 && sticker.length > 4000, 'the block is delimited');
+  const all = rules(sticker);
+  const light = all[0];
+  const dark = all[1];
+  assert.equal(light[0], '#admin-screen');
+  assert.match(dark[0], /html\.dark #admin-screen/);
+  for (const name of ['--stk-surface', '--stk-card', '--stk-ink', '--stk-line', '--stk-edge', '--stk-b2', '--stk-danger']) {
+    assert.ok(light[1].includes(`${name}:`), `${name} in light`);
+    assert.ok(dark[1].includes(`${name}:`), `${name} in dark`);
+  }
+  for (const [sel, body] of all.slice(2)) {
+    assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/, `${sel} uses tokens`);
+  }
+  // The levels: the sun with the outline and the hard edge, white, quiet, red.
+  assert.match(sticker, /\.adm-btn\.adm-b1 \{ border-color: var\(--stk-line\); background: var\(--stk-sun\); box-shadow: var\(--stk-edge\);/);
+  assert.match(sticker, /\.adm-btn\.adm-b2 \{ border-color: var\(--stk-line\); background: var\(--stk-b2\); box-shadow: var\(--stk-edge\);/);
+  assert.match(sticker, /\.adm-btn\.adm-bd \{ border-color: var\(--stk-danger\);/);
+  assert.match(sticker, /\.adm-btn:active:not\(:disabled\) \{ transform: translate\(2px, 2px\); box-shadow: none; \}/);
+  assert.match(sticker, /#admin-screen \.adm-card,[\s\S]{0,120}\{ border: 1px solid var\(--stk-line\); border-radius: 16px; background: var\(--stk-card\); box-shadow: var\(--stk-edge\);/);
+  // The recipes carry the hooks, so a section that draws with them is aligned.
+  for (const pin of [/card: 'adm-card /, /primary: 'adm-btn adm-b1 /, /outline: 'adm-btn adm-b2 /, /destructive: 'adm-btn adm-bd /,
+    /primarySm: 'adm-btn adm-b1 adm-sm /, /link: 'adm-linkbtn /, /input: 'adm-field /, /select: 'adm-field /, /success: 'adm-badge is-live /]) {
+    assert.match(consoleJs, pin);
+  }
+  const tokens = read('frontend/src/features/admin/topochain/tokens.ts');
+  assert.match(tokens, /export const BTN_BASE = 'adm-btn /);
+  assert.match(tokens, /export const FIELD_CLS = 'adm-field /);
+});
