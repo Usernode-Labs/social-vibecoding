@@ -101,10 +101,12 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # than an exact pin: the daily dependency audit flags 2.54.0 as outdated, and
 # an exact pin would break the build whenever Alpine rebuilds the package.
 # libcrypto3 and libssl3 are held the same way, at 3.5.9-r1 or later: the
-# audit flags 3.5.9-r0.
+# audit flags 3.5.9-r0. libexpat is held the same way, at 2.11.0-r0 or later:
+# the audit of 26 Nov 2026 flags 2.10.0-r0.
 RUN apk upgrade --no-cache \
   && apk add --no-cache "git>=2.54.1-r0" "git-init-template>=2.54.1-r0" \
-    "libcrypto3>=3.5.9-r1" "libssl3>=3.5.9-r1" postgresql-client
+    "libcrypto3>=3.5.9-r1" "libssl3>=3.5.9-r1" "libexpat>=2.11.0-r0" \
+    postgresql-client
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
