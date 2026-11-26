@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -128,7 +129,7 @@ test('#6785: Recent threads never paints a blank list before its first fetch', (
   assert.match(screen,
     /const threadsPending = !threadsLoaded \|\| \(threadsLoading && !\(threads \|\| \[\]\)\.length\)/);
   assert.match(screen,
-    /!searching && isThreads && threadsPending && !threadsError \? \(\s*<div id="notifications-threads-list" aria-busy="true">/);
+    /!searching && isThreads && threadsPending && !threadsError \? \(\s*<div id="notifications-threads-list" aria-busy="true" className="animate-pulse">\s*\{\[0, 1, 2\]\.map\(\(i\) => \(\s*<ListRow/);
   assert.match(screen,
     /const threadsSettled = isThreads && threadsLoaded && !threadsLoading && !threadsPending/);
   assert.match(screen, /id="notifications-threads-empty"/);
@@ -151,25 +152,30 @@ test('#6785: a ?shot= link still opens the panel when the feed cannot be read', 
 test('#6785: a Recent threads row is one thread, with the app tile on the left', () => {
   // "Each row shows the icon of the app its thread belongs to, on the left."
   // The tile is the one the sheet's own rows already wear (`app-icon-tile`
-  // with AppIconContent), and it comes FIRST in the row: the row reads
-  // [project's icon] [what it is] [title] [project, when]. There is no
-  // declared check on the tab's route — the request change adds no slot to
-  // the manifest's pinned count — so the row's anatomy is pinned here.
+  // with AppIconContent), and it is the shared row's leading tile: the row
+  // reads [project's icon] [title over what it is and its project] [when].
+  // There is no declared check on the tab's route (the request change adds
+  // no slot to the manifest's pinned count), so the row's anatomy is pinned
+  // here.
   const row = screen.slice(screen.indexOf('function ThreadRow'));
-  assert.match(row,
-    /data-thread-id=\{thread\.threadId\}[\s\S]{0,900}?>\s*<span\s+aria-hidden="true"\s+data-icon=\{appIconKind\(app\)\}\s+className="app-icon-tile[\s\S]{0,300}?<AppIconContent app=\{app\} \/>\s*<\/span>/,
+  const body = row.slice(0, row.indexOf('\n}\n'));
+  assert.match(body, /<ListRow\s+as="button"\s+data-thread-id=\{thread\.threadId\}/, 'the shared row, as a button');
+  assert.match(body,
+    /leading=\{\(\s*<span\s+aria-hidden="true"\s+data-icon=\{appIconKind\(app\)\}\s+className="app-icon-tile[\s\S]{0,300}?<AppIconContent app=\{app\} \/>\s*<\/span>\s*\)\}/,
     'the project tile leads the row, drawn by AppIconContent');
-  // Then the thread's own words, in the sheet's type scale: the kind line,
-  // the 15/650 title and the 13px project-and-when line.
-  assert.match(row, /notifications:sheet\.threads\.kind\.request/, 'the kind line says what the thread is');
-  const afterTile = row.slice(row.indexOf('<AppIconContent app={app} />'));
-  assert.match(afterTile, /text-\[15px\] font-\[650\][\s\S]{0,160}?\{thread\.title \|\| kind\}/, 'the title is a row title, 15 over 13, and an untitled thread is called what it is');
-  assert.match(afterTile,
-    /id="notifications:sheet\.threads\.meta"[\s\S]{0,200}?values=\{\{ project: thread\.appName \|\| ''/, 'and the project it belongs to, with when');
+  // Then the thread's own words at the shared row's scale: the title, an
+  // untitled thread called what it is, over what it is and its project.
+  assert.match(body, /title=\{thread\.title \|\| kind\}/, 'an untitled thread is called what it is');
+  assert.match(body, /subtitle=\{thread\.title \? line : project\}/, 'and its line is then its project alone');
+  assert.match(body, /t\('notifications:sheet\.threads\.line\.request', \{ number, project \}\)/, 'what it is, and the project it belongs to');
+  assert.equal(message('notifications:sheet.threads.line.request', { number: '214', project: 'Plant Pal' }), 'Request #214 · Plant Pal');
+  assert.equal(message('notifications:sheet.threads.line.decision', { project: 'Plant Pal' }), 'Decision · Plant Pal');
+  // When, on the trailing edge, with the whole instant in its title (#1808).
+  assert.match(body, /trailing=\{<ListRowMeta top=\{<time title=\{whenTitle\}>\{when\}<\/time>\} \/>\}/);
   // A row stands for a discussion, so it carries no unread dot and no
   // bookmark: it opens the thread and dismisses the sheet.
-  assert.doesNotMatch(row.slice(0, row.indexOf('\nfunction ')), /data-notif-id|notifications-row-unread/);
-  assert.match(row, /window\.location\.hash = thread\.href;\s*NotificationsSheet\.close\(\);/);
+  assert.doesNotMatch(body, /data-notif-id|notifications-row/);
+  assert.match(body, /window\.location\.hash = thread\.href;\s*NotificationsSheet\.close\(\);/);
 });
 
 test('#6785: the tab lists every page in the order the server sent it', () => {
