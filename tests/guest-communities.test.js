@@ -66,7 +66,7 @@ test('the page, top to bottom: the hero and its walk-through, what a group gets,
     ...SUPPER, ...SUPPER_END,
     'A', '+4', '9 active this week', 'maya.eats, kai, samwich, ari.k, leo_bakes…',
     'For you', 'Needs you', '1 change up for a vote', '1', 'Workshop', 'Make and vote on changes',
-    '#general · who’s on dessert??', 'samwich · now', '12',
+    'Discussion · who’s on dessert??', 'samwich · now', '12',
     // Scene two, a change up for the vote, before anybody here has voted.
     'Needs you', 'Changes your group is deciding on.',
     'maya.eats', 'proposed · 2h', 'Group vote',

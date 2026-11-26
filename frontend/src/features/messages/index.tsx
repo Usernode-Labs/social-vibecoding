@@ -1294,13 +1294,13 @@ function AppDiscussionThread({ slug }: { slug: string }) {
  * store knows where, or for a viewer the platform's page is not served to,
  * this pane says where it is rather than drawing the room.
  */
-function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
+function ScreenConversation() {
   const snap = useMessagesSnapshot();
   const conversationId = snap.route.conversationId;
-  if (!embedded && conversationId && snap.active?.id === conversationId && snap.active.kind === 'channel') {
+  if (conversationId && snap.active?.id === conversationId && snap.active.kind === 'channel') {
     return <ChannelIsDiscussion conversationId={conversationId} />;
   }
-  return <ConversationThreadPane embedded={embedded} />;
+  return <ConversationThread />;
 }
 
 function ChannelIsDiscussion({ conversationId }: { conversationId: number }): ReactNode {
@@ -1328,7 +1328,7 @@ function ChannelIsDiscussion({ conversationId }: { conversationId: number }): Re
   );
 }
 
-function ConversationThreadPane({ embedded = false }: { embedded?: boolean } = {}) {
+function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // #6479: the separators' days are read in the zone picked; useMessages re-renders on a change.
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2734,7 +2734,7 @@ export function MessagesScreen() {
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
         <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
           <ConversationList drawer={drawer.on} />
-          <ConversationThread />
+          <ScreenConversation />
           {designOpen && snap.route.conversationId && designRootId ? (
             <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
           ) : null}

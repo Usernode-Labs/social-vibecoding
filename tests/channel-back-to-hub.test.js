@@ -72,7 +72,7 @@ test('#general leads with the way back to the Homeroom hub; a conversation does 
   assert.match(header,
     /\{channel \? <PageBackButton label=\{hubBack\.label\} onBack=\{hubBack\.onBack\} data-channel-back="" \/> : null\}/);
   assert.equal((header.match(/<PageBackButton /g) || []).length, 1, 'only behind `channel`');
-  assert.match(SCREEN, /import \{ generalHubBack, openChannelHub, usePlatformSlug \} from '\.\/channel-hub';/);
+  assert.match(SCREEN, /import \{ generalHubBack, openChannelHub, platformHubServed, platformSlug, usePlatformSlug \} from '\.\/channel-hub';/);
   assert.match(HUB_SRC, /useSyncExternalStore\(subscribePlatformSlug, platformSlug, \(\) => null\)/);
 });
 
