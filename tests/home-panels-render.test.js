@@ -919,16 +919,16 @@ test('render: Next challenges folds the rest behind "Show all N challenges" and 
   assert.doesNotMatch(ui, /export function (LeaderboardLink|PanelFooter)\b/);
   assert.doesNotMatch(ui, /ChevronDownIcon/, 'the fold control lives in the block, not in the panel shell');
 
-  // Unfolded: every open one, wrapped on the columns above, and Show less.
+  // Unfolded: every open one, the row wrapping in place instead of scrolling
+  // sideways (`.wip-posters[data-expanded]`, app.css), and Show less.
   out.sandbox.panelsStore.set({ challengesExpanded: true });
   const after = out.rerender();
   assert.equal((after.match(/data-challenge-id/g) || []).length, 5, 'every open challenge, drawn');
   assert.match(after, /data-rows="5"/);
-  assert.match(after, /class="home-panel-rows grid grid-cols-1 gap-2\.5 pb-1 sm:grid-cols-2 lg:grid-cols-3"/,
-    'a wrapping grid, not the sideways row');
+  assert.match(after, /<div class="wip-posters" data-expanded="">/, 'the row wraps, not the sideways one');
   assert.doesNotMatch(after, /snap-x snap-mandatory|overflow-x-auto/, 'nothing left to scroll sideways');
-  assert.match(after, /aria-expanded="true">Show less<\/button>/, 'and the toggle now folds it back');
-  const ids = [...after.matchAll(/home-challenge-card[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
+  assert.match(after, /aria-expanded="true">Show less<svg/, 'and the toggle now folds it back');
+  const ids = [...after.matchAll(/wip-poster"[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
   assert.deepEqual(ids, ['1', '2', '3', '4', '5']);
 
   // Three or fewer: nothing to unfold, so no toggle at all.
