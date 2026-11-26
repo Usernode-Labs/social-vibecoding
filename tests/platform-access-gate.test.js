@@ -18,8 +18,9 @@
 //      CHILD APPS stay usable for any account per the onboarding doc's
 //      ladder.
 //   4. Admins bypass the gate even with has_platform_access FALSE.
-//   5. Sessionless `/` serves the SPA shell; deeper page paths bounce to
-//      the shell; anonymous /api/* stays a plain 401.
+//   5. Sessionless `/` serves the SPA shell; an address nothing knows is
+//      "Page not found" (404), a moved one a 301 (request 7166); anonymous
+//      /api/* stays a plain 401.
 //   6. The legacy standalone pages (landing/login/register/waiting .html)
 //      are PUBLIC_PATH redirect stubs (served pre-auth).
 //
@@ -31,6 +32,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 
@@ -234,7 +237,7 @@ test('an admin bypasses the gate even without the access flag', async () => {
 
 // ─── 5. Sessionless routing ───────────────────────────────────────────
 
-test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', async () => {
+test('sessionless / serves the SPA shell; deeper paths are not found; APIs 401', async () => {
   await withServer(async (base) => {
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
     // without a session and the client shows the in-SPA landing screen.
@@ -248,11 +251,11 @@ test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', 
     assert.equal(app.status, 200);
     assert.equal(await app.text(), 'SPA');
 
-    // Deeper paths bounce to the shell — the URL fragment survives a
-    // redirect, so shared deep links still reach the login screen.
+    // An address nothing knows is "Page not found" (request 7166): it used
+    // to bounce to the shell, which a search engine read as the home page.
     const deep = await get(base, '/social');
-    assert.equal(deep.status, 302);
-    assert.equal(deep.headers.get('location'), '/');
+    assert.equal(deep.status, 404);
+    assert.equal(deep.headers.get('location'), null);
 
     const api = await get(base, '/api/apps');
     assert.equal(api.status, 401);
@@ -266,11 +269,138 @@ test('#5263: sessionless, any one segment after /invite/ reaches its page, so a 
       assert.equal(res.status, 200, path);
       assert.equal(await res.text(), 'SPA', path);
     }
-    // Two segments are not an invite link: they still bounce to the front door.
+    // Two segments are not an invite link, or any address: page not found.
     const deeper = await get(base, '/invite/abc/def');
-    assert.equal(deeper.status, 302);
-    assert.equal(deeper.headers.get('location'), '/');
+    assert.equal(deeper.status, 404);
   });
+});
+
+// Request 7166, point 1 (the search check of 25 Nov 2026): a signed-out
+// request for an address that does not exist was answered 302 to `/`, a soft
+// 404 that listed the home page under every mistyped address.
+test('#7166: sessionless, an unknown address answers 404 with a small page that links home', async () => {
+  const lost = require('../src/services/lost-addresses');
+  await withServer(async (base) => {
+    for (const path of ['/nonexistent-page-xyz', '/u/snait', '/@snait', '/challenges', '/communities/x', '/app', '/thread/12']) {
+      const res = await get(base, path);
+      assert.equal(res.status, 404, path);
+      assert.equal(res.headers.get('location'), null, path);
+      assert.equal(res.headers.get('x-robots-tag'), 'noindex', path);
+      assert.equal(res.headers.get('cache-control'), 'no-store', path);
+      assert.match(res.headers.get('content-type'), /^text\/html/, path);
+      assert.equal(await res.text(), lost.notFoundPage(), path);
+    }
+    // A HEAD (what `curl -I` sends) says the same with no body.
+    const head = await fetch(`${base}/nonexistent-page-xyz`, { method: 'HEAD', redirect: 'manual' });
+    assert.equal(head.status, 404);
+    assert.equal(await head.text(), '');
+    // A request that does not take HTML, and any other method, get JSON.
+    const json = await fetch(`${base}/nonexistent-page-xyz`, { redirect: 'manual', headers: { accept: 'application/json' } });
+    assert.equal(json.status, 404);
+    assert.deepEqual(await json.json(), { error: 'Not found' });
+    const post = await fetch(`${base}/nonexistent-page-xyz`, { method: 'POST', redirect: 'manual' });
+    assert.equal(post.status, 404);
+    assert.deepEqual(await post.json(), { error: 'Not found' });
+
+    // What the shell's own router reads from the path is untouched.
+    for (const path of ['/', '/app/demo-app', '/app/demo-app/workshop', '/invite/abc']) {
+      const res = await get(base, path);
+      assert.equal(res.status, 200, path);
+      assert.equal(await res.text(), 'SPA', path);
+    }
+    // Real addresses behind sign-in still go to the front door.
+    for (const path of ['/admin', '/admin.html', '/admin-features', '/dashboard', '/debug', '/gallery', '/get-app']) {
+      const res = await get(base, path);
+      assert.equal(res.status, 302, path);
+      assert.equal(res.headers.get('location'), '/', path);
+    }
+    // An API is still refused, never "not found".
+    assert.equal((await get(base, '/api/nope')).status, 401);
+  });
+});
+
+test('#7166: a signed-in person at an unknown address still gets the app, not the 404 page', async () => {
+  await withServer(async (base) => {
+    const res = await get(base, '/social', 'released-session');
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'SPA');
+  });
+});
+
+test('#7166: the not-found page is one heading, one line and a link home, with nothing loaded', () => {
+  const lost = require('../src/services/lost-addresses');
+  const page = lost.notFoundPage();
+  assert.match(page, /<title>Page not found · Homeroom<\/title>/);
+  assert.match(page, /<meta name="robots" content="noindex">/);
+  assert.equal((page.match(/<h1[\s>]/g) || []).length, 1);
+  assert.match(page, /<h1>Page not found<\/h1>/);
+  assert.match(page, /<a class="btn" href="\/">Go to Home<\/a>/);
+  assert.ok(!/<script|<link|<img|src=|url\(/.test(page), 'no script and no file from anywhere');
+  assert.ok(!page.includes('\u2014'), 'no em dash in the copy');
+  const csp = lost.notFoundHeaders()['Content-Security-Policy'];
+  const hash = require('crypto').createHash('sha256').update(lost.STYLE).digest('base64');
+  assert.ok(csp.includes(`style-src 'sha256-${hash}'`), 'the one inline style is allowed by its hash');
+  assert.ok(page.includes(`<style>${lost.STYLE}</style>`));
+});
+
+test('#7166: moved addresses answer 301 to their new place, signed in or not', async () => {
+  const lost = require('../src/services/lost-addresses');
+  const { termsUrl, privacyNoticeUrl } = require('../src/services/marketing-links');
+  assert.equal(termsUrl({}), 'https://onhomeroom.com/legal/terms-of-service');
+  assert.equal(termsUrl({ marketingBaseUrl: 'https://example.test/' }), 'https://example.test/legal/terms-of-service');
+  // The published terms row names the same address.
+  const migrate = fs.readFileSync(path.join(__dirname, '../src/db/migrate.js'), 'utf8');
+  assert.ok(migrate.includes(`link: '${termsUrl({})}'`));
+
+  const config = {};
+  assert.equal(lost.movedAddress('/terms', config), termsUrl(config));
+  assert.equal(lost.movedAddress('/terms.html', config), termsUrl(config));
+  assert.equal(lost.movedAddress('/privacy', config), privacyNoticeUrl(config));
+  assert.equal(lost.movedAddress('/privacy/', config), 'https://onhomeroom.com/legal/privacy-notice');
+  assert.equal(lost.movedAddress('/apps', config), '/');
+  assert.equal(lost.movedAddress('/apps/', config, '?q=1'), '/?q=1');
+  assert.equal(lost.movedAddress('/private-communities', config), '/communities');
+  // A legal page never carries the link's query to another site.
+  assert.equal(lost.movedAddress('/terms', config, '?next=//evil.test'), termsUrl(config));
+  for (const not of ['/', '/termsx', '/apps/foo', '/app', '/communities', '/privacy/x', '/Terms', '', null]) {
+    assert.equal(lost.movedAddress(not, config), null, String(not));
+  }
+
+  const app = express();
+  app.use(lost.movedAddressRedirect({ marketingBaseUrl: 'https://example.test' }));
+  app.use((_req, res) => res.send('NEXT'));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const expected = {
+      '/terms': 'https://example.test/legal/terms-of-service',
+      '/privacy': 'https://example.test/legal/privacy-notice',
+      '/apps': '/',
+      '/apps?report=app': '/?report=app',
+      '/private-communities': '/communities',
+    };
+    for (const [from, to] of Object.entries(expected)) {
+      const res = await get(base, from);
+      assert.equal(res.status, 301, from);
+      assert.equal(res.headers.get('location'), to, from);
+      assert.equal(res.headers.get('cache-control'), 'public, max-age=3600', from);
+    }
+    for (const through of ['/', '/apps/foo', '/communities', '/app/demo-app']) {
+      const res = await get(base, through);
+      assert.equal(res.status, 200, through);
+      assert.equal(await res.text(), 'NEXT', through);
+    }
+    const post = await fetch(`${base}/terms`, { method: 'POST', redirect: 'manual' });
+    assert.equal(post.status, 200, 'only a GET or a HEAD is forwarded');
+  } finally {
+    server.close();
+  }
+
+  // It is mounted before the session is read, so the answer is one for all.
+  const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const moved = serverSource.indexOf("require('./src/services/lost-addresses').movedAddressRedirect(config)");
+  assert.ok(moved > 0 && moved < serverSource.indexOf('app.use(authMiddleware(config));'));
 });
 
 // ─── 6. The legacy standalone pages are public redirect stubs ─────────
@@ -290,8 +420,6 @@ test('the landing/waiting stubs are served without a session', async () => {
 // ─── 7. The on-disk stubs carry the right SPA hash routes ─────────────
 
 test('the four standalone pages are redirect stubs into SPA hash routes', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 
   assert.match(read('landing.html'), /location\.replace\('\/#landing'\)/);

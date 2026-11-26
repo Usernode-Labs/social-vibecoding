@@ -31,6 +31,12 @@ const MARKETING_WAITLIST_PATH = '/waitlist';
 // GET /api/public/waitlist/options, so the address is decided here once.
 const PRIVACY_NOTICE_PATH = '/legal/privacy-notice';
 
+// The terms of service, beside it. The published terms row names the same
+// address (src/db/migrate.js, terms_versions.terms_link); this one is for
+// the old `/terms` address on the app's host, which forwards there
+// (services/lost-addresses.js).
+const TERMS_PATH = '/legal/terms-of-service';
+
 // The two legal pages the terms point to by name (#6043): the Child Safety
 // Standards, and how to delete your account and data. Settings › About links
 // to both beside the terms and the privacy notice, read from the same
@@ -92,6 +98,11 @@ function privacyNoticeUrl(config) {
   return `${siteUrl(config)}${PRIVACY_NOTICE_PATH}`;
 }
 
+// The terms of service's address. Never null, for the same reason.
+function termsUrl(config) {
+  return `${siteUrl(config)}${TERMS_PATH}`;
+}
+
 // The Child Safety Standards and the account-deletion page. Never null, for
 // the same reason.
 function childSafetyUrl(config) {
@@ -122,6 +133,8 @@ module.exports = {
   MARKETING_WAITLIST_PATH,
   PRIVACY_NOTICE_PATH,
   privacyNoticeUrl,
+  TERMS_PATH,
+  termsUrl,
   CHILD_SAFETY_PATH,
   childSafetyUrl,
   ACCOUNT_DELETION_PATH,

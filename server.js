@@ -731,6 +731,12 @@ app.use(topochainPartnerRoutes(config));
 app.use(topochainIngestRoutes(config));
 app.use(topochainMobileRoutes(config));
 
+// Addresses that moved answer 301 to their new place, the same for a
+// signed-in person and a crawler, so this sits before the session is read:
+// `/terms` and `/privacy` to the legal pages on the marketing site, the old
+// `/apps` to the landing (services/lost-addresses.js, request 7166).
+app.use(require('./src/services/lost-addresses').movedAddressRedirect(config));
+
 // User-facing JSON APIs may authenticate with a scoped CLI bearer token.
 // This mounts after internal/app/topochain bearer surfaces so the CLI token
 // can never be confused for one of those distinct credentials.

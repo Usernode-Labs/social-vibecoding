@@ -1039,14 +1039,17 @@ test('the platform’s auth middleware lets the apex hop answer a signed-out vis
   const { authMiddleware } = require('../src/middleware/auth');
   const mw = authMiddleware({});
   const run = (p) => new Promise((resolve) => {
-    const req = { path: p, method: 'GET', query: {}, headers: {}, cookies: {} };
+    const req = { path: p, method: 'GET', query: {}, headers: {}, cookies: {}, accepts: () => false };
     const res = {
       redirect: (status, loc) => resolve({ redirected: loc || status }),
-      status: () => ({ json: () => resolve({ rejected: true }) }),
+      status(code) { this.code = code; return this; },
+      set() { return this; },
+      json() { resolve({ rejected: this.code }); },
       setHeader() {},
     };
     mw(req, res, () => resolve({ next: true, user: req.user }));
   });
   assert.deepEqual(await run('/__access/authorize'), { next: true, user: undefined });
-  assert.deepEqual(await run('/__access/authorize-something-else'), { redirected: '/' }, 'that path only');
+  // Any other address there is one nothing knows: not found (request 7166).
+  assert.deepEqual(await run('/__access/authorize-something-else'), { rejected: 404 }, 'that path only');
 });

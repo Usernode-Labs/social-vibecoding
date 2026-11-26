@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { classifyUserAgent } = require('../services/linked-browsers');
 const platformJwt = require('../services/platform-jwt');
+const lostAddresses = require('../services/lost-addresses');
 
 const PUBLIC_PATHS = [
   // Legacy standalone auth pages, now tiny redirect stubs into the SPA's
@@ -232,7 +233,7 @@ const GATE_OPEN_PATHS = [
 // index.html with or without a session. API access remains authenticated by
 // the routes themselves; this only lets the browser boot the same shell `/`
 // already serves. Keep this narrower than the catch-all so an unrelated typo
-// retains the existing redirect-to-root behaviour.
+// is answered "Page not found" (services/lost-addresses.js).
 // An invite link (`/invite/<token>`, routes/community-invites.js) is one
 // too: a visitor with no account is exactly who it is for. Any one segment
 // after /invite/, not only a token's shape (#5263): a link cut short or
@@ -712,7 +713,13 @@ function redirectOrReject(req, res, next) {
   if (isSpaDocumentPath(req.path)) {
     return next();
   }
-  return res.redirect('/');
+  // A real address that needs a session (the retired admin pages people
+  // bookmark) still goes to the front door, where they sign in.
+  if (lostAddresses.isSignInFirst(req.path)) return res.redirect('/');
+  // Anything else is an address nothing knows: 404 with a small page that
+  // links home (request 7166). It used to be a 302 to `/`, which a search
+  // engine reads as the home page living at every mistyped address.
+  return lostAddresses.sendNotFound(req, res);
 }
 
 module.exports = {
