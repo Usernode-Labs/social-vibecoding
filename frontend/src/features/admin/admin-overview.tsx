@@ -210,12 +210,12 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   const recentTables = <div className="admin-records-grid">
     <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Users</h2><p>Recent community members</p></div><button type="button" onClick={() => (window as any).AdminConsole?.goTo?.('users')}>View all →</button></div>
       <div className="admin-record-table"><div className="admin-record-head"><span>User</span><span>Joined</span><span>Role</span></div>
-        {users === null ? <p className="admin-dashboard-muted">Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{new Date(u.created_at).toLocaleDateString()}</span><span><em className={u.is_admin ? 'admin-role-admin' : 'admin-role-member'}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">No users to show.</p>}
+        {users === null ? <p className={AdminUI.loading}>Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{new Date(u.created_at).toLocaleDateString()}</span><span><em className={u.is_admin ? 'admin-role-admin' : 'admin-role-member'}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">No users to show.</p>}
       </div>
     </section>
     <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Content</h2><p>Recently active projects</p></div><button type="button" onClick={() => (window as any).AdminConsole?.goTo?.('apps')}>View all →</button></div>
       <div className="admin-record-table"><div className="admin-record-head"><span>Project</span><span>Creator</span><span>Status</span></div>
-        {apps === null ? <p className="admin-dashboard-muted">Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><i>◇</i><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className="admin-role-published">{app.status || 'Active'}</em></span></div>) : <p className="admin-dashboard-muted">No projects to show.</p>}
+        {apps === null ? <p className={AdminUI.loading}>Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><i>◇</i><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className="admin-role-published">{app.status || 'Active'}</em></span></div>) : <p className="admin-dashboard-muted">No projects to show.</p>}
       </div>
     </section>
   </div>;

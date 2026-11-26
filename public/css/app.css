@@ -4020,7 +4020,10 @@ html[data-browser-scroller^="auth-"] :is(
   .admin-mobile-shortcuts button { flex: 0 0 auto; min-height: 42px; padding: 8px 14px; border-radius: 13px; font-size: 14px; font-weight: 600; }
   .admin-mobile-shortcuts button[aria-current="page"] { background: #ffe681; }
   .admin-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin: 14px 0 22px; }
-  .admin-metric-card { min-height: 102px; gap: 10px; padding: 13px; border-radius: 17px; }
+  #admin-screen #admin-dashboard .admin-metric-card { min-height: 102px; gap: 9px; padding: 13px; border: 1px solid rgba(35,45,50,.1); border-radius: 17px; color: #111 !important; }
+  #admin-screen #admin-dashboard .admin-metric-card.sky { background: linear-gradient(135deg,#dff4ff,#d3effc) !important; }
+  #admin-screen #admin-dashboard .admin-metric-card.green { background: linear-gradient(135deg,#eef8d8,#e5f4cd) !important; }
+  #admin-screen #admin-dashboard .admin-metric-card.yellow { background: linear-gradient(135deg,#fff4cf,#fff0bd) !important; }
   .admin-metric-card strong { font: 700 25px/1.05 Georgia,serif; }
   .admin-metric-card small { font-size: 13px; }
   .admin-metric-icon { font-size: 24px; }
@@ -4029,10 +4032,12 @@ html[data-browser-scroller^="auth-"] :is(
   .admin-dashboard-panel { padding: 15px; border: 1px solid var(--app-sheet-line,#ddd); border-radius: 17px; }
   .admin-dashboard-section-head h2, .admin-quick-actions h2 { font: 700 22px/1.1 Georgia,serif; }
   .admin-dashboard-section-head button { font-size: 13px; }
-  .admin-queue-row { gap: 9px; min-height: 69px; }
+  #admin-screen #admin-dashboard .admin-queue-row { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 9px; min-height: 69px; white-space: normal; }
   .admin-queue-mark { width: 34px; height: 34px; }
   .admin-queue-age { display: none; }
-  .admin-queue-action { padding: 6px 9px; font-size: 12px; }
+  .admin-queue-copy { display: grid; grid-template-columns: minmax(0,1fr); gap: 4px; min-width: 0; line-height: 1.25; }
+  .admin-queue-copy strong, .admin-queue-copy small { display: block; min-width: 0; }
+  .admin-queue-action { margin-inline-start: 3px; padding: 6px 9px; font-size: 12px; }
   .admin-quick-actions { margin: 22px 0 12px; }
   .admin-quick-actions > div { grid-template-columns: 1fr; gap: 8px; }
   .admin-quick-actions button { min-height: 53px; }
