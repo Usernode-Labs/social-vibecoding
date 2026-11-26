@@ -2067,6 +2067,14 @@
     "text": "Only full admins see this. A row stays until its figure is back under its line.",
     "description": "Line at the foot of the platform limits area (top of the notifications sheet, full admins only). It explains that the rows cannot be dismissed: each one leaves only once the limit is no longer near."
   },
+  "limits.fold.more_one": {
+    "text": "and 1 more",
+    "description": "End of the one-line platform limits area on a phone (top of the notifications sheet, full admins only), after the most serious limit's figure, like \"Apps: 300 of 300\": one other limit is also past its line. Pressing the line shows them all."
+  },
+  "limits.fold.more_other": {
+    "text": "and {{count}} more",
+    "description": "End of the one-line platform limits area on a phone (top of the notifications sheet, full admins only), after the most serious limit's figure, like \"Apps: 300 of 300\": {{count}} other limits are also past their lines. Pressing the line shows them all."
+  },
   "limits.kicker.near": {
     "text": "Near the limit",
     "description": "Small coloured word over a row of the platform limits area (top of the notifications sheet, full admins only): the count is past 80% of the limit."
