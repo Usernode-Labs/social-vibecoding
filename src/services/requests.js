@@ -125,6 +125,10 @@ function normalizedOf(row, slug) {
     user: row.author_login || null,
     state: row.state === 'closed' ? 'closed' : 'open',
     closedAt: iso(row.closed_at),
+    // #7212: 'reopened' when someone reopened the request (reopen() writes
+    // it), so the board can show a request again after an earlier merged
+    // change named it.
+    stateReason: row.state_reason || null,
   };
 }
 

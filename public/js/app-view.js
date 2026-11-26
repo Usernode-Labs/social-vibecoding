@@ -16436,7 +16436,12 @@ const AppView = {
   //
   // Returns { issues, inProgress, inReview, done }:
   //   issues     — open issues with no work under way on them (no claim,
-  //                no live linked session)
+  //                no live linked session), and no MERGED change naming
+  //                them (#7212): a request whose change is in Done is that
+  //                change's record, so it leaves the Requests column at
+  //                once, instead of waiting for its own row to be closed.
+  //                A request someone reopened (stateReason 'reopened') is
+  //                shown again.
   //   inProgress — TYPED entries {kind:'my-session'|'issue'|'shared-session',
   //                item}: the viewer's sessions pinned first (most recent
   //                activity first), then issues with work under way —
@@ -16524,6 +16529,20 @@ const AppView = {
         if (Number.isFinite(num)) linked.add(num);
       }
     }
+    // #7212: issue numbers a MERGED change names (the Done column's rows,
+    // which carry linked_issues). A request whose change has merged has
+    // been built: it leaves the Requests column straight away, before its
+    // own row is closed. Only real changes count — an applied close-issue
+    // vote closes a request, it does not build it.
+    const shipped = new Set();
+    for (const m of merged) {
+      if (!m || m.row_type === 'close_issue') continue;
+      const arr = Array.isArray(m.linked_issues) ? m.linked_issues : [];
+      for (const n of arr) {
+        const num = parseInt(n, 10);
+        if (Number.isFinite(num)) shipped.add(num);
+      }
+    }
 
     const col1 = [];
     const col2 = [];
@@ -16537,6 +16556,7 @@ const AppView = {
       // proposal must never sit in "Issues" inviting someone to start the
       // work over.
       if (linked.has(i.number) || AppView._issueInProgress(i)) col2.push(i);
+      else if (shipped.has(i.number) && i.stateReason !== 'reopened') continue;
       else col1.push(i);
     }
     col1.sort((a, b) => issueT(b) - issueT(a));

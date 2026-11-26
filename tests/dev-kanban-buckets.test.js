@@ -2,7 +2,10 @@
 // into the four lifecycle columns shown on the board:
 //
 //   issues     — open GitHub issues with no work under way (no claim, no
-//                live session, no proposal)
+//                live session, no proposal) and no MERGED change naming
+//                them (#7212): a request whose change is in Done is that
+//                change's record, so it leaves Requests at once. A request
+//                someone reopened (stateReason 'reopened') stays.
 //   inProgress — open issues with work under way: a claim or live session,
 //                or an open proposal
 //   inReview   — promoted PR proposals + governance proposals
@@ -251,6 +254,76 @@ test('a proposal row with no status at all is kept (synthetic fixtures)', () => 
     merged: [],
   });
   assert.deepEqual(reviewOf(b.inReview), ['proposal:5']);
+});
+
+// ── #7212: a request whose change has merged leaves Requests ───────────────
+// Once a change built for a request is merged (and drawn in Done), the
+// request leaves the Requests column at once — the Done card is its record —
+// instead of waiting for the request's own row to be closed. Only a real
+// change counts (not an applied close-issue vote), and a reopened request is
+// shown again.
+
+test('a request linked by a merged change is in neither issue column; the change is in Done', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 26 })],
+    proposals: [],
+    gov: [],
+    merged: [{ id: 32, pr_number: 32, linked_issues: [26], created_at: at(3), merged_at: at(3) }],
+  });
+  assert.deepEqual(numbersOf(b.issues), [], 'no longer in Requests');
+  assert.deepEqual(inProgOf(b.inProgress), [], 'not moved to Underway either');
+  assert.deepEqual(idsOf(b.done), [32], 'the merged change is in Done');
+});
+
+test('a shipped request with an open proposal against it stays in Underway', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 26 })],
+    proposals: [prop({ id: 40, linked_issues: [26] })],
+    gov: [],
+    merged: [{ id: 32, pr_number: 32, linked_issues: [26], created_at: at(3), merged_at: at(3) }],
+  });
+  assert.deepEqual(inProgOf(b.inProgress), ['issue:26'],
+    'work under way is checked before the shipped rule');
+  assert.deepEqual(numbersOf(b.issues), []);
+});
+
+test('a reopened request named by a merged change is back in Requests', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 26, stateReason: 'reopened' })],
+    proposals: [],
+    gov: [],
+    merged: [{ id: 32, pr_number: 32, linked_issues: [26], created_at: at(3), merged_at: at(3) }],
+  });
+  assert.deepEqual(numbersOf(b.issues), [26]);
+});
+
+test('an applied close-issue vote does not take a request off Requests', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 26 })],
+    proposals: [],
+    gov: [],
+    merged: [{ id: 77, row_type: 'close_issue', linked_issues: [26], created_at: at(3), merged_at: at(3) }],
+  });
+  assert.deepEqual(numbersOf(b.issues), [26]);
+});
+
+test('shipping one request leaves the others in Requests in their order', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [
+      issue({ number: 1, updatedAt: at(4), lastMessageAt: at(4) }),
+      issue({ number: 26, updatedAt: at(3), lastMessageAt: at(3) }),
+      issue({ number: 2, updatedAt: at(2), lastMessageAt: at(2) }),
+    ],
+    proposals: [],
+    gov: [],
+    merged: [{ id: 32, pr_number: 32, linked_issues: [26], created_at: at(5), merged_at: at(5) }],
+  });
+  assert.deepEqual(numbersOf(b.issues), [1, 2]);
 });
 
 test('In review: pinned pipeline states sort above normal, gov in the normal tier', () => {

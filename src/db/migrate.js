@@ -257,6 +257,9 @@ const STAGING_SEEDS = Object.freeze([
   // as one it closes, so that request's page shows "Change #N says it closes
   // this" and the requester can answer it. Obviously fake, staging only.
   stagingSeed('seedStagingChangeClaim', async (pool, config) => { await seedStagingChangeClaim(pool); }),
+  // #7212's shots: a request whose merged change is in Done, so the board
+  // shows it out of the Requests column.
+  stagingSeed('seedStagingShippedRequest', async (pool, config) => { await seedStagingShippedRequest(pool); }),
   // #6306's shots: a request the bot read and found already works, so Needs
   // you says "Already works" with Propose to close and the request's page
   // says why. Staging has no model, so the bot's note is stored.
@@ -2968,6 +2971,48 @@ async function seedStagingBotWaitingRows(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
+  }
+}
+
+// #7212's shots: a request whose change has merged and sits in Done, so the
+// board shows what the fix is about — the request is out of Requests while
+// the merged change it was built by stays in Done. Obviously fake;
+// idempotent by request number and pull request number; a no-op outside
+// staging.
+async function seedStagingShippedRequest(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const builder = await pool.query("SELECT id FROM users WHERE username = 'staging-demo-user' LIMIT 1");
+    const capture = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !builder.rows.length || !capture.rows.length) {
+      return seedSkipped('no self-hosted project, builder or requester');
+    }
+    const appId = apps.rows[0].id;
+    const number = 9142;
+    const title = 'Staging demo: a request its merged change has already built';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. Homeroom bot built this, and its change has merged.', $4,
+              NOW() - INTERVAL '4 hours', NOW() - INTERVAL '3 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, Number(capture.rows[0].id)],
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, status, linked_issues, pr_number, pr_title, pr_summary_md, branch_name,
+          created_at, promoted_at, merged_at, last_activity_at)
+       SELECT $1, $2, 'merged', ARRAY[$3]::int[], 9902,
+              'Staging demo: build the request the merged change answers',
+              'Staging demo: obviously fake. This change has merged, so its request has left the Requests column.',
+              'feature/staging-demo-shipped-request',
+              NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours',
+              NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = 9902)`,
+      [appId, Number(builder.rows[0].id), number],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging shipped-request seeding failed', { message: err.message });
   }
 }
 

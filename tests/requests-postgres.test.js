@@ -94,8 +94,10 @@ test('requests are rows: filed, listed, numbered, closed, reopened and commented
   await pool.query(`UPDATE requests SET updated_at = NOW() - INTERVAL '1 hour' WHERE number = 58`);
   const board = await requests.listOpen('apps', 'todo-list-b91765');
   assert.deepEqual(board.issues.map((i) => i.number), [59, 58]);
+  // #7212: stateReason is part of the board row, so a reopened request can be
+  // told apart from one still open after its change merged.
   assert.deepEqual(Object.keys(board.issues[0]).sort(),
-    ['body', 'closedAt', 'createdAt', 'htmlUrl', 'labels', 'number', 'state', 'title', 'updatedAt', 'user']);
+    ['body', 'closedAt', 'createdAt', 'htmlUrl', 'labels', 'number', 'state', 'stateReason', 'title', 'updatedAt', 'user']);
   assert.deepEqual(board.issues[0].labels, ['usernode']);
   assert.equal(board.truncatedList, false);
 
@@ -118,6 +120,9 @@ test('requests are rows: filed, listed, numbered, closed, reopened and commented
   const reopened = await requests.reopen('apps', 'todo-list-b91765', 58);
   assert.equal(reopened.state, 'open');
   assert.equal(reopened.closed_at, null);
+  // #7212: the board's row carries WHY the request is open again, so the
+  // board shows it even when a merged change named it.
+  assert.equal((await requests.getOne('apps', 'todo-list-b91765', 58)).issue.stateReason, 'reopened');
   assert.equal((await requests.close('apps', 'todo-list-b91765', 58)).state_reason, 'completed', 'GitHub\'s default reason');
 
   // Comments: what were GitHub comments.
