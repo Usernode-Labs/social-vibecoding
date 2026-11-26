@@ -15,40 +15,50 @@
  *                     with no account (./guest-discover.tsx TryLink), else
  *                     "Sign up to open" with a line under it saying it needs
  *                     a free account. Join and Share beside it. No Pin.
- *   Who is around     how many were active this week and how many are in
- *                     it, as numbers only (never a name).
- *   What it's like    the after pictures of the latest changes that went
- *                     live, with their titles, sideways; not drawn under
- *                     three (until the preview loop's own stills exist).
- *   Made together     how a change gets in, and Join to vote and suggest.
+ *                     Under the buttons, one line of who is around: who it
+ *                     is for, how many are in it and how many were active
+ *                     this week, numbers only (its own strip until the
+ *                     signed-out page's redesign, 26 Nov 2026).
+ *   The join card     "Made by the people who play it.", how many changes
+ *                     went live this month, and Sign up to vote and suggest.
  *   Up for a vote     compact rows: a small before & after, the title, a
  *                     line of it, the tally and Vote. Two, then "N more up
  *                     for a vote". A row opens the change (GuestChange):
  *                     its before & after with a slider, and Join to vote.
- *   Recently live     the last three changes that went live, and how many
- *                     more did this month.
+ *   Recently live     the last three changes that went live, each with
+ *                     when and who said yes ("Approved by community" when
+ *                     more than one person did), and how many more did
+ *                     this month.
+ *   Top contributors  the member hub's card, for visitors too
+ *                     (./guest-contributors.tsx): the one place this page
+ *                     names anybody.
+ *
+ * "What it's like", the strip of after pictures, is gone: it showed the
+ * same changes as Recently live.
  *
  * Read from GET /api/public/apps/:slug/overview (src/services/
  * public-project.js), which carries no names on purpose: how many, not who.
- * Taking part (Join, Vote, Sign up to open) opens the sign-in sheet titled
- * for it, and signing in lands back here (`onIntent`).
+ * Top contributors reads its own route. Taking part (Join, Vote, Sign up to
+ * open) opens the sign-in sheet titled for it, and signing in lands back
+ * here (`onIntent`).
  */
 
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronLeftIcon, ChevronRightIcon, ShareIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ShareIcon, UserGroupIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestIcon, TryLink } from './guest-discover';
-import { CARD_GLASS_BTN, CARD_OPEN_BTN, CARD_ROUND_BTN, PEOPLE_CARD, PeopleCard, ProjectCard } from './project-card';
+import { GuestContributors } from './guest-contributors';
+import { CARD_GLASS_BTN, CARD_OPEN_BTN, CARD_ROUND_BTN, PEOPLE_CARD, ProjectCard } from './project-card';
 import {
-  type GuestApp, type GuestMerged, type GuestOverview, type GuestVote, MIN_ACTIVE, MIN_MEMBERS, canTryHere,
-  fetchOverview, inHomeroomApp,
+  type GuestApp, type GuestMerged, type GuestOverview, type GuestTopContributors, type GuestVote, MIN_ACTIVE,
+  MIN_MEMBERS, canTryHere, fetchOverview, inHomeroomApp,
 } from './guest-data';
 
 /** What somebody tried to do: the sign-in sheet is titled for it. */
@@ -62,12 +72,8 @@ export type GuestIntent =
 /** The changes each list shows before its "N more" row opens the rest. */
 export const VOTES_SHOWN = 2;
 export const LIVE_SHOWN = 3;
-/** What it's like is drawn from this many pictures, and shows up to five. */
-export const LIKE_MIN = 3;
-export const LIKE_MAX = 5;
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
-const LABEL = 'px-1 pb-2 pt-0';
 const SECTION = 'mt-8 md:mt-9';
 const ROW_LINE = 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]';
 /** A list's closing row ("10 more up for a vote"): the plane under the rows. */
@@ -83,6 +89,14 @@ function playsIt(app: GuestApp): boolean {
 function thisMonth(m: GuestMerged, now: number): boolean {
   const at = m.merged_at ? Date.parse(m.merged_at) : NaN;
   return Number.isFinite(at) && now - at <= MONTH_MS;
+}
+
+/** The words for who said yes to a change that went live (GuestMerged.approved_by), or null to say nothing. */
+export function approvedId(by: GuestMerged['approved_by']): string | null {
+  if (by === 'community') return 'auth:guest.project.approved.community';
+  if (by === 'creator') return 'auth:guest.project.approved.creator';
+  if (by === 'member') return 'auth:guest.project.approved.member';
+  return null;
 }
 
 /** The project's tile on its colour, where a change has no picture anybody may see. */
@@ -145,6 +159,29 @@ function VoteRow({ vote, app, color, last, signedIn, onOpen, onIntent }: {
           {t('auth:guest.project.vote')}
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * A Recently live row's second line: when it went live, then who said yes,
+ * a small green check and muted words ("1h ago ✓ Approved by community").
+ * Nothing about the yeses when none was counted (a first version).
+ */
+function LiveLine({ merged }: { merged: GuestMerged }) {
+  const t = useMessages('auth');
+  const approved = approvedId(merged.approved_by);
+  if (!merged.merged_at && !approved) return null;
+  const stamp = merged.merged_at ? agoStamp(merged.merged_at) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
+      {stamp ? <span title={stamp.title}>{stamp.text}</span> : null}
+      {approved ? (
+        <span data-guest-merged-approved={merged.approved_by || ''} className="inline-flex items-center gap-1">
+          <CheckIcon className="h-3.5 w-3.5 shrink-0 text-[color:var(--state-ok)]" aria-hidden="true" />
+          {t(approved)}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -247,7 +284,7 @@ export function GuestChange({ vote, app, signedIn = false, onBack, onIntent }: {
   );
 }
 
-export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, signedIn = false, preview = false, initialOverview = null }: {
+export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, signedIn = false, preview = false, initialOverview = null, initialContributors = null }: {
   /** The project's card from the public directory. */
   app: GuestApp;
   /**
@@ -271,6 +308,8 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   preview?: boolean;
   /** The overview already read (the visitor view reads it to find the app). */
   initialOverview?: GuestOverview | null;
+  /** Top contributors already read (tests); otherwise the card reads its own. */
+  initialContributors?: GuestTopContributors | null;
 }) {
   const t = useMessages('auth');
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
@@ -320,7 +359,6 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   const activeWeek = Number(overview?.activity?.active_week) || 0;
   const active = activeWeek >= MIN_ACTIVE ? activeWeek : 0;
   const members = (app.member_count || 0) >= MIN_MEMBERS ? app.member_count || 0 : 0;
-  const pictures = merged.filter((m) => m.picture).slice(0, LIKE_MAX);
   const openVote = opened == null ? null : votes.find((v) => v.id === opened) || null;
 
   const votesShown = allVotes ? votes : votes.slice(0, VOTES_SHOWN);
@@ -364,12 +402,41 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       </button>
     </>
   );
-  const note = canTry ? null : (
-    <p data-guest-needs-account="" className="text-[14px] leading-5 text-white/80">
-      {playsIt(app)
-        ? t('auth:guest.project.needsAccountPlay', { project: app.name })
-        : t('auth:guest.project.needsAccountUse', { project: app.name })}
+  // Who is around, under the buttons: who it is for and how many are in it,
+  // then how many were active this week, numbers only and each from its
+  // minimum (guest-data MIN_MEMBERS, MIN_ACTIVE), where a small one reads as
+  // a project nobody uses. Two whole messages on one line, a dot between.
+  const facts = members || active ? (
+    <p data-guest-people="" className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[14px] leading-5 text-white/80">
+      <UserGroupIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      {members ? (
+        <span data-guest-people-members="">
+          <RichMessage
+            id="auth:guest.project.audienceMembers"
+            values={{ count: members }}
+            components={[<b className="font-[650] text-white" />]}
+          />
+        </span>
+      ) : null}
+      {members && active ? <span aria-hidden="true">·</span> : null}
+      {active ? (
+        <b data-guest-people-active="" className="font-[650] text-white">
+          {t('auth:guest.project.activeWeek', { count: active })}
+        </b>
+      ) : null}
     </p>
+  ) : null;
+  const note = (
+    <>
+      {facts}
+      {canTry ? null : (
+        <p data-guest-needs-account="" className="text-[14px] leading-5 text-white/80">
+          {playsIt(app)
+            ? t('auth:guest.project.needsAccountPlay', { project: app.name })
+            : t('auth:guest.project.needsAccountUse', { project: app.name })}
+        </p>
+      )}
+    </>
   );
 
   return (
@@ -395,57 +462,14 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         data-guest-project-band=""
       />
 
-      {active || members ? (
-        <div className="mt-2.5 md:mt-3.5">
-          <PeopleCard
-            data-guest-people=""
-            audience={members ? (
-              <span data-guest-people-members="" className="inline-flex items-center gap-1.5">
-                <UserGroupIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <RichMessage
-                  id="auth:guest.project.audienceMembers"
-                  values={{ count: members }}
-                  components={[<b className="font-[650] text-zinc-900 dark:text-zinc-100" />]}
-                />
-              </span>
-            ) : null}
-          >
-            {active ? (
-              <span data-guest-people-active="" className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">
-                {t('auth:guest.project.activeWeek', { count: active })}
-              </span>
-            ) : null}
-          </PeopleCard>
-        </div>
-      ) : null}
-
-      {pictures.length >= LIKE_MIN ? (
-        <section data-guest-like="" className={SECTION}>
-          <SectionHeader className={LABEL}>{t('auth:guest.project.whatItsLike')}</SectionHeader>
-          <ul className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0 [scrollbar-width:none]">
-            {pictures.map((m) => (
-              <li key={m.id} data-guest-like-item={m.id} className="w-[200px] shrink-0 snap-start md:w-[236px]">
-                <span className="block h-[125px] overflow-hidden rounded-[14px] bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] md:h-[148px] dark:bg-zinc-800">
-                  <img src={m.picture || ''} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover object-top" />
-                </span>
-                <span className="mt-1.5 block truncate px-0.5 text-[13px] leading-[18px] text-zinc-700 dark:text-zinc-300">
-                  {m.title || t('auth:guest.project.untitledChange')}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       <section data-guest-made="" className={SECTION}>
-        <SectionHeader className={LABEL}>{t('auth:guest.project.madeTogether')}</SectionHeader>
         <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5')}>
           <div className="min-w-0 flex-1">
             <h2 className="text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100">
               {playsIt(app) ? t('auth:guest.project.madeByPlayers') : t('auth:guest.project.madeByUsers')}
             </h2>
             <p className="mt-1 text-[15px] leading-[21px] text-zinc-600 dark:text-zinc-300">
-              {month > 0 ? t('auth:guest.project.madeHowMonth', { count: month }) : t('auth:guest.project.madeHow')}
+              {month > 0 ? t('auth:guest.project.membersVoteMonth', { count: month }) : t('auth:guest.project.membersVote')}
             </p>
           </div>
           {signedIn ? (
@@ -460,7 +484,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
               className="h-12 w-full shrink-0 px-6 text-[16px] font-bold md:w-auto md:min-w-[280px]"
               onClick={() => onIntent({ kind: 'join', app })}
             >
-              {t('auth:guest.project.joinToVoteSuggest')}
+              {t('auth:guest.project.signUpToVoteSuggest')}
             </Button>
           )}
         </div>
@@ -529,7 +553,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{m.title || t('auth:guest.project.untitledChange')}</div>
-                  {m.merged_at ? <div className="text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" title={agoStamp(m.merged_at).title}>{agoStamp(m.merged_at).text}</div> : null}
+                  <LiveLine merged={m} />
                 </div>
               </div>
             ))}
@@ -550,6 +574,8 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
           </div>
         </section>
       ) : null}
+
+      <GuestContributors slug={app.slug} initial={initialContributors} className={SECTION} />
 
       {!loaded ? <p className="mt-8 px-1 text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.project.loading')}</p> : null}
     </div>

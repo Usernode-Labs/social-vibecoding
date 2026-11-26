@@ -64,6 +64,7 @@ const {
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadProjectOverview } = require('../services/public-project');
+const { contributorsSummary } = require('../services/communities');
 const { publicStillBytes } = require('../services/shots-public');
 const mediaStore = require('../services/media-store');
 
@@ -302,6 +303,44 @@ function publicApiRoutes(config) {
       res.json(body);
     } catch (err) {
       log.error('public-api', 'project overview failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/apps/:slug/top-contributors — the Top contributors card
+  // of a public project's signed-out page (frontend/src/features/guest/
+  // guest-contributors.tsx): the hub's own list (communities.js
+  // contributorsSummary, request 6837), up to five people this month and
+  // over all time, each a username and one count, nothing else (no id, no
+  // display name, no wallet). Usernames of the people building a public
+  // project are already public here (the directory and /contributors
+  // above); this is the one place the signed-out page names anybody, and
+  // the overview beside it still names nobody. 404 for anything the
+  // directory does not list, kept a short while like the overview.
+  const topContributorsCache = new Map();
+  router.get('/api/public/apps/:slug/top-contributors', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) return res.status(404).json({ error: 'App not found' });
+    try {
+      const hit = topContributorsCache.get(slug);
+      if (hit && hit.expiresAt > Date.now()) return res.json(hit.body);
+      const { rows } = await pool.query(
+        `SELECT id, slug, self_hosted, view_visibility, status, moderation_suspended_at
+           FROM apps WHERE slug = $1`,
+        [slug]
+      );
+      const app = rows[0];
+      if (!isPublicDirectoryApp(app)) return res.status(404).json({ error: 'App not found' });
+      const top = await contributorsSummary(pool, app.id);
+      const shape = (list) => (Array.isArray(list) ? list : [])
+        .map((p) => ({ username: String(p.username || ''), n: Number(p.n) || 0 }))
+        .filter((p) => p.username && p.n > 0);
+      const body = { month: shape(top && top.month), all_time: shape(top && top.all_time) };
+      if (topContributorsCache.size >= OVERVIEW_CACHE_MAX) topContributorsCache.clear();
+      topContributorsCache.set(slug, { body, expiresAt: Date.now() + OVERVIEW_TTL_MS });
+      res.json(body);
+    } catch (err) {
+      log.error('public-api', 'top contributors failed', { slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
