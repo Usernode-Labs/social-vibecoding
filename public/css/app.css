@@ -41631,3 +41631,24 @@ html:not([data-skin]) #leaderboard-screen .tc-se-card[data-challenge-state="done
   html:not([data-skin]) #profile-identity-card .profile-id-about { font-size: 0.875rem; line-height: 1.36; }
 }
 /* ── END ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
+
+/* ── PHONE AUDIT (request 7164, points 2 and 5): A FINGER'S REACH AND 16PX BOXES ──
+   Under 768px only, in the standard look; nothing here is read on a desktop.
+   TAP AREAS. The bar's own controls (Back, the bell, the Homeroom menu) carry .un-touch-target, whose ::after is a
+   44px box, and the bar's 14px gap keeps the bell's box off the menu's, so they needed nothing. A conversation's
+   discs (its members and its actions, and a reply thread's back and close) moved onto its title card with One look,
+   where they are 34px with no box beyond the disc: each gets 5px of reach on every side, 44px in all. The card's gap
+   is 12px, so two boxes stop 2px short of each other and neither takes its neighbour's taps.
+   TEXT BOXES. iOS zooms the page when a box under 16px takes the cursor. Home's, Communities' and Messages' search
+   were made 16px by One look; these are the ones left: the notifications search (14px), every field of Settings
+   (its search and the profile card's fields 15px, the rest 14px), the profile card on You, and the board's filter
+   (15px). max(1rem, 16px): the size follows Settings' Text size upward and never drops under what iOS asks for. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action { position: relative; }
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action::after { content: ''; position: absolute; inset: -5px; }
+  html:not([data-skin]) #notifications-search-input,
+  html:not([data-skin]) #settings-screen :is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"], [type="hidden"]), textarea),
+  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input,
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search,
+  html:not([data-skin]) #dev-kanban-search { font-size: max(1rem, 16px); }
+}
