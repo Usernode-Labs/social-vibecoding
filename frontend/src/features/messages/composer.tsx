@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 
 import { Button } from '@/components/ui/button';
 import { ChatComposerBar } from '@/components/ui/chat';
-import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, CopyIcon, FormatTextIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, SaveDraftIcon, StrikethroughIcon, UnderlineIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, CheckIcon, CopyIcon, FormatTextIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, SaveDraftIcon, StrikethroughIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
 import { applyFormat, hasFormatting, normalizeLinkUrl, type FormatKind } from './composer-format';
@@ -157,9 +157,9 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   const menuRange = useRef<{ start: number; end: number } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   // Request #7164 (phone audit): under 768px a channel's box stands alone and
-  // the formatting row waits behind one button beside it. Closed to begin
-  // with, and it stays as the person left it: sending does not close it. A
-  // desktop draws the row always and never the button (app.css).
+  // the formatting row waits behind "Formatting" in the "+" menu. Closed to
+  // begin with, and it stays as the person left it: sending does not close
+  // it. A desktop draws the row always and never the menu's row (app.css).
   const [formatOpen, setFormatOpen] = useState(false);
   const formatBarId = useId();
   const [linkValue, setLinkValue] = useState('');
@@ -1046,12 +1046,19 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
                   <span>{t('messages:composer.shareItem')}</span>
                 </button>
               )}
+              {/* Request #7164: a channel's alone, and a phone's alone
+                  (app.css hides it from 768px, where the row always shows).
+                  A checked row, so the menu says whether the row is open. */}
+              {isChannel ? (
+                <button type="button" role="menuitemcheckbox" className="messages-composer-menu-format" aria-checked={formatOpen} aria-controls={formatBarId} onMouseDown={(event) => event.preventDefault()} onClick={() => { setAddOpen(false); setFormatOpen((open) => !open); }}>
+                  <FormatTextIcon aria-hidden="true" />
+                  <span>{t('messages:composer.format.toggle')}</span>
+                  {formatOpen ? <CheckIcon aria-hidden="true" className="messages-composer-menu-check" /> : null}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
-        {isChannel ? (
-          <button type="button" className="messages-composer-action messages-format-toggle" data-open={formatOpen ? '' : undefined} onMouseDown={(event) => event.preventDefault()} onClick={() => setFormatOpen((open) => !open)} disabled={dictating} aria-expanded={formatOpen} aria-controls={formatBarId} aria-label={t('messages:composer.format.toggle')} title={t('messages:composer.format.toggle')}><FormatTextIcon aria-hidden="true" /></button>
-        ) : null}
         <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : mainPlaceholder} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         {/* Task 2148: while Homeroom bot works on the viewer's message here and
