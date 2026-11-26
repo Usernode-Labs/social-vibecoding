@@ -1092,9 +1092,11 @@ What a merged pull request still has to do once GitHub has merged it
   - `included.find`, then an `Included` message to each change it carried, which gets
     its own instance;
   - `issues.closeAfterMerge`: one look at the requests the merge closes per attempt
-    (`issue-close-watcher.closeAfterMerge`). At the first look a linked request still open
-    is left to GitHub, and the transition asks for a second look 30 s later, at which the
-    platform closes it. The close proposals whose target the look saw closed (or gone) are
+    (`issue-close-watcher.closeAfterMerge`). On a GitHub repository, at the first look a
+    linked request still open is left to GitHub, and the transition asks for a second look
+    30 s later, at which the platform closes it. On Homeroom's git host, which applies no
+    closing keywords, the first look closes the linked requests itself and nothing waits
+    (#7214). The close proposals whose target the look saw closed (or gone) are
     told by message, in the transition that applies it (`Filed`, then `TargetClosed`, to
     each one's own governance instance), never before the close is confirmed.
 

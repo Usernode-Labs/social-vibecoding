@@ -2874,9 +2874,9 @@
       "expectSelector": "#platform-mark-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
-      "name": "Admin & moderation is a row on Me for admins, out of personal Settings (#588, #2718, #5281)",
+      "name": "Admin & moderation and Sign out are buttons at the head of Me, beside Edit profile (#588, #2718, #5281)",
       "path": "/?demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-admin #profile-row-admin[href=\"#admin\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card #profile-id-actions:has(#profile-edit-btn):has(#profile-signout-btn) #profile-admin-btn[href=\"#admin\"]"
     },
     {
       "name": "Settings renders the platform build as plain text, not a pill",
