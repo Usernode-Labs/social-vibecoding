@@ -186,7 +186,8 @@ test('the card draws its frame first and reads in effects; no channel, no card',
   // A visitor reads: "Start a post…" asks them to sign in, and nothing is written.
   const { visitorData } = loadTsx(CARD);
   const visitor = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: visitorData('book-club'), mode: 'full', visitor: { onSignIn: () => {} } }));
-  assert.match(visitor, /<button type="button" class="dh-composer dh-composer-door dh-sign-in-door dh-composer-post" data-ws-discussion-sign-in="">[\s\S]*?Start a post…[\s\S]*?<span class="dh-sign-in">Sign in to post<\/span><\/button>/);
+  // The Button primitive draws it (tests/button-primitive-ratchet.test.js), its classes as they were.
+  assert.match(visitor, /<button type="button" data-ws-discussion-sign-in="" class="dh-composer dh-composer-door dh-sign-in-door dh-composer-post">[\s\S]*?Start a post…[\s\S]*?<span class="dh-sign-in">Sign in to post<\/span><\/button>/);
   assert.doesNotMatch(visitor, /<textarea|<form/, 'no box to write in');
 });
 

@@ -930,14 +930,17 @@ function FeedView({ feed, slug, name, channel, data, mode, headId, host, viewer,
             return (
               <div key={item.key} className="dh-card-run" data-ws-discussion-card-run={String(run)}>
                 {thread}
-                <button
+                <Button
                   type="button"
+                  variant="unstyled"
+                  size="none"
+                  ink="none"
                   className="dh-card-run-more"
                   data-ws-discussion-card-run-more=""
                   onClick={() => setOpenRuns((was) => new Set([...was, item.key]))}
                 >
                   {cardRunLabel(run - 1)}
-                </button>
+                </Button>
               </div>
             );
           })}
@@ -946,8 +949,11 @@ function FeedView({ feed, slug, name, channel, data, mode, headId, host, viewer,
         <p className="dh-empty" data-ws-discussion-empty="">{t('project:hub.discussion.empty')}</p>
       )}
       {state.status === 'ready' && canMore ? (
-        <button
+        <Button
           type="button"
+          variant="unstyled"
+          size="none"
+          ink="none"
           className="dh-more-posts"
           data-ws-discussion-more=""
           disabled={state.busy}
@@ -957,7 +963,7 @@ function FeedView({ feed, slug, name, channel, data, mode, headId, host, viewer,
           }}
         >
           {t('project:hub.discussion.morePosts')}
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -1053,8 +1059,11 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               <ReplyRow said={reply}>
                 <Pills said={reply} feed={feed} me={me} small />
                 {item.kind === 'earlier' && reply.rootId == null && oldThreadCount(item, reply) > 0 ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="unstyled"
+                    size="none"
+                    ink="none"
                     className="dh-old-thread"
                     data-ws-discussion-old-thread={String(reply.id)}
                     aria-expanded={opened.has(reply.id)}
@@ -1064,7 +1073,7 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
                     {opened.has(reply.id)
                       ? t('project:hub.discussion.oldThreadHide')
                       : t('project:hub.discussion.oldThread', { count: oldThreadCount(item, reply) })}
-                  </button>
+                  </Button>
                 ) : null}
               </ReplyRow>
               {item.kind === 'earlier' && reply.rootId == null && opened.has(reply.id) && oldThreadCount(item, reply) > 0 ? (
@@ -1284,8 +1293,11 @@ function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
   const t = useMessages('project');
   const room = useContext(RoomContext);
   return (
-    <button
+    <Button
       type="button"
+      variant="unstyled"
+      size="none"
+      ink="none"
       className={`dh-composer dh-composer-door dh-sign-in-door${preview ? '' : ' dh-composer-post'}`}
       data-ws-discussion-sign-in=""
       onClick={() => room.signIn?.()}
@@ -1293,7 +1305,7 @@ function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
       <span className="dh-face-blank" aria-hidden="true" />
       <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
       <span className="dh-sign-in">{t('project:hub.discussion.signInToPost')}</span>
-    </button>
+    </Button>
   );
 }
 
