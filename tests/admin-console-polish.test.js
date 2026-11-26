@@ -110,7 +110,7 @@ test('a section opens at its top, and the menu keeps its place with the lit row 
 
 test('with room the open tabs stay on one line, and never scroll sideways', () => {
   assert.match(css, /@media \(min-width: 1200px\) \{\s*\.admin-tab-strip \{ flex-wrap: nowrap; \}/);
-  assert.match(css, /\.admin-tab-strip > \[data-admin-tab\] \{ flex: 0 1 auto; min-width: 4\.75rem; \}/);
+  assert.match(css, /\.admin-tab-strip > \[data-admin-tab\] \{ flex: 0 1 auto; min-width: 4\.25rem; \}/);
   assert.doesNotMatch(consoleJs, /overflow-x-(auto|scroll)/);
 });
 
@@ -151,4 +151,10 @@ test('on a computer the header carries Homeroom\'s name and the console\'s note,
   assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #platform-header #back-btn \{ display: none !important; \}/, 'no back arrow beside the name');
   assert.match(rulesText, /\.admin-header-note \{ position: absolute; inset: 0; width: fit-content; max-width: calc\(100% - 340px\); height: fit-content; margin: auto;/,
     'the note is as wide as its words and sits in the middle of the bar');
+});
+
+test('the pages opened lately are badges: small pills, the sun on the one you are on', () => {
+  assert.match(block, /#admin-open-tabs \.admin-tab-strip > \[data-admin-tab\] \{ min-height: 28px; border-radius: 999px; background: var\(--adm-paper\); box-shadow: inset 0 0 0 1px var\(--adm-line\);/);
+  assert.match(block, /\[data-admin-tab\]\[aria-current="page"\] \{ background: var\(--adm-sun\);/);
+  assert.match(block, /> \[data-admin-tab-close\] \{ width: 20px; height: 20px;/, 'the close button stays inside the badge');
 });

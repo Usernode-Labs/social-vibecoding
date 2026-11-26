@@ -3967,7 +3967,7 @@ html[data-browser-scroller^="auth-"] :is(
    sideways either way. */
 @media (min-width: 1200px) {
   .admin-tab-strip { flex-wrap: nowrap; }
-  .admin-tab-strip > [data-admin-tab] { flex: 0 1 auto; min-width: 4.75rem; }
+  .admin-tab-strip > [data-admin-tab] { flex: 0 1 auto; min-width: 4.25rem; }
   .admin-tab-strip > [data-admin-tab]:first-child,
   .admin-tab-strip > [data-admin-tab][aria-current="page"] { flex-shrink: 0; }
 }
@@ -4101,6 +4101,20 @@ html[data-app-tone="dark"] #admin-screen {
 .admin-sidebar.is-folded .admin-sidebar-group [data-admin-section] svg { width: 20px; height: 20px; }
 .admin-sidebar.is-folded [data-admin-group].hidden { display: block !important; }
 .admin-sidebar.is-folded .admin-sidebar-group { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--adm-rule); }
+
+/* The pages opened lately, above the page: each a badge. A small pill
+   on paper with one thin outline, the sun on the one you are on, its
+   close button inside the pill. */
+#admin-open-tabs .admin-tab-strip { gap: 6px; }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] { min-height: 28px; border-radius: 999px; background: var(--adm-paper); box-shadow: inset 0 0 0 1px var(--adm-line); color: var(--adm-muted); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab]:hover { color: var(--adm-ink); box-shadow: inset 0 0 0 1px var(--adm-muted); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab][aria-current="page"] { background: var(--adm-sun); box-shadow: inset 0 0 0 1px var(--adm-line); color: var(--adm-on-sun); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] > [data-admin-section] { gap: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; line-height: 1.25rem; }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab]:has(> [data-admin-tab-close]) > [data-admin-section] { padding-inline-end: 4px; }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] > [data-admin-section] svg { width: 14px; height: 14px; }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] > [data-admin-tab-close] { width: 20px; height: 20px; margin-inline-end: 4px; border-radius: 999px; color: inherit; }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] > [data-admin-tab-close]:hover { background: var(--adm-well); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] > [data-admin-tab-close] svg { width: 12px; height: 12px; }
 
 /* The page's head: its name, one sentence, and Refresh. */
 #admin-dashboard { color: var(--adm-ink); }
