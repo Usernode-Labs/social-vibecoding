@@ -162,8 +162,9 @@ function reasonBody(text: string): string {
 /**
  * The vote line that goes above its reason's post: the change page's own
  * wording, without the reason ("evan voted no", or "…on an earlier version").
- * It carries no time or tag (the post under it does), and `voteNote` keeps it
- * through `keptOnRequest` after its reason has left the row.
+ * It carries no time (#7221: its change is named in the line's own sentence,
+ * and the post under it shows only its time), and `voteNote` keeps it through
+ * `keptOnRequest` after its reason has left the row.
  */
 function voteNoteOf(vote: TranscriptMessage): TranscriptMessage {
   return {
@@ -212,6 +213,9 @@ function voteReasonPost(vote: TranscriptMessage, reason: string): TranscriptMess
     showReact: false,
     voteNote: false,
     voteReasonPost: true,
+    // #7221: the note above names the change, so this post is not tagged with
+    // it again; it shows only its time.
+    changeOf: null,
   };
 }
 

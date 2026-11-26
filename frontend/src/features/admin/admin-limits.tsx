@@ -5,6 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { LimitTextsCard } from './admin-limit-texts';
+import {
+  Field, ScreenHeader, SettingRow, SettingsGroup, TabPanel, Tabs,
+} from './topochain/ui.tsx';
 
 // Limits (#admin/limits): the server's app limit and session limit, whether
 // previews may have projects made in them, GitHub's hourly request budget
@@ -43,7 +46,9 @@ const TONE_CLASS: Record<Tone, string> = {
   err: 'text-red-400',
 };
 
-const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
+// The kit's own label (topochain/ui.tsx `Field`), for a heading over a group
+// that is not one control.
+const LABEL = 'text-xs font-medium text-zinc-600 dark:text-zinc-400';
 const MONEY_INPUT = `${AdminUI.input} ps-6 font-mono disabled:opacity-60`;
 
 /** A `$`-prefixed money field. */
@@ -52,15 +57,14 @@ function MoneyField({ id, label, title, placeholder, value, onChange, disabled }
   value: string; onChange: (v: string) => void; disabled: boolean;
 }) {
   return (
-    <label className="block">
-      <span className={LABEL} title={title}>{label}</span>
-      <div className="relative mt-1">
+    <Field label={<span title={title}>{label}</span>} htmlFor={id}>
+      <div className="relative">
         <span className="absolute start-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 dark:text-zinc-400 pointer-events-none">$</span>
         <input id={id} type="number" min="0" step="0.01" inputMode="decimal" disabled={disabled}
           className={MONEY_INPUT} placeholder={placeholder}
           value={value} onChange={(e) => onChange(e.target.value)} />
       </div>
-    </label>
+    </Field>
   );
 }
 
@@ -192,14 +196,13 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
       </p>
       {off ? null : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-          <label className="block">
-            <span className={LABEL}>Live apps allowed</span>
+          <Field label="Live apps allowed" htmlFor="admin-app-limit-input">
             <input id="admin-app-limit-input" type="number" min="1" step="1" inputMode="numeric"
               disabled={!canWrite || !data}
-              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+              className={`${AdminUI.input} font-mono disabled:opacity-60`}
               placeholder={data ? String(data.defaultLimit) : ''}
               value={value} onChange={(e) => setValue(e.target.value)} />
-          </label>
+          </Field>
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -239,7 +242,7 @@ function LiveDraftsCard({ canWrite }: { canWrite: boolean }) {
   }, []);
 
   const flip = async () => {
-    if (!data) return;
+    if (!data || saving) return;
     setStatus(null);
     setSaving(true);
     try {
@@ -263,29 +266,36 @@ function LiveDraftsCard({ canWrite }: { canWrite: boolean }) {
   const usage = !data ? 'Loading…' : `${data.open} open now`;
   const who = data && data.updatedBy ? ` by @${data.updatedBy}` : '';
   const when = data && data.updatedAt ? ` on ${String(data.updatedAt).slice(0, 10)}` : '';
+  // A row of the Features card (26 Nov 2026): the switch saves as soon as it
+  // is pressed, as the Turn on / Turn off button did, and keeps its id.
   return (
-    <div id="admin-live-drafts" className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>App previews in chats</h2>
-        <span id="admin-live-drafts-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
-      </div>
-      <p className={`${AdminUI.muted} mb-3`}>
-        In a Homeroom bot thread about a project, anyone who can change it may open a live preview of a draft:
-        the bot edits the draft and the preview restarts with each edit, until they propose it. Each open
-        draft is a running preview (two at most per person). Switched off, no new draft opens, no edit runs,
-        and the drafts already open wait.
-      </p>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p id="admin-live-drafts-source" className="text-xs text-zinc-500 dark:text-zinc-400">
-          {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
-        </p>
-        {canWrite ? (
-          <button id="admin-live-drafts-btn" type="button" className={data && data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
-            disabled={saving || !data} onClick={flip}>{data && !data.enabled ? 'Turn on' : 'Turn off'}</button>
-        ) : null}
-      </div>
+    <SettingRow
+      wrapId="admin-live-drafts"
+      id="admin-live-drafts-btn"
+      title="App previews in chats"
+      help={(
+        <>
+          In a Homeroom bot thread about a project, anyone who can change it may open a live preview of a draft:
+          the bot edits the draft and the preview restarts with each edit, until they propose it. Each open
+          draft is a running preview (two at most per person). Switched off, no new draft opens, no edit runs,
+          and the drafts already open wait.
+        </>
+      )}
+      checked={data ? !!data.enabled : null}
+      onChange={() => { void flip(); }}
+      canEdit={canWrite}
+      meta={(
+        <>
+          <span id="admin-live-drafts-usage">{usage}</span>
+          {data ? ' · ' : ''}
+          <span id="admin-live-drafts-source">
+            {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
+          </span>
+        </>
+      )}
+    >
       <StatusLine id="admin-live-drafts-status" status={status} okClass="text-green-800 dark:text-green-400" />
-    </div>
+    </SettingRow>
   );
 }
 
@@ -308,7 +318,7 @@ function WebSearchCard({ canWrite }: { canWrite: boolean }) {
   }, []);
 
   const flip = async () => {
-    if (!data) return;
+    if (!data || saving) return;
     setStatus(null);
     setSaving(true);
     try {
@@ -333,28 +343,33 @@ function WebSearchCard({ canWrite }: { canWrite: boolean }) {
   const who = data && data.updatedBy ? ` by @${data.updatedBy}` : '';
   const when = data && data.updatedAt ? ` on ${String(data.updatedAt).slice(0, 10)}` : '';
   return (
-    <div id="admin-bot-web-search" className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Web search in Homeroom bot's chat</h2>
-        <span id="admin-bot-web-search-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
-      </div>
-      <p className={`${AdminUI.muted} mb-3`}>
-        In a person's chat with Homeroom bot, the bot may search the web when asked to research or look something
-        up: {data ? data.searchesPerTurn : 3} searches a turn at most, each about $0.007 on the bot's OpenRouter key,
-        through OpenRouter. Its reply links the pages it used. Switched off, the bot is not offered the search and
-        says it answers from what it knows.
-      </p>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p id="admin-bot-web-search-source" className="text-xs text-zinc-500 dark:text-zinc-400">
-          {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
-        </p>
-        {canWrite ? (
-          <button id="admin-bot-web-search-btn" type="button" className={data && data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
-            disabled={saving || !data} onClick={flip}>{data && !data.enabled ? 'Turn on' : 'Turn off'}</button>
-        ) : null}
-      </div>
+    <SettingRow
+      wrapId="admin-bot-web-search"
+      id="admin-bot-web-search-btn"
+      title="Web search in Homeroom bot's chat"
+      help={(
+        <>
+          In a person's chat with Homeroom bot, the bot may search the web when asked to research or look something
+          up: {data ? data.searchesPerTurn : 3} searches a turn at most, each about $0.007 on the bot's OpenRouter key,
+          through OpenRouter. Its reply links the pages it used. Switched off, the bot is not offered the search and
+          says it answers from what it knows.
+        </>
+      )}
+      checked={data ? !!data.enabled : null}
+      onChange={() => { void flip(); }}
+      canEdit={canWrite}
+      meta={(
+        <>
+          <span id="admin-bot-web-search-usage">{usage}</span>
+          {data ? ' · ' : ''}
+          <span id="admin-bot-web-search-source">
+            {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
+          </span>
+        </>
+      )}
+    >
       <StatusLine id="admin-bot-web-search-status" status={status} okClass="text-green-800 dark:text-green-400" />
-    </div>
+    </SettingRow>
   );
 }
 
@@ -444,14 +459,13 @@ function SessionLimitCard({ canWrite }: { canWrite: boolean }) {
         seconds, with no deploy.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-        <label className="block">
-          <span className={LABEL}>Sessions allowed</span>
+        <Field label="Sessions allowed" htmlFor="admin-session-limit-input">
           <input id="admin-session-limit-input" type="number" min="1" step="1" inputMode="numeric"
             disabled={!canWrite || !data}
-            className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+            className={`${AdminUI.input} font-mono disabled:opacity-60`}
             placeholder={data ? String(data.defaultLimit) : ''}
             value={value} onChange={(e) => setValue(e.target.value)} />
-        </label>
+        </Field>
       </div>
       {quota.length ? (
         <div id="admin-session-limit-quota" className="mb-3">
@@ -515,6 +529,7 @@ function PreviewProjectsCard({ canWrite }: { canWrite: boolean }) {
   }, []);
 
   const put = async (enabled: boolean | null) => {
+    if (saving) return;
     setStatus(null);
     setSaving(true);
     try {
@@ -553,36 +568,43 @@ function PreviewProjectsCard({ canWrite }: { canWrite: boolean }) {
     source = 'On by default.';
   }
 
+  // A row of the Features card (26 Nov 2026). The switch is the old Turn on /
+  // Turn off button and keeps its id; where the deploy decides it is not
+  // offered, and the row says Yes or No in its place.
   return (
-    <div id="admin-preview-projects" className={`${AdminUI.card} p-4 mt-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Projects in previews</h2>
-        <span id="admin-preview-projects-state" className="text-xs text-zinc-500 dark:text-zinc-400">{state}</span>
-      </div>
-      <p className={`${AdminUI.muted} mb-3`}>
-        Lets people make projects inside the preview of a Homeroom change, and makes one from each
-        ready-made app the change touches, so it can be tried before the vote. This server builds
-        and runs them for the preview, up to {data ? data.perPreview : 3} per preview
-        and {data ? data.total : 30} in all, and removes them when the preview goes. Turned off,
-        previews built from then on cannot make any. A change applies to every server within ten
-        seconds, with no deploy.
-      </p>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p id="admin-preview-projects-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
-        {canWrite && data && !blocked ? (
-          <div className="flex items-center gap-2">
-            {data.source === 'admin' ? (
-              <button id="admin-preview-projects-reset-btn" type="button" className={AdminUI.btn.outline}
-                disabled={saving} onClick={() => put(null)}>Use default</button>
-            ) : null}
-            <button id="admin-preview-projects-toggle-btn" type="button"
-              className={data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
-              disabled={saving} onClick={() => put(!data.enabled)}>{data.enabled ? 'Turn off' : 'Turn on'}</button>
-          </div>
-        ) : null}
-      </div>
+    <SettingRow
+      wrapId="admin-preview-projects"
+      id="admin-preview-projects-toggle-btn"
+      title="Projects in previews"
+      help={(
+        <>
+          Lets people make projects inside the preview of a Homeroom change, and makes one from each
+          ready-made app the change touches, so it can be tried before the vote. This server builds
+          and runs them for the preview, up to {data ? data.perPreview : 3} per preview
+          and {data ? data.total : 30} in all, and removes them when the preview goes. Turned off,
+          previews built from then on cannot make any. A change applies to every server within ten
+          seconds, with no deploy.
+        </>
+      )}
+      checked={data ? !!data.enabled : null}
+      onChange={(next) => { void put(next); }}
+      canEdit={canWrite && !blocked}
+      meta={(
+        <>
+          <span id="admin-preview-projects-state">{state}</span>
+          {source ? ' · ' : ''}
+          <span id="admin-preview-projects-source">{source}</span>
+        </>
+      )}
+    >
+      {canWrite && data && !blocked && data.source === 'admin' ? (
+        <div className="mt-2">
+          <button id="admin-preview-projects-reset-btn" type="button" className={AdminUI.btn.outlineSm}
+            disabled={saving} onClick={() => put(null)}>Use default</button>
+        </div>
+      ) : null}
       <StatusLine id="admin-preview-projects-status" status={status} okClass="text-green-800 dark:text-green-400" />
-    </div>
+    </SettingRow>
   );
 }
 
@@ -611,6 +633,7 @@ function VersionsCard({ canWrite }: { canWrite: boolean }) {
   }, []);
 
   const put = async (enabled: boolean | null) => {
+    if (saving) return;
     setStatus(null);
     setSaving(true);
     try {
@@ -646,34 +669,38 @@ function VersionsCard({ canWrite }: { canWrite: boolean }) {
   }
 
   return (
-    <div id="admin-versions" className={`${AdminUI.card} p-4 mt-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Versions</h2>
-        <span id="admin-versions-state" className="text-xs text-zinc-500 dark:text-zinc-400">{state}</span>
-      </div>
-      <p className={`${AdminUI.muted} mb-3`}>
-        Gives each project&apos;s merged changes to the versions made from it that get its updates, as
-        a change their own group tries and votes on, and makes each ready-made app as a version of
-        its platform original. Turned off, no update is planned or opened, hubs show no update cards,
-        and ready-mades are made from the starters as before. Which project each version came from is
-        recorded either way. A change applies to every server within ten seconds, with no deploy.
-      </p>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p id="admin-versions-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
-        {canWrite && data && !blocked ? (
-          <div className="flex items-center gap-2">
-            {data.source === 'admin' ? (
-              <button id="admin-versions-reset-btn" type="button" className={AdminUI.btn.outline}
-                disabled={saving} onClick={() => put(null)}>Use default</button>
-            ) : null}
-            <button id="admin-versions-toggle-btn" type="button"
-              className={data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
-              disabled={saving} onClick={() => put(!data.enabled)}>{data.enabled ? 'Turn off' : 'Turn on'}</button>
-          </div>
-        ) : null}
-      </div>
+    <SettingRow
+      wrapId="admin-versions"
+      id="admin-versions-toggle-btn"
+      title="Versions"
+      help={(
+        <>
+          Gives each project&apos;s merged changes to the versions made from it that get its updates, as
+          a change their own group tries and votes on, and makes each ready-made app as a version of
+          its platform original. Turned off, no update is planned or opened, hubs show no update cards,
+          and ready-mades are made from the starters as before. Which project each version came from is
+          recorded either way. A change applies to every server within ten seconds, with no deploy.
+        </>
+      )}
+      checked={data ? !!data.enabled : null}
+      onChange={(next) => { void put(next); }}
+      canEdit={canWrite && !blocked}
+      meta={(
+        <>
+          <span id="admin-versions-state">{state}</span>
+          {source ? ' · ' : ''}
+          <span id="admin-versions-source">{source}</span>
+        </>
+      )}
+    >
+      {canWrite && data && !blocked && data.source === 'admin' ? (
+        <div className="mt-2">
+          <button id="admin-versions-reset-btn" type="button" className={AdminUI.btn.outlineSm}
+            disabled={saving} onClick={() => put(null)}>Use default</button>
+        </div>
+      ) : null}
       <StatusLine id="admin-versions-status" status={status} okClass="text-green-800 dark:text-green-400" />
-    </div>
+    </SettingRow>
   );
 }
 
@@ -929,6 +956,9 @@ function GithubBudgetCard() {
   );
 }
 
+type LimitsTab = 'limits' | 'features' | 'texts';
+const LIMITS_TABS_ID = 'admin-limits-tabs';
+
 function LimitsSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -951,6 +981,7 @@ function LimitsSection() {
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
+  const [tab, setTab] = useState<LimitsTab>('limits');
 
   const alive = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1025,83 +1056,110 @@ function LimitsSection() {
     }
   };
 
+  // Three jobs, so three tabs (26 Nov 2026); the page was nine cards down
+  // one column. The first tab holds every limit, the GitHub figures and the
+  // spend caps together on purpose: the platform limit alerts open this page
+  // for them, and the declared checks read the app limit's sentence and the
+  // weekly cap's label on the page as it first opens. Every panel stays
+  // mounted, so no card's read waits on its tab.
   return (
     <>
-      <AppLimitCard canWrite={canWrite} />
+      <ScreenHeader
+        title="Limits"
+        subtitle="How much the server allows and spends, which features are switched on, and who is texted when a limit is near."
+      />
+      <Tabs<LimitsTab>
+        id={LIMITS_TABS_ID}
+        label="Limits"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'limits', label: 'Limits' },
+          { key: 'features', label: 'Features' },
+          { key: 'texts', label: 'Text alerts' },
+        ]}
+      />
+      <TabPanel tabsId={LIMITS_TABS_ID} tab="limits" active={tab === 'limits'}>
+        <AppLimitCard canWrite={canWrite} />
 
-      <SessionLimitCard canWrite={canWrite} />
+        <SessionLimitCard canWrite={canWrite} />
 
-      <GithubBudgetCard />
+        <GithubBudgetCard />
 
-      <PreviewProjectsCard canWrite={canWrite} />
-
-      <VersionsCard canWrite={canWrite} />
-
-      <WebSearchCard canWrite={canWrite} />
-
-      <LiveDraftsCard canWrite={canWrite} />
-
-      <LimitTextsCard canWrite={canWrite} />
-
-      <div className={`${AdminUI.card} p-4 mt-4`}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · per-user cap resets Monday 00:00 UTC, platform caps midnight UTC</span>
+        <div className={`${AdminUI.card} p-4 mt-4`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · per-user cap resets Monday 00:00 UTC, platform caps midnight UTC</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
+              value={global} onChange={setGlobal} disabled={dis} />
+            <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
+              title="Funds platform-driven merge-conflict / sync-with-main resolution turns"
+              value={system} onChange={setSystem} disabled={dis} />
+          </div>
+          {/* #838: the weekly cap by identity tier. The first field keeps the
+              #admin-limit-weekly id: it is the same stored value it always was
+              (the base weekly cap), now read as the unverified tier's, and a
+              declared check selects on it. The two others inherit it while
+              blank. */}
+          <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+            <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
+              title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
+              value={weekly} onChange={setWeekly} disabled={dis} />
+            <MoneyField id="admin-limit-weekly-phone" label="Weekly cap: phone verified" placeholder="same as unverified"
+              title="For accounts with a verified phone number, and, while the verified-identity rule is on, accounts let in before it was switched on. Blank inherits the unverified cap."
+              value={weeklyPhone} onChange={setWeeklyPhone} disabled={dis} />
+            <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
+              title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
+              value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
+            <MoneyField id="admin-limit-weekly-zk" label="Weekly cap: zkPassport verified" placeholder="same as unverified"
+              title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
+              value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
+          </div>
+          {/* The verified-identity rule (schema.sql identity_rule_since):
+              saved with the caps, and on records the time once. */}
+          <label htmlFor="admin-identity-rule" data-admin-identity-rule="" className="flex items-start gap-2 mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+            <input id="admin-identity-rule" type="checkbox" className="mt-1 accent-violet-600" checked={ruleOn} disabled={dis}
+              onChange={(e) => setRuleOn(e.target.checked)} />
+            <span>
+              <span className="font-medium">Verified identity rule</span>
+              {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt and get the phone cap. Off, every vote counts and nobody is exempt, so earlier members without one get the unverified cap too. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
+            </span>
+          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              An account has ONE AI limit and it is weekly: the same pool covers work run on
+              the platform's own Claude key and work run on the account's included OpenRouter
+              key. Per-user overrides live in the Users section; these are the platform
+              defaults. The weekly cap follows the account's identity tier: the default
+              applies to accounts with no verified identity, and the phone, GitHub-and-X
+              and zkPassport tiers use the default while left blank. A cap set to 0 means the
+              account has no AI allowance at all. The two daily caps above are the platform's
+              own safety limits, not a per-user one.
+            </p>
+            {canWrite ? (
+              <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}
+                onClick={saveLimits}>Save</button>
+            ) : null}
+          </div>
+          <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-800 dark:text-green-400" />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-          <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
-            value={global} onChange={setGlobal} disabled={dis} />
-          <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
-            title="Funds platform-driven merge-conflict / sync-with-main resolution turns"
-            value={system} onChange={setSystem} disabled={dis} />
-        </div>
-        {/* #838: the weekly cap by identity tier. The first field keeps the
-            #admin-limit-weekly id: it is the same stored value it always was
-            (the base weekly cap), now read as the unverified tier's, and a
-            declared check selects on it. The two others inherit it while
-            blank. */}
-        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
-            title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
-            value={weekly} onChange={setWeekly} disabled={dis} />
-          <MoneyField id="admin-limit-weekly-phone" label="Weekly cap: phone verified" placeholder="same as unverified"
-            title="For accounts with a verified phone number, and, while the verified-identity rule is on, accounts let in before it was switched on. Blank inherits the unverified cap."
-            value={weeklyPhone} onChange={setWeeklyPhone} disabled={dis} />
-          <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
-            title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
-            value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
-          <MoneyField id="admin-limit-weekly-zk" label="Weekly cap: zkPassport verified" placeholder="same as unverified"
-            title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
-            value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
-        </div>
-        {/* The verified-identity rule (schema.sql identity_rule_since):
-            saved with the caps, and on records the time once. */}
-        <label htmlFor="admin-identity-rule" data-admin-identity-rule="" className="flex items-start gap-2 mb-3 text-sm text-zinc-700 dark:text-zinc-300">
-          <input id="admin-identity-rule" type="checkbox" className="mt-1 accent-violet-600" checked={ruleOn} disabled={dis}
-            onChange={(e) => setRuleOn(e.target.checked)} />
-          <span>
-            <span className="font-medium">Verified identity rule</span>
-            {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt and get the phone cap. Off, every vote counts and nobody is exempt, so earlier members without one get the unverified cap too. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
-          </span>
-        </label>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            An account has ONE AI limit and it is weekly: the same pool covers work run on
-            the platform's own Claude key and work run on the account's included OpenRouter
-            key. Per-user overrides live in the Users section; these are the platform
-            defaults. The weekly cap follows the account's identity tier: the default
-            applies to accounts with no verified identity, and the phone, GitHub-and-X
-            and zkPassport tiers use the default while left blank. A cap set to 0 means the
-            account has no AI allowance at all. The two daily caps above are the platform's
-            own safety limits, not a per-user one.
-          </p>
-          {canWrite ? (
-            <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}
-              onClick={saveLimits}>Save</button>
-          ) : null}
-        </div>
-        <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-800 dark:text-green-400" />
-      </div>
+      </TabPanel>
+      <TabPanel tabsId={LIMITS_TABS_ID} tab="features" active={tab === 'features'}>
+        <SettingsGroup title="Features" subtitle="Switched on or off for everyone at once, with no deploy. Each switch takes effect as soon as it is pressed.">
+          <PreviewProjectsCard canWrite={canWrite} />
+
+          <VersionsCard canWrite={canWrite} />
+
+          <WebSearchCard canWrite={canWrite} />
+
+          <LiveDraftsCard canWrite={canWrite} />
+        </SettingsGroup>
+      </TabPanel>
+      <TabPanel tabsId={LIMITS_TABS_ID} tab="texts" active={tab === 'texts'}>
+        <LimitTextsCard canWrite={canWrite} />
+      </TabPanel>
     </>
   );
 }

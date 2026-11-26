@@ -6,6 +6,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // depended on <script> order (admin-console.js loaded first); inside the
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, CheckField, Figures, List, ScreenHeader, TabPanel, Tabs,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 import { messageStamp } from '../../lib/timestamp';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { linkAttrs } from '../../lib/repo-link.js';
@@ -48,6 +53,18 @@ import { linkAttrs } from '../../lib/repo-link.js';
 //     inside refresh(), with the comment "or, worse, resurrect the poll
 //     after destroy()". Nothing can resurrect an interval whose effect has
 //     been cleaned up.
+//
+// ── Drawn from the shared admin kit (26 Nov 2026) ─────────────────────
+//
+// The header, the summary figures, the tabs, every status pill and the three
+// plain lists (workers, missing previews, drift) are the kit's parts now, so
+// this page reads like the rest of the console. It held eight jobs in two
+// columns; they are four tabs, the first being what a visitor comes for.
+// The two tabs only an admin has data for are offered only to an admin, and
+// nothing here asks for an admin session: every part reads the one
+// /api/status payload, which the server has already cut down for a visitor.
+// The meters, the apps tree and the event log stay as they were: the kit has
+// no meter, and the other two are not rows of plain records.
 
 const REFRESH_MS = 5000;
 
@@ -113,42 +130,33 @@ function MeterRow({ label, value, pct, tone = 'zinc' }: {
   );
 }
 
-const PILL_STATE: Record<string, string> = {
-  running: 'pill-running',
-  exited: 'pill-stopped',
-  stopped: 'pill-stopped',
-  paused: 'pill-stopped',
-  dead: 'pill-missing',
-  missing: 'pill-missing',
-  creating: 'pill-creating',
-  restarting: 'pill-creating',
-  unknown: 'pill-stopped',
+// A container's state, as a tone of the shared `Badge`: mint for running,
+// sky for on its way, amber for stopped, red for gone.
+const STATE_TONE: Record<string, string> = {
+  running: 'mint',
+  exited: 'amber',
+  stopped: 'amber',
+  paused: 'amber',
+  dead: 'red',
+  missing: 'red',
+  creating: 'sky',
+  restarting: 'sky',
+  unknown: 'zinc',
 };
 
 function StatePill({ state, label }: { state?: string; label?: string }) {
-  return (
-    <span className={`pill ${(state && PILL_STATE[state]) || 'pill-stopped'}`}>
-      <span className="dot" />{label || state}
-    </span>
-  );
+  return <Badge tone={(state && STATE_TONE[state]) || 'amber'} label={label || state} />;
 }
 
-const CARD_TONE: Record<Tone, string> = {
-  zinc: 'border-zinc-200 dark:border-zinc-800',
-  green: 'border-green-300 dark:border-green-700/40',
-  yellow: 'border-yellow-300 dark:border-yellow-700/40',
-  red: 'border-red-300 dark:border-red-700/40',
-};
-
-function SummaryCard({ label, tone = 'zinc', children }: {
-  label: string; tone?: Tone; children: React.ReactNode;
-}) {
-  return (
-    <div className={`rounded-lg border ${CARD_TONE[tone]} bg-zinc-50 dark:bg-zinc-900/60 p-3`}>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">{label}</div>
-      <div className="text-xl font-semibold mt-0.5">{children}</div>
-    </div>
-  );
+// One summary figure. The kit's figures have three washes and no red, so
+// trouble is the yellow wash with its number in red.
+function figure(key: string, label: string, tone: Tone, value: React.ReactNode): Figure {
+  return {
+    key,
+    label,
+    tone: tone === 'green' ? 'green' : tone === 'zinc' ? 'sky' : 'yellow',
+    value: tone === 'red' ? <span className="text-red-700 dark:text-red-400">{value}</span> : value,
+  };
 }
 
 // Capacity & host panel — the ramp dashboard. Leads with the two numbers that
@@ -277,35 +285,33 @@ function Capacity({ data }: { data: StatusData }) {
 }
 
 // Maps the sidecar's `node_sync_status` (Synced / Syncing / Connected /
-// Connecting / unreachable / unknown) onto a human label, a status pill
-// class, and the summary-card tone. Centralized so Node and Summary agree.
+// Connecting / unreachable / unknown) onto a human label, the tone of its
+// badge (`pill`), and the summary figure's tone. Centralized so Node and Summary agree.
 function nodeStatusMeta(node: any): { label: string; pill: string; tone: Tone } {
-  if (!node || !node.status) return { label: 'unknown', pill: 'pill-stopped', tone: 'zinc' };
+  if (!node || !node.status) return { label: 'unknown', pill: 'zinc', tone: 'zinc' };
   switch (node.status) {
-    case 'Synced': return { label: 'Synced', pill: 'pill-running', tone: 'green' };
+    case 'Synced': return { label: 'Synced', pill: 'mint', tone: 'green' };
     // Syncing after first sync is healthy ("just applying new tip blocks").
     // Before first sync it's a fresh boot still catching up — yellow there.
     case 'Syncing': return {
       label: 'Syncing',
-      pill: node.hasBeenSynced ? 'pill-running' : 'pill-creating',
+      pill: node.hasBeenSynced ? 'mint' : 'sky',
       tone: node.hasBeenSynced ? 'green' : 'yellow',
     };
-    case 'Connected': return { label: 'Connected', pill: 'pill-creating', tone: 'yellow' };
-    case 'Connecting': return { label: 'Connecting', pill: 'pill-creating', tone: 'yellow' };
-    case 'unreachable': return { label: 'Unreachable', pill: 'pill-missing', tone: 'red' };
-    case 'mock': return { label: 'Mock', pill: 'pill-stopped', tone: 'zinc' };
-    default: return { label: node.status, pill: 'pill-stopped', tone: 'zinc' };
+    case 'Connected': return { label: 'Connected', pill: 'sky', tone: 'yellow' };
+    case 'Connecting': return { label: 'Connecting', pill: 'sky', tone: 'yellow' };
+    case 'unreachable': return { label: 'Unreachable', pill: 'red', tone: 'red' };
+    case 'mock': return { label: 'Mock', pill: 'zinc', tone: 'zinc' };
+    default: return { label: node.status, pill: 'zinc', tone: 'zinc' };
   }
 }
 
-function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKind?: string }) {
-  if (runtimeKind === 'preview') return (
-    <SummaryCard label="Runtime status" tone="zinc">Unavailable in previews</SummaryCard>
-  );
+function summaryFigures(s: StatusData, node: any, runtimeKind?: string): Figure[] {
+  if (runtimeKind === 'preview') return [figure('runtime', 'Runtime status', 'zinc', 'Unavailable in previews')];
   const prodTone: Tone = s.prodMissing > 0 ? 'red' : 'green';
   const workerTone: Tone = s.workersOrphaned > 0 ? 'red' : 'zinc';
   const stuckTone: Tone = s.stuckSessions > 0 ? 'yellow' : 'zinc';
-  // Node summary card. Tone matches the dot colour in <Node/> so the
+  // Node summary figure. Tone matches the badge in <Node/> so the
   // top-of-page glance and the dedicated section agree.
   const nodeMeta = nodeStatusMeta(node);
 
@@ -316,43 +322,39 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
   const warmIdle = s.workersWarmIdle ?? 0;
   const k8s = runtimeKind === 'kubernetes';
 
-  const cards: React.ReactNode[] = [
-    <SummaryCard key="node" label="Node" tone={nodeMeta.tone}>
-      {nodeMeta.label}
-      {node && typeof node.peers === 'number'
-        ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`${node.peers}p`}</span></>
-        : null}
-    </SummaryCard>,
-    <SummaryCard key="apps" label="Apps" tone={prodTone}>{`${s.prodRunning}/${s.apps}`}</SummaryCard>,
-    <SummaryCard key="staging" label="Staging">
-      {k8s ? `${s.stagingRunning || 0}/${s.stagingTotal || 0}` : `${s.stagingRunning}/${s.stagingCap}`}
-    </SummaryCard>,
-    <SummaryCard key="workers" label="Workers" tone={workerTone}>
-      {k8s ? (
-        <>
-          {`${s.workersReady || 0}/${s.workersTotal || 0}`}
-          {inFlight > 0 ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`${inFlight} active`}</span></> : null}
-        </>
-      ) : (
-        <>
-          {inFlight}
-          {warmIdle > 0 ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`+${warmIdle} warm`}</span></> : null}
-          {s.workersOrphaned > 0 ? <> <span className="text-red-700 dark:text-red-400 text-xs">{`+${s.workersOrphaned} orphan`}</span></> : null}
-        </>
-      )}
-    </SummaryCard>,
-    <SummaryCard key="stuck" label="Missing previews" tone={stuckTone}>{`${s.stuckSessions}`}</SummaryCard>,
-    <SummaryCard key="prodmissing" label="Prod missing" tone={s.prodMissing > 0 ? 'red' : 'zinc'}>{`${s.prodMissing}`}</SummaryCard>,
+  const cards: Figure[] = [
+    figure('node', 'Node', nodeMeta.tone, (
+      <>
+        {nodeMeta.label}
+        {node && typeof node.peers === 'number'
+          ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`${node.peers}p`}</span></>
+          : null}
+      </>
+    )),
+    figure('apps', 'Apps', prodTone, `${s.prodRunning}/${s.apps}`),
+    figure('staging', 'Staging', 'zinc',
+      k8s ? `${s.stagingRunning || 0}/${s.stagingTotal || 0}` : `${s.stagingRunning}/${s.stagingCap}`),
+    figure('workers', 'Workers', workerTone, k8s ? (
+      <>
+        {`${s.workersReady || 0}/${s.workersTotal || 0}`}
+        {inFlight > 0 ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`${inFlight} active`}</span></> : null}
+      </>
+    ) : (
+      <>
+        {inFlight}
+        {warmIdle > 0 ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`+${warmIdle} warm`}</span></> : null}
+        {s.workersOrphaned > 0 ? <> <span className="text-red-700 dark:text-red-400 text-xs">{`+${s.workersOrphaned} orphan`}</span></> : null}
+      </>
+    )),
+    figure('stuck', 'Missing previews', stuckTone, `${s.stuckSessions}`),
+    figure('prodmissing', 'Prod missing', s.prodMissing > 0 ? 'red' : 'zinc', `${s.prodMissing}`),
   ];
 
   if (s.globalSpendCents != null) {
     const spendPct = Math.round((s.globalSpendCents / s.globalSpendCap) * 100);
     const spendTone: Tone = spendPct > 80 ? 'red' : spendPct > 50 ? 'yellow' : 'zinc';
-    cards.splice(5, 0, (
-      <SummaryCard key="llm" label="LLM today" tone={spendTone}>
-        {`${fmtDollars(s.globalSpendCents)} / ${fmtDollars(s.globalSpendCap)}`}
-      </SummaryCard>
-    ));
+    cards.splice(5, 0, figure('llm', 'LLM today', spendTone,
+      `${fmtDollars(s.globalSpendCents)} / ${fmtDollars(s.globalSpendCap)}`));
   }
 
   // Ramp headlines. Sessions vs the global cap (what 429s/eviction gate on)
@@ -362,35 +364,27 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
   if (s.sessionsGlobalCap != null) {
     const sessPct = s.sessionsGlobalCap ? Math.round((s.sessionsGlobalUsed / s.sessionsGlobalCap) * 100) : 0;
     const sessTone: Tone = sessPct >= 90 ? 'red' : sessPct >= 70 ? 'yellow' : 'zinc';
-    cards.push(
-      <SummaryCard key="sessions" label="Sessions" tone={sessTone}>
-        {`${s.sessionsGlobalUsed}/${s.sessionsGlobalCap}`}
-      </SummaryCard>,
-    );
+    cards.push(figure('sessions', 'Sessions', sessTone, `${s.sessionsGlobalUsed}/${s.sessionsGlobalCap}`));
   }
   if (s.activeTurns != null) {
-    cards.push(
-      <SummaryCard key="turns" label="Active turns" tone={s.activeTurns > 0 ? 'green' : 'zinc'}>{`${s.activeTurns}`}</SummaryCard>,
-    );
+    cards.push(figure('turns', 'Active turns', s.activeTurns > 0 ? 'green' : 'zinc', `${s.activeTurns}`));
   }
   if (s.hostMemUsedPct != null) {
     const memTone: Tone = s.hostMemUsedPct >= 90 ? 'red' : s.hostMemUsedPct >= 75 ? 'yellow' : 'zinc';
-    cards.push(<SummaryCard key="ram" label="Host RAM" tone={memTone}>{`${s.hostMemUsedPct}%`}</SummaryCard>);
+    cards.push(figure('ram', 'Host RAM', memTone, `${s.hostMemUsedPct}%`));
   }
   if (s.dbPoolWaiting != null) {
-    cards.push(
-      <SummaryCard key="dbq" label="DB queue" tone={s.dbPoolWaiting > 0 ? 'red' : 'zinc'}>{`${s.dbPoolWaiting}`}</SummaryCard>,
-    );
+    cards.push(figure('dbq', 'DB queue', s.dbPoolWaiting > 0 ? 'red' : 'zinc', `${s.dbPoolWaiting}`));
   }
 
-  return <>{cards}</>;
+  return cards;
 }
 
 const EXPLORER_META: Record<string, { label: string; pill: string }> = {
-  ok: { label: 'Reachable', pill: 'pill-running' },
-  unreachable: { label: 'Unreachable', pill: 'pill-missing' },
-  bad_response: { label: 'Bad response', pill: 'pill-missing' },
-  mock: { label: 'Mock', pill: 'pill-stopped' },
+  ok: { label: 'Reachable', pill: 'mint' },
+  unreachable: { label: 'Unreachable', pill: 'red' },
+  bad_response: { label: 'Bad response', pill: 'red' },
+  mock: { label: 'Mock', pill: 'zinc' },
 };
 
 // Block-explorer card. The explorer is external infrastructure — this card
@@ -402,11 +396,11 @@ function Explorer({ ex }: { ex: any }) {
   if (!ex || ex.status === 'unknown') {
     return <div className="text-zinc-500 dark:text-zinc-400">Explorer not probed yet.</div>;
   }
-  const meta = EXPLORER_META[ex.status] || { label: ex.status, pill: 'pill-stopped' };
+  const meta = EXPLORER_META[ex.status] || { label: ex.status, pill: 'zinc' };
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={`pill ${meta.pill}`}>{meta.label}</span>
+        <Badge tone={meta.pill} label={meta.label} />
         <span className="mono text-xs text-zinc-500 dark:text-zinc-400 break-all">{ex.host || '—'}</span>
         {ex.chainId ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{'chain '}<span className="mono">{ex.chainId}</span></span> : null}
         {ex.latencyMs != null ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{`${ex.latencyMs}ms`}</span> : null}
@@ -453,9 +447,9 @@ function Node({ node }: { node: any }) {
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap">
-        <span className={`pill ${meta.pill}`}><span className="dot" />{meta.label}</span>
+        <Badge tone={meta.pill} label={meta.label} />
         <span className="text-zinc-700 dark:text-zinc-300">{`${node.peers} peer${node.peers === 1 ? '' : 's'}`}</span>
-        {node.hasFullUtxoDb === true ? <span className="pill pill-running"><span className="dot" />full UTXO DB</span> : null}
+        {node.hasFullUtxoDb === true ? <Badge tone="mint" label="full UTXO DB" /> : null}
         {ageSeconds != null ? (
           <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">
             {`updated ${ageSeconds < 60 ? `${ageSeconds}s` : `${Math.floor(ageSeconds / 60)}m`} ago`}
@@ -613,67 +607,69 @@ function Apps({ apps }: { apps: any[] }) {
 //   warm-idle    : waiting for the next dispatch (memory cost only)
 //   bootstrapping: clone + checkout + warm-ready in flight
 //   unregistered : container exists but isn't in the warm registry
-const WORKER_MODE_PILL: Record<string, string> = {
-  'in-flight': 'pill-running',
-  'warm-idle': 'pill-creating',
-  bootstrapping: 'pill-creating',
-  unregistered: 'pill-stopped',
+const WORKER_MODE_TONE: Record<string, string> = {
+  'in-flight': 'mint',
+  'warm-idle': 'sky',
+  bootstrapping: 'sky',
+  unregistered: 'amber',
 };
+
+const WORKER_COLUMNS: Column<any>[] = [
+  { label: 'Session', primary: true, cell: (w) => `session #${w.sessionId}` },
+  { label: 'State', cell: (w) => <StatePill state={w.state} label={w.state} /> },
+  {
+    label: 'Mode',
+    cell: (w) => (w.workerMode
+      ? <Badge tone={WORKER_MODE_TONE[w.workerMode] || 'amber'} label={w.workerMode} />
+      : ''),
+  },
+  { label: 'App', cell: (w) => (w.appSlug ? <span className="mono text-xs">{w.appSlug}</span> : '') },
+  { label: 'User', cell: (w) => (w.username ? `@${w.username}` : '') },
+  {
+    label: 'Idle',
+    cell: (w) => (w.workerMode === 'warm-idle' && w.idleMs != null
+      ? `idle ${fmtDurationSeconds(Math.floor(w.idleMs / 1000))}` : ''),
+  },
+  {
+    label: 'Up',
+    cell: (w) => (
+      <>
+        {fmtDurationSeconds(w.uptimeSeconds)}
+        {w.orphan ? <span className="text-red-700 dark:text-red-400 ms-1">orphan</span> : null}
+      </>
+    ),
+  },
+];
 
 function Workers({ workers }: { workers: any[] }) {
   if (!workers.length) return <div className="text-zinc-500 dark:text-zinc-400">No workers running.</div>;
   return (
-    <>
-      {workers.map((w) => {
-        const idleLabel = w.workerMode === 'warm-idle' && w.idleMs != null
-          ? `idle ${fmtDurationSeconds(Math.floor(w.idleMs / 1000))}` : '';
-        return (
-          <div key={w.sessionId}
-            className={`rounded border ${w.orphan ? 'border-red-300 dark:border-red-700/40' : 'border-zinc-200 dark:border-zinc-800'} bg-zinc-50 dark:bg-zinc-900/40 p-2`}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <StatePill state={w.state} label={w.state} />
-              {w.workerMode ? (
-                <span className={`pill ${WORKER_MODE_PILL[w.workerMode] || 'pill-stopped'}`}>
-                  <span className="dot" />{w.workerMode}
-                </span>
-              ) : null}
-              <span className="text-xs text-zinc-600 dark:text-zinc-400">{`session #${w.sessionId}`}</span>
-              {w.appSlug ? <span className="mono text-xs text-zinc-500 dark:text-zinc-400">{w.appSlug}</span> : null}
-              {w.username ? <span className="text-xs">{`@${w.username}`}</span> : null}
-              {idleLabel ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{idleLabel}</span> : null}
-              <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">
-                {fmtDurationSeconds(w.uptimeSeconds)}
-                {w.orphan ? <span className="text-red-700 dark:text-red-400 ms-1">orphan</span> : null}
-              </span>
-            </div>
-            {w.lastProgress
-              ? <div className="mt-1 mono text-xs text-zinc-600 dark:text-zinc-400 truncate">{`▸ ${w.lastProgress}`}</div>
-              : null}
-          </div>
-        );
-      })}
-    </>
+    <List
+      items={workers}
+      columns={WORKER_COLUMNS}
+      rowKey={(w) => w.sessionId}
+      // What the worker is doing right now, so it is always drawn (`extra`),
+      // not folded behind the row's arrow.
+      extra={(w) => (w.lastProgress
+        ? <div className="mono text-xs text-zinc-600 dark:text-zinc-400 truncate">{`▸ ${w.lastProgress}`}</div>
+        : null)}
+      rowClass={(w) => (w.orphan ? 'bg-red-50 dark:bg-red-950/20' : '')}
+    />
   );
 }
 
+const STUCK_COLUMNS: Column<any>[] = [
+  { label: 'Session', primary: true, cell: (s) => `session #${s.id}` },
+  { label: 'Status', cell: () => <Badge tone="amber" label="preview missing" /> },
+  { label: 'App', cell: (s) => <span className="mono text-xs">{s.appSlug}</span> },
+  { label: 'User', cell: (s) => `@${s.username || 'unknown'}` },
+  { label: 'Branch', cell: (s) => <span className="mono text-xs">{s.branchName}</span> },
+  { label: 'Age', cell: (s) => fmtDurationSeconds(s.ageSeconds) },
+];
+
 function Stuck({ stuck }: { stuck: any[] }) {
   if (!stuck.length) return <div className="text-zinc-500 dark:text-zinc-400">None.</div>;
-  return (
-    <>
-      {stuck.map((s) => (
-        <div key={s.id} className="rounded border border-yellow-300 dark:border-yellow-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="pill pill-stopped"><span className="dot" />preview missing</span>
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">{`session #${s.id}`}</span>
-            <span className="mono text-xs text-zinc-500 dark:text-zinc-400">{s.appSlug}</span>
-            <span className="text-xs">{`@${s.username || 'unknown'}`}</span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">{fmtDurationSeconds(s.ageSeconds)}</span>
-          </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mono">{s.branchName}</div>
-        </div>
-      ))}
-    </>
-  );
+  return <List items={stuck} columns={STUCK_COLUMNS} rowKey={(s) => s.id} />;
 }
 
 function Llm({ data }: { data: StatusData }) {
@@ -715,21 +711,14 @@ function Llm({ data }: { data: StatusData }) {
   );
 }
 
+const DRIFT_COLUMNS: Column<any>[] = [
+  { label: 'Expected', primary: true, cell: (d) => <span className="mono text-xs">{d.expected}</span> },
+  { label: 'Status', cell: (d) => <Badge tone="red" label={`${d.kind} missing`} /> },
+];
+
 function Drift({ drift }: { drift: any[] }) {
   if (!drift.length) return <div className="text-zinc-500 dark:text-zinc-400">No drift detected.</div>;
-  return (
-    <>
-      {drift.map((d, i) => (
-        // eslint-disable-next-line react/no-array-index-key
-        <div key={i} className="rounded border border-red-300 dark:border-red-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="pill pill-missing"><span className="dot" />{`${d.kind} missing`}</span>
-            <span className="mono text-zinc-600 dark:text-zinc-400">{d.expected}</span>
-          </div>
-        </div>
-      ))}
-    </>
-  );
+  return <List items={drift} columns={DRIFT_COLUMNS} rowKey={(_d, i) => i} />;
 }
 
 // The checks queue (services/checks-queue.js snapshot): how many proposal
@@ -737,10 +726,10 @@ function Drift({ drift }: { drift: any[] }) {
 // and how the last day's slots went. It is the one place the limit can be
 // judged against the cluster without reading logs. Times are measured
 // against the payload's own `now`, so a cached payload reads consistently.
-const QUEUE_PILL: Record<string, string> = {
-  holding: 'pill-running',
-  waiting: 'pill-stopped',
-  stale: 'pill-missing',
+const QUEUE_TONE: Record<string, string> = {
+  holding: 'mint',
+  waiting: 'sky',
+  stale: 'red',
 };
 
 function ordinal(n: number): string {
@@ -800,7 +789,7 @@ function ChecksQueue({ q, now }: { q: any; now: number }) {
                   <div key={run.runId}
                     className={`rounded border ${run.ownerAlive ? 'border-zinc-200 dark:border-zinc-800' : 'border-red-300 dark:border-red-700/40'} bg-zinc-50 dark:bg-zinc-900/40 p-2`}>
                     <div className="flex items-center gap-2 flex-wrap text-xs">
-                      <span className={`pill ${QUEUE_PILL[run.state] || 'pill-stopped'}`}><span className="dot" />{queueRunPlace(run)}</span>
+                      <Badge tone={QUEUE_TONE[run.state] || 'amber'} label={queueRunPlace(run)} />
                       <span className="text-zinc-600 dark:text-zinc-400">{run.classLabel || run.class}</span>
                       {run.app ? <span className="mono text-zinc-500 dark:text-zinc-400">{run.app}</span> : null}
                       {run.prNumber != null ? <span>{`PR #${run.prNumber}`}</span> : null}
@@ -890,10 +879,14 @@ function Events({ events }: { events: any[] }) {
 
 const SECTION_H3 = 'text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide';
 
+const TABS_ID = 'admin-status-tabs';
+type StatusTab = 'overview' | 'apps' | 'capacity' | 'events';
+
 function StatusSection() {
   const [data, setData] = useState<StatusData | null>(null);
   const [auto, setAuto] = useState(true);
   const [countdown, setCountdown] = useState(Math.ceil(REFRESH_MS / 1000));
+  const [picked, setPicked] = useState<StatusTab>('overview');
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -933,6 +926,9 @@ function StatusSection() {
 
   const d = data || {};
   const isAdmin = !!d.isAdmin;
+  // Capacity and Events hold only what the server sends an admin, so a
+  // visitor is offered neither, and is never left standing on one.
+  const tab: StatusTab = !isAdmin && (picked === 'capacity' || picked === 'events') ? 'overview' : picked;
   // The instant the payload describes, for durations measured against it.
   const statusNow = d.now && !Number.isNaN(new Date(d.now).getTime()) ? new Date(d.now).getTime() : Date.now();
   const deploy = d.deployProgress;
@@ -944,23 +940,31 @@ function StatusSection() {
   return (
     // Scoped to this section's root, NOT <body> — see public/css/app.css.
     <div id="admin-status-root" className={isAdmin ? 'is-admin' : undefined}>
-      <header className="flex items-center justify-between flex-wrap gap-2 mb-4">
-        <div className="flex items-center gap-3">
-          <h2 className={AdminUI.cardTitle}>Health &amp; status</h2>
-          <span id="admin-status-version" className="text-xs mono text-zinc-500 dark:text-zinc-400">{d.version || ''}</span>
-          <span id="admin-status-badge" className="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-          <label className="flex items-center gap-2">
-            <input id="admin-status-autorefresh" type="checkbox" className="accent-violet-500"
-              checked={auto} onChange={(e) => setAuto(e.target.checked)} />
-            {'auto-refresh '}
-            <span id="admin-status-countdown" className="mono">{auto ? `(${countdown}s)` : '(paused)'}</span>
-          </label>
-          <button id="admin-status-refresh-now" type="button" onClick={refresh}
-            className="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200">refresh</button>
-        </div>
-      </header>
+      <ScreenHeader
+        title="Health & status"
+        subtitle={(
+          <>
+            <span id="admin-status-version" className="mono">{d.version || ''}</span>
+            <span id="admin-status-badge" className="admin-only ms-1"><Badge tone="violet" label="admin view" /></span>
+          </>
+        )}
+        actions={(
+          <>
+            <CheckField
+              id="admin-status-autorefresh"
+              label={(
+                <>
+                  {'auto-refresh '}
+                  <span id="admin-status-countdown" className="mono">{auto ? `(${countdown}s)` : '(paused)'}</span>
+                </>
+              )}
+              checked={auto}
+              onChange={setAuto}
+            />
+            <button id="admin-status-refresh-now" type="button" onClick={refresh} className={BTN.secondarySm}>refresh</button>
+          </>
+        )}
+      />
 
       {/* Deploy-in-progress banner. */}
       <div id="admin-status-deploy-banner"
@@ -981,56 +985,91 @@ function StatusSection() {
       </div>
 
       {/* Summary bar */}
-      <div id="admin-status-summary" className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2 mb-6">
-        {data ? <Summary s={d.summary || {}} node={d.node} runtimeKind={d.runtimeKind} /> : null}
-      </div>
+      <Figures id="admin-status-summary" items={data ? summaryFigures(d.summary || {}, d.node, d.runtimeKind) : []} />
 
-      {/* Homeroom node sidecar status. The cached snapshot is updated server-side
-          every 500ms-2s by services/node-status.js, so this card stays fresh
-          without each tab independently polling the sidecar. "→ full status"
-          switches to the Node & chain section. */}
-      <section className="mb-6">
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className={SECTION_H3}>Homeroom node</h3>
-          <button type="button" data-admin-section="node"
-            className="text-xs text-violet-700 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300"
-            onClick={() => {
-              const c = (window as any).AdminConsole;
-              if (c?.setSection) c.setSection('node');
-            }}>
-            → full status
-          </button>
-        </div>
-        <div id="admin-status-node" className={`${AdminUI.card} p-4 text-sm`}>
-          {data ? <Node node={d.node} /> : null}
-        </div>
-      </section>
+      <Tabs<StatusTab>
+        id={TABS_ID}
+        label="Health & status"
+        value={tab}
+        onChange={setPicked}
+        tabs={isAdmin ? [
+          { key: 'overview', label: 'Overview' },
+          { key: 'apps', label: 'Apps' },
+          { key: 'capacity', label: 'Capacity' },
+          { key: 'events', label: 'Events' },
+        ] : [
+          { key: 'overview', label: 'Overview' },
+          { key: 'apps', label: 'Apps' },
+        ]}
+      />
 
-      {/* Block-explorer reachability. Separate card from the node above:
-          different host, different failure mode, and when it's down the
-          consequence (wallet linking stops completing) is invisible anywhere
-          else. */}
-      <section className="mb-6">
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className={SECTION_H3}>Block explorer</h3>
-        </div>
-        <div id="admin-status-explorer" className={`${AdminUI.card} p-4 text-sm`}>
-          {data ? <Explorer ex={d.explorer} /> : null}
-        </div>
-      </section>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {/* Left: Apps tree */}
-        <div className="space-y-3 min-w-0">
-          <h3 className={SECTION_H3}>Apps</h3>
-          <div id="admin-status-apps" className="space-y-3">
-            {data ? <Apps apps={d.apps || []} /> : null}
+      <TabPanel tabsId={TABS_ID} tab="overview" active={tab === 'overview'}>
+        {/* Homeroom node sidecar status. The cached snapshot is updated server-side
+            every 500ms-2s by services/node-status.js, so this card stays fresh
+            without each tab independently polling the sidecar. "→ full status"
+            switches to the Node & chain section. */}
+        <section className="mb-6">
+          <div className="flex items-baseline justify-between mb-2">
+            <h3 className={SECTION_H3}>Homeroom node</h3>
+            <button type="button" data-admin-section="node"
+              className={`${AdminUI.btn.link} text-xs`}
+              onClick={() => {
+                const c = (window as any).AdminConsole;
+                if (c?.setSection) c.setSection('node');
+              }}>
+              → full status
+            </button>
           </div>
-        </div>
+          <div id="admin-status-node" className={`${AdminUI.card} p-4 text-sm`}>
+            {data ? <Node node={d.node} /> : null}
+          </div>
+        </section>
 
-        {/* Right: System lanes */}
-        <div className="space-y-6 min-w-0">
-          <section className="admin-only">
+        {/* Block-explorer reachability. Separate card from the node above:
+            different host, different failure mode, and when it's down the
+            consequence (wallet linking stops completing) is invisible anywhere
+            else. */}
+        <section className="mb-6">
+          <div className="flex items-baseline justify-between mb-2">
+            <h3 className={SECTION_H3}>Block explorer</h3>
+          </div>
+          <div id="admin-status-explorer" className={`${AdminUI.card} p-4 text-sm`}>
+            {data ? <Explorer ex={d.explorer} /> : null}
+          </div>
+        </section>
+
+        <section className="mb-6">
+          <h3 className={`${SECTION_H3} mb-2`}>Workers</h3>
+          <div id="admin-status-workers" className="text-sm">
+            {data ? <Workers workers={d.workers || []} /> : null}
+          </div>
+        </section>
+
+        <section className="mb-6">
+          <h3 className={`${SECTION_H3} mb-2`}>Missing previews</h3>
+          <div id="admin-status-stuck" className="text-sm">
+            {data ? <Stuck stuck={d.stuckSessions || []} /> : null}
+          </div>
+        </section>
+
+        <section>
+          <h3 className={`${SECTION_H3} mb-2`}>Drift</h3>
+          <div id="admin-status-drift" className="text-sm">
+            {data ? <Drift drift={d.driftContainers || []} /> : null}
+          </div>
+        </section>
+      </TabPanel>
+
+      {/* The apps tree: an app, its sessions, each session's worker. */}
+      <TabPanel tabsId={TABS_ID} tab="apps" active={tab === 'apps'}>
+        <div id="admin-status-apps" className="space-y-3">
+          {data ? <Apps apps={d.apps || []} /> : null}
+        </div>
+      </TabPanel>
+
+      <TabPanel tabsId={TABS_ID} tab="capacity" active={tab === 'capacity'}>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <section className="admin-only min-w-0">
             <h3 id="admin-status-capacity-heading" className={`${SECTION_H3} mb-2`}>
               {d.runtimeKind === 'kubernetes' ? 'Capacity' : 'Capacity & host'}
             </h3>
@@ -1039,49 +1078,32 @@ function StatusSection() {
             </div>
           </section>
 
-          <section className="admin-only">
-            <h3 id="admin-status-checks-queue-heading" className={`${SECTION_H3} mb-2`}>Checks queue</h3>
-            <div id="admin-status-checks-queue" className={`${AdminUI.card} p-4 text-sm`}>
-              {data && isAdmin ? <ChecksQueue q={d.checksQueue} now={statusNow} /> : null}
-            </div>
-          </section>
+          <div className="space-y-6 min-w-0">
+            <section className="admin-only">
+              <h3 id="admin-status-checks-queue-heading" className={`${SECTION_H3} mb-2`}>Checks queue</h3>
+              <div id="admin-status-checks-queue" className={`${AdminUI.card} p-4 text-sm`}>
+                {data && isAdmin ? <ChecksQueue q={d.checksQueue} now={statusNow} /> : null}
+              </div>
+            </section>
 
-          <section>
-            <h3 className={`${SECTION_H3} mb-2`}>Workers</h3>
-            <div id="admin-status-workers" className="space-y-2 text-sm">
-              {data ? <Workers workers={d.workers || []} /> : null}
-            </div>
-          </section>
-
-          <section>
-            <h3 className={`${SECTION_H3} mb-2`}>Missing previews</h3>
-            <div id="admin-status-stuck" className="space-y-2 text-sm">
-              {data ? <Stuck stuck={d.stuckSessions || []} /> : null}
-            </div>
-          </section>
-
-          <section className="admin-only">
-            <h3 className={`${SECTION_H3} mb-2`}>LLM today</h3>
-            <div id="admin-status-llm" className="space-y-1 text-sm">
-              {data && isAdmin ? <Llm data={d} /> : null}
-            </div>
-          </section>
-
-          <section>
-            <h3 className={`${SECTION_H3} mb-2`}>Drift</h3>
-            <div id="admin-status-drift" className="space-y-2 text-sm">
-              {data ? <Drift drift={d.driftContainers || []} /> : null}
-            </div>
-          </section>
-
-          <section className="admin-only">
-            <h3 className={`${SECTION_H3} mb-2`}>Recent events</h3>
-            <div id="admin-status-events" className="space-y-0.5 text-xs mono max-h-80 overflow-y-auto">
-              {data && isAdmin ? <Events events={d.events || []} /> : null}
-            </div>
-          </section>
+            <section className="admin-only">
+              <h3 className={`${SECTION_H3} mb-2`}>LLM today</h3>
+              <div id="admin-status-llm" className="space-y-1 text-sm">
+                {data && isAdmin ? <Llm data={d} /> : null}
+              </div>
+            </section>
+          </div>
         </div>
-      </div>
+      </TabPanel>
+
+      <TabPanel tabsId={TABS_ID} tab="events" active={tab === 'events'}>
+        <section className="admin-only">
+          <h3 className={`${SECTION_H3} mb-2`}>Recent events</h3>
+          <div id="admin-status-events" className="space-y-0.5 text-xs mono max-h-80 overflow-y-auto">
+            {data && isAdmin ? <Events events={d.events || []} /> : null}
+          </div>
+        </section>
+      </TabPanel>
     </div>
   );
 }

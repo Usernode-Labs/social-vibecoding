@@ -255,16 +255,20 @@ function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): Rea
           </div>
           <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
         </button>
-        <button
+        <Button
           data-saved-unsave={view.messageId}
-          className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+          layout="shrink"
+          variant="pillNeutral"
+          size="none"
+          ink="neutral"
+          className="h-8 px-3 text-xs font-semibold"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._unsave(view.messageId);
           }}
         >
           {t('notifications:saved.unsave')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -339,16 +343,20 @@ function SavedNotification({ view, touch }: { view: SavedNotificationView; touch
           </div>
           <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{subject}</div>
         </button>
-        <button
+        <Button
           data-saved-notification-unsave={view.id}
-          className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+          layout="shrink"
+          variant="pillNeutral"
+          size="none"
+          ink="neutral"
+          className="h-8 px-3 text-xs font-semibold"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._unsaveNotification(view.id);
           }}
         >
           {t('notifications:saved.unsave')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -438,17 +446,19 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
           >
             {t('notifications:invite.accept')}
           </Button>
-          <button
+          <Button
             data-invite-decline={view.appId}
             data-invite-kind={view.kind}
-            className="rounded-full bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+            variant="pillNeutral"
+            size="pillText"
+            ink="neutral"
             onClick={(e) => {
               e.stopPropagation();
               controller()?._declineInvite(view.appId, view.kind);
             }}
           >
             {t('notifications:invite.decline')}
-          </button>
+          </Button>
         </div>
         </div>
       </div>

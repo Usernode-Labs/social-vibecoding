@@ -6,7 +6,7 @@ import { fetchJson, send } from './api.ts';
 import { BTN, PANEL_CLS } from './tokens.ts';
 import {
   Badge, CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
-  Pager, Panel, ScreenHeader, Skeleton, Textarea, fmt, isoToLocalInput, localInputToIso,
+  Pager, Panel, ScreenHeader, Skeleton, Textarea, Toolbar, fmt, isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
@@ -68,8 +68,9 @@ export function seasonStatus(s: Season): { label: string; tone: string } {
   const ends = s.ends_at ? new Date(s.ends_at).getTime() : null;
   if (!s.is_active) return { label: 'Inactive', tone: 'zinc' };
   if (ends != null && !Number.isNaN(ends) && ends < now) return { label: 'Closed', tone: 'zinc' };
-  if (starts != null && !Number.isNaN(starts) && starts > now) return { label: 'Upcoming', tone: 'amber' };
-  return { label: 'Running', tone: 'green' };
+  // The soft tones: this status is on every row of the list (26 Nov 2026).
+  if (starts != null && !Number.isNaN(starts) && starts > now) return { label: 'Upcoming', tone: 'sky' };
+  return { label: 'Running', tone: 'mint' };
 }
 
 // Hands the Season events screen a pre-set season filter and jumps there.
@@ -400,34 +401,16 @@ function SeasonsScreen() {
       <ScreenHeader
         title="Seasons"
         subtitle="The top tier: each season holds season events, which hold challenges."
-        actions={(
-          <>
-            {/* Commits on blur or Enter, not per keystroke — a paged server
-                query, same rule as the other search boxes in this console. */}
-            <Input
-              id="admin-topo-sn-search"
-              type="text"
-              placeholder="Search name…"
-              aria-label="Search seasons"
-              className="sm:w-56"
-              defaultValue={search}
-              onBlur={(e) => commitSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
-              }}
-            />
-            {write ? (
-              <button
-                id="admin-topo-sn-new"
-                type="button"
-                className={BTN.primarySm}
-                onClick={() => setEditing('new')}
-              >
-                New season
-              </button>
-            ) : null}
-          </>
-        )}
+        actions={write ? (
+          <button
+            id="admin-topo-sn-new"
+            type="button"
+            className={BTN.primarySm}
+            onClick={() => setEditing('new')}
+          >
+            New season
+          </button>
+        ) : null}
       />
       <div id="admin-topo-sn-form">
         {editing != null && write ? (
@@ -439,6 +422,25 @@ function SeasonsScreen() {
           />
         ) : null}
       </div>
+      {/* The search is the list's, so it sits in the bar over the list and
+          the header keeps only New season (26 Nov 2026). */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          {/* Commits on blur or Enter, not per keystroke: a paged server
+              query, same rule as the other search boxes in this console. */}
+          <Input
+            id="admin-topo-sn-search"
+            type="text"
+            placeholder="Search name…"
+            aria-label="Search seasons"
+            defaultValue={search}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+            }}
+          />
+        </div>
+      </Toolbar>
       <div id="admin-topo-sn-table">
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (

@@ -415,8 +415,11 @@ test('the newest build hands the previews another env built to the preview machi
 });
 
 test('the console renders the to-shut-down tile and the automatic-sweep line', () => {
-  assert.match(reapTsx, /id="admin-reap-due"/);
-  assert.match(reapTsx, /To shut down/);
+  // The tile is one of the shared kit's figures now, and its number keeps
+  // the id (request 7224).
+  assert.match(reapTsx, /\{ key: 'due', label: 'To shut down', tone: 'yellow', value: figureValue\('admin-reap-due', due == null \? '\u2014' : String\(due\)\) \}/);
+  assert.match(reapTsx, /function figureValue\(id: string, value: string\) \{\s*return <span id=\{id\}>\{value\}<\/span>;/);
+  assert.match(reapTsx, /<Figures items=\{figures\} \/>/);
   assert.match(reapTsx, /id="admin-reap-automatic"/);
   assert.match(reapTsx, /Automatic sweep last ran/);
   // The switched-off case must say so rather than render an empty line.

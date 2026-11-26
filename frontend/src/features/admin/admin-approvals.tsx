@@ -5,6 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { changeHref } from '../../lib/change-href';
+// The shared admin kit (26 Nov 2026): the header, the tabs, the table and the
+// badges are the ones every other admin page is drawn with.
+import { Badge, ScreenHeader, TABLE, TabPanel, Tabs } from './topochain/ui.tsx';
 
 // Approvals (#admin/approvals, #6643).
 //
@@ -54,14 +57,18 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
   notice: 'Told, not held',
 };
 
-const OUTCOME_BADGE: Record<Outcome, string> = {
-  waiting: AdminUI.badge.warn,
-  approved: AdminUI.badge.success,
-  declined: AdminUI.badge.outline,
-  fixed: AdminUI.badge.secondary,
-  closed: AdminUI.badge.secondary,
-  notice: AdminUI.badge.secondary,
+// An outcome is repeated down the history, so it takes the kit's soft tones.
+const OUTCOME_TONE: Record<Outcome, string> = {
+  waiting: 'sky',
+  approved: 'mint',
+  declined: 'zinc',
+  fixed: 'zinc',
+  closed: 'zinc',
+  notice: 'zinc',
 };
+
+type ApprovalsTab = 'waiting' | 'history';
+const TABS_ID = 'admin-approvals-tabs';
 
 function when(iso: string | null): string {
   if (!iso) return '';
@@ -113,63 +120,63 @@ export function ApprovalsView({ payload, tab, onTab, now }: {
   const waiting = payload?.waiting || [];
   const history = payload?.history || [];
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Approvals</h2>
-        <span className={AdminUI.cardDescription} id="admin-approvals-count">
-          {payload ? (waiting.length ? `${waiting.length} waiting` : 'Nothing waiting') : 'Loading…'}
-        </span>
-      </div>
-      <p className={`${AdminUI.muted} mb-3`} id="admin-approvals-about">
-        A change that carries risk is held: it cannot go live until an admin other than its author votes yes on
-        it. Open the change and vote there. Your yes lets it through once its votes and checks allow; your no,
-        with a reason, closes it and the request it was built for. Without an answer it stays held.
-      </p>
-      <div className="flex items-center gap-2 mb-3" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'waiting'}
-          className={tab === 'waiting' ? AdminUI.btn.primary : AdminUI.btn.outline}
-          id="admin-approvals-tab-waiting"
-          onClick={() => onTab('waiting')}
-        >{`Waiting${waiting.length ? ` (${waiting.length})` : ''}`}</button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'history'}
-          className={tab === 'history' ? AdminUI.btn.primary : AdminUI.btn.outline}
-          id="admin-approvals-tab-history"
-          onClick={() => onTab('history')}
-        >History</button>
-      </div>
-      {tab === 'waiting' ? (
-        <div className={AdminUI.tableWrap}>
-          <table className={`${AdminUI.table} min-w-[40rem]`} id="admin-approvals-waiting">
-            <thead className={AdminUI.thead}>
+    <div>
+      <ScreenHeader
+        title="Approvals"
+        subtitle={(
+          <span id="admin-approvals-about">
+            A change that carries risk is held: it cannot go live until an admin other than its author votes yes on
+            it. Open the change and vote there. Your yes lets it through once its votes and checks allow; your no,
+            with a reason, closes it and the request it was built for. Without an answer it stays held.
+          </span>
+        )}
+        actions={(
+          <span className={AdminUI.cardDescription} id="admin-approvals-count">
+            {payload ? (waiting.length ? `${waiting.length} waiting` : 'Nothing waiting') : 'Loading…'}
+          </span>
+        )}
+      />
+      {/* The shared tabs, in place of two buttons that swapped a table. Both
+          tables stay in the page; the one not open is hidden. */}
+      <Tabs<ApprovalsTab>
+        id={TABS_ID}
+        label="Approvals"
+        value={tab}
+        onChange={onTab}
+        tabs={[
+          { key: 'waiting', label: `Waiting${waiting.length ? ` (${waiting.length})` : ''}`, id: 'admin-approvals-tab-waiting' },
+          { key: 'history', label: 'History', id: 'admin-approvals-tab-history' },
+        ]}
+      />
+      {/* The tables are written out with the kit's classes, not its list: each
+          row and each table keeps a hook the list has no place for. */}
+      <TabPanel tabsId={TABS_ID} tab="waiting" active={tab === 'waiting'}>
+        <div className={TABLE.wrap}>
+          <table className={`${TABLE.table} min-w-[40rem]`} id="admin-approvals-waiting">
+            <thead className={TABLE.thead}>
               <tr>
-                <th className={`${AdminUI.th} min-w-[14rem]`}>Change</th>
-                <th className={`${AdminUI.th} min-w-[16rem]`}>Why it is held</th>
-                <th className={AdminUI.th}>Waiting</th>
-                <th className={AdminUI.th}>Your vote</th>
+                <th className={`${TABLE.th} min-w-[14rem]`}>Change</th>
+                <th className={`${TABLE.th} min-w-[16rem]`}>Why it is held</th>
+                <th className={TABLE.th}>Waiting</th>
+                <th className={TABLE.th}>Your vote</th>
               </tr>
             </thead>
             <tbody>
               {waiting.map((hold) => (
-                <tr className={AdminUI.trHover} key={hold.id} data-release-hold-row={hold.id}>
-                  <td className={AdminUI.td}><ChangeCell hold={hold} /></td>
-                  <td className={AdminUI.td}><Reasons hold={hold} /></td>
-                  <td className={`${AdminUI.td} whitespace-nowrap`}>{waited(hold.heldAt, now)}</td>
-                  <td className={`${AdminUI.td} whitespace-nowrap`}>
+                <tr className={TABLE.tr} key={hold.id} data-release-hold-row={hold.id}>
+                  <td className={TABLE.td}><ChangeCell hold={hold} /></td>
+                  <td className={TABLE.td}><Reasons hold={hold} /></td>
+                  <td className={`${TABLE.td} whitespace-nowrap`}>{waited(hold.heldAt, now)}</td>
+                  <td className={`${TABLE.td} whitespace-nowrap`}>
                     {hold.needsAnotherAdmin
-                      ? <span className={AdminUI.badge.secondary}>Needs another admin</span>
+                      ? <Badge tone="sky" label="Needs another admin" />
                       : <a className={AdminUI.btn.link} href={changeHref(hold.appSlug, hold.sessionId, hold.prNumber)}>Open to vote</a>}
                   </td>
                 </tr>
               ))}
               {payload && waiting.length === 0 ? (
                 <tr>
-                  <td className={AdminUI.td} colSpan={4} id="admin-approvals-empty">
+                  <td className={TABLE.td} colSpan={4} id="admin-approvals-empty">
                     No change is waiting for an admin.
                   </td>
                 </tr>
@@ -177,27 +184,26 @@ export function ApprovalsView({ payload, tab, onTab, now }: {
             </tbody>
           </table>
         </div>
-      ) : (
-        <div className={AdminUI.tableWrap}>
-          <table className={`${AdminUI.table} min-w-[40rem]`} id="admin-approvals-history">
-            <thead className={AdminUI.thead}>
+      </TabPanel>
+      <TabPanel tabsId={TABS_ID} tab="history" active={tab === 'history'}>
+        <div className={TABLE.wrap}>
+          <table className={`${TABLE.table} min-w-[40rem]`} id="admin-approvals-history">
+            <thead className={TABLE.thead}>
               <tr>
-                <th className={AdminUI.th}>When</th>
-                <th className={`${AdminUI.th} min-w-[14rem]`}>Change</th>
-                <th className={`${AdminUI.th} min-w-[14rem]`}>Why it was held</th>
-                <th className={`${AdminUI.th} min-w-[12rem]`}>What happened</th>
+                <th className={TABLE.th}>When</th>
+                <th className={`${TABLE.th} min-w-[14rem]`}>Change</th>
+                <th className={`${TABLE.th} min-w-[14rem]`}>Why it was held</th>
+                <th className={`${TABLE.th} min-w-[12rem]`}>What happened</th>
               </tr>
             </thead>
             <tbody>
               {history.map((hold) => (
-                <tr className={AdminUI.trHover} key={hold.id} data-release-hold-row={hold.id} data-outcome={hold.outcome}>
-                  <td className={`${AdminUI.td} whitespace-nowrap`}>{when(hold.decidedAt || hold.heldAt)}</td>
-                  <td className={AdminUI.td}><ChangeCell hold={hold} /></td>
-                  <td className={AdminUI.td}><Reasons hold={hold} /></td>
-                  <td className={AdminUI.td}>
-                    <span className={OUTCOME_BADGE[hold.outcome] || AdminUI.badge.secondary}>
-                      {OUTCOME_LABEL[hold.outcome] || hold.outcome}
-                    </span>
+                <tr className={TABLE.tr} key={hold.id} data-release-hold-row={hold.id} data-outcome={hold.outcome}>
+                  <td className={`${TABLE.td} whitespace-nowrap`}>{when(hold.decidedAt || hold.heldAt)}</td>
+                  <td className={TABLE.td}><ChangeCell hold={hold} /></td>
+                  <td className={TABLE.td}><Reasons hold={hold} /></td>
+                  <td className={TABLE.td}>
+                    <Badge tone={OUTCOME_TONE[hold.outcome] || 'zinc'} label={OUTCOME_LABEL[hold.outcome] || hold.outcome} />
                     {hold.decidedBy ? <div className={`${AdminUI.muted} text-xs mt-1`}>{`by @${hold.decidedBy}`}</div> : null}
                     {hold.note ? <div className="text-xs mt-1">{hold.note}</div> : null}
                   </td>
@@ -205,7 +211,7 @@ export function ApprovalsView({ payload, tab, onTab, now }: {
               ))}
               {payload && history.length === 0 ? (
                 <tr>
-                  <td className={AdminUI.td} colSpan={4} id="admin-approvals-history-empty">
+                  <td className={TABLE.td} colSpan={4} id="admin-approvals-history-empty">
                     No change has been held yet.
                   </td>
                 </tr>
@@ -213,7 +219,7 @@ export function ApprovalsView({ payload, tab, onTab, now }: {
             </tbody>
           </table>
         </div>
-      )}
+      </TabPanel>
       {payload?.rules?.length ? (
         <p className={`${AdminUI.muted} mt-3`} id="admin-approvals-rules">
           {`A change is held when: ${payload.rules.map((r) => r.words.charAt(0).toLowerCase() + r.words.slice(1)).join('; ')}.`}

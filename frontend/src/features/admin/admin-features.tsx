@@ -2,14 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The console's shared page parts (26 Nov 2026): the header, the bar over the
+// list, the list and its badges are the ones every admin page draws with.
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, EmptyState, List, ScreenHeader, Segmented, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Submitted features (#admin/features) — the cross-app feature requests users
 // filed from inside each app, ported from the retired admin-features.js page.
 //
-// Ranked by net votes, one card per request, with the app it belongs to and
-// its GitHub issue number when one was opened. "Download CSV" pulls the ENTIRE
+// Ranked by net votes, one row per request, with the app it belongs to and
+// its GitHub issue number when one was opened. A request's description is
+// behind the row's arrow. "Download CSV" pulls the ENTIRE
 // filtered set rather than the visible page, by looping the offset parameter.
 //
 // PERMISSIONS: any admin, full or view-only. Read surface — the filter and
@@ -38,10 +45,18 @@ const FEATURES_CSV_FIELDS = [
   'created_by', 'created_by_username', 'up_count', 'down_count',
 ];
 
-const FEATURES_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  open: { label: 'Open', cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
-  closed: { label: 'Closed', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-  completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-300' },
+// The status is repeated down the list, so it wears the soft tones: open is
+// still waiting, shipped is done, closed says nothing.
+const FEATURES_STATUS_BADGE: Record<string, { label: string; tone: string }> = {
+  open: { label: 'Open', tone: 'sky' },
+  closed: { label: 'Closed', tone: 'zinc' },
+  completed: { label: 'Shipped', tone: 'mint' },
+};
+
+const FEATURES_STATUSES = ['all', 'open', 'closed', 'completed'] as const;
+type FeaturesStatus = typeof FEATURES_STATUSES[number];
+const FEATURES_STATUS_LABELS: Record<FeaturesStatus, string> = {
+  all: 'All', open: 'Open', closed: 'Closed', completed: 'Shipped',
 };
 
 interface Feature {
@@ -56,6 +71,8 @@ interface Feature {
   github_issue_number?: number;
   up_count?: number;
   down_count?: number;
+  /** Its place in the ranked page, set when the page arrives. */
+  rank?: number;
   [key: string]: any;
 }
 
@@ -68,44 +85,43 @@ function csvCell(v: any): string {
   return `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 }
 
-function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
-  const b = (f.status && FEATURES_STATUS_BADGE[f.status])
-    || { label: f.status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
-  return (
-    <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-4">
-      <div className="flex items-start gap-3">
-        <div className="text-zinc-500 dark:text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">{`#${rank}`}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold">{f.title}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
-          </div>
-          {f.description ? (
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 whitespace-pre-wrap break-words">{f.description}</div>
-          ) : null}
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-violet-700 dark:text-violet-400">{f.app_name}</span>
-            <span className="text-zinc-500 dark:text-zinc-400">{f.app_slug}</span>
-            <span>{`by ${f.created_by_username || '—'}`}</span>
-            <span>{fmtTime(f.created_at)}</span>
-            {f.github_issue_number
-              ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{`GitHub #${f.github_issue_number}`}</span>
-              : null}
-          </div>
-        </div>
-        <div className="text-end text-sm shrink-0">
-          <div className="text-green-800 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
-          <div className="text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const FEATURE_COLUMNS: Column<Feature>[] = [
+  { label: 'Rank', cell: (f) => <span className="font-mono text-zinc-500 dark:text-zinc-400">{`#${f.rank}`}</span> },
+  { label: 'Feature', primary: true, cell: (f) => <span className="font-semibold">{f.title}</span> },
+  {
+    label: 'Status',
+    cell: (f) => {
+      const b = (f.status && FEATURES_STATUS_BADGE[f.status]) || { label: f.status || '—', tone: 'zinc' };
+      return <Badge label={b.label} tone={b.tone} />;
+    },
+  },
+  {
+    label: 'App',
+    cell: (f) => (
+      <>
+        <span>{f.app_name}</span>
+        <span className="ms-1 font-mono text-xs text-zinc-500 dark:text-zinc-400">{f.app_slug}</span>
+      </>
+    ),
+  },
+  { label: 'By', cell: (f) => f.created_by_username || '—' },
+  { label: 'Filed', cell: (f) => fmtTime(f.created_at) },
+  { label: 'GitHub', cell: (f) => (f.github_issue_number ? `GitHub #${f.github_issue_number}` : '') },
+  {
+    label: 'Votes',
+    cell: (f) => (
+      <span className="tabular-nums whitespace-nowrap">
+        <span className="font-semibold text-green-800 dark:text-green-400">{`▲ ${f.up_count}`}</span>
+        <span className="ms-1 text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</span>
+      </span>
+    ),
+  },
+];
 
 function FeaturesSection() {
   // Default 'all' so an admin lands on the full cross-app list — shipped
   // features carry status='completed', invisible under open/closed (#565).
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = useState<FeaturesStatus>('all');
   const [features, setFeatures] = useState<Feature[] | null>(null);
   const [summary, setSummary] = useState('');
   const [empty, setEmpty] = useState('');
@@ -136,7 +152,7 @@ function FeaturesSection() {
           : 'No submitted features match this filter. Try the “All” status.');
         return;
       }
-      setFeatures(rows);
+      setFeatures(rows.map((f, i) => ({ ...f, rank: i + 1 })));
       setSummary(total > rows.length
         ? `Showing the top ${rows.length} of ${total}. Use Download CSV for the full list.`
         : `${total} feature${total === 1 ? '' : 's'}.`);
@@ -182,30 +198,50 @@ function FeaturesSection() {
   };
 
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <h2 className={AdminUI.cardTitle}>Submitted features</h2>
-        <div className="flex items-center gap-2">
-          <select id="admin-features-status" value={status} onChange={(e) => setStatus(e.target.value)}
-            className="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
-            <option value="all">All</option>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-            <option value="completed">Shipped</option>
-          </select>
-          <button id="admin-features-refresh" type="button" className={`${AdminUI.btn.link} text-xs px-1 py-1`}
-            onClick={() => setNonce((n) => n + 1)}>Refresh</button>
-          <button id="admin-features-csv" type="button" className={AdminUI.btn.primarySm}
-            disabled={busy} onClick={downloadCsv}>{busy ? 'Preparing…' : 'Download CSV'}</button>
-        </div>
-      </div>
+    <>
+      <ScreenHeader
+        title="Submitted features"
+        subtitle="Feature requests people filed from inside each app, ranked by net votes."
+        actions={(
+          <>
+            <button id="admin-features-refresh" type="button" className={BTN.secondarySm}
+              onClick={() => setNonce((n) => n + 1)}>Refresh</button>
+            <button id="admin-features-csv" type="button" className={BTN.primarySm}
+              disabled={busy} onClick={downloadCsv}>{busy ? 'Preparing…' : 'Download CSV'}</button>
+          </>
+        )}
+      />
+      {/* The status filter is the list's, so it sits in the bar over it; the
+          header keeps Refresh and the export, which take the whole page
+          (26 Nov 2026). */}
+      <Toolbar>
+        <Segmented<FeaturesStatus>
+          id="admin-features-status"
+          label="Filter by status"
+          value={status}
+          options={FEATURES_STATUSES.map((v) => ({ value: v, label: FEATURES_STATUS_LABELS[v] }))}
+          onChange={setStatus}
+        />
+      </Toolbar>
       <p id="admin-features-summary" className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">{summary}</p>
-      <div id="admin-features-list" className="space-y-3">
-        {(features || []).map((f, i) => <FeatureCard key={f.id} f={f} rank={i + 1} />)}
+      <div id="admin-features-list">
+        {features && features.length ? (
+          <List
+            items={features}
+            columns={FEATURE_COLUMNS}
+            rowKey={(f) => f.id}
+            details={(f) => (
+              <div className="text-xs text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap break-words">
+                {f.description || 'No description.'}
+              </div>
+            )}
+          />
+        ) : null}
       </div>
-      <p id="admin-features-empty"
-        className={`text-sm text-zinc-500 dark:text-zinc-400${empty ? '' : ' hidden'}`}>{empty}</p>
-    </div>
+      <div id="admin-features-empty" hidden={!empty}>
+        <EmptyState title={empty} />
+      </div>
+    </>
   );
 }
 

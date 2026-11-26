@@ -355,8 +355,16 @@ test('the list reads GET /api/test-accounts and says how many of the most are li
   assert.match(html, /30m ago/, 'last active, relative');
   assert.match(html, /Not yet/, 'an account never seen says so');
   assert.match(html, /plant-pal<\/span> · running/, 'its apps, with their status, as text');
-  assert.match(html, /plant-pal \(running\), chores/, 'and folded into one line below md');
-  assert.equal((html.match(/data-retire-test-account="/g) || []).length, 2, 'a Retire button per row');
+  // The list is the shared kit's now, which draws the phone's card itself:
+  // below md the apps are the card's own Apps field, where they were one
+  // folded line under the name (request 7224).
+  const phone = html.slice(html.indexOf('<div class="md:hidden'));
+  assert.ok(html.includes('<div class="md:hidden'), 'the list draws a card below md');
+  assert.match(phone, /Apps[\s\S]*?plant-pal<\/span> · running<\/li><li><span[^>]*>chores<\/span><\/li>/, 'and the card carries its apps below md');
+  // One per row in each of the list's two layouts, the table and the card.
+  const wide = html.slice(0, html.indexOf('<div class="md:hidden'));
+  assert.equal((wide.match(/data-retire-test-account="/g) || []).length, 2, 'a Retire button per row');
+  assert.equal((phone.match(/data-retire-test-account="/g) || []).length, 2, 'and per card below md');
   assert.doesNotMatch(html, /<a[\s>]|href=/, 'no slug, username or note becomes a link');
 
   const empty = renderToHtml(createElement(mod.LiveAccounts, {

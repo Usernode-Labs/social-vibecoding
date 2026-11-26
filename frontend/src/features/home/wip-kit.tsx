@@ -11,6 +11,7 @@
  */
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, PlusWideIcon } from '@/components/ui/icons';
 
 /** The look's card: the plane colour, the card radius, one inset hairline. */
@@ -22,13 +23,17 @@ export function WipCard({ on = true, className, children, ...rest }: HTMLAttribu
   return <div className={cls || undefined} {...rest}>{children}</div>;
 }
 
-/** A filled action: the accent gradient pill and its words, after a plus unless `glyph` is false. */
+/**
+ * The page's top action, the primary kind as `.wip-cta` draws it (the
+ * Button primitive's `cta` variant): its words after a plus unless `glyph`
+ * is false.
+ */
 export function WipCta({ children, glyph = true, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode; glyph?: boolean }) {
   return (
-    <button type="button" className="wip-cta" {...rest}>
+    <Button type="button" variant="cta" size="none" ink="none" {...rest}>
       {glyph ? <PlusWideIcon className="wip-cta-glyph" strokeWidth="2.6" aria-hidden="true" /> : null}
       {children}
-    </button>
+    </Button>
   );
 }
 

@@ -7,6 +7,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The console's shared page parts (26 Nov 2026): the header, the figures, the
+// tables and the badge are the ones every admin page draws with.
+import {
+  Badge, EmptyState, Figures, List, ScreenHeader,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Estimator accuracy section of the admin console (#898) — the
 // "Progress estimator accuracy" card lifted out of #admin/analytics into
@@ -235,64 +241,86 @@ const tone = (ok: boolean | null) => (ok == null
   ? 'text-zinc-500 dark:text-zinc-400'
   : ok ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400');
 
-function Tile({ label, value, cls, sub }: { label: string; value: string; cls?: string; sub?: string }) {
-  return (
-    <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
-      <div className={`text-2xl font-bold mt-1 ${cls || ''}`}>{value}</div>
-      {sub ? <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">{sub}</div> : null}
-    </div>
-  );
-}
+// The same answer for a figure at the head of the card: green when the bar is
+// met, yellow when it is not, the plain sky when the figure is not judged.
+const figureTone = (ok: boolean | null): Figure['tone'] => (ok == null ? 'sky' : ok ? 'green' : 'yellow');
 
-const TH_L = 'text-start font-medium py-1';
-const TH_R = 'text-end font-medium py-1';
-const TR = 'border-t border-zinc-200 dark:border-zinc-800';
+// One row of the measures table: what a tile used to hold.
+type Measure = { label: string; value: string; cls?: string; sub?: string };
+
+const MEASURE_COLUMNS: Column<Measure>[] = [
+  { label: 'Measure', primary: true, cell: (m) => m.label },
+  { label: 'Value', cell: (m) => <span className={`font-semibold tabular-nums ${m.cls || ''}`}>{m.value}</span> },
+  { label: 'Bar and notes', cell: (m) => <span className="text-xs text-zinc-500 dark:text-zinc-400">{m.sub || ''}</span> },
+];
+
+const VERSION_COLUMNS: Column<any>[] = [
+  {
+    label: 'Prompt',
+    primary: true,
+    cell: (v) => (
+      <>
+        {`v${fmtInt(v.promptVersion)}`}
+        {v.promptVersion === CANDIDATE_PROMPT_VERSION
+          ? <span className="ms-1"><Badge label="candidate" tone="violet" /></span>
+          : null}
+      </>
+    ),
+  },
+  { label: 'Scored', cell: (v) => fmtInt(v.scored) },
+  { label: 'Median err', cell: (v) => fmtSecs(v.medianAbsErrS) },
+  { label: 'In band', cell: (v) => fmtPct(v.withinBand) },
+  { label: 'Bias', cell: (v) => fmtSecs(v.medianBiasS) },
+];
+
+type BaseRow = { label: string; note: string; b: any };
+
+const BASE_COLUMNS: Column<BaseRow>[] = [
+  {
+    label: 'Predictor',
+    primary: true,
+    cell: (r) => (
+      <>
+        {r.label}
+        <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">{r.note}</span>
+      </>
+    ),
+  },
+  { label: 'Median err', cell: (r) => fmtSecs(r.b.medianAbsErrS) },
+  { label: 'In band', cell: (r) => fmtPct(r.b.withinBand) },
+  { label: 'Bias', cell: (r) => fmtSecs(r.b.medianBiasS) },
+];
+
+const PRIOR_COLUMNS: Column<any>[] = [
+  { label: 'Elapsed bucket', primary: true, cell: (b) => b.bucket },
+  { label: 'Told the model', cell: (b) => fmtSecs(b.committedP50) },
+  { label: 'Actually now', cell: (b) => fmtSecs(b.liveP50) },
+  {
+    label: 'Drift',
+    cell: (b) => (
+      <span className={b.driftRatio != null && b.driftRatio > 0.25 ? 'text-amber-800 dark:text-amber-400' : ''}>
+        {fmtPct(b.driftRatio)}
+      </span>
+    ),
+  },
+];
+
 const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400';
 
 function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyLabel: string }) {
+  const columns: Column<any>[] = [
+    { label: keyLabel, primary: true, cell: (r) => r.label },
+    { label: 'Scored', cell: (r) => fmtInt(r.scored) },
+    { label: 'Median err', cell: (r) => fmtSecs(r.medianAbsErrS) },
+    { label: 'In band', cell: (r) => fmtPct(r.withinBand) },
+  ];
   return (
     <div>
       <h4 className={`${H4} mb-2`}>{title}</h4>
-      {rows.length ? (
-        <table className="text-xs w-full">
-          <thead>
-            <tr className="text-zinc-500 dark:text-zinc-400">
-              <th className={TH_L}>{keyLabel}</th>
-              <th className={TH_R}>Scored</th>
-              <th className={TH_R}>Median err</th>
-              <th className={TH_R}>In band</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <tr key={i} className={TR}>
-                <td className="py-1 text-zinc-600 dark:text-zinc-300">{r.label}</td>
-                <td className="py-1 text-end">{fmtInt(r.scored)}</td>
-                <td className="py-1 text-end">{fmtSecs(r.medianAbsErrS)}</td>
-                <td className="py-1 text-end">{fmtPct(r.withinBand)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : <p className="text-xs text-zinc-500 dark:text-zinc-400">No data yet.</p>}
+      {rows.length
+        ? <List items={rows} columns={columns} rowKey={(_r, i) => i} />
+        : <EmptyState title="No data yet." />}
     </div>
-  );
-}
-
-function BaseRow({ label, b, note }: { label: string; b: any; note: string }) {
-  if (!b) return null;
-  return (
-    <tr className={TR}>
-      <td className="py-1 text-zinc-600 dark:text-zinc-300">
-        {label}
-        <div className="text-[10px] text-zinc-500 dark:text-zinc-400">{note}</div>
-      </td>
-      <td className="py-1 text-end">{fmtSecs(b.medianAbsErrS)}</td>
-      <td className="py-1 text-end">{fmtPct(b.withinBand)}</td>
-      <td className="py-1 text-end">{fmtSecs(b.medianBiasS)}</td>
-    </tr>
   );
 }
 
@@ -391,6 +419,53 @@ function EstimatorCard({ e }: { e: any }) {
   const verdict = estimatorVerdict(head, { baselines, monotonicity: mono, completionClaims: claims });
   const priors = e.priors || null;
 
+  // Every measure with its bar. They were twelve tiles; a table keeps each
+  // one's bar beside it, and the first four are also the figures at the head.
+  const measures: Measure[] = [
+    {
+      label: `Scored guesses (${headLabel})`, value: fmtInt(head.scored), cls: sampleOk ? '' : 'text-zinc-500 dark:text-zinc-400',
+      sub: `${fmtInt(head.runs)} runs · ${fmtInt(head.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`,
+    },
+    {
+      label: 'Median error', value: fmtSecs(head.medianAbsErrS), cls: tone(errOk),
+      sub: oracleErr == null ? 'bar: ≤ the oracle baseline' : `bar: ≤ ${fmtSecs(oracleErr)} (oracle)`,
+    },
+    {
+      label: 'Within ½×–2×', value: fmtPct(head.withinBand), cls: tone(bandOk),
+      sub: `bar: ≥ ${fmtPct(ESTIMATOR_BAR.withinBand)}`,
+    },
+    {
+      label: 'Median bias', value: fmtSecs(head.medianBiasS), cls: tone(biasOk),
+      sub: head.medianBiasS == null ? `bar: ±${ESTIMATOR_BAR.biasS}s`
+        : `${head.medianBiasS < 0 ? 'optimistic' : 'pessimistic'} · bar: ±${ESTIMATOR_BAR.biasS}s`,
+    },
+    // Treadmill: the share of consecutive readings that pushed the finish
+    // LATER. Computed on what the user SAW, so it measures the guard.
+    {
+      label: 'Finish pushed later', value: fmtPct(disp && disp.laterRate), cls: tone(laterOk),
+      sub: `shown · bar: ≤ ${fmtPct(ESTIMATOR_BAR.laterRate)}`,
+    },
+    {
+      label: 'Countdown went backwards', value: fmtPct(disp && disp.increasedRate), cls: tone(backOk),
+      sub: `shown · bar: < ${fmtPct(ESTIMATOR_BAR.increasedRate)}`,
+    },
+    {
+      label: 'Held / floored', value: `${fmtPct(mono && mono.clampRate)} / ${fmtPct(mono && mono.flooredRate)}`,
+      sub: 'guard held the projection · run outlived it',
+    },
+    {
+      label: 'Unearned "nearly done"', value: fmtPct(claims && claims.overFiveMinLeftRate), cls: tone(claimOk),
+      sub: claims ? `${fmtInt(claims.ticks)} claims · ${fmtInt(claims.suppressed)} suppressed` : 'no claims yet',
+    },
+    { label: 'Within 60s', value: fmtPct(head.within60s), sub: 'share of guesses inside a minute' },
+    {
+      label: 'Unresolved', value: fmtPct(w.unresolvedRate),
+      sub: `${fmtInt(w.unresolved)} of ${fmtInt(w.ticks)} never matched`,
+    },
+    { label: 'Toggle ON', value: fmtInt(e.usersEnabled), sub: 'users opted in today' },
+    { label: 'Ran past estimate', value: fmtInt(w.ranPast), sub: 'run outlived the guess' },
+  ];
+
   // #892: split by prompt version. v1's bias swings from +81s early to -299s
   // late; v2's should stay flat, and this table is where that shows.
   const byElapsed = (e.byElapsed || []).map((r: any) => ({
@@ -414,62 +489,20 @@ function EstimatorCard({ e }: { e: any }) {
             v2 gives it the measured run-length distribution instead: calibration through the
             prompt, with no multiplier on the model’s output.
           </p>
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
-                <th className={TH_L}>Prompt</th>
-                <th className={TH_R}>Scored</th>
-                <th className={TH_R}>Median err</th>
-                <th className={TH_R}>In band</th>
-                <th className={TH_R}>Bias</th>
-              </tr>
-            </thead>
-            <tbody>
-              {versions.map((v: any) => (
-                <tr key={v.promptVersion} className={TR}>
-                  <td className="py-1 text-zinc-600 dark:text-zinc-300">
-                    {`v${fmtInt(v.promptVersion)}`}
-                    {v.promptVersion === CANDIDATE_PROMPT_VERSION
-                      ? <> <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
-                      : null}
-                  </td>
-                  <td className="py-1 text-end">{fmtInt(v.scored)}</td>
-                  <td className="py-1 text-end">{fmtSecs(v.medianAbsErrS)}</td>
-                  <td className="py-1 text-end">{fmtPct(v.withinBand)}</td>
-                  <td className="py-1 text-end">{fmtSecs(v.medianBiasS)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <List items={versions} columns={VERSION_COLUMNS} rowKey={(v: any) => v.promptVersion} />
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Tile label={`Scored guesses (${headLabel})`} value={fmtInt(head.scored)} cls={sampleOk ? '' : 'text-zinc-500 dark:text-zinc-400'}
-          sub={`${fmtInt(head.runs)} runs · ${fmtInt(head.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`} />
-        <Tile label="Median error" value={fmtSecs(head.medianAbsErrS)} cls={tone(errOk)}
-          sub={oracleErr == null ? 'bar: ≤ the oracle baseline' : `bar: ≤ ${fmtSecs(oracleErr)} (oracle)`} />
-        <Tile label="Within ½×–2×" value={fmtPct(head.withinBand)} cls={tone(bandOk)}
-          sub={`bar: ≥ ${fmtPct(ESTIMATOR_BAR.withinBand)}`} />
-        <Tile label="Median bias" value={fmtSecs(head.medianBiasS)} cls={tone(biasOk)}
-          sub={head.medianBiasS == null ? `bar: ±${ESTIMATOR_BAR.biasS}s`
-            : `${head.medianBiasS < 0 ? 'optimistic' : 'pessimistic'} · bar: ±${ESTIMATOR_BAR.biasS}s`} />
-        {/* Treadmill: the share of consecutive readings that pushed the finish
-            LATER. Computed on what the user SAW, so it measures the guard. */}
-        <Tile label="Finish pushed later" value={fmtPct(disp && disp.laterRate)} cls={tone(laterOk)}
-          sub={`shown · bar: ≤ ${fmtPct(ESTIMATOR_BAR.laterRate)}`} />
-        <Tile label="Countdown went backwards" value={fmtPct(disp && disp.increasedRate)} cls={tone(backOk)}
-          sub={`shown · bar: < ${fmtPct(ESTIMATOR_BAR.increasedRate)}`} />
-        <Tile label="Held / floored" value={`${fmtPct(mono && mono.clampRate)} / ${fmtPct(mono && mono.flooredRate)}`}
-          sub="guard held the projection · run outlived it" />
-        <Tile label={'Unearned "nearly done"'} value={fmtPct(claims && claims.overFiveMinLeftRate)} cls={tone(claimOk)}
-          sub={claims ? `${fmtInt(claims.ticks)} claims · ${fmtInt(claims.suppressed)} suppressed` : 'no claims yet'} />
-        <Tile label="Within 60s" value={fmtPct(head.within60s)} sub="share of guesses inside a minute" />
-        <Tile label="Unresolved" value={fmtPct(w.unresolvedRate)}
-          sub={`${fmtInt(w.unresolved)} of ${fmtInt(w.ticks)} never matched`} />
-        <Tile label="Toggle ON" value={fmtInt(e.usersEnabled)} sub="users opted in today" />
-        <Tile label="Ran past estimate" value={fmtInt(w.ranPast)} sub="run outlived the guess" />
-      </div>
+      {/* The four figures the verdict turns on, as the shared tiles: green
+          when the bar is met, yellow when it is not. Each one's bar is its
+          tooltip, and its row in the measures table below (26 Nov 2026). */}
+      <Figures items={[null, errOk, bandOk, biasOk].map((ok, i): Figure => ({
+        key: `measure-${i}`,
+        label: measures[i].label,
+        value: measures[i].value,
+        title: measures[i].sub,
+        tone: figureTone(ok),
+      }))} />
 
       {verdict ? (
         <div className={`mt-3 text-sm ${verdict.ready ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400'}`}>
@@ -489,6 +522,11 @@ function EstimatorCard({ e }: { e: any }) {
           fmtSecs(all.medianAbsErrS)} · ${fmtPct(all.withinBand)} in band · ${fmtPct(all.unresolvedRate)} unresolved`}
       </div>
 
+      <div className="mt-4">
+        <h4 className={`${H4} mb-2`}>Every measure and its bar</h4>
+        <List items={measures} columns={MEASURE_COLUMNS} rowKey={(m) => m.label} />
+      </div>
+
       {/* Baselines: what the estimator has to BEAT. Without these the card can
           only say "is it good?", never "is it better than doing no thinking at
           all?" — and the oracle row is what makes the restated in-band bar
@@ -496,25 +534,19 @@ function EstimatorCard({ e }: { e: any }) {
       {baselines ? (
         <div className="mt-4">
           <h4 className={`${H4} mb-2`}>Baselines to beat</h4>
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
-                <th className={TH_L}>Predictor</th>
-                <th className={TH_R}>Median err</th>
-                <th className={TH_R}>In band</th>
-                <th className={TH_R}>Bias</th>
-              </tr>
-            </thead>
-            <tbody>
-              <BaseRow label="Estimator" note={`prompt ${headLabel}`} b={{
-                medianAbsErrS: head.medianAbsErrS,
-                withinBand: head.withinBand,
-                medianBiasS: head.medianBiasS,
-              }} />
-              <BaseRow label="Fixed constant" b={baselines.constant} note="say the same thing every time" />
-              <BaseRow label="Elapsed-only oracle" b={baselines.oracle} note="best possible knowing only elapsed time" />
-            </tbody>
-          </table>
+          <List
+            items={([
+              {
+                label: 'Estimator',
+                note: `prompt ${headLabel}`,
+                b: { medianAbsErrS: head.medianAbsErrS, withinBand: head.withinBand, medianBiasS: head.medianBiasS },
+              },
+              { label: 'Fixed constant', note: 'say the same thing every time', b: baselines.constant },
+              { label: 'Elapsed-only oracle', note: 'best possible knowing only elapsed time', b: baselines.oracle },
+            ] as BaseRow[]).filter((r) => r.b)}
+            columns={BASE_COLUMNS}
+            rowKey={(r) => r.label}
+          />
         </div>
       ) : null}
 
@@ -541,27 +573,7 @@ function EstimatorCard({ e }: { e: any }) {
               ? <><br /><b>{priors.staleReasons.join('; ')}</b></>
               : null}
           </p>
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
-                <th className={TH_L}>Elapsed bucket</th>
-                <th className={TH_R}>Told the model</th>
-                <th className={TH_R}>Actually now</th>
-                <th className={TH_R}>Drift</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(priors.buckets || []).map((b: any) => (
-                <tr key={b.bucket} className={TR}>
-                  <td className="py-1 text-zinc-600 dark:text-zinc-300">{b.bucket}</td>
-                  <td className="py-1 text-end">{fmtSecs(b.committedP50)}</td>
-                  <td className="py-1 text-end">{fmtSecs(b.liveP50)}</td>
-                  <td className={`py-1 text-end ${b.driftRatio != null && b.driftRatio > 0.25
-                    ? 'text-amber-800 dark:text-amber-400' : ''}`}>{fmtPct(b.driftRatio)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <List items={priors.buckets || []} columns={PRIOR_COLUMNS} rowKey={(b: any) => b.bucket} />
         </div>
       ) : null}
 
@@ -636,23 +648,23 @@ function EstimatorSection() {
 
   return (
     <div id="admin-estimator-root" ref={rootRef}>
-      <h2 className="text-lg font-semibold mb-4">Estimator accuracy</h2>
-      {gate ? <div id="admin-estimator-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      <ScreenHeader
+        title="Estimator accuracy"
+        subtitle="How close the experimental AI progress estimate’s “time remaining” guesses land to the real remaining time. Last 30 days unless noted; always includes admins."
+      />
+      {gate ? <div id="admin-estimator-gate"><EmptyState title={gate} /></div> : null}
 
       {gate ? null : (
-        <main id="admin-estimator-content" className="space-y-6">
+        <main id="admin-estimator-content">
           {/* Progress estimator accuracy (#891, moved out of Analytics in #898) */}
           <section className={`${AdminUI.card} p-4`}>
-            <h3 className="text-lg font-semibold mb-1 inline-flex items-center">
+            <h3 className={`${AdminUI.cardTitle} mb-3 inline-flex items-center`}>
               Progress estimator accuracy
               <span className="dc-info" data-info="estimator" data-tip-id="info-estimator"
                 tabIndex={0} role="button" aria-label="What is this?"
                 onFocus={(ev) => showTipAt(ev.currentTarget, INFO.estimator)}
                 onBlur={() => { ensureTip().style.display = 'none'; }}>?</span>
             </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-              How close the experimental AI progress estimate’s “time remaining” guesses land to the real remaining time. Last 30 days unless noted; always includes admins.
-            </p>
             <div id="admin-estimator-card">
               {payload ? <EstimatorCard e={payload} /> : null}
             </div>

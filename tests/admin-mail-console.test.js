@@ -203,7 +203,7 @@ test('the older v4 mail routes are still there and unchanged in shape', () => {
 // ─── the section module ─────────────────────────────────────────────────
 
 test('the section is registered and mapped to its module', () => {
-  assert.match(consoleJs, /key: 'mail', label: 'Email delivery', group: 'Platform'/);
+  assert.match(consoleJs, /key: 'mail', label: 'Email delivery', group: 'Delivery & sign-in'/);
   assert.match(consoleJs, /mail: 'AdminMail'/);
   // Not public: this one is admin-only in both navs.
   const sectionBlock = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['),

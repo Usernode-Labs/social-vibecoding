@@ -99,6 +99,9 @@ function steppedReact() {
   let cursor = 0, renderFn = null, passive = [];
   const render = () => { cursor = 0; passive = []; renderFn(); for (const run of passive) run(); };
   const React = {
+    // The invite card's story module draws its buttons with the Button
+    // primitive, which calls forwardRef at module load; nothing here renders it.
+    forwardRef: (render) => render,
     useState(initial) {
       const i = cursor++;
       if (!(i in slots)) {

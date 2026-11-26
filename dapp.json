@@ -3819,16 +3819,16 @@
       "expectText": "Programme users"
     },
     {
-      "name": "Admin Users explains what excluding a user from ranking does (#1558)",
+      "name": "Admin Users keeps the line on what excluding a user from ranking does, in its Programme users tab (#1558)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-topo-u-ranking-help",
-      "expectText": "non-podium"
+      "expectSelector": "#admin-users-programme #admin-topo-u-ranking-help",
+      "expectText": "Programme users"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
+      "name": "Admin Waitlist is a first-class menu section (#1179): its figures, its tabs, and its settings loaded as switch rows",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-switch .text-xs):has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
-      "expectText": "Signed-out visitors"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-figures [data-figure=\"waiting\"]):has(#admin-topo-wl-tabs [role=\"tab\"][aria-selected=\"true\"]):has(#admin-topo-wl-switch .adm-setting-title):has(#admin-topo-wl-story .adm-setting-title):has(#admin-topo-wl-search)",
+      "expectText": "Longest wait"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
@@ -3843,10 +3843,10 @@
       "expectText": "of 7 answered"
     },
     {
-      "name": "Admin Waitlist has an Analytics button just before Export CSV (#2748)",
+      "name": "Admin Waitlist's totals and trend are its Trends tab (#2748)",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-wl-analytics",
-      "expectText": "Analytics"
+      "expectSelector": "#admin-topo-wl-tabs #admin-topo-wl-analytics[role=\"tab\"]",
+      "expectText": "Trends"
     },
     {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",

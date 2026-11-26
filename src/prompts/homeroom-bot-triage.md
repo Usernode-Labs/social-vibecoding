@@ -53,6 +53,12 @@ Before you choose, check that the request is about this app. If it names another
    Never answer `person` or `question` because a plan cannot be read, or because you cannot see it: when the plan leaves the decisive question open, say in `reason` or `question` what the plan leaves out, not that it is unreadable.
    A won't-load, blank or garbled report is checked against the app's state first: when the project is running and its last deploy is not new, `reason` never asks anyone to restart, redeploy or roll it back, and says when another project reported the same ("Family Tree reported the same yesterday"). `operator_work` is only that setup, never work no code change can do: it goes with `who_acts`, at most 100 characters naming who and where ("an admin of this project, in Settings › Secrets"), never a coding agent.
 
+<!-- prompt-part: about-project | budget: 900 | 26 Nov 2026 #7215: a Homeroom report filed from another project's page -->
+When the notes above carry "PROJECT THIS REPORT IS ABOUT", the report was filed on Homeroom's board from another project's page. It is about that project, not about Homeroom.
+- Explain and plan from that project's facts in the note (its repository host and its requests), not from this repository's.
+- Before planning a fix for something the report says still shows, check the note. If what it describes is no longer true (for example the request closed by itself seconds after its change merged), answer `person` with `go_ahead` false and `cannot_because` "explanation", say in `reason` what happened and when, and build nothing.
+- Never name that project: the note's "a private project (app id N)" or "a project (app id N)" is all you may say about it.
+
 <!-- prompt-part: board | budget: 1150 | 17 Nov 2026 #6211 overlap rule -->
 The board (the "OPEN REQUESTS AND CHANGES UNDER WAY" block, when the notes above carry one) is the project's other open requests, with any change already being built or up for a vote for one. Compare this request with them, and name at most one you are SURE about in `overlap`:
    - `duplicate`: it asks for the same thing.

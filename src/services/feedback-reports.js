@@ -64,26 +64,58 @@ async function createPlatformIssue({ owner, repo, title, body, labels = ['userno
 // person has been helped, so a bookkeeping failure must not turn their
 // submission into an error and invite a duplicate. `source` is null for the
 // feedback dialog, and 'homeroom_bot' for a report the bot filed for them.
-async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description, source = null,
+async function recordFeedbackReport(pool, { user, app, aboutAppId = null, owner, repo, issueNumber, title, description, source = null,
   bodyPrefix = null, bodySuffix = null, conversationId = null, threadRootId = null }) {
   if (!user?.id) return;
   try {
     const { rows } = await pool.query(
       `INSERT INTO feedback_reports
          (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source, body_prefix, body_suffix,
-          conversation_id, thread_root_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          conversation_id, thread_root_id, about_app_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id`,
       [user.id, app ? 'app' : 'platform', app ? app.id : null,
         owner || null, repo || null,
         Number.isSafeInteger(issueNumber) ? issueNumber : null,
         title ? String(title).slice(0, 512) : null, description, source, bodyPrefix, bodySuffix,
         Number.isSafeInteger(conversationId) ? conversationId : null,
-        Number.isSafeInteger(threadRootId) ? threadRootId : null]
+        Number.isSafeInteger(threadRootId) ? threadRootId : null,
+        // #7215: the project the report was filed from, by id only.
+        Number.isSafeInteger(aboutAppId) && aboutAppId > 0 ? aboutAppId : null]
     );
     return rows[0] || null;
   } catch (err) {
     log.warn('feedback', 'Feedback report record failed', { issueNumber, message: err.message });
+  }
+}
+
+/**
+ * #7215: the newest platform report on `issueNumber` that recorded the
+ * project it was filed from: { aboutAppId, userId, createdAt }, or null.
+ * The id only; the project's name is never stored on the public request.
+ */
+async function aboutAppFor(pool, { issueNumber } = {}) {
+  const n = Number(issueNumber);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT about_app_id, user_id, created_at
+         FROM feedback_reports
+        WHERE target = 'platform' AND issue_number = $1 AND about_app_id IS NOT NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1`,
+      [n],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      aboutAppId: Number(row.about_app_id),
+      userId: row.user_id == null ? null : Number(row.user_id),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    };
+  } catch (err) {
+    log.warn('feedback', 'Could not read the project a report is about', { issueNumber: n, message: err.message });
+    return null;
   }
 }
 
@@ -171,6 +203,7 @@ module.exports = {
   platformIssueHint,
   createPlatformIssue,
   recordFeedbackReport,
+  aboutAppFor,
   recentReports,
   findRecentReport,
   filePlatformReport,

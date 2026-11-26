@@ -1,6 +1,6 @@
 'use strict';
 
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type {
   InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes,
 } from 'react';
@@ -260,11 +260,15 @@ export type Selection<T> = {
   itemLabel: (item: T) => string;
 };
 
+// The arrow at the start of a row with details: a plain stroke, turned a
+// quarter when the row is open (app.css, `.adm-row-toggle`).
+const ROW_ARROW = 'M9 6l6 6-6 6';
+
 const SELECT_CHECKBOX_CLS = 'h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 '
   + 'text-violet-700 focus:ring-2 focus:ring-violet-500 dark:text-violet-400';
 
 export function List<T>({
-  items, columns, rowKey, actions, extra, rowClass, selection,
+  items, columns, rowKey, actions, extra, details, rowClass, selection,
 }: {
   items: T[];
   columns: Column<T>[];
@@ -272,6 +276,13 @@ export function List<T>({
   rowKey: (item: T, index: number) => string | number;
   actions?: (item: T) => ReactNode;
   extra?: (item: T) => ReactNode;
+  /**
+   * More about a row, folded away until asked for (26 Nov 2026): an arrow at
+   * the row's start opens it under the row. Use this, not `extra`, for
+   * anything a person reads only now and then: `extra` is always drawn, and
+   * one line of it per row doubles the height of a list.
+   */
+  details?: (item: T) => ReactNode;
   rowClass?: (item: T) => string;
   /** Adds a checkbox column (desktop) / row control (mobile) plus a
    * select-all header checkbox, for a caller that offers a bulk action. */
@@ -281,8 +292,28 @@ export function List<T>({
   const ex = extra || (() => null);
   const cls = rowClass || (() => '');
   const anyActions = items.some((it) => !!act(it));
-  const span = columns.length + (anyActions ? 1 : 0) + (selection ? 1 : 0);
+  const span = columns.length + (anyActions ? 1 : 0) + (selection ? 1 : 0) + (details ? 1 : 0);
   const primary = columns.find((c) => c.primary) || columns[0];
+  const [open, setOpen] = useState<Set<string | number>>(new Set());
+  const toggle = (key: string | number) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const arrow = (key: string | number, label: string) => (
+    <button
+      type="button"
+      className="adm-row-toggle"
+      aria-expanded={open.has(key)}
+      aria-label={`${open.has(key) ? 'Hide' : 'Show'} details for ${label}`}
+      onClick={() => toggle(key)}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d={ROW_ARROW} />
+      </svg>
+    </button>
+  );
+  const nameOf = (it: T, i: number) => (selection ? selection.itemLabel(it).replace(/^Select /, '') : `row ${i + 1}`);
 
   return (
     <>
@@ -290,6 +321,7 @@ export function List<T>({
         <table className="w-full text-sm">
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
+              {details ? <th className="w-8 px-1 py-2"><span className="sr-only">Details</span></th> : null}
               {selection ? (
                 <th className="w-10 px-3 py-2 text-start font-medium">
                   <input
@@ -315,7 +347,8 @@ export function List<T>({
               const below = ex(it);
               return (
                 <Fragment key={key}>
-                  <tr className={`border-t border-zinc-100 dark:border-zinc-800 ${cls(it)}`}>
+                  <tr className={`adm-row border-t border-zinc-100 dark:border-zinc-800 ${details && open.has(key) ? 'is-open' : ''} ${cls(it)}`}>
+                    {details ? <td className="px-1 py-2">{arrow(key, nameOf(it, i))}</td> : null}
                     {selection ? (
                       <td className="px-3 py-2">
                         <input
@@ -341,6 +374,11 @@ export function List<T>({
                       <td colSpan={span} className="px-3 py-3">{below}</td>
                     </tr>
                   ) : null}
+                  {details && open.has(key) ? (
+                    <tr className="adm-row-detail">
+                      <td colSpan={span} className="px-4 py-4">{details(it)}</td>
+                    </tr>
+                  ) : null}
                 </Fragment>
               );
             })}
@@ -351,8 +389,9 @@ export function List<T>({
         {items.map((it, i) => {
           const rowActions = act(it);
           const below = ex(it);
+          const key = rowKey(it, i);
           return (
-            <div key={rowKey(it, i)} className={`${PANEL_CLS} px-4 py-3 ${cls(it)}`}>
+            <div key={key} className={`${PANEL_CLS} px-4 py-3 ${cls(it)}`}>
               <div className="flex items-start gap-2.5">
                 {selection ? (
                   <input
@@ -383,6 +422,12 @@ export function List<T>({
                 </div>
               ) : null}
               {below ? <div className="mt-2">{below}</div> : null}
+              {details ? (
+                <div className="mt-2 border-t border-zinc-100 dark:border-zinc-800 pt-2">
+                  <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">{arrow(key, nameOf(it, i))}<span>Details</span></div>
+                  {open.has(key) ? <div className="mt-2">{details(it)}</div> : null}
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -558,6 +603,12 @@ const BADGE_TONES: Record<string, string> = {
   green: 'is-live bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
   amber: 'is-build bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
   violet: 'is-vote bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
+  // The two soft ones, for a status repeated down a list, where a solid pill
+  // on every row is a wall of colour: waiting (a wash of the sky) and done
+  // (a wash of the green).
+  sky: 'is-wait bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300',
+  mint: 'is-done bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300',
+  red: 'is-fail bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400',
   zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
 };
 
@@ -610,3 +661,264 @@ export function localInputToIso(v: string): string | null {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
+
+// ── Tabs and figures (26 Nov 2026) ──────────────────────────────────────
+//
+// A screen that holds more than one job (a list, its settings, its trends)
+// splits them with these, so every screen's tabs look and behave alike. They
+// are drawn as tabs (app.css, `.adm-tabs` / `.adm-tab`): names on one rule,
+// the open one marked on it. Every panel stays mounted and is hidden
+// with the attribute, so a panel's fetch and its ids do not depend on which
+// tab is up; pass `lazy` for one that should not load until it is opened.
+
+export function Tabs<K extends string>({
+  id, label, tabs, value, onChange,
+}: {
+  id: string;
+  label: string;
+  tabs: Array<{ key: K; label: ReactNode; id?: string }>;
+  value: K;
+  onChange: (key: K) => void;
+}) {
+  return (
+    <div id={id} role="tablist" aria-label={label} className="adm-tabs">
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          id={tab.id || `${id}-tab-${tab.key}`}
+          aria-selected={value === tab.key}
+          aria-controls={`${id}-panel-${tab.key}`}
+          className="adm-tab"
+          onClick={() => onChange(tab.key)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function TabPanel({
+  tabsId, tab, active, lazy, children,
+}: { tabsId: string; tab: string; active: boolean; lazy?: boolean; children: ReactNode }) {
+  return (
+    <div id={`${tabsId}-panel-${tab}`} role="tabpanel" hidden={!active}>
+      {lazy && !active ? null : children}
+    </div>
+  );
+}
+
+// A row of figures at the head of a screen: the dashboard's own tiles
+// (app.css, `.admin-metric-grid` / `.admin-metric-card`), so a figure looks
+// the same wherever it is. A figure that has not arrived is a dash. One with
+// an `onClick` is a button, a door to what it counts.
+export type Figure = {
+  key: string;
+  label: string;
+  value: ReactNode | null;
+  tone?: 'sky' | 'green' | 'yellow';
+  onClick?: () => void;
+  title?: string;
+  /** A quiet second line under the label: how the figure splits, or its bar. */
+  detail?: ReactNode;
+};
+
+export function Figures({ id, items }: { id?: string; items: Figure[] }) {
+  return (
+    <div id={id} className="admin-metric-grid">
+      {items.map((f) => {
+        const body = <span><strong>{f.value === null || f.value === undefined ? '–' : f.value}</strong><small>{f.label}</small>{f.detail ? <small className="admin-metric-detail">{f.detail}</small> : null}</span>;
+        const cls = `admin-metric-card ${f.tone || 'sky'}`;
+        return f.onClick ? (
+          <button key={f.key} type="button" data-figure={f.key} className={cls} title={f.title} onClick={f.onClick}>{body}</button>
+        ) : (
+          <div key={f.key} data-figure={f.key} className={cls} title={f.title}>{body}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+// A choice among two or three, all in view: one pressed-in pill of options in
+// place of a select that hides them (app.css, `.adm-seg`). A radio group, so
+// the arrow keys move the choice. `value` on the group is what a test or a
+// script reads, as it read the select's. Use it for a filter or an order of
+// up to four short words; a longer list stays a `Select`.
+export function Segmented<K extends string>({
+  id, label, value, options, onChange,
+}: {
+  id: string;
+  label: string;
+  value: K;
+  options: Array<{ value: K; label: string; title?: string }>;
+  onChange: (value: K) => void;
+}) {
+  const move = (step: number) => {
+    const at = options.findIndex((o) => o.value === value);
+    const next = options[(at + step + options.length) % options.length];
+    if (next) onChange(next.value);
+  };
+  return (
+    <div
+      id={id}
+      role="radiogroup"
+      aria-label={label}
+      data-value={value}
+      className="adm-seg"
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      }}
+    >
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          tabIndex={o.value === value ? 0 : -1}
+          data-value={o.value}
+          title={o.title}
+          className="adm-seg-opt"
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Settings (26 Nov 2026) ──────────────────────────────────────────────
+//
+// A screen's settings read as settings: one card, a row for each, the name
+// and what it does after its switch, which says Yes or No, a rule between
+// two (app.css, `.adm-settings` / `.adm-setting` / `.adm-switch`). They were
+// a card apiece with a checkbox in it. An admin who cannot write sees Yes or
+// No where the switch would be. `checked` null is "not read yet".
+
+export function SettingsGroup({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
+  return (
+    <section className={`${PANEL_CLS} adm-settings mb-4`}>
+      <header className="adm-settings-head">
+        <h3 className="adm-title text-base font-semibold">{title}</h3>
+        {subtitle ? <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p> : null}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+export function SettingRow({
+  id, wrapId, title, help, checked, onChange, canEdit, meta, error, children,
+}: {
+  /** The switch's id. */
+  id: string;
+  /** The row's own id, for what looks the whole setting up. */
+  wrapId?: string;
+  title: ReactNode;
+  help?: ReactNode;
+  checked: boolean | null;
+  onChange: (next: boolean) => void;
+  canEdit: boolean;
+  /** A quiet last line: who switched it, and when. */
+  meta?: ReactNode;
+  /** Shown in place of the switch when the setting could not be read. */
+  error?: ReactNode;
+  /** Under the row: a question the switch asked, or what is happening now. */
+  children?: ReactNode;
+}) {
+  return (
+    <div id={wrapId} className="adm-setting">
+      <div className="adm-setting-main">
+        {/* The switch first, with its answer in a word beside it (Yes / No),
+            then what it is the answer to. */}
+        {error ? null : checked === null ? (
+          <span className="adm-setting-state"><span className="adm-setting-wait" aria-hidden="true" /></span>
+        ) : canEdit ? (
+          <span className="adm-setting-state">
+            <button
+              type="button"
+              id={id}
+              role="switch"
+              aria-checked={checked}
+              aria-labelledby={`${id}-label`}
+              className="adm-switch"
+              onClick={() => onChange(!checked)}
+            >
+              <span aria-hidden="true" />
+            </button>
+            <span className="adm-setting-word" aria-hidden="true">{checked ? 'Yes' : 'No'}</span>
+          </span>
+        ) : (
+          <span className="adm-setting-state"><Badge tone={checked ? 'mint' : 'zinc'} label={checked ? 'Yes' : 'No'} /></span>
+        )}
+        <div className="min-w-0">
+          <div className="adm-setting-title" id={`${id}-label`}>{title}</div>
+          {help ? <p className="adm-setting-help">{help}</p> : null}
+          {meta ? <p className="adm-setting-meta">{meta}</p> : null}
+        </div>
+      </div>
+      {error}
+      {children}
+    </div>
+  );
+}
+
+// ── A list that goes on as you scroll (26 Nov 2026) ─────────────────────
+//
+// In place of `Pager` under a list a person reads down: the next rows are
+// fetched when its foot comes into view, and added under the ones shown. It
+// says how many of the total are on screen, and carries a button that does
+// the same, for a reader who does not scroll (a keyboard, a screen reader).
+// The watcher is made again whenever `shown` changes, so a short page whose
+// foot is still in view after a load goes on loading.
+export function LoadMore({
+  shown, total, hasMore, onMore, noun,
+}: { shown: number; total: number; hasMore: boolean; onMore: () => void; noun?: string }) {
+  const foot = useRef<HTMLDivElement>(null);
+  const more = useRef(onMore);
+  more.current = onMore;
+  useEffect(() => {
+    const el = foot.current;
+    if (!el || !hasMore || typeof IntersectionObserver === 'undefined') return undefined;
+    const watcher = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) more.current();
+    });
+    watcher.observe(el);
+    return () => watcher.disconnect();
+  }, [hasMore, shown]);
+  const what = noun || 'rows';
+  return (
+    <div ref={foot} className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+      <span aria-live="polite">
+        {hasMore ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${what}` : `All ${total.toLocaleString()} ${what} shown`}
+      </span>
+      {hasMore ? <button type="button" className={BTN.row} onClick={onMore}>Load more</button> : null}
+    </div>
+  );
+}
+
+// ── A bar over a list, and a table written by hand (26 Nov 2026) ────────
+//
+// `Toolbar` is the one bar over a list: its search first (give it
+// `className="min-w-[14rem] flex-1"` on a wrapping div), then its filters,
+// then what acts on the list. A screen's header keeps only what acts on the
+// whole screen.
+export function Toolbar({ children }: { children: ReactNode }) {
+  return <div className="adm-toolbar mb-3 flex flex-wrap items-center gap-2">{children}</div>;
+}
+
+// For a table `List` cannot draw (a pivot, a chart's legend, rows with their
+// own nesting): the same classes `List` writes, so it is the same table. Use
+// `List` wherever the rows are plain records.
+export const TABLE = {
+  wrap: 'adm-card adm-table overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800',
+  table: 'w-full text-sm',
+  thead: 'bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
+  th: 'px-3 py-2 text-start font-medium',
+  tr: 'adm-row border-t border-zinc-100 dark:border-zinc-800',
+  td: 'px-3 py-2',
+} as const;

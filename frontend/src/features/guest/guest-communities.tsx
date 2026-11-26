@@ -71,12 +71,13 @@ import {
   UserCheckIcon,
   UserGroupIcon,
 } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { reducedMotion } from '../../lib/reduced-motion';
 import { noteSignUpFrom } from '../auth/sign-up-from';
-import { HERO_PRIMARY, HERO_SECONDARY, SITE_LABEL } from '../auth/story';
+import { HERO_SECONDARY, HERO_TAP, SITE_LABEL } from '../auth/story';
 
 // This page's headings are the hero's serif (--site-serif is Source Serif 4
 // under [data-guest-groups]), a touch heavier and tighter than the landing's.
@@ -497,9 +498,9 @@ export function GuestCommunities({ waitlist, onStart }: {
               <RichMessage id="auth:guest.groups.sub" components={[<span className="block" />, <span className="block" />]} />
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2.5 md:mt-6 lg:justify-start">
-              <button type="button" data-guest-groups-start="" className={HERO_PRIMARY} onClick={start}>
+              <Button type="button" data-guest-groups-start="" layout="site" variant="sitePrimary" size="site" ink="siteOnSun" className={HERO_TAP} onClick={start}>
                 {startLabel}
-              </button>
+              </Button>
               <a href="/" data-guest-groups-public="" className={HERO_SECONDARY}>
                 {t('auth:guest.groups.explore')}
               </a>

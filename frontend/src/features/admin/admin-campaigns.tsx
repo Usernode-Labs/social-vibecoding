@@ -8,6 +8,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { linkAttrs } from '../../lib/repo-link.js';
+// The shared admin kit (26 Nov 2026): header, figures, fields, list and
+// badges are the same parts every other admin page is drawn with.
+import { Badge, Figures, Input, List, ScreenHeader, Textarea } from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
+import { BTN } from './topochain/tokens.ts';
 
 // Maintenance campaigns section of the admin console (#860, #853) — the one
 // block on the retired standalone /admin page that the console never picked
@@ -147,33 +152,31 @@ function writeSubHash(id: number | null): void {
 }
 
 // An app's state: the campaign's own record, or (merged, closed) what came
-// of its proposal.
+// of its proposal. It is repeated down a campaign's apps, so it takes the
+// kit's soft tones, and red only for a failure.
 const APP_BADGE: ReadonlyMap<string, [string, string]> = new Map([
-  ['pending', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending']],
-  ['running', ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running']],
-  ['pr_open', ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open']],
-  ['merged', ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged']],
-  ['closed', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Closed']],
-  ['underway', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Back underway']],
-  ['skipped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped']],
-  ['failed', ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed']],
-  ['stopped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Not reached']],
+  ['pending', ['zinc', 'Pending']],
+  ['running', ['sky', 'Running']],
+  ['pr_open', ['sky', 'PR open']],
+  ['merged', ['mint', 'Merged']],
+  ['closed', ['zinc', 'Closed']],
+  ['underway', ['zinc', 'Back underway']],
+  ['skipped', ['zinc', 'Skipped']],
+  ['failed', ['red', 'Failed']],
+  ['stopped', ['zinc', 'Not reached']],
 ]);
 
 function AppBadge({ state }: { state?: string }) {
-  const [cls, label] = (state && APP_BADGE.get(state)) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
-  return (
-    <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
-      {label}
-    </span>
-  );
+  const [tone, label] = (state && APP_BADGE.get(state)) || ['zinc', state || '—'];
+  return <Badge tone={tone} label={label} />;
 }
+
+// A campaign's own status, beside its number in the header.
+const CAMPAIGN_TONE: ReadonlyMap<string, string> = new Map([['running', 'sky'], ['done', 'mint']]);
 
 const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-800 dark:text-green-400'
   : (s === 'failing' || s === 'error') ? 'text-red-700 dark:text-red-400'
     : 'text-zinc-500 dark:text-zinc-400');
-
-const ROW_LINK = 'text-xs text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 shrink-0';
 
 // POST one session recheck; resolves when the server accepted it (including
 // the "already running" coalesce response).
@@ -185,9 +188,24 @@ async function postRecheck(sessionId: number | string): Promise<void> {
   }
 }
 
-function AppRow({
-  app, campaignId, write, stopped, onDone,
-}: { app: CampaignApp; campaignId: number; write: boolean; stopped: boolean; onDone: () => void }) {
+type AppRowProps = { app: CampaignApp; campaignId: number; write: boolean; stopped: boolean; onDone: () => void };
+
+function showsRetry({ app, write, stopped }: AppRowProps): boolean {
+  return write && !stopped && (app.state === 'failed' || app.state === 'skipped');
+}
+
+// Failing/error checks on an open campaign PR: offer the same manual re-run
+// as the proposal card (#447). POSTs to the session recheck endpoint, which
+// stamps 'pending' and rebuilds staging if the preview is gone. The 8s
+// poll refreshes the row.
+function showsRecheck({ app, write }: AppRowProps): boolean {
+  return !!(write && app.state === 'pr_open' && app.sessionId
+    && (app.checkState === 'failing' || app.checkState === 'error'));
+}
+
+// One app's two actions, with the label each shows while it is under way.
+function AppActions(props: AppRowProps) {
+  const { app, campaignId, onDone } = props;
   const [busy, setBusy] = useState<'' | 'retry' | 'recheck'>('');
 
   const retry = async () => {
@@ -210,48 +228,58 @@ function AppRow({
     onDone();
   };
 
-  const showRetry = write && !stopped && (app.state === 'failed' || app.state === 'skipped');
-  // Failing/error checks on an open campaign PR: offer the same manual re-run
-  // as the proposal card (#447). POSTs to the session recheck endpoint, which
-  // stamps 'pending' and rebuilds staging if the preview is gone — the 8s
-  // poll refreshes the row.
-  const showRecheck = write && app.state === 'pr_open' && app.sessionId
-    && (app.checkState === 'failing' || app.checkState === 'error');
-
-  // A change kept in Homeroom opens its page here; a pull request on GitHub
-  // in a new tab (lib/repo-link.js).
-  const prLink = app.prUrl ? linkAttrs(app.prUrl) : null;
   return (
-    <li className="p-2 rounded bg-white dark:bg-zinc-900">
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-sm truncate">{app.slug}</span>
-        <span className="flex items-center gap-2">
-          {prLink ? (
-            <a href={prLink.href} target={prLink.target} rel={prLink.rel}
-              className="text-violet-700 dark:text-violet-400 hover:underline text-xs">
-              {`PR #${app.prNumber || '?'}`}
-            </a>
-          ) : null}
-          {app.checkState ? <span className={`text-xs ${CHECK_CLASS(app.checkState)}`}>{`checks: ${app.checkState}`}</span> : null}
-          <AppBadge state={app.state} />
-          {showRecheck ? (
-            <button type="button" className={`campaign-recheck-btn ${ROW_LINK}`}
-              disabled={busy === 'recheck'} onClick={recheck}>
-              {busy === 'recheck' ? 'Rechecking…' : 'Re-run checks'}
-            </button>
-          ) : null}
-          {showRetry ? (
-            <button type="button" className={`campaign-retry-btn ${ROW_LINK}`}
-              disabled={busy === 'retry'} onClick={retry}>
-              {busy === 'retry' ? 'Retrying…' : 'Retry'}
-            </button>
-          ) : null}
-        </span>
-      </div>
-      {app.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">{app.error}</div> : null}
-    </li>
+    <>
+      {showsRecheck(props) ? (
+        <button type="button" className={`campaign-recheck-btn ${BTN.row}`}
+          disabled={busy === 'recheck'} onClick={recheck}>
+          {busy === 'recheck' ? 'Rechecking…' : 'Re-run checks'}
+        </button>
+      ) : null}
+      {showsRetry(props) ? (
+        <button type="button" className={`campaign-retry-btn ${BTN.row}`}
+          disabled={busy === 'retry'} onClick={retry}>
+          {busy === 'retry' ? 'Retrying…' : 'Retry'}
+        </button>
+      ) : null}
+    </>
   );
 }
+
+// A campaign's apps are plain records, so they are the shared list.
+const APP_COLUMNS: Column<CampaignApp>[] = [
+  {
+    label: 'App',
+    primary: true,
+    cell: (app) => (
+      <>
+        <span className="font-mono text-sm">{app.slug}</span>
+        {app.error ? <span className="block text-xs font-normal text-red-700 dark:text-red-400 mt-0.5 break-words">{app.error}</span> : null}
+      </>
+    ),
+  },
+  {
+    label: 'PR',
+    cell: (app) => {
+      // A change kept in Homeroom opens its page here; a pull request on GitHub
+      // in a new tab (lib/repo-link.js).
+      const prLink = app.prUrl ? linkAttrs(app.prUrl) : null;
+      return prLink ? (
+        <a href={prLink.href} target={prLink.target} rel={prLink.rel}
+          className="text-violet-700 dark:text-violet-400 hover:underline text-xs">
+          {`PR #${app.prNumber || '?'}`}
+        </a>
+      ) : null;
+    },
+  },
+  {
+    label: 'Checks',
+    cell: (app) => (app.checkState
+      ? <span className={`text-xs ${CHECK_CLASS(app.checkState)}`}>{`checks: ${app.checkState}`}</span>
+      : null),
+  },
+  { label: 'State', cell: (app) => <AppBadge state={app.state} /> },
+];
 
 function CampaignRow({
   c, open, write, tick, onToggle, onReloadList,
@@ -411,13 +439,10 @@ function CampaignRow({
     refresh();
   };
 
-  const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
-    : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
-
   const detailId = `admin-campaign-${c.id}-detail`;
 
   return (
-    <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3" id={`admin-campaign-${c.id}`}>
+    <div className={`${AdminUI.card} p-3`} id={`admin-campaign-${c.id}`}>
       {/* A real button, like the console's other expanders (Merges' run-head,
           account deletions), so the header opens from the keyboard and says
           whether it is open. Its children are spans: a button holds phrasing
@@ -428,7 +453,7 @@ function CampaignRow({
         <span className="block min-w-0">
           <span className="block font-medium truncate">{c.title}</span>
           <span className="block text-xs text-zinc-500 dark:text-zinc-400">
-            {`#${c.id} · `}<span className={statusCls}>{c.status}</span>
+            {`#${c.id} · `}<Badge tone={CAMPAIGN_TONE.get(c.status) || 'zinc'} label={c.status} />
             {` · by ${c.created_by_username || 'platform'} · ${new Date(c.created_at).toLocaleString()}`}
           </span>
         </span>
@@ -443,7 +468,7 @@ function CampaignRow({
           <>
             <details className="mb-2">
               <summary className="text-xs text-zinc-500 dark:text-zinc-400 cursor-pointer">Instructions</summary>
-              <pre className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-zinc-900 max-h-48 overflow-y-auto">
+              <pre className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap mt-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800 max-h-48 overflow-y-auto">
                 {detail.instructions || ''}
               </pre>
             </details>
@@ -459,13 +484,19 @@ function CampaignRow({
                   : `Waiting: ${detail.held.open} of its proposals are up for a vote, the most it keeps open at once (${detail.held.maxOpen}). Merging or closing them lets it go on.`}
               </p>
             ) : null}
-            <ul className="space-y-1">
-              {apps.length
-                ? apps.map((a) => (
-                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} stopped={detail.status === 'cancelled'} onDone={refresh} />
-                ))
-                : <li className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</li>}
-            </ul>
+            {apps.length ? (
+              <List<CampaignApp>
+                items={apps}
+                columns={APP_COLUMNS}
+                rowKey={(a) => a.appId}
+                actions={(a) => {
+                  const row = { app: a, campaignId: c.id, write, stopped: detail.status === 'cancelled', onDone: refresh };
+                  // Nothing to offer on this row: say so, and the list draws
+                  // no actions column when no row has one.
+                  return showsRecheck(row) || showsRetry(row) ? <AppActions {...row} /> : null;
+                }}
+              />
+            ) : <p className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</p>}
             <div className="flex items-center justify-end gap-2 mt-2">
               <span className="campaign-detail-status text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
               {write && failingChecks.length > 0 ? (
@@ -494,7 +525,7 @@ function CampaignRow({
               ) : null}
               {write && green > 0 ? (
                 <button type="button" disabled={merging} onClick={mergeGreen}
-                  className="campaign-merge-green-btn rounded-lg bg-green-600 hover:bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-colors">
+                  className={`campaign-merge-green-btn ${AdminUI.btn.primarySm}`}>
                   {merging ? 'Merging…' : `Merge all green (${green})`}
                 </button>
               ) : null}
@@ -505,8 +536,6 @@ function CampaignRow({
     </div>
   );
 }
-
-const FORM_INPUT = 'w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm';
 
 function CampaignsSection() {
   const write = canWrite();
@@ -590,32 +619,49 @@ function CampaignsSection() {
     }
   };
 
+  // Counts the list already carries: nothing more is read for them.
+  const figures: Figure[] = [
+    { key: 'campaigns', label: 'Campaigns', value: loaded ? campaigns.length.toLocaleString() : null, tone: 'sky' },
+    {
+      key: 'running',
+      label: 'Running',
+      value: loaded ? campaigns.filter((c) => c.status === 'running').length.toLocaleString() : null,
+      tone: 'green',
+    },
+    {
+      key: 'failed',
+      label: 'Apps failed',
+      value: loaded ? campaigns.reduce((sum, c) => sum + (Number(c.failed_apps) || 0), 0).toLocaleString() : null,
+      tone: 'yellow',
+    },
+  ];
+
   return (
-    <div id="admin-campaigns-root" className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <h2 className={AdminUI.cardTitle}>Maintenance campaigns</h2>
-        <div className="flex items-center gap-3">
-          <button id="admin-refresh-campaigns" type="button" className={`${AdminUI.btn.link} text-xs`}
-            onClick={loadCampaigns}>Refresh</button>
-          {write ? (
-            <button id="admin-new-campaign-btn" type="button" className={AdminUI.btn.primary}
-              onClick={() => setFormOpen((v) => !v)}>New campaign</button>
-          ) : null}
-        </div>
-      </div>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-        Fleet-wide platform maintenance. A campaign fans one set of AI instructions out across every app as its own PR;
-        this list tracks per-app progress.
-      </p>
+    <div id="admin-campaigns-root">
+      <ScreenHeader
+        title="Maintenance campaigns"
+        subtitle="Fleet-wide platform maintenance. A campaign fans one set of AI instructions out across every app as its own PR; this list tracks per-app progress."
+        actions={(
+          <>
+            <button id="admin-refresh-campaigns" type="button" className={AdminUI.btn.outlineSm}
+              onClick={loadCampaigns}>Refresh</button>
+            {write ? (
+              <button id="admin-new-campaign-btn" type="button" className={AdminUI.btn.primarySm}
+                onClick={() => setFormOpen((v) => !v)}>New campaign</button>
+            ) : null}
+          </>
+        )}
+      />
+      <Figures id="admin-campaign-figures" items={figures} />
       {write ? (
-        <div id="admin-campaign-form" className={`${formOpen ? '' : 'hidden '}mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 space-y-2`}>
-          <input id="admin-campaign-title" type="text" maxLength={200} className={FORM_INPUT}
+        <div id="admin-campaign-form" className={`${formOpen ? '' : 'hidden '}${AdminUI.card} mb-4 p-4 space-y-2`}>
+          <Input id="admin-campaign-title" type="text" maxLength={200}
             placeholder="Campaign title, becomes each app's PR title"
             value={title} onChange={(e) => setTitle(e.target.value)} />
-          <textarea id="admin-campaign-instructions" rows={6} maxLength={20000} className={`${FORM_INPUT} font-mono`}
+          <Textarea id="admin-campaign-instructions" rows={6} maxLength={20000}
             placeholder="Instructions for the AI: what to change in each app, with code snippets where helpful. The AI reads each repo and applies these per-app."
             value={instructions} onChange={(e) => setInstructions(e.target.value)} />
-          <input id="admin-campaign-targets" type="text" className={`${FORM_INPUT} font-mono`}
+          <Input id="admin-campaign-targets" type="text" className="font-mono"
             placeholder="Optional: comma-separated app slugs to target (blank = every app)"
             value={targets} onChange={(e) => setTargets(e.target.value)} />
           <div className="flex flex-wrap items-center justify-between gap-2">

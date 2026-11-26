@@ -2430,6 +2430,15 @@ export function init() {
         // #6485: the app the person picked when they picked it, not whatever
         // app happens to be mounted now.
         if (target === 'app') body.appSlug = targetApp?.slug || App.currentApp;
+        // #7215: a report sent to Homeroom from a project's page remembers
+        // which project it was about, by slug. The server records its id
+        // only, so a private project is never named on the public request.
+        // Homeroom's own project is not "another project": skip it.
+        if (target === 'platform' && typeof App.currentApp === 'string'
+            && APP_SLUG_RE.test(App.currentApp)
+            && !(typeof AppView !== 'undefined' && AppView?.appData?.self_hosted)) {
+          body.aboutAppSlug = App.currentApp;
+        }
         // #5048: a private request goes to Homeroom alone. It never takes
         // the outbox or /api/feedback, both of which file a public GitHub
         // issue, and nothing attached goes with it.

@@ -958,7 +958,8 @@ function ChallengeScoringScreen() {
         if (!live) return <Badge label={r.covers[0].skipped || 'Idle'} tone="amber" />;
         // The count is noise when a rule pays into exactly one challenge,
         // which is every rule until a season runs two events at once.
-        return <Badge label={live > 1 ? `Scoring ${live}` : 'Scoring'} tone="green" />;
+        // The soft tone: it is the status of nearly every row (26 Nov 2026).
+        return <Badge label={live > 1 ? `Scoring ${live}` : 'Scoring'} tone="mint" />;
       },
     },
   ];
