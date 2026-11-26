@@ -239,6 +239,11 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       className={cn(
         'ui-lrow relative flex w-full items-center gap-4 px-4 py-3.5 text-start',
         (props.onClick || as === 'button' || as === 'a') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
+        // A row that names the page open beside its list (a conversation in
+        // the Messages column) is lit in the "where you are" tint, as the
+        // sidebar's current row is (AGENTS.md, "One accent"). Only `page`:
+        // `step` and `true` mark other things on other lists.
+        'aria-[current=page]:bg-[color:var(--lit-tint)]',
         rowSeparator({ inset: depth }),
         className,
       )}
@@ -283,3 +288,49 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     </Tag>
   );
 });
+
+/**
+ * THE ROW'S TRAILING FACTS: a short line level with the title (a time, "2h")
+ * and, under it, an optional one level with the subtitle (a count, "2 new").
+ * The Messages inbox drew this pair by hand inside its own row, the time at
+ * the end of the name's line and the count at the end of the preview's; as
+ * the row's `trailing` it is the same two facts in one column, so the title
+ * and the subtitle keep the row's whole width to truncate in.
+ *
+ * Each line keeps its line's height (the title's and the subtitle's, at
+ * both sizes), and the second is drawn even when it is empty, so the first
+ * always sits on the title's line rather than drifting to the row's middle
+ * when there is no count. `tone` says which line asks to be read: `strong`
+ * puts the first in the ink (something new since you last looked), `quiet`
+ * leaves both grey. The second line is grey and semibold either way: new to
+ * read, not waiting on you (AGENTS.md, "One accent").
+ */
+const rowMetaTop = cva(
+  'ui-lrow-mt whitespace-nowrap text-sm leading-[1.3125rem] tabular-nums md:text-[0.8125rem] md:leading-5',
+  {
+    variants: {
+      tone: {
+        quiet: 'text-zinc-500 dark:text-zinc-400',
+        strong: 'font-semibold text-zinc-900 dark:text-zinc-100',
+      },
+    },
+    defaultVariants: { tone: 'quiet' },
+  },
+);
+
+export interface ListRowMetaProps extends VariantProps<typeof rowMetaTop> {
+  /** The fact level with the title: usually a `<time>` with its whole instant in `title`. */
+  top?: React.ReactNode;
+  /** The fact level with the subtitle, or nothing (its line is kept). */
+  bottom?: React.ReactNode;
+  className?: string;
+}
+
+export function ListRowMeta({ top, bottom, tone, className }: ListRowMetaProps) {
+  return (
+    <span className={cn('ui-lrow-m flex shrink-0 flex-col items-end', className)}>
+      <span className={rowMetaTop({ tone })}>{top}</span>
+      <span className="ui-lrow-mb mt-0.5 min-h-[1.1875rem] whitespace-nowrap text-sm font-semibold leading-[1.1875rem] text-zinc-500 md:min-h-[1.125rem] md:text-[0.8125rem] md:leading-[1.125rem] dark:text-zinc-400">{bottom}</span>
+    </span>
+  );
+}

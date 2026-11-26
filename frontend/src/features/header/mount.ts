@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { backButtonStore } from './back-button-store.js';
 import { headerTitleStore } from './header-title-store.js';
 import { clearShellSnapshot, saveShellSnapshot } from '../../lib/shell-snapshot';
+// Publishes window.UsernodeReact.documentTitle: the browser tab's title on a
+// project's pages (request #7164), which App.setHeaderTitle asks first.
+import './document-title';
 
 headerTitleStore.setFlush(flushSync);
 // Same reason as the title's: App.setBackIcon's callers read the header back

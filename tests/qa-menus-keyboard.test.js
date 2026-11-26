@@ -246,12 +246,17 @@ test('Q15: Messages and the group chat never call window.confirm()', () => {
   for (const file of [
     'frontend/src/features/messages/index.tsx',
     'frontend/src/features/messages/members-dialog.tsx',
-    'frontend/src/features/messages/message-row.tsx',
-    'frontend/src/features/group-chat/transcript.tsx',
+    // Both chats' rows ask through the one message menu.
+    'frontend/src/features/message-actions/message-menu.ts',
   ]) {
     const code = read(file).replace(/\/\/.*$/gm, '');
     assert.doesNotMatch(code, /window\.confirm\(/, `${file} asks through lib/confirm.ts`);
     assert.match(code, /confirmAction\(\{/, `${file} uses confirmAction`);
+  }
+  for (const file of ['frontend/src/features/messages/message-row.tsx', 'frontend/src/features/group-chat/transcript.tsx']) {
+    const code = read(file).replace(/\/\/.*$/gm, '');
+    assert.doesNotMatch(code, /window\.confirm\(/, file);
+    assert.match(code, /messageMenu\(\{/, `${file} builds its menu with message-actions/message-menu.ts`);
   }
   // Audit D09: the new-message picker no longer blocks anyone, so it has
   // nothing to confirm; it still never calls the browser's.
@@ -324,10 +329,11 @@ test('Enter sends where there is a keyboard, Shift + Enter is a new line, and to
   assert.equal(keys.enterSends(enter({ isComposing: true, ctrlKey: true }), false), false);
   assert.equal(keys.enterSends({ key: 'a' }, false), false, 'no other key');
 
-  // Touch is the channels' own reading (GroupChat._isTouch), so a channel's
-  // box and a conversation's agree on every device.
+  // Touch is read here and nowhere else: the channels' boxes ask this rule
+  // too (the next test), so a channel's box and a conversation's agree on
+  // every device.
   assert.equal(keys.NO_HOVER_QUERY, '(hover: none)');
-  assert.match(read('public/js/group-chat.js'), /_isTouch\(\) \{\s*return !!\(window\.matchMedia && window\.matchMedia\('\(hover: none\)'\)\.matches\);/);
+  assert.doesNotMatch(read('public/js/group-chat.js'), /_isTouch|hover: none/, 'no second reading of touch');
   const asked = [];
   const device = (noHover) => ({ matchMedia: (query) => { asked.push(query); return { matches: noHover }; } });
   assert.equal(keys.isTouchInput(device(true)), true);
@@ -346,6 +352,22 @@ test('Enter sends where there is a keyboard, Shift + Enter is a new line, and to
   } finally {
     if (savedWindow === undefined) delete global.window; else global.window = savedWindow;
   }
+});
+
+test('a project channel, a thread, both inline editors and a board card\'s reply ask the same rule', () => {
+  // The classic scripts reach it as a global the shell bundle publishes.
+  const rule = read('frontend/src/lib/enter-sends.ts');
+  assert.match(rule, /\.UsernodeEnterSends = \{ enterSends \};/);
+  assert.match(read('frontend/src/main.tsx'), /import '\.\/lib\/enter-sends';/);
+  const gc = read('public/js/group-chat.js');
+  assert.match(gc, /_enterSends\(e\) \{\s*const rule = window\.UsernodeEnterSends;\s*return !!\(rule && rule\.enterSends\(e\)\);/);
+  assert.match(gc, /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*submitThread\(\);/, 'a thread\'s box');
+  assert.match(gc, /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*GroupChat\._saveEdit/, 'the channel\'s inline editor');
+  assert.match(read('public/js/app-view.js'), /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*submitGeneral\(\);/, 'a channel\'s box');
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /if \(event\.key === 'Escape'\) setEditing\(false\); else if \(enterSends\(event\.nativeEvent\)\) \{ event\.preventDefault\(\); void saveEdit\(\); \}/,
+    'Messages\' inline editor: on a touch screen Enter is a new line there too');
+  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'), /if \(!enterSends\(e\.nativeEvent\)\) return;/, 'a board card\'s reply');
 });
 
 test('the conversation composer and the New thread box share the rule, and say it only where it holds', () => {

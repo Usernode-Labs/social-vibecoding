@@ -1373,9 +1373,33 @@ function authRoutes(config) {
     try {
       const currentCredential = await currentNativeCredential(req);
       const phones = await linkedPhones.listLinkedPhones(pool, req.user.id, { currentCredential });
-      res.json({ phones });
+      // #7159: `phones` stays one row per install, as the mobile app may
+      // read it; `devices` is the same list with one row per kind of phone,
+      // which is what the page draws.
+      res.json({ phones, devices: linkedPhones.groupLinkedPhones(phones) });
     } catch (err) {
       log.error('settings', 'Failed to list linked phones', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #7159: unlink a whole device, every install of one kind of phone the
+  // account holds. Registered before the per-install route, whose `:id`
+  // never matches a second path segment anyway.
+  router.delete('/api/me/phones/device/:key', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const key = req.params.key;
+    if (!linkedPhones.isPhoneDeviceKey(key)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const currentCredential = await currentNativeCredential(req);
+      const { unlinked, current } = await withTransaction(pool, (client) => (
+        linkedPhones.unlinkPhoneDevice(client, req.user.id, key, { currentCredential })
+      ));
+      if (!unlinked) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Linked phone device unlinked', { userId: req.user.id, unlinked, current });
+      res.json({ ok: true, unlinked, current });
+    } catch (err) {
+      log.error('settings', 'Failed to unlink phone device', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1408,9 +1432,32 @@ function authRoutes(config) {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
         currentToken: readSessionCookie(req) || null,
       });
-      res.json({ browsers });
+      // #7159: `devices` is the same list with one row per browser on a
+      // system, which is what the page draws.
+      res.json({ browsers, devices: linkedBrowsers.groupLinkedBrowsers(browsers) });
     } catch (err) {
       log.error('settings', 'Failed to list browser sessions', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #7159: sign a whole device out, every sign-in of one browser on one
+  // system the account holds.
+  router.delete('/api/me/browser-sessions/device/:key', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const key = req.params.key;
+    if (!linkedBrowsers.isBrowserDeviceKey(key)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const currentToken = readSessionCookie(req) || null;
+      const { signedOut, current } = await linkedBrowsers.signOutBrowserDevice(pool, req.user.id, key, { currentToken });
+      if (!signedOut) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Browser device signed out', { userId: req.user.id, signedOut, current });
+      if (current) {
+        clearSessionCookies(res);
+      }
+      res.json({ ok: true, signedOut, current });
+    } catch (err) {
+      log.error('settings', 'Failed to sign a browser device out', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -33,6 +33,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const overviewTsx = read('frontend/src/features/admin/admin-overview.tsx');
+const appCss = read('public/css/app.css');
 const islandTsx = read('frontend/src/features/admin/index.tsx');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -179,7 +180,8 @@ test('the strip: Home first and unclosable, tabs closable by × and middle-click
   assert.match(strip, /parts\.push\(tab\(byKey\.get\('overview'\), false\)\)/, 'Home first, no close');
   assert.match(strip, /data-admin-tab-close="\$\{s\.key\}"/);
   assert.match(strip, /data-admin-tab="\$\{s\.key\}"\$\{on \? ' aria-current="page"' : ''\}/);
-  assert.match(strip, /flex flex-wrap/, 'the strip wraps');
+  assert.match(strip, /class="admin-tab-strip flex items-center gap-1\.5"/, 'the strip is laid out by app.css');
+  assert.match(appCss, /\.admin-tab-strip \{ flex-wrap: wrap;/, 'the strip wraps');
   assert.doesNotMatch(consoleJs, /overflow-x-(auto|scroll)/, 'nothing scrolls sideways');
   const wire = method(consoleJs, '  _wireTopBar(host) {');
   assert.match(wire, /addEventListener\('auxclick'/);

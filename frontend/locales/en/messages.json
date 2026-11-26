@@ -2979,6 +2979,10 @@
     "text": "Marked unread",
     "description": "Brief confirmation after choosing \"Mark unread\" on a message."
   },
+  "row.menu.makeRequest": {
+    "text": "Make this a request",
+    "description": "Item in a chat message's menu: asks Homeroom bot to treat the message as a request to build something for the project. 'Request' is a noun."
+  },
   "row.menu.viewThread": {
     "text": "View thread",
     "description": "Item in a message's actions menu when the message already has replies in a thread: opens the thread."
