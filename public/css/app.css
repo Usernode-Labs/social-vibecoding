@@ -3610,6 +3610,31 @@ html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) 
   object-position: left top;
 }
 
+/* THE PICTURE YOU PRESSED IS THE ONE THAT FLIES. The page's picture is
+   snapshotted about 30ms after the press, and it starts on its still: its
+   preview loop mounts after it and fades in once it plays
+   (frontend/src/features/guest/project-card.tsx). A card under the pointer is
+   already playing that loop, so the default cross-fade turned the loop into
+   the poster and back again in mid-air. The card's image is held for most of
+   the flight and the page's comes in over its last 100ms, by which time a
+   loop the card was playing has usually started on the page as well. */
+@keyframes guest-hero-hold-out {
+  0%, 75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes guest-hero-hold-in {
+  0%, 75% { opacity: 0; }
+  100% { opacity: 1; }
+}
+::view-transition-old(guest-hero) {
+  animation-name: guest-hero-hold-out;
+  animation-timing-function: linear;
+}
+::view-transition-new(guest-hero) {
+  animation-name: guest-hero-hold-in;
+  animation-timing-function: linear;
+}
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress
@@ -10948,7 +10973,14 @@ html:root #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platfor
     --platform-rail-full: var(--wip-nav-mini-w);
     --platform-rail-w: var(--wip-nav-mini-w);
   }
-  html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) { display: flex; }
+  /* …BUT A RAIL THE ROUTE HAS TAKEN AWAY STAYS AWAY. An id outranks
+     Tailwind's `.hidden`, so this rule without `:not(.hidden)` kept a hidden,
+     folded rail laid out under the signed-out landing and a running app. A
+     view transition draws `platform-tabs` as its own group, above the page,
+     and the "rail is going away" rule holds its old image at full opacity:
+     pressing a Discover card on a medium window flashed the strip down the
+     left for the 0.4s of the morph. */
+  html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek):not(.hidden) { display: flex; }
   html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-inline: var(--wip-nav-mini-pad); }
   html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x) { display: none; }
   /* THE COUNTS STAY, ON THE GLYPH'S CORNER (phone review #81, 23 Nov 2026). Folded, the votes waiting on you were
