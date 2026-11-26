@@ -872,6 +872,11 @@ account for most changes that end up with no shots:
   copies have no model key. A seed cannot help a change to a state that
   already existed, which both copies need: put the steps that make it in
   `hints.setup`, or seed it first, in its own proposal.
+  A seeded request shows on a copy in its project's list and at its own
+  address whenever the project has no repository. In a project that has a
+  repository, a copy without GitHub opens the request's page but keeps the
+  fixture list, because the declared checks read those rows. A seed that
+  writes nothing is named on the run with its reason.
 - **It has no role in your app.** `member` is an ordinary signed-in member:
   not your app's manager or owner, with no linked wallet and nothing it
   made. When a change shows only to someone with a role, put the real

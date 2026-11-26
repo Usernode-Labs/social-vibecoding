@@ -633,9 +633,10 @@ function stagingConnectionLimit() {
 // A copy can hold up to 14: those 12, and the presence client
 // (services/process-presence.js) and read-only debug pool
 // (services/debug-access.js, max 1), which it may open though none of the
-// 600 copies seen in the six days to 5 Nov held either. The platform's four
+// 600 copies seen in the six days to 5 Nov held either. The platform's five
 // (the fixtures client and the per-database client, then the before-copy seed
-// step's two, src/db/seed-other-copy.js) make 18, and 20 leaves two for a
+// step's two, src/db/seed-other-copy.js, and the after-copy seed report's
+// read, services/shots-environment.js) make 19, and 20 leaves one for a
 // pool replacing a connection whose backend has not exited yet. Still a
 // backstop, not a budget. The preview
 // server allows 400 connections and peaked at 216 in the same days, with at

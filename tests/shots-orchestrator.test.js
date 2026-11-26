@@ -715,16 +715,62 @@ test('Homeroom\'s brief carries changeSeeds only when a seed was left out of the
     assert.equal('changeSeeds' in briefFor(null), false);
 
     const applied = briefFor({ ran: true, applied: [], leftOut: [{ name: 'seedNeedsNewTable', why: 'schema' }] });
-    assert.deepEqual(applied.changeSeeds, {
-      beforeCopy: 'applied',
-      leftOut: [{ seed: 'seedNeedsNewTable', why: 'schema' }],
-      note: applied.changeSeeds.note,
+    assert.equal(applied.changeSeeds.beforeCopy, 'applied');
+    assert.deepEqual(applied.changeSeeds.leftOut, [{ seed: 'seedNeedsNewTable', why: 'schema' }]);
+    assert.deepEqual(applied.changeSeeds.didNothing, {
+      before: [{ seed: 'seedNeedsNewTable', outcome: 'failed', reason: 'the before copy\'s database cannot hold it' }],
+      after: [],
     });
-    assert.match(applied.changeSeeds.note, /the before copy can't hold the demo data this change adds \(seed name\)/);
+    assert.match(applied.changeSeeds.note, /did nothing on the <before\|after> copy: <reason>/);
     assert.match(applied.changeSeeds.note, /on the after copy only/);
 
     assert.equal(briefFor({ ran: 'partial', leftOut: [] }).changeSeeds.beforeCopy, 'partial');
     assert.equal(briefFor({ ran: false, reason: 'no_runner' }).changeSeeds.beforeCopy, 'not_run');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('#7172: a copy whose seeds wrote nothing reaches the brief and the verdict', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-change-seeds-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const afterSeeds = {
+      ran: true,
+      outcomes: Array.from({ length: 7 }, (_, i) => ({
+        name: `seedNothing${i}`, outcome: i === 0 ? 'failed' : 'skipped', reason: `no project p${i}`,
+      })),
+    };
+    const brief = orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A guest-ready demo project' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/db/migrate.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' }, afterSeeds },
+      intent: contract.parseIntent(fixtures.intent()),
+      selfApp: true,
+    });
+    assert.equal(brief.changeSeeds.didNothing.after.length, 7);
+    assert.equal(brief.changeSeeds.didNothing.after[0].seed, 'seedNothing0', 'a failed seed comes first');
+    assert.equal(brief.changeSeeds.didNothing.before.length, 0);
+
+    const verdict = orchestrator.verdictOf({
+      summary: {
+        stories: [{ id: 'one', status: 'skipped', reason: 'The seeded request does not exist.' }],
+        verdict: { passed: false }, readyCount: 0, failedCount: 0, manifestHash: 'x', files: [],
+      },
+      intent: { stories: [] },
+      seeds: brief.changeSeeds.didNothing,
+    });
+    assert.deepEqual(verdict.seeds, brief.changeSeeds.didNothing);
+    assert.deepEqual(verdict.verdict.seeds, brief.changeSeeds.didNothing,
+      'the published verdict carries them for shot_runs.hard_verdict.seeds');
+    assert.match(verdict.incompleteReason, /Demo data that did not load on the after copy:/);
+    assert.match(verdict.incompleteReason, /seedNothing0 \(failed: no project p0\)/);
+    assert.match(verdict.incompleteReason, /and 2 more/);
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }

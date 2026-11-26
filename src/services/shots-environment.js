@@ -22,6 +22,7 @@ const shotsFixtures = require('./shots-fixtures');
 const shotsDemoStates = require('./shots-demo-states');
 const { getPool } = require('../db/pool');
 const repoRef = require('./repo-ref');
+const { Client } = require('pg');
 
 const IMAGE_RECIPE = 'v1';
 const SHOTS_LABEL = 'social.usernode.io/shots-run';
@@ -522,6 +523,31 @@ const SEEDS_NAME_RE = /^[A-Za-z][A-Za-z0-9]{2,79}$/;
 // A seed name and why it could not be written: `schema` (a table, column or
 // constraint the before copy lacks) or `media` (a file only the after copy
 // holds). Anything else is unreadable, and the run says nothing was applied.
+const SEED_OUTCOMES = new Set(['wrote', 'nothing', 'skipped', 'failed']);
+const REASON_MAX = 200;
+
+// #7172: the seeds' own report (staging-seed-outcome.js) when a copy carries
+// one. `null` for an older head image, an unreadable row, or a copy whose
+// schema has no platform_settings at all.
+function validSeedOutcomes(value) {
+  const list = Array.isArray(value) ? value : value?.outcomes;
+  if (!Array.isArray(list)) return null;
+  if (list.length > SEEDS_MAX_ENTRIES) return null;
+  const outcomes = [];
+  for (const entry of list) {
+    if (!entry || !SEEDS_NAME_RE.test(String(entry.name || ''))) return null;
+    if (!SEED_OUTCOMES.has(entry.outcome)) return null;
+    if (entry.reason != null && typeof entry.reason !== 'string') return null;
+    if (entry.outcome === 'wrote') continue;
+    outcomes.push({
+      name: entry.name,
+      outcome: entry.outcome,
+      reason: typeof entry.reason === 'string' ? entry.reason.slice(0, REASON_MAX) : null,
+    });
+  }
+  return outcomes.length ? { outcomes } : null;
+}
+
 function validSeedsResult(value) {
   if (!value || value.version !== 1 || !Array.isArray(value.applied) || !Array.isArray(value.leftOut)) return null;
   if (value.applied.length + value.leftOut.length > SEEDS_MAX_ENTRIES) return null;
@@ -532,7 +558,45 @@ function validSeedsResult(value) {
     if (!['schema', 'media'].includes(entry.why)) return null;
     leftOut.push({ name: entry.name, why: entry.why });
   }
-  return { ran: true, applied: value.applied, leftOut };
+  const outcomes = validSeedOutcomes(value.outcomes);
+  if (value.outcomes != null && !outcomes) return null;
+  return { ran: true, applied: value.applied, leftOut, ...(outcomes ? { outcomes: outcomes.outcomes } : {}) };
+}
+
+// The head copy's own report of what its staging seeds did, read from the
+// copy's platform_settings once it has booted. Never throws: a copy that has
+// none (an older image, or an app with no such key) simply has no report.
+async function readAfterSeeds(config, pair, cloneBySide) {
+  const url = dbManager.connectionUrl(
+    pair.sides.head.dbName, cloneBySide.head.password, { server: cloneBySide.head.server }
+  );
+  const client = new Client({
+    connectionString: url,
+    connectionTimeoutMillis: 5_000,
+    statement_timeout: 5_000,
+    query_timeout: 5_000,
+    application_name: require('../db/connection-options').connectionName('shots-seeds-report'),
+  });
+  try {
+    await client.connect();
+    const { rows } = await client.query("SELECT value FROM platform_settings WHERE key = 'staging_seed_report'");
+    if (!rows.length) return null;
+    let parsed = null;
+    try { parsed = JSON.parse(rows[0].value); } catch (_) { return null; }
+    const valid = validSeedOutcomes(parsed);
+    if (!valid) {
+      log.warn('shots', 'The after copy answered an unreadable staging seed report', { runId: pair.runId });
+      return null;
+    }
+    return { ran: true, ...valid };
+  } catch (error) {
+    log.warn('shots', 'Could not read the after copy\'s staging seed report', {
+      runId: pair.runId, error: error?.message || String(error),
+    });
+    return null;
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 // `/result` is pending (202, "pending") until the runner has an answer. Docker
@@ -694,6 +758,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       return [side, deployed];
     }));
     pair.deployments = Object.fromEntries(deployments);
+    // #7172: what the head copy's own seeds wrote, or why they wrote
+    // nothing, read from that copy once it has booted.
+    const afterSeeds = await readAfterSeeds(config, pair, cloneBySide);
     let fixtureProfile = null;
     let availableFixtures = [];
     let beforeSeeds = null;
@@ -785,6 +852,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       fixtureFingerprint: pair.fixtureFingerprint,
       availableFixtures,
       beforeSeeds,
+      afterSeeds,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
       // For the shots agent's brief only (shots-orchestrator.js shotsBrief),
@@ -855,5 +923,8 @@ module.exports = {
   preparePair,
   resetPair,
   stopPair,
+  // #7172: the seed-result shapes, as their test seams.
+  validSeedsResult,
+  validSeedOutcomes,
   cleanupPair,
 };
