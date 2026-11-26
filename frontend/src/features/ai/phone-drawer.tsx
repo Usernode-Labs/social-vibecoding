@@ -33,6 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 
 import { EmbeddedConversation } from '../messages';
+import { NewChatInBar } from './new-chat-bar';
 import { isPan, landingIn, SLIDE_EASE, SLIDE_MS } from '../nav-drawer/drawer-math';
 import { reducedMotion } from '../nav-drawer/drawer-store';
 import { dirSign } from '../../lib/i18n/direction';
@@ -65,7 +66,12 @@ export function ThreadPane({ botId, active, at, onBack }: {
   at: { threadRootId: number | null; focusMessageId: number | null } | null;
   onBack: () => void;
 }): ReactNode {
-  return botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} threadsOnly onBack={onBack} /> : null;
+  // One look (25 Nov 2026): a new chat here is named by the bar (./new-chat-bar.ts).
+  return botId ? (
+    <NewChatInBar.Provider value>
+      <EmbeddedConversation conversationId={botId} active={active} at={at} threadsOnly onBack={onBack} />
+    </NewChatInBar.Provider>
+  ) : null;
 }
 
 // ── The list is the whole screen ──
@@ -74,13 +80,15 @@ export function ThreadPane({ botId, active, at, onBack }: {
 export const FULL_AT: readonly [number, number] = [0, 1];
 
 /** The strip: the list, then the column a whole screen to its right; level 0 the list, 1 the thread or the new chat. */
-export function AiDrawer({ level, onLevel, list, pane, canOpen = true }: {
+export function AiDrawer({ level, onLevel, list, pane, canOpen = true, onPan }: {
   level: 0 | 1;
   onLevel: (next: 0 | 1) => void;
   list: ReactNode;
   pane: ReactNode;
   /** Whether anything is to the list's right: a thread or a new chat. With nothing there the list does not pan. */
   canOpen?: boolean;
+  /** One look: where a pan has the strip (0 the list, 1 the column), then null and where it lands, for the bar (./new-chat-bar.ts). */
+  onPan?: (depth: number | null, lands?: 0 | 1) => void;
 }): ReactNode {
   const root = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
@@ -123,6 +131,7 @@ export function AiDrawer({ level, onLevel, list, pane, canOpen = true }: {
     }
     const next = Math.max(0, Math.min(at[1], at[p.from] - dx / width));
     setDrag(next);
+    onPan?.(next);
   };
   const up = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
@@ -132,9 +141,15 @@ export function AiDrawer({ level, onLevel, list, pane, canOpen = true }: {
     swallow.current = true;
     setDrag(null);
     const lands = landingIn(at, p.from, now, (e.clientX - p.x) * dirSign()) as 0 | 1;
+    onPan?.(null, lands);
     onLevel(lands);
   };
-  const cancel = () => { pan.current = null; setDrag(null); };
+  const cancel = () => {
+    const was = pan.current;
+    pan.current = null;
+    setDrag(null);
+    if (was?.panning) onPan?.(null, was.from);
+  };
 
   return (
     <div

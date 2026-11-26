@@ -64,7 +64,7 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
@@ -609,7 +609,7 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
           leading={<IconTile size="xs" className={OWED_TILE}><BallotIcon aria-hidden="true" /></IconTile>}
           titleClassName={TITLE_WITH_PILL}
           title={pillTitle(t('project:hub.needs.upForVote'), (
-            <span className="dev-ws-foryou-pill dev-ws-foryou-pill-light" data-ws-hub-needs-count="">
+            <span className="dev-ws-foryou-pill dev-ws-foryou-pill-light one-tag" data-ws-hub-needs-count="">
               <span aria-hidden="true">{votes.length}</span>
               <span className="sr-only">{t('project:hub.needs.upForVoteCount', { count: votes.length })}</span>
             </span>
@@ -641,7 +641,7 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
         onClick={onOpen}
         leading={<IconTile size="xs" className={count ? OWED_TILE : undefined}><BallotIcon aria-hidden="true" /></IconTile>}
         titleClassName={TITLE_WITH_PILL}
-        title={pillTitle(t('project:hub.needs.title'), count ? <span className="dev-ws-foryou-pill">{t('project:hub.needs.toVote', { count })}</span> : null)}
+        title={pillTitle(t('project:hub.needs.title'), count ? <span className="dev-ws-foryou-pill one-tag one-tag-strong">{t('project:hub.needs.toVote', { count })}</span> : null)}
         subtitle={sub}
       />
       {count && !canPost ? (
@@ -744,7 +744,7 @@ function DiscussionRow({ data, onOpen, outsider = false }: {
           components={[<span className="dev-ws-foryou-handle" />]}
         />
       ), unread > 0 ? (
-        <span className="dev-ws-foryou-pill" data-ws-channel-unread={String(unread)}>
+        <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-channel-unread={String(unread)}>
           {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
         </span>
       ) : null)}
@@ -862,7 +862,7 @@ export function TopicsCard({ data, onOpen }: {
                   {topic.name || topic.handle} <span className="dev-ws-foryou-handle">#{topic.handle}</span>
                 </>
               ), unread ? (
-                <span className="dev-ws-foryou-pill" data-ws-hub-topic-unread={String(unread)}>
+                <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-hub-topic-unread={String(unread)}>
                   {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
                 </span>
               ) : null)}
@@ -914,7 +914,8 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
     <section className="dev-ws-hub-section" data-ws-hub-contributors={span} aria-labelledby={headId}>
       <div className="dev-ws-hub-sechead">
         <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.contributors.title')}</SectionHeader>
-        <div className="dev-ws-contrib-span" role="group" aria-label={t('project:hub.contributors.span')}>
+        {/* ONE LOOK (25 Nov 2026): the shared segmented control, its ink pill sliding to the span picked. */}
+        <div className="dev-ws-contrib-span one-seg" role="group" aria-label={t('project:hub.contributors.span')} style={{ '--one-seg-n': 2, '--one-seg-i': span === 'month' ? 0 : 1 } as CSSProperties}>
           <button type="button" data-ws-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
             {t('project:hub.contributors.month')}
           </button>
@@ -938,7 +939,8 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
               </span>
             )}
             title={person.username}
-            trailing={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}
+            // ONE LOOK (25 Nov 2026): the count is the row's second line, as every row's is.
+            subtitle={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}
           />
         )) : (
           <p className="dev-ws-week-note" data-ws-contrib-none="">{t('project:hub.contributors.emptyMonth')}</p>

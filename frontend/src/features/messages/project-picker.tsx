@@ -106,7 +106,8 @@ export function ProjectChip({ slug, open, onOpen }: {
   return (
     <button
       type="button"
-      className="messages-project-chip"
+      // One look (25 Nov 2026): a menu chip, the shared part, its lead word quiet.
+      className="messages-project-chip one-chip"
       data-bot-new-thread-project={slug || ''}
       data-picked={info ? '' : undefined}
       aria-haspopup="dialog"
@@ -118,7 +119,7 @@ export function ProjectChip({ slug, open, onOpen }: {
       {info ? <Tile info={info} className="messages-project-chip-tile" /> : null}
       {/* Phone review S13: it says what it picks ("About: Homeroom", "With:
           Homeroom bot"), and those words are its name for a screen reader. */}
-      <span className="messages-project-chip-name"><RichMessage id="messages:newThread.projectChip" values={{ project: name }} components={[<span className="messages-project-chip-label" />]} /></span>
+      <span className="messages-project-chip-name"><RichMessage id="messages:newThread.projectChip" values={{ project: name }} components={[<span className="messages-project-chip-label one-chip-lead" />]} /></span>
       <ChevronDownIcon className="messages-project-chip-chev" aria-hidden="true" />
     </button>
   );

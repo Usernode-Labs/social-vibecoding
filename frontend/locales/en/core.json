@@ -589,7 +589,7 @@
   },
   "header.drawer.messages": {
     "text": "Messages",
-    "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level."
+    "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level, and over a conversation opened from that list."
   },
   "header.drawer.toMessages": {
     "text": "Back to your messages",

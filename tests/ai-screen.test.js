@@ -1889,8 +1889,9 @@ test('on a phone the list and one thread (or a new chat) are one drawer, as Mess
   assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
   assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); openNewChat\(\); \} \}\}/, 'and the Ask bar slides a new chat in');
   // One header: the platform's, which names the tab; a thread draws its own head.
+  // One look (25 Nov 2026): a new chat in the pane is named by that header (./new-chat-bar.ts).
   assert.ok(!drawer.includes('ai-drawer-head'));
-  assert.match(drawer, /return botId \? <EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} threadsOnly onBack=\{onBack\} \/> : null;/);
+  assert.match(drawer, /<NewChatInBar\.Provider value>\s+<EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} threadsOnly onBack=\{onBack\} \/>\s+<\/NewChatInBar\.Provider>/);
   assert.match(src, /canOpen=\{threadUp\}\s+pane=\{<ThreadPane botId=\{botId\} active=\{visible\} at=\{at\} onBack=\{toList\} \/>\}/);
   assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
   assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
@@ -1903,7 +1904,8 @@ test('on a phone the list is always the whole screen, and its second level is a 
   assert.match(drawer, /const at = FULL_AT;/);
   assert.ok(!drawer.includes('OPENED_KEY'), 'no per-device switch into a drawer that peeks');
   assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
-  assert.match(drawer, /const lands = landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1;\s+onLevel\(lands\);/);
+  // One look (25 Nov 2026): the bar's words follow the pan and settle where it lands.
+  assert.match(drawer, /const lands = landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1;\s+onPan\?\.\(null, lands\);\s+onLevel\(lands\);/);
   // There is no Main Chat to its right: with no thread and no new chat the
   // list does not pan toward an empty level, and the page slides back to the
   // list once the thread or the new chat closes.

@@ -128,8 +128,10 @@ test('the primitives keep their stable names', () => {
   assert.match(src, /const groupedList = cva\('ui-glist mx-4 overflow-hidden rounded-\[20px\]/);
   assert.match(src, /'ui-lrow relative flex w-full items-center gap-4 px-4 py-3\.5 text-start',/);
   assert.match(src, /<div className=\{cn\('ui-lrow-tx min-w-0 flex-1', contentClassName\)\}>/);
-  assert.match(src, /'ui-lrow-t truncate text-\[0\.9375rem\] font-\[650\] leading-5 text-zinc-900 dark:text-zinc-100',/);
-  assert.match(src, /cn\('ui-lrow-s mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/);
+  // The row's ramp is 16/600 over 14 on a phone and 15 over 13 from 768px (design review, 25 Nov 2026; AGENTS.md
+  // "Type and colour"): the desktop's step down is its own `md:` classes, left out where a caller sets a size.
+  assert.match(src, /'ui-lrow-t truncate text-base font-semibold leading-\[1\.3125rem\] text-zinc-900 dark:text-zinc-100',\s*ownSize\(titleClassName\) \? null : 'md:text-\[0\.9375rem\] md:leading-5',\s*titleClassName,/);
+  assert.match(src, /'ui-lrow-s mt-0\.5 truncate text-sm leading-\[1\.1875rem\] text-zinc-500 dark:text-zinc-400',\s*ownSize\(subtitleClassName\) \? null : 'md:text-\[0\.8125rem\] md:leading-\[1\.125rem\]',\s*subtitleClassName,/);
   const field = read('frontend/@/components/ui/field.tsx');
   assert.match(field, /<h3 className=\{cn\('ui-sechead text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className\)\}>/);
   assert.match(field, /<p className=\{cn\('ui-secblurb text-xs text-zinc-500 dark:text-zinc-400 mb-3', blurbClassName\)\}>/);

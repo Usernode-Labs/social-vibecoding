@@ -697,11 +697,15 @@ The shell's screens read as one product because a few choices are made once.
 Make new UI from them rather than choosing again; the primitives already
 carry most of them.
 
-- **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
-  subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
-  same pair. A 17px bold row title makes every row a heading. Write them in
-  rem (0.9375rem over 0.8125rem), as the primitives do: Settings' Text size
-  scales rem, and a size in px stays put when someone turns it up.
+- **Rows are 16 over 14 on a phone, 15 over 13 from 768px.** `ListRow`'s
+  title is 16px at weight 600 over a 14px muted subtitle, stepping down to
+  15 over 13 at a desktop's reading distance (the design review of 25 Nov
+  2026). The standard look's `--one-row-title` / `--one-row-sub` (app.css,
+  ONE LOOK · SHARED PARTS) carry the same pair for a row drawn outside the
+  primitive, Messages' `.messages-row-name` / `-preview` among them. A 17px
+  bold row title makes every row a heading. Write them in rem (1rem over
+  0.875rem, then 0.9375rem over 0.8125rem), as the primitives do: Settings'
+  Text size scales rem, and a size in px stays put when someone turns it up.
   **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
   `frontend/src/features/ai/lists.tsx`): every thread you are in across
   projects, so a row is one 14px line (a glyph, its number from 768px, its
@@ -789,8 +793,9 @@ carry most of them.
   `tests/editorial-settings-profile.test.js` holds it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
-`tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
-a change to the rule. Make it here as well.
+`tests/nav-tab-bar`, `tests/workshop-screen`, and `tests/settings-frame` for
+the row's own classes), so a change to one of these is a change to the rule.
+Make it here as well.
 
 ### The console is React — add a section the same way
 

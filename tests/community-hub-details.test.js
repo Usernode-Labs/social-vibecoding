@@ -295,7 +295,8 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
   }));
   const mixed = card([row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('c2', 'Tags', 'claim')]);
   assert.match(mixed, /data-ws-hub-needs-votes="1"/);
-  assert.match(mixed, /<span class="dev-ws-foryou-pill">1 to vote<\/span>/);
+  // One look (25 Nov 2026): the count is the shared strong tag.
+  assert.match(mixed, /<span class="dev-ws-foryou-pill one-tag one-tag-strong">1 to vote<\/span>/);
   assert.match(mixed, /<span data-ws-hub-needs-first="">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
   assert.doesNotMatch(mixed, /Fix login/);
   // #3408: requests owe no vote, so the hub draws no Needs you row, only
@@ -660,7 +661,8 @@ test('For you for somebody not in it: "Up for a vote · Join to vote on these." 
   assert.match(outside, /data-ws-hub-needs-votes="13" data-ws-hub-needs-outsider=""/);
   assert.ok(outside.includes(`>${message('project:hub.needs.upForVote')}<`));
   assert.match(outside, /<span data-ws-hub-needs-join="">Join to vote on these\.<\/span>/);
-  assert.match(outside, /class="dev-ws-foryou-pill dev-ws-foryou-pill-light" data-ws-hub-needs-count=""><span aria-hidden="true">13<\/span><span class="sr-only">13 changes up for a vote<\/span>/);
+  // One look (25 Nov 2026): the light count is the shared tag.
+  assert.match(outside, /class="dev-ws-foryou-pill dev-ws-foryou-pill-light one-tag" data-ws-hub-needs-count=""><span aria-hidden="true">13<\/span><span class="sr-only">13 changes up for a vote<\/span>/);
   assert.doesNotMatch(outside, /to vote<\/span>|data-ws-channel-unread/);
   // A member's: Needs you, "13 to vote", and the room's unread count.
   const inside = card(true);

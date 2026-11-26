@@ -202,10 +202,10 @@ test('Standard (WIP) draws the page as Home is: its ground, the community cards,
   assert.doesNotMatch(css, /html:not\(\[data-skin\]\) #communities-screen \{[^}]*background-color/);
   const first = renderComponent(PAGE, 'CommunitiesScreen', {});
   assert.doesNotMatch(first, /communities-discover-section|communities-needs-tile|communities-new-community/, 'the first render is the kit page: no Discover card, no tiles');
-  // A pin is the big card from 768px and a joined community the compact card at every width (./communities-card.test.js holds the card).
-  assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/);
+  // A pin is the big card and a joined community the compact card at every width (./communities-card.test.js holds the card).
+  // One look (25 Nov 2026): a pin is the card on a phone too, its colour band over its name.
+  assert.match(page, /const pinCards = wip \|\| \(brand && brandCards\);/);
   assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/);
-  assert.match(page, /const wideCards = useMinWidth\(768\);/);
   // The week is read only where a card is drawn: a pin's, or a joined community's compact card.
   assert.match(page, /if \(shown && state\.ready && \(\(pinCards && pinKey\) \|\| \(joinCards && joinedKey\)\)\) void loadHomePinsActivity\(\);/);
   // A group folds to three rows of four; its label unfolds the rest and folds it back.
@@ -302,13 +302,13 @@ test('from 768px a pin is the big card and a joined community the compact card, 
   assert.doesNotMatch(pinned, /communities-grid/, 'no tiles beside the cards');
   // One link to the hub, with the tile's hooks, the picture first.
   assert.match(pinned, /<a href="\/app\/tide\/workshop" class="cm-card" data-home-community="tide" data-home-community-pinned=""><span class="cm-card-pic"><img src="\/app-illustrations\/aaaa" alt="" loading="lazy" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/bbbb"/);
-  // The name over the members, what it is, and this week on one line.
-  assert.match(pinned, /<span class="cm-card-name">Tide Table<\/span><span class="cm-card-members" data-cm-members="">93 members<\/span>/);
+  // The name, with the votes waiting as a tag beside it (One look, 25 Nov 2026), over the members, what it is, and this week on one line.
+  assert.match(pinned, new RegExp(`<span class="cm-card-name-row"><span class="cm-card-name">Tide Table</span><span class="one-tag cm-card-votes" data-home-community-votes="2">${message('communities:row.toVote', { count: 2 })}</span></span><span class="cm-card-members" data-cm-members="">93 members</span>`));
   assert.match(pinned, /<span class="cm-card-desc" data-cm-desc="">Tides for the bay\.<\/span>/);
   assert.match(pinned, /<span class="cm-week-in"><span>33 active<\/span><span class="cm-week-live">5 changes live this week<\/span><\/span>/);
-  // The votes waiting on the icon's corner, with their words for a screen reader.
-  assert.match(pinned, /<span class="cm-card-face"><span class="cm-card-icon" data-icon="emoji" aria-hidden="true">[\s\S]*?data-home-community-votes="2"/);
-  assert.match(pinned, new RegExp(`<span class="sr-only">${message('communities:row.toVote', { count: 2 })}</span>`));
+  // The tag's words are the votes' words for a screen reader too: no count on the icon's corner, no second copy.
+  assert.match(pinned, /<span class="cm-card-face"><span class="cm-card-icon" data-icon="emoji" aria-hidden="true"><span class="text-3xl leading-none" aria-hidden="true">🌊<\/span><\/span><\/span>/, 'the icon alone, no count on its corner');
+  assert.doesNotMatch(pinned, new RegExp(`<span class="sr-only">${message('communities:row.toVote', { count: 2 })}</span>`));
   // A pin with no picture draws its icon as the picture, on its tint (an emoji); with no week, it says nothing; with no activity yet, its joined count or no line at all.
   const garden = pinned.slice(pinned.indexOf('data-home-community="garden"'));
   assert.match(garden, /^data-home-community="garden" data-home-community-pinned=""><span class="cm-card-pic" data-cm-band="tint" data-cm-tint="[1-5]"><span class="cm-band-face"><span class="cm-band-icon" data-icon="emoji" aria-hidden="true">/);
@@ -319,8 +319,7 @@ test('from 768px a pin is the big card and a joined community the compact card, 
   assert.match(joined, /<div class="cm-grid" data-cm-grid="joined">/);
   assert.doesNotMatch(joined, /class="wip-card"/, 'the compact cards stand on the page, no group card round them');
   assert.match(joined, /<a href="\/app\/orchard\/workshop" class="cm-card" data-cm-size="compact" data-home-community="orchard" data-home-community-pinned=""><span class="cm-card-head"><span class="cm-card-face"><span class="cm-card-icon" data-icon="emoji"/);
-  assert.match(joined, /<span class="cm-card-name">Orchard<\/span><span class="cm-card-members" data-cm-members="">34 members<\/span>/, 'the joined list\'s own count, until its week is read');
-  assert.match(joined, /data-home-community-votes="1"/);
+  assert.match(joined, /<span class="cm-card-name">Orchard<\/span><span class="one-tag cm-card-votes" data-home-community-votes="1">[^<]+<\/span><\/span><span class="cm-card-members" data-cm-members="">34 members<\/span>/, 'the joined list\'s own count, until its week is read');
   assert.doesNotMatch(joined, /cm-card-pic|cm-card-week|cm-card-desc|cm-card-live/, 'no picture, no sentence, no week yet');
 });
 
@@ -340,16 +339,15 @@ test('a joined community\'s compact card says its week once it is read: its memb
   }
 });
 
-test('under 768px the standard look keeps the small tiles, with the picture on the band and the real icon on it', () => {
-  const html = withCards(393, 'standard', { ready: true, pins: PICTURED, joined: JOINED_COUNTED, owed: {} },
+test('under 768px the standard look draws the same cards: a pin\'s colour band over its name (One look, 25 Nov 2026)', () => {
+  const html = withCards(393, 'standard', { ready: true, pins: PICTURED, joined: JOINED_COUNTED, owed: { tide: 2 } },
     (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})));
   const pinned = section(html, 'communities-pinned-section');
-  assert.match(pinned, /class="communities-grid grid grid-cols-4 /);
-  // Its picture over the wash of the colour it sets; no picture: the wash, or its tint, alone (the tile's large icon is right under the band, so none in it).
-  assert.match(pinned, /data-home-community="tide" data-home-community-pinned="" data-cm-band="wash" data-home-community-picture="" style="--cm-wash:#2e6660;--cm-pic:url\(&quot;\/app-illustrations\/aaaa&quot;\);--cm-pic-dark:url\(&quot;\/app-illustrations\/bbbb&quot;\)"/);
-  assert.match(pinned, /data-home-community="garden" data-home-community-pinned="" data-cm-band="tint" data-cm-tint="[1-5]">/, 'no picture: the tint alone');
-  assert.doesNotMatch(pinned, /cm-band-icon/, 'no second icon in the band');
-  assert.match(pinned, /<span class="app-icon-tile w-14 h-14 [^"]* home-community-logo" data-icon="emoji" aria-hidden="true">/, 'the icon at the tile\'s own size');
+  // One look: the phone draws the card a desktop does (its picture, or its icon on its band), not the small tile.
+  assert.match(pinned, /<div class="cm-grid" data-cm-grid="pinned">/);
+  assert.doesNotMatch(pinned, /communities-grid/, 'no tiles');
+  assert.match(pinned, /data-home-community="garden" data-home-community-pinned=""><span class="cm-card-pic" data-cm-band="tint" data-cm-tint="[1-5]"><span class="cm-band-face"><span class="cm-band-icon" data-icon="emoji"/, 'no picture: the icon on its band');
+  assert.match(pinned, new RegExp(`<span class="one-tag cm-card-votes" data-home-community-votes="2">${message('communities:row.toVote', { count: 2 })}</span>`), 'the votes waiting, a tag');
   assert.doesNotMatch(read('frontend/src/features/home/pinned-communities.tsx'), /CommunityEmblem|CommunityApps|CommunityDetail/, 'no emblem, no row of apps, no faces');
   // Joined is the compact card at every width.
   assert.match(section(html, 'communities-joined-section'), /<div class="cm-grid" data-cm-grid="joined">/);

@@ -267,10 +267,11 @@ test('the row holds its line\'s place at the subtitle\'s height, with words for 
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
   const pending = renderToHtml(createElement(mod.WorkPanel, { rows: { challenges: null, kudos: null, requestsPending: true } }));
   const row = pending.slice(pending.indexOf('id="profile-row-feedback"'), pending.indexOf('id="profile-row-feedback-history"'));
-  assert.match(row, /<div class="flex h-\[1\.125rem\] items-center"><span class="sr-only">Counting your requests<\/span><div class="[^"]*animate-pulse[^"]*" aria-hidden="true"><\/div><\/div>/);
+  assert.match(row, /<div class="flex h-\[1\.1875rem\] md:h-\[1\.125rem\] items-center"><span class="sr-only">Counting your requests<\/span><div class="[^"]*animate-pulse[^"]*" aria-hidden="true"><\/div><\/div>/);
   assert.doesNotMatch(row, /What you asked for/, 'the fallback is not said while the counts are coming');
-  // The bar stands in for ListRow's one subtitle line (13px on 1.125rem).
-  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /'ui-lrow-s mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\]/);
+  // The bar stands in for ListRow's one subtitle line (14px on 1.1875rem on a phone, 13px on 1.125rem from 768px,
+  // the design review's row ramp of 25 Nov 2026).
+  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /'ui-lrow-s mt-0\.5 truncate text-sm leading-\[1\.1875rem\][^']*',\s*ownSize\(subtitleClassName\) \? null : 'md:text-\[0\.8125rem\] md:leading-\[1\.125rem\]'/);
   assert.equal(message('profile:work.requests.counting'), 'Counting your requests');
 
   const landed = renderToHtml(createElement(mod.WorkPanel, { rows: { challenges: null, kudos: null, requests: '56 open · 750 done', requestsPending: true } }));

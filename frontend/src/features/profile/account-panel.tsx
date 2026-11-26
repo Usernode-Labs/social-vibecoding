@@ -123,14 +123,15 @@ type ProfileRows = {
 
 /**
  * A row's second line whose words are still on their way: a muted bar at
- * the line's own height (ListRow's subtitle is 1.125rem leading), so the row
+ * the line's own height (ListRow's subtitle is 1.1875rem leading on a phone,
+ * 1.125rem from 768px), so the row
  * is already the height it will be and nothing under it moves when they
  * land. Your requests' counts come after the rest of Profile (profile.js
  * _load).
  */
 function PendingLine({ label }: { label: string }): ReactNode {
   return (
-    <div className="flex h-[1.125rem] items-center">
+    <div className="flex h-[1.1875rem] md:h-[1.125rem] items-center">
       <span className="sr-only">{label}</span>
       <Skeleton shape="muted" className="w-32 animate-pulse" aria-hidden="true" />
     </div>

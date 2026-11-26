@@ -886,6 +886,13 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
     ? (snap.thread?.rootId === threadRootId ? snap.thread.root : null) || snap.messages.find((item) => item.id === threadRootId) || null
     : null;
   const botRequest = botRoot?.sender.bot && botRoot.metadata?.homeroomBot ? botRequestNames(botRoot.metadata.homeroomBot) : null;
+  // ONE LOOK (25 Nov 2026): the box names who it goes to, as the agreed
+  // mockups draw it ("Message pat_parrot"): the other person of a direct
+  // message, or a group's name. A person with no name keeps "Message…".
+  const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || 0 : 0;
+  const toPeer = active.kind === 'direct' ? active.peer || active.members.find((member) => Number(member.id) !== viewerId) || null : null;
+  const toName = active.kind === 'group' ? active.title : toPeer && !toPeer.unnamed ? senderName(toPeer, { bare: true }) : '';
+  const mainPlaceholder = toName ? t('messages:composer.placeholderTo', { name: toName }) : t('messages:composer.placeholder');
   const threadPlaceholder = !botRequest ? t('messages:composer.placeholderThread')
     : botRequest.firstVersion ? t('messages:composer.placeholderBotThreadFirstVersion')
       : botRequest.title || botRequest.number ? t('messages:composer.placeholderBotThread')
@@ -1036,7 +1043,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : t('messages:composer.placeholder')} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : mainPlaceholder} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         {/* Task 2148: while Homeroom bot works on the viewer's message here and
             the box is empty, Send's place is Stop (./bot-stop.ts): the same

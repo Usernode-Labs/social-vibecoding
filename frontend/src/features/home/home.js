@@ -692,6 +692,15 @@ const Home = {
       const cell = parseFloat(cs.gridAutoRows) || 0;
       const gap = parseFloat(cs.rowGap) || 0;
       if (!cell) return last;
+      // A look that draws its tiles shorter than the row this budget was set
+      // for (the standard look's desktop rows, app.css ONE LOOK) names the
+      // row's height to count with, --home-budget-row, so the fold holds
+      // back the same tiles however tall they are drawn: "Show all" still
+      // comes where it came. Only ever taller than the drawn row.
+      const named = cs.getPropertyValue('--home-budget-row').trim();
+      const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const counted = !named ? 0 : named.endsWith('rem') ? parseFloat(named) * rootPx : parseFloat(named) || 0;
+      const row = counted > cell ? counted : cell;
       // The resting scroll position parks the hidden search bar out of sight
       // (see _searchReveal), so the grid's top AT REST is its offset in the
       // scroller's content minus that bar. Measuring the live rect alone
@@ -706,7 +715,7 @@ const Home = {
         - resting;
       const room = (viewport * Home.APPS_VIEWPORT_FRACTION) - top;
       // n rows occupy n cells and the n-1 gaps between them.
-      const rows = Math.floor((room + gap) / (cell + gap));
+      const rows = Math.floor((room + gap) / (row + gap));
       return Math.max(floor, Math.min(HomeLayout.MAX_ROWS, rows));
     } catch (err) {
       return last;

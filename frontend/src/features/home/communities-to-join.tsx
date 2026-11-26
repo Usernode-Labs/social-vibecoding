@@ -111,6 +111,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const holdFeatured = wip && !apps && !failed && !query;
   const leadCount = useLeadCount(probe);
   const lead = useMemo(() => featured.slice(0, leadCount), [featured, leadCount]);
+  // One look (25 Nov 2026): on the standard look's signed-in pages Featured
+  // is one grid of covers of one size (app.css, ONE LOOK), so every featured
+  // community is in the first grid; each card is still drawn as it is signed
+  // out, the first row's marked larger, so the card is one card everywhere.
+  const firstGrid = wip ? featured : lead;
   const leadStyle = { ['--cm-lead-cols' as string]: String(leadCount) } as CSSProperties;
   // One featured community where the row has room for more is the whole row,
   // a wide card, not one card beside an empty half page (phone review, 23 Nov
@@ -208,7 +213,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
           {probeGrid}
           <div className={GRID} data-cm-grid="lead" style={leadStyle}>
-            {Array.from({ length: leadCount }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
+            {/* One look: a row of covers, at least two across (app.css). */}
+            {Array.from({ length: Math.max(2, leadCount) }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
           </div>
         </div>
       ) : null}
@@ -234,13 +240,13 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             className={GRID}
             style={shownLeadStyle}
           >
-            {lead.map((app, i) => (
+            {firstGrid.map((app, i) => (
               <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">
-                <Card app={app} eager={i < LEAD_MAX} featured lead />
+                <Card app={app} eager={i < LEAD_MAX} featured lead={i < lead.length} />
               </div>
             ))}
           </div>
-          {featured.length > lead.length ? (
+          {featured.length > firstGrid.length ? (
             <div
               role="list"
               aria-labelledby={featuredId}

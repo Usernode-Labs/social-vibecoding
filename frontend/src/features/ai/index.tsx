@@ -87,7 +87,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, MicrophoneIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
@@ -133,6 +133,7 @@ import { NewChatButton } from './new-chat-button';
 import { BOT_SEARCH_SHORTCUT_KEYS, installBotSearchShortcut } from './search-shortcut';
 import { useSearchHint } from '../home/search-hint';
 import { AiDrawer, PHONE_QUERY, ThreadPane } from './phone-drawer';
+import { useNewChatBar } from './new-chat-bar';
 import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
@@ -1183,6 +1184,19 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (phone && level === 1 && !threadUp && !at?.threadRootId) setLevel(0);
   }, [phone, level, threadUp, at]);
+  // ONE LOOK (25 Nov 2026): on a phone New chat is named by the bar, with
+  // its back disc, while it is the drawer's level in view (./new-chat-bar.ts).
+  // A thread keeps the plain bar and its own head. The standard look's only:
+  // the other looks keep New chat's own head (app.css scopes the same).
+  const standardLook = useSkin() === 'standard';
+  const newChatHere = mounted && standardLook && visible && phone && blank && !openRoot;
+  const newChatBar = useNewChatBar({
+    shown: newChatHere && level === 1,
+    away: newChatHere && level === 0,
+    list: t('messages:ai.hero.name'),
+    back: t('messages:newThread.back'),
+    onBack: () => toListRef.current(),
+  });
 
   // NEW CHAT (#6071 follow-up; 14 Nov 2026): a new chat with the bot, in the
   // column (../messages/new-thread.tsx), slid in on a phone.
@@ -1461,8 +1475,12 @@ export function AiScreen(): ReactNode {
           // On a phone's drawer the new chat slides in beside the list: in, not away.
           onClick={(e) => { if (phone) { e.preventDefault(); openNewChat(); } }}
         >
+          {/* One look (25 Nov 2026): drawn as the message box it opens, its
+              "+" first and its send last, quiet until there are words. */}
+          <span className="messages-composer-action ai-askbar-add" aria-hidden="true"><PlusIcon className="h-5 w-5" /></span>
           <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
           <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
+          <span className="ai-askbar-send" aria-hidden="true"><ArrowUpIcon className="h-5 w-5" /></span>
         </a>
       </div>
     </>
@@ -1486,6 +1504,7 @@ export function AiScreen(): ReactNode {
         <AiDrawer
           level={level}
           onLevel={setLevel}
+          onPan={newChatBar.pan}
           list={listContent}
           canOpen={threadUp}
           pane={<ThreadPane botId={botId} active={visible} at={at} onBack={toList} />}
