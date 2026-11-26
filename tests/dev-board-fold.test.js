@@ -1827,7 +1827,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check opens `#profile?tab=changes` and reads the history column in the
   // profile, the other opens `#profile?tab=activity` and reads the activity
   // column there. Two routes no existing check opens. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 710: +1 (request 7210) Home's Next challenges, with more than
+  // three open, folds the rest behind "Show all N challenges". It needs
+  // `?demo=1&challenges=many`: the default demo route holds three unfinished
+  // open challenges, which draws no toggle, and no existing check opens the
+  // five-open route. 710 leaves 170 slots.
+  checkCap.assertPinned(DAPP.tests.length, 710);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -342,8 +342,11 @@ test('the kit unfolds every open challenge in place, behind a fold pill under th
   const src = 'frontend/src/features/home/panels/challenges.tsx';
   const folded = renderComponent(src, 'ChallengesPanel', { view });
   assert.match(folded, /<div class="wip-posters">/, 'folded: the plain row, unchanged');
-  assert.doesNotMatch(folded, /data-expanded/, 'and no fold-back pill');
+  assert.doesNotMatch(folded, /data-expanded/, 'the row does not wrap yet');
   assert.equal((folded.match(/wip-poster"/g) || []).length, 3, 'three cards');
+  assert.match(folded,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="false">Show all 5 challenges<svg[^>]*class="wip-head-chevron-glyph"/,
+    'the fold pill is under the row while folded too, counting every open challenge, with the down chevron');
 
   const open = renderComponent(src, 'ChallengesPanel', { view, expanded: true });
   assert.match(open, /<div class="wip-posters" data-expanded="">/, 'unfolded: the row wraps (app.css)');

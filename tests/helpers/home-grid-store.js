@@ -84,6 +84,7 @@ function installGridStore(sandbox) {
 const INITIAL_PANELS = {
   painted: false,
   challenges: null,
+  challengesExpanded: false,
 };
 
 /**

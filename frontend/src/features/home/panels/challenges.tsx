@@ -106,8 +106,8 @@ function WipChallengeArt({ row }: { row: ChallengeRowView }) {
  * when it is done. The whole card is the one thing to press: it has no arrow
  * of its own, and its progress is the meter, not a pill.
  */
-function WipChallengePosters({ view, shown, expanded }: {
-  view: ChallengesView; shown: ChallengeRowView[]; expanded: boolean;
+function WipChallengePosters({ view, shown, expanded, hasMore }: {
+  view: ChallengesView; shown: ChallengeRowView[]; expanded: boolean; hasMore: boolean;
 }) {
   const t = useMessages('home');
   const rail = useRef<HTMLDivElement | null>(null);
@@ -188,8 +188,9 @@ function WipChallengePosters({ view, shown, expanded }: {
       ) : null}
       {/* The rest of them, in place: the look's own fold pill, as Pinned
           projects' "Show all" uses. Only when there is more than the three
-          the folded row draws. */}
-      {shown.length > view.rows.length ? (
+          the folded row draws: the row is what tells, not what is drawn
+          (`shown` is the three while folded, so it never says so itself). */}
+      {hasMore ? (
         <div className="home-challenges-more wip-posters-more">
           <button
             type="button"
@@ -199,7 +200,9 @@ function WipChallengePosters({ view, shown, expanded }: {
           >
             {expanded
               ? t('home:challenges.showLess')
-              : t('home:challenges.showAll', { count: view.total != null ? view.total : shown.length })}
+              : t('home:challenges.showAll', {
+                count: view.total != null ? view.total : view.rows.length + (view.more || []).length,
+              })}
             {expanded
               ? <ChevronUpIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />
               : <ChevronDownIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />}
@@ -242,7 +245,7 @@ export function ChallengesPanel({ view, expanded = false }: { view: ChallengesVi
   if (wip) {
     return (
       <PanelShell panelKey={view.key} plate="none" stamps={{ rows: shown.length }}>
-        <WipChallengePosters view={view} shown={shown} expanded={expanded} />
+        <WipChallengePosters view={view} shown={shown} expanded={expanded} hasMore={more.length > 0} />
       </PanelShell>
     );
   }
@@ -290,7 +293,9 @@ export function ChallengesPanel({ view, expanded = false }: { view: ChallengesVi
             >
               {expanded
                 ? t('home:challenges.showLess')
-                : t('home:challenges.showAll', { count: view.total != null ? view.total : shown.length })}
+                : t('home:challenges.showAll', {
+                  count: view.total != null ? view.total : view.rows.length + (view.more || []).length,
+                })}
             </button>
           </div>
         ) : null}
