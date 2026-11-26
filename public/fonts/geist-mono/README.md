@@ -1,12 +1,8 @@
 # public/fonts/geist-mono: the Geist Mono typeface, self-hosted
 
-Geist Mono is the monospace of the Geist family. The shell uses it only for
-the **brand look** ("Paper, simplified, with brand styling"), one of the
-looks of Settings › Experimental › Look, off by default (the head's
-`window.Skin` sets `data-skin="brand"` on `<html>`), and there only for
-counts, so the figures in a row line up. The `@font-face` in
-`public/css/app.css` is used only by rules scoped to that attribute, so a
-browser without the look never downloads the file.
+Geist Mono is the monospace of the Geist family. The shell uses it for
+counts on a request's or a change's page, so the figures in a row line up
+(the `@font-face` in `public/css/app.css`).
 
 Served from our own origin, like `public/fonts/geist/`, so the shell still
 makes no cross-origin asset requests.

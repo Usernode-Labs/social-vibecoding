@@ -170,12 +170,6 @@ function makeHomePanels({
 // the tests below still assert on real markup produced by the real components
 // rather than on a description of it.
 const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
-// The panels as every look but the kit's Home draws them (the cards these
-// tests hold): since 20 Nov 2026 the standard look's Home is the kit's
-// (lib/skin.ts isKitHome), which draws Challenges as posters instead, held by
-// tests/home-needs-you-card.test.js. "Paper, simplified, with brand styling"
-// still draws these, so the panels are loaded here as that look sees them.
-const STANDARD_PANELS = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
 // The renderers, as text, for the handful of assertions that are about the
 // SOURCE rather than the output (a class that must be written as a literal, a
 // helper that must be reached through Home).
@@ -189,7 +183,7 @@ const SECTION_VIEWS = {
 };
 
 function paintHosts(sandbox, hosts) {
-  const mod = loadTsx(SECTIONS, { stubs: STANDARD_PANELS });
+  const mod = loadTsx(SECTIONS);
   const state = sandbox.panelsStore.get();
   for (const host of hosts) {
     const key = host.dataset.panelSlot;
@@ -218,13 +212,13 @@ const challenge = (over = {}) => ({
   ...over,
 });
 
-// The first challenge card and everything after it: the card markup without
-// the heading above it.
-const cardOf = (html) => html.slice(html.indexOf('home-challenge-card'));
-// The first card alone, up to where the next one starts.
+// The first challenge poster and everything after it: the poster markup
+// without the heading above it.
+const cardOf = (html) => html.slice(html.indexOf('wip-poster"'));
+// The first poster alone, up to where the next one starts.
 const firstCardOf = (html) => {
   const card = cardOf(html);
-  const next = card.indexOf('home-challenge-card', 1);
+  const next = card.indexOf('wip-poster"', 1);
   return next < 0 ? card : card.slice(0, next);
 };
 
@@ -669,74 +663,6 @@ test('a This week challenge says "this week" on a counted rail, and only there',
 
 // ── Rendering ─────────────────────────────────────────────────────
 
-test('render: a yes-or-no challenge reads Not started on the shared rail, with no count', () => {
-  // ONE CARD ON BOTH SURFACES. The block draws the Challenges tab's card, so a
-  // challenge nobody has credited reads exactly what that tab says about it.
-  const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
-  const card = cardOf(html);
-  assert.match(card, /role="progressbar"/, 'every card has the rail, yes-or-no ones included');
-  assert.match(card, /aria-valuetext="Not started"/);
-  assert.match(card, /<span class="relative min-w-0 truncate">Not started<\/span>/);
-  assert.doesNotMatch(card, />0\/1</, 'a yes-or-no challenge carries no count');
-  assert.match(card, />250 pts</);
-  assert.match(html, /Report a reproducible bug/);
-});
-
-test('render: a done row reads Done and says what the viewer earned', () => {
-  // A finished card is drawn in First challenges, where the done ones keep
-  // their seats while another is still to do.
-  const p = panel({
-    challenges: [challenge({
-      label: 'ONBOARDING',
-      progress: { done: true, current: null, target: null },
-      earned_points: 250,
-    }), challenge({ id: 2, label: 'ONBOARDING' })],
-  });
-  const card = firstCardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /data-challenge-state="done"/);
-  assert.doesNotMatch(card, /role="progressbar"/, 'a finished card is one line, with no rail (#4563)');
-  assert.match(card, /<span class="sr-only">Done<\/span>/, 'it still says Done to a screen reader');
-  assert.match(card, /text-emerald-700 dark:text-emerald-400">250 pts<\/span>/,
-    'and says what was earned in emerald ink');
-  assert.match(card, />250 pts</, 'the chip says what was earned, not what is on offer');
-  assert.doesNotMatch(card, /home-panel-glyph/, 'the old filled ✓ disc is retired');
-});
-
-test('render: a numeric row gets the count on the rail with truthful aria values', () => {
-  const p = panel({
-    challenges: [challenge({
-      metric: { kind: 'count', label: 'Apps tested', target: 8 },
-      progress: { done: false, current: 3, target: 8 },
-    })],
-  });
-  const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /role="progressbar"/);
-  assert.match(card, /aria-valuemin="0"/);
-  assert.match(card, /aria-valuemax="100"/);
-  assert.match(card, /aria-valuenow="38"/);
-  assert.match(card, /aria-valuetext="3\/8 Apps tested"/, 'the spoken value is the visible count');
-  assert.match(card, /aria-label="Report a reproducible bug: 3\/8 Apps tested"/);
-  assert.match(card, /style="width:max\(0\.375rem, 38%\)"/, 'the fill is drawn at the same fraction');
-  assert.match(card, />3\/8 Apps tested</);
-});
-
-test('render: a counted row at zero shows its count and a stub of bar, not Not started', () => {
-  // Evan's "0/3" capsule: a challenge with steps reads as a track not yet
-  // run, so it is told apart from a yes-or-no challenge before anyone starts.
-  const p = panel({
-    challenges: [challenge({
-      metric: { kind: 'count', label: 'Kudos', target: 5 },
-      progress: { done: false, current: 0, target: 5 },
-    })],
-  });
-  const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /aria-valuetext="0\/5 Kudos"/);
-  assert.match(card, /aria-valuenow="0"/);
-  assert.match(card, /style="width:0\.375rem"/, 'the stub: a track with nothing run yet');
-  assert.match(card, />0\/5 Kudos</, 'the count is shown from zero');
-  assert.doesNotMatch(card, />Not started</);
-});
-
 // ── The bar's breathing room ──────────────────────────────────────
 //
 // The bar used to be centred-text-with-a-bar-jammed-underneath: half a
@@ -756,12 +682,8 @@ test('the retired pill, capsule and category well leave nothing behind', () => {
     '.home-challenge-art']) {
     assert.ok(!css.includes(rule), `app.css still declares ${rule}`);
   }
-  // No rule of the card's own. Standard (WIP) sizes and rounds the card where
-  // it sits in that look's Challenges row (tests/standard-wip-look.test.js),
-  // always from under html[data-skin-wip].
-  for (const m of css.matchAll(/([^{}]*)\.home-challenge-card \{/g)) {
-    assert.match(m[1], /html\[data-skin-wip\][^,]*$/, 'app.css still declares .home-challenge-card { (only Standard (WIP) may, in its own row)');
-  }
+  // No rule of the card's own.
+  assert.doesNotMatch(css, /\.home-challenge-card \{/, 'app.css still declares .home-challenge-card {');
   const src = challengesSrc();
   for (const gone of ['home-challenge-pill', 'home-panel-glyph', 'home-challenge-art',
     'home-panel-bar-track', 'tintOf', 'title={row']) {
@@ -874,77 +796,43 @@ test("a row carries the Challenges tab's rail descriptor", () => {
   assert.equal(row.label, undefined, 'no category: the tile never shows it');
 });
 
-test('a numeric challenge at full target is a finished line, not a count (#4563)', () => {
-  const { html } = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({
-      challenges: [challenge({
-        label: 'ONBOARDING',
-        goal: 'Vote on five proposals',
-        metric: { kind: 'count', label: 'Proposals voted', target: 5 },
-        progress: { done: true, current: 5, target: 5 },
-        earned_points: 900,
-      }), challenge({ id: 2, label: 'ONBOARDING' })],
-    })],
-  });
-  const card = firstCardOf(html);
-  assert.match(card, /data-challenge-state="done"/);
-  assert.doesNotMatch(card, /role="progressbar"/, 'no rail on a finished card');
-  assert.match(card, /<span class="sr-only">Done<\/span>/);
-  assert.match(card, /text-emerald-700 dark:text-emerald-400">900 pts</);
-  assert.doesNotMatch(card, />5\/5</, "finished reads the tab's word, not a count");
+test('render: a poster says the challenge\'s state, what it is worth and how far along it is', () => {
+  // A yes-or-no challenge nobody has credited: its words, no count.
+  const fresh = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
+  assert.match(fresh, /data-challenge-id="1" data-state="new"/);
+  assert.match(fresh, /<span class="wip-item-meta">Not started<\/span>/);
+  assert.doesNotMatch(fresh, />0\/1</, 'a yes-or-no challenge carries no count');
+  assert.match(fresh, /<span class="wip-poster-worth">250 pts<\/span>/);
+  assert.match(fresh, /<span class="wip-meter" aria-hidden="true"><span style="width:0%"><\/span><\/span>/);
+  // A counted one: the count, and the meter at the same fraction.
+  const counted = cardOf(renderWith({ registry: [], hidden: [], panels: [panel({ challenges: [challenge({
+    metric: { kind: 'count', label: 'Apps tested', target: 8 },
+    progress: { done: false, current: 3, target: 8 },
+  })] })] }).html);
+  assert.match(counted, /<span class="wip-item-meta">3\/8 Apps tested<\/span>/);
+  assert.match(counted, /<span style="width:38%"><\/span>/);
+  // A done one keeps its seat in First challenges and says what was earned.
+  const done = firstCardOf(renderWith({ registry: [], hidden: [], panels: [panel({ challenges: [challenge({
+    label: 'ONBOARDING', progress: { done: true, current: null, target: null }, earned_points: 250,
+  }), challenge({ id: 2, label: 'ONBOARDING' })] })] }).html);
+  assert.match(done, /data-state="done"/);
+  assert.match(done, /<span class="wip-item-meta">Done<\/span>/);
+  assert.match(done, /<span class="wip-poster-worth wip-poster-worth-ok">250 pts<\/span>/);
+  assert.match(done, /<span style="width:100%"><\/span>/);
 });
 
-test("Home draws the Challenges tab's card, not a card of its own", () => {
-  const src = challengesSrc();
-  assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
-  // One Home (#6361): one row that scrolls sideways, each card a fixed width
-  // so the next one peeks in, snapped to the section's gutter, and still the
-  // row's own child, which the declared checks select. Unfolded (#7210) the
-  // cards share the grid's columns instead (`min-w-0`, no fixed width).
-  assert.match(src, /<ChallengeCard[\s\S]*?className=\{expanded\s*\?\s*'home-challenge-card min-w-0'\s*:\s*'home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start'\}/);
-  assert.match(src, /: 'home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 \[-ms-overflow-style:none\] \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden'\}/);
-  const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
-  // S8: the card's corners are 24px and the tile's 11px, concentric inside
-  // the card's 12px padding and 1px border.
-  assert.match(card, /^home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
-  assert.match(card, /h-20 w-20 [^"]*rounded-\[0\.6875rem\]"/, "the tab's 80px tile");
-  assert.match(card, /data-challenge-id="1"/);
-});
-
-test('render: the card shows the kind icon and the title, never the task, the category or a CTA', () => {
-  const p = panel({
-    challenges: [challenge({
-      label: 'COMMUNITY',
-      icon: '🐞',
-      task: 'Find and file a reproducible bug report.',
-      cta: { label: 'Start', link: 'https://example.invalid/go' },
-    })],
-  });
-  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  const card = cardOf(html);
-  assert.match(card, /<span class="text-\[2\.5rem\] leading-none">🐞<\/span>/, 'the kind icon sits in the tile');
-  assert.doesNotMatch(card, />COMMUNITY</, 'the category never does ("ONBOARDI / NG" was the old well)');
-  assert.doesNotMatch(card, /Find and file a reproducible bug report/,
-    'no description on the card: the title and the rail are the whole card');
-  assert.doesNotMatch(card, /\btitle="/, 'and no tooltip either: a phone has no hover');
-  assert.doesNotMatch(card, /<a href=/, 'still no per-challenge Start button');
-  assert.doesNotMatch(html, /example\.invalid/);
-});
-
-test('render: a registry illustration takes the kind icon’s place in the tile', () => {
+test('render: a registry illustration takes the kind icon’s place on the poster', () => {
   const withArt = (illustration) => cardOf(renderWith({
     registry: [], hidden: [],
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration })] })],
   }).html);
   const card = withArt('useful-feedback');
-  assert.match(card, /<img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"\/>/,
-    'the artwork, from the same-origin static path');
-  assert.match(card, /home-tone-orange bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on its pale tone');
+  assert.match(card, /<span class="wip-poster-art home-tone-orange" aria-hidden="true"><img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" width="64" height="64" draggable="false"\/><\/span>/,
+    'the artwork, from the same-origin static path, on its pale tone');
   assert.doesNotMatch(card, /🐞/, 'in place of the kind icon');
   for (const slug of [null, 'not-in-the-registry']) {
     const plain = withArt(slug);
-    assert.match(plain, /<span class="text-\[2\.5rem\] leading-none">🐞<\/span>/, `${slug}: the kind icon stays`);
+    assert.match(plain, /<span class="wip-poster-art" aria-hidden="true">🐞<\/span>/, `${slug}: the kind icon stays`);
     assert.doesNotMatch(plain, /<img/, `${slug}: and no artwork is guessed`);
   }
 
@@ -956,14 +844,13 @@ test('render: a registry illustration takes the kind icon’s place in the tile'
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration: `u-${HEX}`, illustration_tone: tone })] })],
   }).html);
   const onTone = uploadedCard('yellow');
-  assert.ok(onTone.includes(`<img src="/challenge-illustrations/${HEX}" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"/>`),
-    'the upload, from its derived path');
-  assert.match(onTone, /home-tone-yellow bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on the payload tone');
+  assert.ok(onTone.includes(`<span class="wip-poster-art home-tone-yellow" aria-hidden="true"><img src="/challenge-illustrations/${HEX}" alt="" width="64" height="64" draggable="false"/></span>`),
+    'the upload, from its derived path, on the payload tone');
   assert.doesNotMatch(onTone, /🐞/, 'in place of the kind icon');
-  assert.match(uploadedCard(undefined), /home-tone-gray bg-\[var\(--tint-art\)\]/, 'without a tone, on gray');
+  assert.match(uploadedCard(undefined), /wip-poster-art home-tone-gray"/, 'without a tone, on gray');
 });
 
-test('render: organiser text is escaped in text AND attribute contexts', () => {
+test('render: organiser text is escaped', () => {
   const p = panel({
     challenges: [challenge({
       goal: 'Break "out" of <it> & \'quote\'',
@@ -972,19 +859,14 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  // The CONTRACT is unchanged and still the point: a goal lands in text nodes
-  // (the row's label), in `title="…"` and in `aria-label="…"`, so & < > alone
-  // was never enough — an unescaped `"` would break out and inject attributes.
-  // `HomePanels.esc` did it by hand; React does it by construction, and spells
-  // the apostrophe `&#x27;` where esc() spelled it `&#39;`.
-  assert.doesNotMatch(html, /aria-label="[^"]*"out"/, 'no raw quote inside an attribute');
+  // A goal lands in the poster's text. `HomePanels.esc` did it by hand;
+  // React does it by construction, and spells the apostrophe `&#x27;` where
+  // esc() spelled it `&#39;`.
+  assert.doesNotMatch(html, /"out"/, 'no raw quote');
   assert.match(html, /&quot;out&quot;/);
   assert.match(html, /&lt;it&gt;/);
   assert.match(html, /&amp;/);
   assert.match(html, /&#x27;quote&#x27;/);
-  // …in the attribute as well as the text, which is the half a text-only
-  // escape would pass.
-  assert.match(html, /aria-label="[^"]*&quot;out&quot;[^"]*"/, 'the rail label is escaped');
 });
 
 // ── The heading names what the block holds, and carries "See all" ─────
@@ -993,16 +875,16 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
 // #home-browse-btn.
 const headingOf = (html) => [...html.matchAll(/<h2 class="home-area-label[\s\S]*?<\/h2>/g)]
   .map((m) => m[0]).find((h) => !h.includes('home-browse-btn'));
-const SEE_ALL = /<a href="#leaderboard\/challenges" class="home-panel-see-all [^"]*" aria-label="See all challenges"><span class="whitespace-nowrap">See all<\/span><\/a>/;
+const SEE_ALL = /<a href="#leaderboard\/challenges" class="wip-head-more" aria-label="See all challenges" title="See all challenges"><span class="wip-head-words">[^<]*<\/span><span class="wip-fold-pill" aria-hidden="true">See all<svg /;
 
-test('render: the heading says First, Next or Challenges, with See all beside it', () => {
+test('render: the heading says First, Next or Challenges, and is the way to See all', () => {
   const heading = (challenges) => headingOf(renderWith({
     registry: [], hidden: [], panels: [panel({ challenges })],
   }).host('challenges').innerHTML);
 
   const first = heading([challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'WEEKLY' })]);
-  assert.match(first, /<span class="min-w-0 flex-1 truncate whitespace-nowrap[^"]*">First challenges<\/span>/);
-  assert.match(first, SEE_ALL, 'a real link to the Challenges tab, at the right of the heading');
+  assert.match(first, /<span class="min-w-0 flex-1 truncate whitespace-nowrap[^"]*"><a [^>]*><span class="wip-head-words">First challenges<\/span>/);
+  assert.match(first, SEE_ALL, 'the label itself is a real link to the Challenges tab, its pill after it');
 
   const next = heading([challenge({ id: 1, label: 'ONBOARDING', progress: DONE }), challenge({ id: 2, label: 'WEEKLY' })]);
   assert.match(next, />Next challenges<\/span>/);
@@ -1014,7 +896,7 @@ test('render: the heading says First, Next or Challenges, with See all beside it
 
   const none = heading([]);
   assert.match(none, />Challenges<\/span>/);
-  assert.doesNotMatch(none, /home-panel-see-all|See all/, 'No challenges right now: no See all');
+  assert.doesNotMatch(none, /wip-head-more|See all/, 'No challenges right now: no See all');
 });
 
 // #7210: the three cards stay, and "Show all N challenges" under them opens
@@ -1026,9 +908,9 @@ test('render: Next challenges folds the rest behind "Show all N challenges" and 
   const { html } = out;
   assert.equal((html.match(/data-challenge-id/g) || []).length, 3, 'three Next challenges, whatever the season holds');
   assert.match(html, /data-rows="3"/, 'data-rows reports what is DRAWN');
-  assert.equal((html.match(/home-panel-see-all/g) || []).length, 1, 'one way in to the tab, in the heading');
+  assert.equal((html.match(/wip-head-more"/g) || []).length, 1, 'one way out, in the heading');
   assert.match(html,
-    /<div class="home-challenges-more flex items-center justify-end pt-2"><button type="button" class="[^"]*" aria-expanded="false">Show all 5 challenges<\/button><\/div>/,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="false">Show all 5 challenges/,
     'the toggle sits under the cards, closed, counting every open challenge');
   assert.doesNotMatch(html, /home-panel-lb-browse|Open challenges/, '"Open challenges" is gone');
   assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded/,
@@ -1064,24 +946,24 @@ test('render: Next challenges folds the rest behind "Show all N challenges" and 
 // with no link, which is what the prerender holds too. The skeleton under it
 // is tests/home-first-paint.test.js's.
 test('the heading is the prerender\'s own until the data lands', () => {
-  const mod = loadTsx(SECTIONS, { stubs: STANDARD_PANELS });
+  const mod = loadTsx(SECTIONS);
   const before = renderToHtml(createElement(mod.ChallengesSectionView, { painted: false, discover: null, challenges: null }));
   assert.match(before, /^<section id="home-challenges-section" data-panel-slot="challenges" class="home-section-pending px-3 pb-3">/,
     'not hidden before the first paint');
   assert.match(headingOf(before), /><span class="invisible">Challenges<\/span><\/span><\/h2>$/,
     'the constant label, its words held, and no link');
-  assert.doesNotMatch(before, /home-panel-see-all|<article/);
+  assert.doesNotMatch(before, /wip-head-more|<article/);
   const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
   assert.match(sections,
-    /\) : challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll && !wip \? <SeeAllLink \/> : null\}/,
+    /label=\{challenges\?\.seeAll \? \([\s\S]*?<\/WipHeadMore>\s*\) : challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}/,
     'the content-named heading and its link follow the view, and fall back to the prerender\'s values');
   assert.equal(message('home:challenges.heading'), 'Challenges');
 });
 
 // #4635 (evan): no Getting started card on top of Home; a new account's First
-// challenges are ordinary `.home-challenge-card`s in this block. The Semi
+// challenges are ordinary posters in this block. The Semi
 // design names the block by them while any is unfinished.
-test('a new account\'s First challenges are .home-challenge-card under "First challenges", never locked', () => {
+test('a new account\'s First challenges are posters under "First challenges", never locked', () => {
   const first = (id, over = {}) => challenge({ id, label: 'ONBOARDING', display_order: id, goal: `First ${id}`, ...over });
   const p = panel({
     total: 6, done: 1, all_total: 6, all_done: 1,
@@ -1099,7 +981,7 @@ test('a new account\'s First challenges are .home-challenge-card under "First ch
   assert.doesNotMatch(html, /Getting started/, 'the words are gone from Home');
   assert.doesNotMatch(html, /unlock/i, 'nothing is locked, so nothing unlocks');
   assert.match(headingOf(html), />First challenges<\/span>/);
-  const ids = [...html.matchAll(/home-challenge-card[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
+  const ids = [...html.matchAll(/wip-poster"[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
   assert.deepEqual(ids, ['1', '2', '3', '4'], 'all four, in the admin\'s order, the done one in place');
   assert.match(html, /data-rows="4"/, 'real cards, counted as such');
   // Tapping one opens it on the Challenges tab like any other card.
@@ -1227,7 +1109,7 @@ test('a brand-new account sees Challenges, whatever its age, with its First chal
     const out = renderWith(NEW_ACCOUNT_DATA(), { user });
     const host = out.host('challenges');
     assert.ok(!host._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
-    assert.match(host.innerHTML, /home-challenge-card[\s\S]*Try an app/, 'the First challenges, drawn in the block');
+    assert.match(host.innerHTML, /wip-poster"[\s\S]*Try an app/, 'the First challenges, drawn in the block');
     assert.match(host.innerHTML, /Join a community/, 'done ones under Done');
     assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, `no locked card for ${JSON.stringify(user)}`);
     assert.doesNotMatch(host.innerHTML, /Getting started/, 'and no gate line under them');
@@ -1312,45 +1194,19 @@ test('render: each panel is its own bordered article, in its own host', () => {
 // white-space: nowrap) or explicitly `whitespace-nowrap`, and the row
 // itself declares nowrap so future children inherit it.
 
-test('every text node in a row is single-line — no wrapping anywhere', () => {
-  const p = panel({
-    total: 9,
-    challenges: [challenge({
-      // Real production strings: multi-word goal AND multi-word prose
-      // reward, the combination that wraps first.
-      goal: 'Produce Every Block - June 2026',
-      reward: 'Up to 6,500 pts',
-      metric: { kind: 'count', label: 'Blocks produced', target: 720 },
-      progress: { done: false, current: 543, target: 720 },
-    })],
-  });
-  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-
-  // Every text-bearing element on the card opts out of wrapping: the title,
-  // the meta line's reward and the rail's label. Nothing on the card wraps,
-  // not even as a row: the reward rides the meta line and the rail is alone.
-  const card = cardOf(html);
-  assert.match(card, /class="[^"]*\btruncate\b[^"]*">Produce Every Block - June 2026</, 'the goal truncates');
-  assert.doesNotMatch(card, /<p /, 'and there is no task line to wrap');
-  assert.match(card, /<span class="relative min-w-0 truncate">543\/720 Blocks produced<\/span>/, 'the rail label truncates');
-  assert.match(card, /class="[^"]*\btruncate\b[^"]*">Up to 6,500 pts</, 'the reward truncates');
-  assert.doesNotMatch(card, /flex-wrap/, 'and no row on the card wraps');
-});
-
 test('the heading and its link are single-line too', () => {
   const data = {
     registry: [], hidden: [],
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
   };
   const { html } = renderWith(data);
-  // The heading is the block's NAME and its one link. No counter rides it
-  // (the season progress and its points are gone from Home altogether), and
-  // the name truncates rather than wraps beside the link on a 320px phone.
+  // The heading is the block's NAME, and the name is its one link. No
+  // counter rides it (the season progress and its points are gone from Home
+  // altogether), and the label truncates rather than wraps on a 320px phone.
   const heading = headingOf(html);
-  assert.match(heading, /min-w-0 flex-1 truncate whitespace-nowrap[^"]*">Next challenges<\/span>/);
+  assert.match(heading, /min-w-0 flex-1 truncate whitespace-nowrap[^"]*"><a [^>]*><span class="wip-head-words">Next challenges<\/span>/);
   assert.doesNotMatch(heading, /24,300|2 of 9| · /, 'no counter appended to the label');
-  assert.match(heading, /home-panel-see-all shrink-0[^"]*whitespace-nowrap/, 'the link never shrinks or wraps');
-  assert.match(heading, /<span class="whitespace-nowrap">See all<\/span><\/a>/, 'and has no chevron, as Discover\'s See all has none');
+  assert.match(heading, /<span class="wip-fold-pill" aria-hidden="true">See all<svg /, 'See all is the pill on the same link');
 });
 
 test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
@@ -1879,8 +1735,9 @@ test('Challenges sits on the page ground: no plate, no divider, no inset', () =>
     assert.equal(article[1], 'home-panel', `${name}: the article carries no plate class`);
     assert.doesNotMatch(html, /home-challenges-plate/, `${name}: the translucent plate is gone`);
     assert.doesNotMatch(article[0], /home-panel-card/, `${name}: and it did not become the white card`);
-    assert.match(html, /<div class="home-panel-body pt-2">/, `${name}: the body is not inset`);
   }
+  assert.match(populated, /<article class="home-panel" data-panel="challenges" data-rows="1"><div class="wip-posters-box" data-wip-challenges="">/, 'populated: the posters sit straight in the article');
+  assert.match(empty, /<div class="home-panel-body pt-2">/, 'empty state: the body is not inset');
   // The one line is a card of its own, white like the challenge cards, which
   // starts at the heading's edge; its text is padded inside it.
   assert.match(empty, /class="home-panel-rows home-panel-row home-challenges-note [^"]*rounded-\[1\.25rem\] bg-white px-4 dark:bg-zinc-900"/);
@@ -2102,7 +1959,7 @@ test('a Home challenge card opens that challenge’s page on the Challenges tab,
   const pathMod = require('node:path');
   const read = (p) => fs.readFileSync(pathMod.join(__dirname, '..', p), 'utf8');
   const ui = read('frontend/src/features/home/panels/challenges.tsx');
-  assert.match(ui, /data-challenge-id=\{row\.id\}\s*onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/,
+  assert.match(ui, /data-challenge-id=\{row\.id\}\s*data-state=\{row\.state\}\s*onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/,
     'each card deep-links to its own challenge');
   assert.equal((ui.match(/goToChallenges\?\.\(\)/g) || []).length, 0,
     'nothing in the block goes to the list: "See all" is a real link in the heading (ui.tsx)');

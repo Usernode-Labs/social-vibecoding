@@ -148,6 +148,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   const prepareOk = (input) => ({
     ok: true, url: `https://pv--s${input.sessionId}.apps.test`, runtimeKind: 'kubernetes',
     runtimeName: `sv-preview-1-s${input.sessionId}`, containerId: null, imageRef: `img@sha256:${input.n}`, buildRef: `b-${input.n}`,
+    timings: { sourceFetchMs: 5, imageBuildMs: 20, healthMs: 3 },
   });
   // These apps have no repo unit suite, and their runs say so as a real run
   // does (visuals.settleCaptureRun's `unitSuiteAbsent`), which is what
@@ -210,6 +211,10 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(r.capture_state, 'console_only');
     const prepare = (await workOf(s, WORK.prepare))[0];
     assert.equal(prepare.input.db, attemptDb(s.app.slug, s.id, i.data.seed, 1));
+    const [run] = await workOf(s, WORK.run);
+    assert.deepEqual(run.input.timings, { sourceFetchMs: 5, imageBuildMs: 20, healthMs: 3 },
+      'the run right after the build carries its step times, for its trace');
+    assert.equal(i.data.serving.timings, undefined, 'the attempt that serves does not keep them');
     const { rows: history } = await pool.query('SELECT pass_count FROM app_check_history WHERE app_id = $1', [s.app_id]);
     assert.deepEqual(history.map((h) => h.pass_count), [1]);
     assert.deepEqual(await toldBot(s), [['Verdict', 'passing']],

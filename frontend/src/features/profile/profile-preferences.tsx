@@ -1,7 +1,7 @@
 /** The reference's preference card and page links, using existing destinations. */
 import { BellIcon, ChevronRightIcon, CogIcon, ShieldCheckIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { tabAddress, type YouTab } from './frame/you-tabs';
+import { tabAddress, type YouTab } from './you-tabs';
 import { Profile } from './profile.js';
 
 export function ProfilePreferences() {

@@ -342,7 +342,7 @@ test('a card that opens something is a keyboard-reachable button, so it takes th
   const fs = require('node:fs');
   const path = require('node:path');
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
-  assert.match(css, /\.tc-se-card\[role="button"\]:active,\s*\.home-challenge-card\[role="button"\]:active \{\s*transition: transform 0s linear 120ms, filter 0s linear 120ms;/,
+  assert.match(css, /\.tc-se-card\[role="button"\]:active \{\s*transition: transform 0s linear 120ms, filter 0s linear 120ms;/,
     'on touch the press waits a beat, so a scroll that starts on a card does not flash it');
 });
 

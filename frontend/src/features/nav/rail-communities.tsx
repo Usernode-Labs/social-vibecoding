@@ -109,6 +109,7 @@ import { AppWindowIcon, PushPinIcon, SearchIcon, XIcon } from '@/components/ui/i
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { capCount } from '../../lib/count-cap';
 import {
   closeLiveApp, currentAppOnScreen, liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
 } from '../app-frame/live-apps';
@@ -473,7 +474,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
       </a>
       {votes > 0 ? (
         <span className="platform-rail-votes" aria-hidden="true">
-          {votes > 99 ? '99+' : String(votes)}
+          {capCount(votes)}
         </span>
       ) : null}
       <button

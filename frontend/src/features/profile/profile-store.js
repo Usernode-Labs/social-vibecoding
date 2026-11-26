@@ -51,7 +51,8 @@
 import { createStore } from '../../lib/plain-store.js';
 import { changeHref } from '../../lib/change-href';
 import { getDateLocale, t } from '../../lib/i18n/runtime';
-import { getTimeZone, zonedDay } from '../../lib/time-zone';
+import { getTimeZone } from '../../lib/time-zone';
+import { agoStamp } from '../../lib/timestamp';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 
 /** The zone the account picked in Settings › Language (#6479), as a formatter option. */
@@ -88,7 +89,7 @@ function factLine(parts) {
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  * @property {boolean} weekShareOpen        — the "Share your week" card is up (#6464)
- * @property {string} tab                   — under a look, which of You's tabs is up (./frame/you-tabs.ts)
+ * @property {string} tab                   — which of You's tabs is up (./you-tabs.ts)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -108,7 +109,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsOpen: false,
   appSlotsOpen: false,
   weekShareOpen: false,
-  // Under a look, which of You's tabs is up (./frame/you-tabs.ts).
+  // Which of You's tabs is up (./you-tabs.ts).
   tab: 'overview',
 }));
 
@@ -158,22 +159,12 @@ export function avatarUrlOf(state) {
  *  (/avatars/g/<20 hex>.svg). Anything else is dropped rather than drawn. */
 export const AVATAR_URL_RE = /^\/avatars\/(?:[a-f0-9]{32}|g\/[a-f0-9]{20}\.svg)$/;
 
-/** "today" / "3 days ago" / a plain date past a fortnight. Returns null for
- *  anything unparseable, so the caller just omits the segment. */
+/** When something happened, in the shell's one list form (lib/timestamp.ts
+ *  agoStamp): "3h ago", "3d ago", or the day ("Sep 3", with the year once it
+ *  is not this one) a week or more back. Returns null for anything
+ *  unparseable, so the caller just omits the segment. */
 export function relativeDate(iso, now = Date.now()) {
-  if (!iso) return null;
-  const at = Date.parse(iso);
-  if (!Number.isFinite(at)) return null;
-  const days = Math.floor((now - at) / 86400000);
-  if (days < 0) return null;
-  if (days === 0) return t('profile:date.today');
-  if (days === 1) return t('profile:date.yesterday');
-  if (days < 14) return t('profile:date.daysAgo', { count: days });
-  try {
-    return new Date(at).toLocaleDateString(undefined, inZone());
-  } catch (_) {
-    return null;
-  }
+  return agoStamp(iso, { now: new Date(now) }).text || null;
 }
 
 /**
@@ -276,9 +267,8 @@ export function identityView(state) {
     initial: initialOf(u),
     name: displayNameOf(u),
     handle,
-    // The kit's You page (./frame/you-frame.tsx) leads with the @handle and
-    // says the facts under it, so it reads the two apart: the handle whether
-    // or not a display name is set, and the facts without it.
+    // The handle whether or not a display name is set, and the facts
+    // without it, read apart (./profile-view.tsx).
     username: u.username ? `@${u.username}` : null,
     displayName: handle ? displayNameOf(u) : null,
     about: factLine(facts.filter((fact) => fact !== handle)),
@@ -595,7 +585,7 @@ export function feedbackListView(feedback, now = Date.now()) {
     const linked = !!slug && Number.isSafeInteger(issue) && issue > 0;
     const meta = [r.appName ? String(r.appName) : (r.target === 'platform' ? 'Homeroom' : t('profile:feedback.anApp'))];
     if (linked) meta.push(t('profile:feedback.request', { number: issue }));
-    const when = mergedAgo(r.createdAt, now);
+    const when = relativeDate(r.createdAt, now);
     if (when) meta.push(t('profile:feedback.sent', { when }));
     const points = Number(r.points);
     const secondsLeft = r.edit ? Math.max(0, Number(r.edit.secondsLeft)
@@ -621,23 +611,6 @@ export function feedbackListView(feedback, now = Date.now()) {
   };
 }
 
-/** "3 days ago", or "Sep 3" (with the year once it is not this one) past a
- *  fortnight — a month and day reads in every locale, "9/3/2026" does not. */
-export function mergedAgo(iso, now = Date.now()) {
-  const at = Date.parse(iso || '');
-  if (!Number.isFinite(at)) return null;
-  const days = Math.floor((now - at) / 86400000);
-  if (days >= 0 && days < 14) return relativeDate(iso, now);
-  const date = new Date(at);
-  const opts = zonedDay(date).year === zonedDay(new Date(now)).year
-    ? { month: 'short', day: 'numeric' }
-    : { month: 'short', day: 'numeric', year: 'numeric' };
-  try {
-    return date.toLocaleDateString(undefined, inZone(opts));
-  } catch (_) {
-    return null;
-  }
-}
 
 /** What a vote was cast on, by its title: the Your votes row's latest one. */
 function voteTitle(item) {
@@ -735,7 +708,7 @@ export function friendsView(lists, now = Date.now()) {
     incoming: people(lists.incoming).map((p) => {
       // Short, because the row also carries Accept and Decline: on a phone
       // the name and this line share what the two buttons leave.
-      const when = mergedAgo(p.requestedAt, now);
+      const when = relativeDate(p.requestedAt, now);
       return row(p, when ? t('profile:friends.asked', { when }) : t('profile:friends.askedUndated'));
     }),
     friends: people(lists.friends).map((p) => {
@@ -743,7 +716,7 @@ export function friendsView(lists, now = Date.now()) {
       return row(p, since ? t('profile:friends.since', { date: since }) : t('profile:friends.sinceUndated'));
     }),
     outgoing: people(Array.isArray(lists.outgoing) ? lists.outgoing : []).map((p) => {
-      const when = mergedAgo(p.requestedAt, now);
+      const when = relativeDate(p.requestedAt, now);
       return row(p, when ? t('profile:friends.requested', { when }) : t('profile:friends.requestedUndated'));
     }),
   };

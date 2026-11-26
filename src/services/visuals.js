@@ -1843,7 +1843,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // True once the run is settled: its Jobs have nothing left to give.
   let settledRun = false;
   try {
-    const buildTimings = (stagingResult && stagingResult.timings) || null;
+    // The preview machine hands the build's timings over as
+    // workflow.buildTimings, for this trace only: the progress card and the
+    // run's manifest keep reading stagingResult.timings, which it leaves null.
+    const buildTimings = (stagingResult && stagingResult.timings) || workflow.buildTimings || null;
     if (buildTimings) {
       if (buildTimings.sourceFetchMs != null) {
         // Everything before the image build: the shallow clone of the branch,
@@ -1854,7 +1857,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         traceStep('source_fetch', 'Branch source fetched', { durationMs: buildTimings.sourceFetchMs });
       }
       if (buildTimings.imageBuildMs != null) {
-        traceStep('image_build', 'Staging image built', { durationMs: buildTimings.imageBuildMs });
+        // With its slowest steps, as the builder reported them, so a slow
+        // build says whether a step or the builder itself took the time.
+        const phases = Array.isArray(buildTimings.imagePhases) ? buildTimings.imagePhases.slice(0, 8)
+          .map((ph) => ({ name: String(ph?.name || '').slice(0, 80), ms: Number.isFinite(ph?.ms) ? Math.round(ph.ms) : null })) : [];
+        traceStep('image_build', 'Staging image built', {
+          durationMs: buildTimings.imageBuildMs, ...(phases.length ? { phases } : {}),
+        });
       }
       if (buildTimings.cloneMs != null) {
         // Historically the single largest phase of the whole run: a full

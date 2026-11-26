@@ -667,14 +667,10 @@ test('#needs is the Needs you page; #communities is the Communities tab\'s page,
   // A page under Home: its tab is Home's, and the header's arrow goes up to it.
   assert.match(appJs, /'workshop-screen': \['arrow', '\/'\],/);
   assert.match(read('frontend/src/features/nav/nav-store.js'), /'workshop-screen': 'home',/);
-  // The vote digest opens it, and so does the Communities page's Needs you
-  // tile while a vote waits, in a look whose Home has no Needs you card.
+  // The vote digest opens it. (The Communities page's Needs you tile was a
+  // removed look's; the standard look's Home has the Needs you card.)
   assert.match(read('frontend/src/features/notifications/notifications.js'),
     /item\.kind === 'vote_digest' && !item\.appSlug\) \{[\s\S]{0,200}window\.location\.hash = '#needs';/);
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /href="#needs"\s+id="communities-needs-tile"/);
-  const page = read('frontend/src/features/communities/index.tsx');
-  assert.match(page, /const needsTile = !kit && needs > 0 && !q && !editing;/);
-  assert.match(page, /\{needsTile \? <NeedsTile count=\{needs\} \/> : null\}/);
   // The app menu keeps the SCOPED entrance, the project's own hub (#2761).
   assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
     "and the app's menu links out to it, scoped");

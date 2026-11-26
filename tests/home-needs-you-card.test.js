@@ -46,18 +46,18 @@ const thread = (threadId, extra = {}) => ({
   ...extra,
 });
 
-test('the island mounts it under Standard (WIP) and the brand look, in a row of its own before Challenges', () => {
+test('the island mounts it in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  // Standard (WIP) mounts it as soon as the look and the viewer are known, so its
-  // place is held from the first paint; the brand look mounts it with the grid.
-  assert.match(island, /const aside = wip \? viewer : brand && grid\.ready && !!grid\.create;/);
-  assert.match(island, /\{wip \|\| brand \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
-  assert.match(island, /\{wip \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
+  // It is mounted as soon as the viewer is known, so its place is held from
+  // the first paint.
+  assert.match(island, /const aside = viewer;/);
+  assert.match(island, /<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>/);
+  assert.equal(island.match(/<ChallengesSection \/>/g).length, 1, 'Challenges is drawn once, in the row');
   // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
-  assert.match(css, /html:not\(\[data-skin\]\) \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
-  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-main > \.home-row \{ display: contents; \}/);
-  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
+  assert.match(css, /html:root \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
+  assert.match(css, /html:root #home-screen \.home-main > \.home-row \{ display: contents; \}/);
+  assert.match(css, /html:root #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
 });
 
 // The bot tab's two reads, as a member with work in four projects has them.
@@ -259,7 +259,7 @@ test('the row scrolls sideways from the page\'s gutter and snaps to cards, about
   assert.match(css, /\n\.wip-activity-card:focus-visible \{ outline: 2px solid var\(--wip-ink-action\); outline-offset: 2px; \}/);
   // As many columns as the look has room for still drive Challenges' posters, which share the page's lines.
   for (const [at, n] of [['640px', 2], ['1024px', 4]]) {
-    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:not\\(\\[data-skin\\]\\) \\{ --wip-cols: ${n}; \\} \\}`));
+    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:root \\{ --wip-cols: ${n}; \\} \\}`));
   }
   assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-card-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
 });
@@ -269,37 +269,37 @@ test('a row answers the pointer, a press and the keyboard, and a placeholder row
   // A soft ground of the ink, quiet because a row here is something to open, and a shade deeper pressed: tokens of the kit's first rule.
   assert.match(css, /--wip-item-hover: color-mix\(in srgb, var\(--wip-ink\) 5%, transparent\);\s*--wip-item-press: color-mix\(in srgb, var\(--wip-ink\) 9%, transparent\);/);
   // Only where a pointer hovers: a tap on a phone can leave a row :hover, and the ground would stay on it.
-  assert.match(css, /@media \(hover: hover\) \{\s*html:not\(\[data-skin\]\) a\.wip-row:hover \{ background-color: var\(--wip-item-hover\); \}\s*html:not\(\[data-skin\]\) a\.wip-row:active \{ background-color: var\(--wip-item-press\); \}\s*\}/);
+  assert.match(css, /@media \(hover: hover\) \{\s*html:root a\.wip-row:hover \{ background-color: var\(--wip-item-hover\); \}\s*html:root a\.wip-row:active \{ background-color: var\(--wip-item-press\); \}\s*\}/);
   // The whole row, in its own corners.
   assert.match(css, /\.wip-row \{[^}]*border-radius: var\(--wip-item-radius\);/);
   // A ring for the keyboard inside the row's edge, since the list clips what is outside it.
   assert.match(css, /\.wip-rows \{[^}]*overflow: hidden;/);
-  assert.match(css, /html:not\(\[data-skin\]\) a\.wip-row:focus-visible \{ outline: 2px solid var\(--wip-ink-action\); outline-offset: -2px; \}/);
+  assert.match(css, /html:root a\.wip-row:focus-visible \{ outline: 2px solid var\(--wip-ink-action\); outline-offset: -2px; \}/);
   // The fade is dropped with reduced motion, the device's or the setting's.
-  assert.match(css, /html:not\(\[data-skin\]\) a\.wip-row \{ transition: background-color 120ms ease; \}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*html:not\(\[data-skin\]\) a\.wip-row \{ transition: none; \}\s*\}\s*html:not\(\[data-skin\]\):where\(\[data-motion="reduce"\]\) a\.wip-row \{ transition: none; \}/);
+  assert.match(css, /html:root a\.wip-row \{ transition: background-color 120ms ease; \}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*html:root a\.wip-row \{ transition: none; \}\s*\}\s*html:root:where\(\[data-motion="reduce"\]\) a\.wip-row \{ transition: none; \}/);
   // The lines either side of a lit row give way: the row's own above it, and under it the line of the row a whole
   // line of columns on, so the chain is as long as the look's column count at each width.
-  assert.match(css, /@media \(hover: hover\) \{\s*html:not\(\[data-skin\]\) \.wip-rows > li:has\(> a\.wip-row:is\(:hover, :focus-visible\)\) \{ box-shadow: none; \}\s*\}/);
+  assert.match(css, /@media \(hover: hover\) \{\s*html:root \.wip-rows > li:has\(> a\.wip-row:is\(:hover, :focus-visible\)\) \{ box-shadow: none; \}\s*\}/);
   const widths = [['\\(max-width: 639\\.98px\\)', 1], ['\\(min-width: 640px\\) and \\(max-width: 1023\\.98px\\)', 2], ['\\(min-width: 1280px\\)', 4]];
   for (const [media, cols] of widths) {
-    assert.match(css, new RegExp(`@media \\(hover: hover\\) and ${media} \\{\\s*html:not\\(\\[data-skin\\]\\) \\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)${' \\+ li'.repeat(cols)} \\{ box-shadow: none; \\}\\s*\\}`), `${cols} column(s): the row under a lit one is ${cols} on`);
+    assert.match(css, new RegExp(`@media \\(hover: hover\\) and ${media} \\{\\s*html:root \\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)${' \\+ li'.repeat(cols)} \\{ box-shadow: none; \\}\\s*\\}`), `${cols} column(s): the row under a lit one is ${cols} on`);
   }
   // Those are the look's own counts: one, two from 640px, four from 1024px.
-  assert.match(css, /html:not\(\[data-skin\]\) \{ --wip-cols: 1; \}\n@media \(min-width: 640px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 2; \} \}\n@media \(min-width: 1024px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 4; \} \}/);
+  assert.match(css, /html:root \{ --wip-cols: 1; \}\n@media \(min-width: 640px\) \{ html:root \{ --wip-cols: 2; \} \}\n@media \(min-width: 1024px\) \{ html:root \{ --wip-cols: 4; \} \}/);
   // Except on Home beside the open sidebar up to 1280px, where it stays two (four cut every title there), so
   // between 1024px and 1280px the line under a lit row is four on unless the sidebar is open, and two on if it is.
   const open = '#platform-tabs:not\\(\\.hidden\\):not\\(\\.platform-tabs-route-hidden\\):not\\(\\.platform-tabs-folded\\)';
   const lit = '\\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)';
-  assert.match(css, new RegExp(`@media \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{[^}]*\\}\\s*html:not\\(\\[data-skin\\]\\) body:has\\(> ${open}\\) #home-screen \\{ --wip-cols: 2; \\}`), 'Home is two across beside the open sidebar');
-  assert.match(css, new RegExp(`@media \\(hover: hover\\) and \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{\\s*html:not\\(\\[data-skin\\]\\):not\\(:has\\(> body > ${open}\\)\\) ${lit}${' \\+ li'.repeat(4)} \\{ box-shadow: none; \\}\\s*html:not\\(\\[data-skin\\]\\) body:has\\(> ${open}\\) #home-screen ${lit}${' \\+ li'.repeat(2)} \\{ box-shadow: none; \\}\\s*\\}`), 'between 1024px and 1280px the line under a lit row follows the sidebar');
+  assert.match(css, new RegExp(`@media \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{[^}]*\\}\\s*html:root body:has\\(> ${open}\\) #home-screen \\{ --wip-cols: 2; \\}`), 'Home is two across beside the open sidebar');
+  assert.match(css, new RegExp(`@media \\(hover: hover\\) and \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{\\s*html:root:not\\(:has\\(> body > ${open}\\)\\) ${lit}${' \\+ li'.repeat(4)} \\{ box-shadow: none; \\}\\s*html:root body:has\\(> ${open}\\) #home-screen ${lit}${' \\+ li'.repeat(2)} \\{ box-shadow: none; \\}\\s*\\}`), 'between 1024px and 1280px the line under a lit row follows the sidebar');
   // A placeholder is a row too, but a span, not a link: no rule lights a row that is not the link.
   assert.match(read('frontend/src/features/home/wip-kit.tsx'), /<span className="wip-row" aria-hidden="true">/);
   assert.doesNotMatch(css, /(?<!a)\.wip-row:(?:is\(|(?:hover|active|focus-visible)\s*[{,)])/, 'a placeholder would light up too');
   // The standard look and its brand drawing only: the brand look sets these rows flush with its card's inset and
   // answers the pointer with the title in its sky, the kit's rule it keeps.
   for (const m of css.matchAll(/^[^\n{}]*a\.wip-row[^\n{]*\{/gm)) {
-    assert.ok(m[0].trim().startsWith('html:not([data-skin])'), `"${m[0].trim()}" reaches another look`);
+    assert.ok(m[0].trim().startsWith('html:root'), `"${m[0].trim()}" reaches another look`);
   }
   assert.match(css, /\n\.wip-row:hover \.wip-item-title \{ color: var\(--wip-ink-action\); \}/);
 });
@@ -409,7 +409,7 @@ test('each challenge is a card of its own, and the row around them draws none', 
   // The arrows sit centred on the edge of the card at their end; a phone's 12px gutter keeps them a little further in.
   assert.match(css, /\n\.wip-rail-arrow-back \{ inset-inline-start: -1rem; \}\n\.wip-rail-arrow-on \{ inset-inline-end: -1rem; \}\n@media \(max-width: 639\.98px\) \{\n  \.wip-rail-arrow-back \{ inset-inline-start: -0\.625rem; \}\n  \.wip-rail-arrow-on \{ inset-inline-end: -0\.625rem; \}\n\}/);
   // While it loads, the placeholder holds the same shape: card-shaped blocks a card gap apart, nothing round them.
-  const pending = 'html:not\\(\\[data-skin\\]\\) #home-challenges-section\\.home-section-pending > \\.home-panel-body';
+  const pending = 'html:root #home-challenges-section\\.home-section-pending > \\.home-panel-body';
   assert.match(css, new RegExp(`${pending} \\{ padding: 0; \\}`));
   assert.match(css, new RegExp(`${pending} > div \\{\\s*flex-direction: row;\\s*gap: var\\(--wip-card-gap\\);`));
   assert.match(css, new RegExp(`${pending} > div > div \\{\\s*flex: 0 0 calc\\(\\(100% - \\(var\\(--wip-cols\\) - 1\\) \\* var\\(--wip-card-gap\\)\\) \\/ var\\(--wip-cols\\)\\);\\s*height: calc\\(var\\(--wip-poster-art\\) \\+ 2 \\* var\\(--wip-card-pad\\)\\);\\s*border-radius: var\\(--wip-card-radius\\);\\s*background-color: var\\(--wip-skeleton\\);\\s*\\}`));
@@ -424,69 +424,67 @@ test('a title\'s plain words have their own span, and a project\'s name is one s
   // A plain pill in a card that asks reads the card's own ink (Advisory was pale on yellow in the dark).
   assert.match(css, /--wip-ink-soft: var\(--wip-ask-ink\);/);
   // One size at every width, outside any media query.
-  assert.match(css, /\nhtml:not\(\[data-skin\]\) #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
+  assert.match(css, /\nhtml:root #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
   // On a phone alone it is a size down: four across leaves a name about 85px.
-  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html:not\(\[data-skin\]\) #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
+  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html:root #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
 });
 
-test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
+test('A project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  // No Invite card and no Share it card under the look: both actions are the hero's.
-  assert.match(ws, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
-  assert.match(ws, /inviteCard=\{!kitHub\}/);
-  assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
-  assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
+  // No Invite card and no Share it card: both actions are the hero's.
+  assert.doesNotMatch(ws, /inviteCard=/);
+  assert.doesNotMatch(card, /function ShareItCard\(|function InviteHeroCard\(/, 'no Share it card and no invite card under the hero');
+  assert.match(card, /<WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/>/);
   assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
   // Invite is a full-size button in the action row, right after Open app, for
   // a member, and opens the same pane. The drawn arrow and the small pill on
   // the line about who is here are gone: the arrow was left pointing at
   // nothing once the pill wrapped (the visual audit's item 32).
-  assert.match(card, /\{appButton\}\s*\{\/\*[\s\S]*?\*\/\}\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}\s*>\s*\{wipLook \? <UserPlusIcon aria-hidden="true" \/> : null\}\s*\{t\('project:communityCard\.invite\.button'\)\}/);
+  assert.match(card, /\{appButton\}\s*\{\/\*[\s\S]*?\*\/\}\s*\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}\s*>\s*<UserPlusIcon aria-hidden="true" \/>\s*\{t\('project:communityCard\.invite\.button'\)\}/);
   assert.equal(card.slice(card.indexOf('function HeroIdentity('), card.indexOf('export async function proposeAudience(')).includes('data-ws-community-invite'), false, 'nothing to invite with on the line about who is here');
   assert.doesNotMatch(card, /wip-hub-meta-invite|wip-hub-meta-arrow|SwooshArrowIcon/);
-  assert.equal(card.slice(card.indexOf('export function CommunityCard('), card.indexOf('export function showsInviteHero(')).split('data-ws-community-invite=""').length - 1, 1, 'one Invite on the page');
+  assert.equal(card.split('data-ws-community-invite=""').length - 1, 1, 'one Invite on the page');
   // The hero's scenery is for show.
   assert.match(card, /<span className="wip-hero-wash" data-scene=\{platform \? 'home' : String\(communityScene\(slug\)\)\} aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
-  // The standard look's hub too (20 Nov 2026), and a project's preview beside the hero where there is one.
-  assert.match(card, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
-  assert.match(card, /const previewBeside = wipLook && !platform && !!data\.cover\?\.illustration_url;/);
+  // A project's preview beside the hero where there is one.
+  assert.match(card, /const previewBeside = !platform && !!data\.cover\?\.illustration_url;/);
   // Pointing at that picture plays the project's loop over it, as a featured card on Home does.
   assert.match(card, /\{data\.cover\?\.preview_url \? <CardPreview src=\{data\.cover\.preview_url\} \/> : null\}/);
   // Needs you stays in the row with nothing waiting, shaped as its neighbours.
-  assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
+  assert.doesNotMatch(hub, /if \(alone && !claims/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
   // As tall and as round as Open app, in the plain pills' outline.
-  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-hero-summary \.dev-ws-hero-actions :is\(\[data-ws-community-invite\], \[data-ws-community-audience-change\]\) \{\s*display: inline-flex;[^}]*height: 2\.75rem;[^}]*font-size: 1rem;\s*font-weight: 700;/);
+  assert.match(css, /html:root #dev-workshop \.dev-ws-hero-summary \.dev-ws-hero-actions :is\(\[data-ws-community-invite\], \[data-ws-community-audience-change\]\) \{\s*display: inline-flex;[^}]*height: 2\.75rem;[^}]*font-size: 1rem;\s*font-weight: 700;/);
   assert.doesNotMatch(css, /\.wip-hub-meta-(?:invite|arrow|seat)\b/);
-  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
+  assert.match(css, /html:root #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
 });
 
-test('Standard (WIP): a project\'s empty Needs you says so as good news, with the ways on under it', () => {
+test('A project\'s empty Needs you says so as good news, with the ways on under it', () => {
   // The run knows no look: the two pieces beside it read it (project-needs.tsx).
   const flow = read('frontend/src/features/review-flow/review-flow.tsx');
   const beside = read('frontend/src/features/review-flow/project-needs.tsx');
   assert.match(flow, /<ProjectNeedsEmpty slug=\{slug\} project=\{project\} anchorRef=\{anchorRef\}>\s*<p ref=\{anchorRef as never\}[^>]*data-needs-empty="" data-review-flow="">/, 'the plain line is every other look\'s');
   assert.match(flow, /<ProjectWaysIn slug=\{slug\} project=\{project\} \/>/, 'under what waits, too');
-  assert.match(beside, /return isKitHome\(useLiveSkin\(\)\) && !!slug && !!project;/);
+  assert.match(beside, /return !!slug && !!project;/);
   assert.match(beside, /if \(!drawn\) return children;\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
   assert.match(beside, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
   assert.equal(message('communities:reel.caughtUp.next'), 'While you\'re here');
 });
 
-test('Standard (WIP): a board card\'s line says who and when first, then the item\'s number as a code', () => {
+test('A board card\'s line says who and when first, then the item\'s number as a code', () => {
   const src = read('frontend/src/features/dev-board/workshop/work-row.tsx');
-  assert.match(src, /<span className="dev-ws-wrow-sub">\{rowWords\(b, \{ whoFirst: wipLook \}\)\}<\/span>/);
+  assert.match(src, /<span className="dev-ws-wrow-sub">\{rowWords\(b, \{ whoFirst: true \}\)\}<\/span>/);
   assert.match(src, /if \(opts\.whoFirst\) \{\s*if \(b\.by && opts\.by !== false\) parts\.push\(b\.by\);\s*if \(b\.ago && opts\.ago !== false\) parts\.push\(b\.ago\);\s*parts\.push\(codeWords\(b\)\);/);
   assert.equal(message('project:workRow.code.request', { number: 6465 }), 'R#6465');
   assert.equal(message('project:workRow.code.change', { number: 5990 }), 'PR#5990');
 });
 
-test('The board ties a request to the changes made for it (the kit\'s board, the standard look\'s since 20 Nov 2026)', () => {
+test('The board ties a request to the changes made for it', () => {
   const { tiesOf } = loadTsx('frontend/src/features/dev-board/workshop/board-links.ts');
   const row = (noun, num, links) => ({
     getAttribute: (name) => ({ 'data-ws-noun': noun, 'data-ws-num': String(num), 'data-ws-for': links || null })[name] ?? null,
@@ -507,59 +505,56 @@ test('The board ties a request to the changes made for it (the kit\'s board, the
   assert.match(src, /document\.body\.appendChild\(svg\);/);
   assert.doesNotMatch(src, /classList|setAttribute\('class'|\.style\./, 'no class or style is written to a row');
   const row2 = read('frontend/src/features/dev-board/workshop/work-row.tsx');
-  assert.match(row2, /\{\.\.\.\(board && wipLook && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
+  assert.match(row2, /\{\.\.\.\(board && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
   // The door that opened the Workshop on the board was Standard (WIP)'s alone, and went with that look (24 Nov 2026, #7071). The board is by stage alone.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(ws, /boardDoor|traversed\.current/, 'nothing moves the Workshop on to All items');
   assert.doesNotMatch(ws, /_setWorkshopGroup|GroupStrip/, 'in every look since request 6708: there is no switch to put on By stage');
-  assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
+  assert.match(ws, /useEffect\(\(\) => \(tab === 'all' \? watchBoardLinks\(\) : undefined\), \[tab\]\);/);
   // Advanced mode is on <html> for the look's one detail kept for it.
-  assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
-  assert.match(read('public/css/app.css'), /html:not\(\[data-skin\]\)\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
+  assert.match(read('frontend/src/head.html'), /document\.documentElement\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
+  assert.match(read('public/css/app.css'), /html:root\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
 });
 
 test('The standard look: the Workshop opens on its overview, and the board is the page under it, with its way back (20 Nov 2026)', () => {
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const { isKitHome } = loadTsx('frontend/src/lib/skin.ts');
-  // The standard look draws the kit's board (its ties, its cards), but the door that skips the overview is Standard (WIP)'s.
-  assert.equal(isKitHome('standard'), true);
-  assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
+  // The board draws its ties, and no door skips the overview.
+  assert.match(ws, /useEffect\(\(\) => \(tab === 'all' \? watchBoardLinks\(\) : undefined\), \[tab\]\);/);
   assert.doesNotMatch(ws, /boardDoor/, 'and no look skips the overview any more (Standard (WIP), whose door did, was removed on 24 Nov 2026)');
-  // The board shows its own head, "‹ All items", in the standard look: the only rules that hide it belong to other looks.
+  // The board shows its own head, "‹ All items": no rule hides it.
   const css = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
   const hiding = [...css.replace(/@media[^{]*\{/g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => /\.dev-ws-pagehead\b/.test(m[1]) && /display:\s*none/.test(m[2]))
     .flatMap((m) => m[1].split(/,(?![^(]*\))/).map((s) => s.trim()).filter((s) => /\.dev-ws-pagehead\b/.test(s)));
-  for (const one of hiding) assert.match(one, /^html\[data-skin\]/, `"${one}" hides the board's way back in the standard look`);
+  assert.deepEqual(hiding, [], 'nothing hides the board\'s way back');
   // "All items" is the page's one heading, so the place's name over it is the quiet one, as "Hub" is over the hub.
-  assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
-  // The Workshop tab's declared checks run in the standard look (#6936 had moved them to the brand look). 24 Nov
-  // 2026: the overview is the front page there (front-page.tsx); the brand look's tab keeps two of its own (?skin=brand).
+  assert.ok(css.includes('html:root #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
+  // The Workshop tab's declared checks: the overview is the front page there (front-page.tsx, 24 Nov 2026).
   const front = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-front'));
   assert.ok(front.length >= 4, 'the front page has declared checks');
   for (const check of front) assert.doesNotMatch(check.path, /[?&]skin=/, `"${check.name}" runs in the standard look`);
   assert.ok(!JSON.parse(read('dapp.json')).tests.some((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]')), 'and nothing looks for the overview it replaced');
 });
 
-test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {
+test('The menu is the token set\'s own panel, and a pinned project says who is in it', () => {
   const css = read('public/css/app.css');
   // The sidebar and the phone's bar are one panel, drawn from the menu's tokens at every width.
-  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
-  assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-nav-bg: #3c7bd8;/, 'the menu wears the brand\'s own sky, under the standard look too');
+  assert.match(css, /html:root #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
+  assert.match(css, /html:root \{[^}]*--wip-nav-bg: #3c7bd8;/, 'the menu wears the brand\'s own sky, under the standard look too');
   assert.match(css, /\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);\s*box-shadow: none;\s*color: var\(--wip-nav-on-ink\);/);
   // The brand is the logotype at the panel's top, and the top bar starts beside the panel.
-  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
+  assert.match(css, /html:root #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
   assert.match(css, /#platform-header \{ padding-inline-start: calc\(var\(--wip-nav-w\) \+ 1rem\); \}/);
-  // A folded sidebar opens from its arrow alone.
+  // A folded sidebar opens from its arrow alone: pointing never starts a peek.
   assert.match(read('frontend/src/features/nav/rail-peek.ts'),
-    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);(?:\s*\/\/[^\n]*)*\s*\}/);
   // A pinned project: members, then contributors, each on its line; no sentence; the same air on four sides.
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /t\('home:grid\.tile\.members', \{ count: app\.members, formatted: app\.members\.toLocaleString\(\) \}\)/);
   assert.equal(message('home:grid.tile.members_other', { formatted: '1,284', count: 1284 }), '1,284 members');
   assert.match(read('frontend/src/features/home/home.js'), /members: Math\.max\(0, Number\(app\.member_count\) \|\| 0\),/);
-  assert.match(css, /html:not\(\[data-skin\]\) #app-list \.app-card-desc \{ display: none; \}/);
-  assert.match(css, /html:not\(\[data-skin\]\) #app-list \{ padding: var\(--wip-cell-pad\); \}/);
+  assert.match(css, /html:root #app-list \.app-card-desc \{ display: none; \}/);
+  assert.match(css, /html:root #app-list \{ padding: var\(--wip-cell-pad\); \}/);
   // A recent thread is its title, its project and when, in every look now: there is no kind line to hide.
   assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
@@ -578,14 +573,7 @@ test('The brand kit\'s token set draws the standard look; Standard (WIP) and eve
   assert.doesNotMatch(head, /WIP_TOKENS|setAttribute\('data-wip-tokens'|setAttribute\('data-skin-wip'|TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/,
     'the head writes nothing for it, and nothing is stored or pinned');
   // The standard look is drawn with the brand kit's values.
-  assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
-  // The menus do not name it.
-  const picker = read('frontend/src/features/frame/look-picker.tsx');
-  assert.doesNotMatch(picker, /wipTokens|data-look-tokens/);
-  const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
-  assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'brand']);
-  assert.equal(skinMod.WIP_TOKEN_SETS, undefined);
-  assert.equal(skinMod.parseLookChoice, undefined);
+  assert.match(css, /html:root \{[^}]*--wip-font: 'Geist',/);
   // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.
-  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
+  assert.match(css, /html:root #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
 });

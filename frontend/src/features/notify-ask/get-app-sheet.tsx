@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState, type Ref } from 'react';
+import { useEffect, useRef, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 
-import { pushDismissible } from '../../lib/back-stack';
 import { useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useSheet } from '../../lib/sheet';
 import type { StoreLink } from './ask-state';
 
 /**
@@ -19,50 +17,23 @@ import type { StoreLink } from './ask-state';
  * open the store on the phone themselves.
  *
  * Presented as the install banner's "How" sheet is
- * (../mobile-install/install-steps-sheet.tsx): handed to the native kit as a
- * `sheet` when there is one, and a CSS sheet over a scrim when not. Back,
- * Escape, the scrim, ✕ and Done close it.
+ * (../mobile-install/install-steps-sheet.tsx), by the Sheet (lib/sheet.ts):
+ * the native kit's `sheet` when there is one, and a CSS sheet over a scrim
+ * when not. Back, Escape, the scrim, ✕ and Done close it.
  */
 export function GetAppSheet({ links, onClose }: { links: StoreLink[]; onClose: () => void }) {
-  const panel = useRef<HTMLDivElement | null>(null);
   const done = useRef<HTMLButtonElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const [adopted, setAdopted] = useState(false);
-
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; onCloseRef.current(); },
-    });
-    setAdopted(!!adoption);
-    done.current?.focus({ preventScroll: true });
-    return () => {
-      if (adoption) adoption.release();
-      previousFocus?.focus?.({ preventScroll: true });
-    };
-  }, []);
-
-  useEffect(() => {
-    let backed = false;
-    const release = pushDismissible(() => {
-      backed = true;
-      onCloseRef.current();
-      return true;
-    });
-    return () => { if (!backed) release(); };
-  }, []);
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose,
+    initialFocus: () => done.current,
+  });
 
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div
       className={adopted ? 'contents' : 'fixed inset-0 z-[70] bg-black/60 flex items-end justify-center md:items-center'}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -73,7 +44,6 @@ export function GetAppSheet({ links, onClose }: { links: StoreLink[]; onClose: (
         // A constant, as the install sheet's is: the kit writes
         // `platform-sheet-adopted` to this node.
         className="w-full max-w-md rounded-t-[20px] md:rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] flex flex-col"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         <GetAppContent links={links} onClose={onClose} doneRef={done} />
       </div>

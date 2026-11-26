@@ -4,8 +4,8 @@
  * rows as ./profile-recent-activity.tsx.
  *
  * The read and the rows are the Homeroom bot tab's History: ./../ai/history.ts
- * useHistory (GET /api/ai/history) and ./../ai/lines.ts useAiLines, the pair
- * ./frame/you-history.tsx uses under a look. No project filter: the tab lists
+ * useHistory (GET /api/ai/history) and ./../ai/lines.ts useAiLines. No
+ * project filter: the tab lists
  * every project at once, as the profile's Recent activity card does.
  *
  * Read after mount: the first render is the loading line only, so the

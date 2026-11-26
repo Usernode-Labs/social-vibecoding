@@ -1133,8 +1133,8 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
 
   // The #911 check must keep running unchanged: four challenges leave no room
   // to fill, so that payload's markup is untouched by this change.
-  // (It runs under "Paper, simplified" since 20 Nov 2026: the standard look's Home draws posters.)
-  assert.ok(kept.some((t) => t.path === '/?demo=1&skin=brand' && /home-challenge-card \[role=progressbar\]/.test(t.expectSelector)),
+  // (Home draws its challenges as posters since 20 Nov 2026, each with its meter.)
+  assert.ok(kept.some((t) => t.path === '/?demo=1' && /\.wip-poster:not\(\[data-state=done\]\) .*\.wip-meter/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
 
   // Home shows a pick, not the whole list: Next challenges is the open ones,
@@ -1143,12 +1143,11 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   // `few` route's two open challenges both show, and the default route stops
   // at three, in the tab's order (the check's name still says "furthest
   // along first", which the demo's part-filled This week row also is).
-  // (Both run under "Paper, simplified" since 20 Nov 2026, the look that still draws these cards.)
-  const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few&skin=brand');
+  const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
-  assert.match(allShown.expectSelector, /home-challenge-card/);
+  assert.match(allShown.expectSelector, /wip-poster/);
   assert.match(allShown.expectSelector, /data-rows="2"/);
-  assert.ok(kept.some((t) => t.path === '/?demo=1&skin=brand'
+  assert.ok(kept.some((t) => t.path === '/?demo=1'
     && /data-rows="3"/.test(t.expectSelector) && /:first-child/.test(t.expectSelector)),
     'and the default route declares the cap of three');
 });

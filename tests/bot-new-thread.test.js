@@ -155,12 +155,11 @@ test('docked beside the bot tab\'s lists, New chat is the column\'s resting stat
   // The look: no sheet round it, a title card, and one card under it for the
   // starts, the choosers and the box, laid in the pane's grid (no offset).
   const css = read('public/css/app.css');
-  const pane = 'html:is\\(:not\\(\\[data-skin\\]\\), \\[data-skin="brand"\\]\\) #ai-screen \\.ai-main-pane \\.messages-layout > \\[data-bot-new-thread-docked\\]';
+  const pane = 'html:root #ai-screen \\.ai-main-pane \\.messages-layout > \\[data-bot-new-thread-docked\\]';
   assert.match(css, /#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\[data-bot-new-thread-docked\]\) \{\s+background: none;\s+border: 0;\s+border-radius: 0;\s+\}/);
   assert.match(css, new RegExp(`${pane} \\{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\\(0, 1fr\\) auto;`));
   assert.match(css, new RegExp(`${pane}::before \\{[^}]*grid-row: 2 / -1;[^}]*margin: 12px var\\(--thread-gutter\\) 8px;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
   assert.match(css, new RegExp(`${pane} > \\.messages-thread-header \\{[^}]*margin-inline: var\\(--thread-gutter\\);[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card-solid\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
-  assert.match(css, /html\[data-skin="brand"\][^{]*#ai-screen \.ai-main-pane \.messages-layout > \[data-bot-new-thread-docked\] \{\n  --thread-card-look: var\(--bl-card\);\n  --thread-card-solid-look: var\(--bl-card\);\n  --thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);\n  --messages-disc-shadow: var\(--bl-raise-edge\);/, 'the brand look gives it the thread\'s cards, and edges the starts and choosers');
 });
 
 test('the kind is read off the start a message begins with, and a tap writes the start into the box', () => {
@@ -189,10 +188,7 @@ test('the kind is read off the start a message begins with, and a tap writes the
 
 // #7069: New chat puts the caret in the box, so you can type at once; on a
 // touch-only phone it does not, so the keyboard stays down over the starts.
-// Its send disc wears the brand look's own colours: the raised plain disc
-// while the box is empty, the sun with its ink outline once there is
-// something to send.
-test('#7069: opening a new chat focuses its box, and the brand look draws its send as the page\'s main action', () => {
+test('#7069: opening a new chat focuses its box', () => {
   const src = read(NEW_THREAD);
   assert.ok(src.includes("import { wantsKeyboardFocus } from '../message-actions/focus';"), 'the same rule Reply uses');
   assert.ok(src.includes('let openTurn = 0;'));
@@ -202,20 +198,6 @@ test('#7069: opening a new chat focuses its box, and the brand look draws its se
   assert.ok(src.includes('() => openTurn,'), 'the panel reads that turn');
   assert.ok(src.includes('useEffect(() => { if (wantsKeyboardFocus()) toField(); }, [opened]);'),
     'the caret goes in the box where there is a keyboard, never on a touch-only phone');
-
-  // The disc's colours in the brand look, beside that look's reply-box block.
-  const css = read('public/css/app.css');
-  const brand = css.slice(css.indexOf('/* #7069:'), css.indexOf("/* THE COLUMN'S HEADER beside Homeroom bot's page"));
-  assert.ok(brand.includes('.messages-composer-card .messages-send:not([data-bot-stop]) {\n  background: var(--bl-sun);\n  color: var(--bl-on-sun);\n  box-shadow: var(--bl-pill-edge);\n  opacity: 1;\n}'),
-    'the look\'s main action once there is something to send');
-  assert.ok(brand.includes('.messages-send:not([data-bot-stop]):not(:disabled):hover {\n  background: var(--bl-sun-lit);'));
-  assert.ok(brand.includes('.messages-send:not([data-bot-stop]):not(:disabled):active {\n  box-shadow: var(--bl-pill-edge-down);'));
-  assert.ok(brand.includes('.messages-composer-card .messages-send:not([data-bot-stop]):disabled,'));
-  assert.ok(brand.includes('.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) {\n  background: var(--bl-raise);\n  color: var(--bl-label);\n  box-shadow: var(--bl-raise-edge);\n  opacity: 1;\n}'),
-    'the raised plain disc while the box is empty, in the look\'s own colours');
-  assert.ok((brand.match(/\.messages-send:not\(\[data-bot-stop\]\)/g) || []).length >= 5, 'every rule leaves Stop alone');
-  // The looks that already drew it neutral, then accent, are untouched.
-  assert.ok(css.includes('html[data-skin]:where(:not([data-skin="brand"])) .messages-composer-card .messages-send:not(:disabled){background:var(--fr-acc);color:var(--fr-acc-ink)}'));
 });
 
 test('the project is chosen from the "Your communities" rows, Any project first', () => {
@@ -235,7 +217,7 @@ test('the project is chosen from the "Your communities" rows, Any project first'
   const src = read('frontend/src/features/messages/project-picker.tsx');
   // A sheet from the floor on a phone (the kit's when it is there), a menu from 768px.
   assert.match(src, /wide\n\s+\? <PickerMenu slug=\{slug\} anchor=\{anchor\} onPick=\{onPick\} onClose=\{onClose\} \/>\n\s+: <PickerSheet slug=\{slug\} onPick=\{onPick\} onClose=\{onClose\} \/>/);
-  assert.match(src, /adoptKitSurface\(\{\n\s+kind: 'sheet',/);
+  assert.match(src, /useSheet\(\{\n\s+kind: 'sheet',/);
   assert.match(src, /className="community-switcher community-switcher-sheet"/);
   assert.match(src, /className="community-switcher community-switcher-menu"/);
   assert.match(src, /import \{ switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');

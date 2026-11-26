@@ -51,11 +51,14 @@ const BuildLog = {
           ${PlatformI18n.htmlText('session:buildLog.empty')}
         </p>`;
     } else {
-      const when = failure.at ? new Date(failure.at) : null;
-      // #6479: in the zone picked in Settings › Language, else the device's.
-      const zone = typeof PlatformI18n !== 'undefined' && PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
-      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(undefined, zone ? { timeZone: zone } : {}) : null;
-      const whenRel = whenAbs ? blRelTime(failure.at) : null;
+      // The shell's one stamp (lib/timestamp.ts agoStamp, which the bundle
+      // publishes on PlatformI18n): the age, "5m ago", and the full date and
+      // time, in the language and zone picked in Settings. A week or more back
+      // the age is the day itself, already the start of the full stamp, so the
+      // line says the full stamp alone rather than the day twice.
+      const stamp = failure.at ? PlatformI18n.agoStamp(failure.at) : { text: '', title: '' };
+      const whenAbs = stamp.title || null;
+      const whenRel = whenAbs && !whenAbs.startsWith(stamp.text) ? stamp.text : null;
       const metaBits = [];
       // Each line is one message: its label in <0>, its value a parameter.
       const metaLabel = (inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-200">${inner}</span>`;
@@ -218,19 +221,6 @@ function blEscape(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-// Compact relative-time formatter (same buckets as home.js's
-// formatRelativeTime; kept local so load order doesn't matter).
-function blRelTime(iso) {
-  const t = new Date(iso);
-  if (Number.isNaN(t.getTime())) return null;
-  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return PlatformI18n.t('session:buildLog.ago.justNow');
-  if (seconds < 3600) return PlatformI18n.t('session:buildLog.ago.minutes', { count: Math.floor(seconds / 60) });
-  if (seconds < 86400) return PlatformI18n.t('session:buildLog.ago.hours', { count: Math.floor(seconds / 3600) });
-  if (seconds < 86400 * 30) return PlatformI18n.t('session:buildLog.ago.days', { count: Math.floor(seconds / 86400) });
-  return PlatformI18n.t('session:buildLog.ago.months', { count: Math.floor(seconds / (86400 * 30)) });
 }
 
 window.BuildLog = BuildLog;

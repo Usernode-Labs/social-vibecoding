@@ -238,7 +238,13 @@ test('the detail slot opens for a shots entry, not only a plan (#6317)', () => {
     kind: 'shots',
     ref: { changeId: 2151 },
     version: null,
-    payload: { html: '<p>Before and after</p>' },
+    // The change's shots, which the one before & after viewer draws.
+    payload: { shots: { source: { sessionId: 2151, shots: {
+      state: 'verified',
+      claims: [{ id: 'c1', claim: 'Before and after', viewports: ['desktop'] }],
+      artifacts: [{ storyId: 'c1', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+        url: `/api/apps/demo/proposals/2151/shots/${'a'.repeat(32)}` }],
+    } }, captions: null } },
     from: null,
     seq: 1,
   };
@@ -253,8 +259,8 @@ test('the detail slot opens for a shots entry, not only a plan (#6317)', () => {
   assert.match(html, /class="gc-spec-side-panel gc-spec-side-panel-open"/,
     'the host carries the class app.css opens it with');
   assert.match(html, /data-detail-kind="shots"/, 'and says what it shows');
-  assert.match(html, /dev-thread-shots-viewer/, 'the change\'s viewer is in it');
-  assert.match(html, /Before and after/, 'with the html the change carried');
+  assert.match(html, /class="gc-detail-shots"><section class="dev-change-shots dev-thread-picture shots-one shots-one-expanded"/, 'the change\'s viewer is in it');
+  assert.match(html, /Before and after/, 'with the shots the change carried');
 });
 
 // #4875: the Workshop's side panel (workshop/side-panel.tsx) shows the same

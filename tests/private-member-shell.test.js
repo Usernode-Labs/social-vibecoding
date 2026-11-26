@@ -236,20 +236,18 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   // What a search finds of your communities follows the launcher (it was
   // Pinned communities, One Home, #6361, and Discover before that, #4937);
   // the waitlist card keeps its place after it.
-  assert.match(read('frontend/src/features/home/index.tsx'), /\{wip \? null : <AppsMore \/>\}\s+<\/WipCard>\s+<\/section>[\s\S]*<HomeCommunityMatches \/>\s+[\s\S]*<WaitlistCard \/>/);
+  assert.match(read('frontend/src/features/home/index.tsx'), /<AppGrid \/>\s+<\/WipCard>\s+<\/section>[\s\S]*<HomeCommunityMatches \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
 test('a private member is offered no New project on Home and no New community on the Communities page, and no Challenges or Create panels', () => {
   const home = read('frontend/src/features/home/home.js');
   assert.match(home, /if \(App\.user\?\.privateMember\) create = null;/);
   // New community is the Communities tab's page's now (it was Pinned
-  // communities' tile on Home, One Home, #6361): the tile at the end of
-  // Joined and the filled button beside search both hang off the one
-  // offer, which a private member is not made.
+  // communities' tile on Home, One Home, #6361): the filled button beside
+  // search hangs off the offer, which a private member is not made.
   const page = read('frontend/src/features/communities/index.tsx');
   assert.match(page, /const offerCreate = state\.ready && !win\?\.App\?\.user\?\.privateMember;/);
-  assert.match(page, /const createTile = offerCreate && !q && !editing && !wip;/);
-  assert.match(page, /\{kit && offerCreate \? \(\s*<WipCta\s+id="communities-new-top"/);
+  assert.match(page, /\{offerCreate \? \(\s*<WipCta\s+id="communities-new-top"/);
   assert.doesNotMatch(read('frontend/src/features/home/pinned-communities.tsx'), /offerCreate|showCreateModal/, 'nothing on Home\'s side of the tiles makes one');
   const panels = read('src/routes/home-panels.js');
   assert.match(panels, /const PRIVATE_MEMBER_PANELS = new Set\(\['discover'\]\);/);

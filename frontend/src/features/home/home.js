@@ -18,9 +18,9 @@ import { reducedMotion } from '../../lib/reduced-motion';
 //
 //   * the app-card delegation is an import now instead of a `window.AppCard`
 //     read (see renderAppPillsHtml / iconTileFor below), and
-//   * escapeHtml and formatRelativeTime at the bottom of the file are
-//     module-local rather than ambient globals. That has a consequence outside
-//     this file, spelled out in the note above them.
+//   * escapeHtml at the bottom of the file is module-local rather than an
+//     ambient global. That has a consequence outside this file, spelled out in
+//     the note above it.
 //
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
@@ -28,7 +28,8 @@ import { reducedMotion } from '../../lib/reduced-motion';
 import { t as message, htmlText, errorText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
-import { rankSearch, searchKey } from '../../lib/search-rank.js';
+import { agoStamp } from '../../lib/timestamp';
+import { matchesSearch, rankSearch, searchKey } from '../../lib/search-rank.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -386,10 +387,9 @@ const Home = {
   // The sidebar's search glyph (features/nav/rail-communities.tsx): Home,
   // with its search box focused, which finds your apps and communities by
   // name. It opened the Communities screen's search until One Home (#6361).
-  // The field a person types in: Home's own, or, under a look, the kit
-  // page's (frame/home-frame.tsx HomeSearch), which writes into Home's own.
+  // The field a person types in: Home's own.
   _searchField() {
-    return document.querySelector('[data-home-frame-search] input') || document.getElementById('home-search-input');
+    return document.getElementById('home-search-input');
   },
   focusSearch() {
     if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
@@ -491,13 +491,11 @@ const Home = {
     return searchKey(value);
   },
 
-  // Case-insensitive substring match on name and slug. An empty /
-  // whitespace-only query matches everything (the default view).
+  // Case-insensitive substring match on name and slug, accents aside (the
+  // shell's one matcher, lib/search-rank.js). An empty / whitespace-only
+  // query matches everything (the default view).
   matchesQuery(app, query) {
-    const q = Home.searchKey(query);
-    if (!q) return true;
-    return Home.searchKey(app?.name).includes(q)
-      || Home.searchKey(app?.slug).includes(q);
+    return matchesSearch(query, app?.name, app?.slug);
   },
 
   // True when the query IS the app's name or slug (trimmed, any case, any
@@ -732,8 +730,8 @@ const Home = {
   _rowBudgetPending: 0,
 
   // Whether New project is drawn outside the grid, so the grid ends with no
-  // tile: under Standard (WIP) only, whose search row carries the button
-  // (features/home/index.tsx), for a viewer who gets a tile.
+  // tile: the search row carries the button (features/home/index.tsx), for a
+  // viewer who gets a tile.
   hasSideCard() {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     if (window.App?.user?.privateMember) return false;
@@ -743,19 +741,12 @@ const Home = {
       const shot = new URLSearchParams(location.search).get('shot');
       if (shot === 'create-enabled' || shot === 'create-disabled') return false;
     } catch { /* no address to read */ }
-    let skin = 'standard';
-    try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
-    // search row at every width, so its grid draws no tile. The brand look
-    // ('brand') has the same button from 768px, where the search row is on
-    // screen; a phone, whose search row waits to be pulled into view, keeps
-    // the tile. The standard look takes Standard (WIP)'s top row (20 Nov
-    // 2026), and both now do as the brand look does (phone review, 23 Nov
-    // 2026): on a phone the button waited under the header with the search,
-    // so nothing on screen started a project until the page was pulled down.
-    // There the collapsed grid ends with the tile again, and the row is the
-    // field alone (app.css).
-    if (skin !== 'brand' && skin !== 'standard') return false;
+    // New project is a button on the search row from 768px, where the search
+    // row is on screen; a phone, whose search row waits to be pulled into
+    // view, keeps the tile (phone review, 23 Nov 2026): on a phone the button
+    // waited under the header with the search, so nothing on screen started
+    // a project until the page was pulled down. There the collapsed grid
+    // ends with the tile again, and the row is the field alone (app.css).
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 
@@ -1091,9 +1082,9 @@ const Home = {
       // three apps and New project. Nothing is re-placed: the app keeps its
       // cell and is there again once the grid is expanded or edited.
       //
-      // Not under Standard (WIP) (`inCard`, Home.hasSideCard): New project is
-      // a button on its search row, and the grid draws no tile at all: four
-      // apps to the last row.
+      // Not from 768px (`inCard`, Home.hasSideCard): New project is a button
+      // on its search row there, and the grid draws no tile at all: four apps
+      // to the last row.
       const inCard = Home.hasSideCard();
       Home._sideCard = inCard;
       const createTakesLast = !inCard && !editing && !Home._appsExpanded
@@ -1876,9 +1867,8 @@ const Home = {
   // stays outside the grid for the reason it always did: the grid's
   // re-render must not take it away mid-click.
   //
-  // Kept its name and its caller. It no longer touches the DOM, and the
-  // listener it used to re-attach on every paint is now attached once by
-  // ./apps-more.tsx to an element React keeps.
+  // Kept its name and its caller. It no longer touches the DOM: it publishes
+  // the count Home's heading offers ("Show all N", ./index.tsx).
   _renderAppsMore(count, canFold) {
     chromeStore.set({
       moreCount: count || 0,
@@ -4073,11 +4063,12 @@ const Home = {
           includePrContext: false,
         })
       : `<span class="text-xs font-mono">${escapeHtml(app.slug)} · ${escapeHtml(app.version?.shortSha || 'dev')}</span>`;
-    // "Updated Xh ago" lives here rather than on the card face; falls
-    // back to created_at when last_deploy_at is null (pre-migration
+    // "Updated Xh ago" lives here rather than on the card face, in the
+    // shell's one list form (lib/timestamp.ts agoStamp: a date past a week);
+    // falls back to created_at when last_deploy_at is null (pre-migration
     // apps — schema.sql backfills last_deploy_at = created_at, so this
-    // is mostly defensive).
-    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
+    // is mostly defensive). An unreadable instant drops the line.
+    const updatedRel = agoStamp(app.last_deploy_at || app.created_at).text;
     // The app's FULL pill set (missing secrets / to vote / in dev /
     // issues / privacy) — the card face carries no chips at all, so
     // this header is the one place they render.
@@ -4107,7 +4098,7 @@ ${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div cl
     // fills the app's own page, search results and demo tiles carry no
     // data-yours, and while edit mode is on there is nothing to start.
     if (!basic && !Home._editing && anchorEl && typeof anchorEl.closest === 'function'
-        && anchorEl.closest('.app-card[data-yours]:not([data-demo]), [data-home-frame-tile="yours"]')) {
+        && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
       items.push({
         key: 'edit-my-apps',
         label: message('home:menu.editMyApps.label'),
@@ -5499,16 +5490,13 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
   });
 }
 
-// escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
-// script's top-level function declarations they were `window.escapeHtml` /
-// `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
-// so it won a last-writer-wins chain. Inside a module they are module-local,
-// which is the right scope and matches what browse.js, app-card.js, kudos.js and
-// leaderboard.js already did when they moved.
-//
-// formatRelativeTime has no ambient consumer left: browse.js carries its own
-// copy and build-log.js's comment says it deliberately kept one local so load
-// order wouldn't matter. Nothing else ever read it.
+// escapeHtml used to be AMBIENT here: as a classic script's top-level function
+// declaration it was `window.escapeHtml`, and home.js was the LAST tag to
+// declare it, so it won a last-writer-wins chain. Inside a module it is
+// module-local, which is the right scope and matches what browse.js,
+// app-card.js, kudos.js and leaderboard.js already did when they moved. (The
+// relative-time formatter that sat beside it is gone: the menu's "Updated …"
+// reads lib/timestamp.ts's agoStamp, the shell's one.)
 //
 // escapeHtml has one, and it changes which copy it resolves to.
 // app-secrets.js calls `escapeHtml` (and `escapeAttr`, which
@@ -5527,24 +5515,6 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-// Compact "Nx ago" formatter shared by the home-card meta line. Kept
-// locally instead of pulling in a date library — the granularity here
-// only needs to be readable at a glance, not exact to the second.
-// Returns null for unparseable input so callers can drop the segment
-// rather than render "NaN ago".
-function formatRelativeTime(input) {
-  if (!input) return null;
-  const t = new Date(input);
-  if (Number.isNaN(t.getTime())) return null;
-  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return message('home:time.justNow');
-  if (seconds < 3600) return message('home:time.minutesAgo', { count: Math.floor(seconds / 60) });
-  if (seconds < 86400) return message('home:time.hoursAgo', { count: Math.floor(seconds / 3600) });
-  if (seconds < 86400 * 30) return message('home:time.daysAgo', { count: Math.floor(seconds / 86400) });
-  if (seconds < 86400 * 365) return message('home:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
-  return message('home:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Back online: refill a grid that could only show the offline note, or

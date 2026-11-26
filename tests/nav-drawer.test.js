@@ -282,14 +282,13 @@ test('Messages\' drawer holds the list and conversations, on a phone only', () =
 
 test('the Messages screen: the panes are the levels, the list is alone, the arrow is the drawer\'s', () => {
   const index = read('frontend/src/features/messages/index.tsx');
-  // One look (25 Nov 2026): in the standard look the bar says Messages over a conversation (barWords); the brand look names it.
-  assert.match(index, /const liveSkin = useLiveSkin\(\);\s+const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, liveSkin === 'brand' \? threadWords : barWords\);/);
+  // One look (25 Nov 2026): the bar says Messages over a conversation (barWords).
+  assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, barWords\);/);
   // 3 Nov 2026: no peek. The list is alone on its level, the whole screen.
   assert.match(index, /const drawerClass = drawer\.on \? ` messages-drawer\$\{drawer\.level === 0 \? ' messages-drawer-alone' : ''\}` : '';/);
   assert.match(index, /<ConversationList drawer=\{drawer\.on\} \/>\s*<ConversationThread \/>/);
   assert.doesNotMatch(index, /ConversationPeek|messages-peek-body/);
   assert.match(index, /className=\{`messages-list-pane \$\{drawer \? 'flex' : /, 'the list stays drawn under a conversation');
-  assert.match(index, /\{inDrawer \? null : channel/, 'no avatar in the sheet\'s title row');
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /if \(state\.route\.conversationId && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
     'no href\'d arrow, so WebKit\'s history swipe stays off');
@@ -317,33 +316,11 @@ test('the Messages screen: the panes are the levels, the list is alone, the arro
   assert.doesNotMatch(css, /\.messages-thread-peek|\.messages-peek-open/, 'nothing peeks');
 });
 
-test('the phone\'s header names a conversation as its sheet does', () => {
-  const { threadWords } = loadTsx('frontend/src/features/messages/index.tsx');
-  const base = { id: 8, members: [], memberCount: 3, membershipStatus: 'member', title: 'Launch crew' };
-  assert.deepEqual(threadWords({ ...base, kind: 'group', myRole: 'owner' }), { title: 'Launch crew', sub: '3 members · you own this group' });
-  assert.deepEqual(threadWords({ ...base, kind: 'group', myRole: 'member', memberCount: 1 }), { title: 'Launch crew', sub: '1 member' });
-  assert.equal(threadWords({ ...base, kind: 'group', membershipStatus: 'invited' }).sub, 'Invitation pending');
-  const ada = { id: 3, username: 'ada' };
-  assert.deepEqual(threadWords({ ...base, kind: 'direct', title: 'ada', peer: ada }), { title: 'ada', sub: 'Direct message' });
-  assert.equal(threadWords({ ...base, kind: 'direct', title: 'ada', peer: ada, awaitingAcceptance: true }).sub, 'Request pending');
-  const bot = { id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' };
-  assert.deepEqual(threadWords({ ...base, kind: 'direct', title: 'homeroom_bot', peer: bot, homeroomBot: true }),
-    { title: 'Homeroom bot', sub: 'Builds what you ask for' });
-  // The sheet builds the same words from the same ids.
-  const index = read('frontend/src/features/messages/index.tsx');
-  const words = index.slice(index.indexOf('export function threadWords('), index.indexOf('function ThreadHeader('));
-  const header = index.slice(index.indexOf('function ThreadHeader('), index.indexOf('/** The day a message was sent'));
-  for (const id of ['header.subtitle.channel', 'header.subtitle.invited', 'header.subtitle.groupOwner', 'header.subtitle.group',
-    'header.subtitle.requestPending', 'header.subtitle.direct', 'header.subtitle.homeroomBot']) {
-    assert.ok(words.includes(`'messages:${id}'`) && header.includes(`'messages:${id}'`), id);
-  }
-});
-
 // One look (25 Nov 2026): on a phone the page's one back is the bar's white disc, which presses the chip, and the
 // chip is put away while the bar has the disc. Still one back, to the place the chip names (audit N05).
 test('a request\'s page has one back: on a phone the bar\'s disc, which presses its chip (audit N05)', () => {
   const drawer = read(`${DIR}/header-drawer.tsx`);
   assert.match(drawer, /if \(mode !== 'communities'\) return null;[\s\S]{0,900}if \(subTab === 'topic'\) return topicName \? <BackDisc mode=\{mode\} label=\{topicName\} onBack=\{topicBack\} \/> : null;/);
-  assert.ok(read('public/css/app.css').includes('html:not([data-skin]) body:has(#platform-header [data-nav-drawer-back]) #dev-topic-thread .dev-request > .dev-request-back { display: none; }'),
+  assert.ok(read('public/css/app.css').includes('html:root body:has(#platform-header [data-nav-drawer-back]) #dev-topic-thread .dev-request > .dev-request-back { display: none; }'),
     'the chip is put away while the bar draws the way back');
 });

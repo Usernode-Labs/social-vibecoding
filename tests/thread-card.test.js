@@ -1,7 +1,6 @@
 'use strict';
 
-// The thread's card on a request's and a change's page, under the standard
-// look and the brand look (frontend/src/features/dev-board/topic/
+// The thread's card on a request's and a change's page (frontend/src/features/dev-board/topic/
 // thread-card.tsx, card-model.ts and step-store.ts; app.css "THE THREAD'S
 // CARD"): a kicker over the title, whose words the summary is, the picture,
 // and a foot that says where the thread stands once, with its action. A step
@@ -10,7 +9,7 @@
 // The foot's model is pure: which of a change's votes, tests and merge it
 // speaks for, and a request's standing in words. These tests read it in
 // words, hold the step store's rules, and pin the places that draw the card:
-// the two heads (never under one of the frame's looks), a lone change under a
+// the two heads, a lone change under a
 // request, and the stylesheet.
 
 const test = require('node:test');
@@ -99,10 +98,10 @@ test('failed tests lead even over a vote the viewer can cast, and so do tests st
 
 test('in a side panel the thread is the same three cards, and the picture is one picture with one switch', () => {
   const css = read('public/css/app.css');
-  const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
+  const panel = 'html:root :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 20 Nov 2026: a private thread in the bot tab's column is the same page, and its two cards the same cards.
-  const priv = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread';
+  const priv = 'html:root #ai-screen .dev-private-thread';
   assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\),\\n${esc(priv)} :is\\(\\[data-thread-page-post\\], \\[data-thread-page-replies\\]\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
   // 25 Nov 2026 (#7122): the panel's sheet paints no ground, as a private
   // thread's does: the cards lie on whatever is behind the panel.
@@ -115,14 +114,11 @@ test('in a side panel the thread is the same three cards, and the picture is one
   assert.match(css, /#ai-screen \.dev-private-thread > \.dev-request-sheet \{\n  background: transparent;/);
   assert.match(css, /#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\.dev-private-thread\) \{\n  background: none;\n  border: 0;\n  border-radius: 0;\n\}/);
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
-  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
-  assert.doesNotMatch(brand, /--thread-ground-look/, 'the brand look no longer paints the sheet\'s ground');
-  assert.match(brand, /\.in-side-panel\.side-panel-beside-ai body:has\(\.dev-thread-card\) \{ background: var\(--bl-page\) !important; \}/);
-  // The picture: the size switch and the light and dark flip are the
-  // expanded viewer's; the caption is one quiet line.
-  assert.match(css, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.shots-seg-size, \.shots-theme-flip\) \{ display: none; \}/);
+  // The picture: one picture with one switch (the slider), and under it each
+  // change is one quiet line; the expanded viewer says more.
   assert.match(css, /\.dev-thread-tiles-legend \.shots-change strong \{[^}]*font-weight: 400;/);
-  assert.match(css, /\.dev-thread-tiles-legend \.shots-key \{ display: none; \}/);
+  assert.match(read('frontend/src/features/review-flow/shots-viewer.tsx'),
+    /className=\{expanded \|\| steps \? 'shots-changes-wrap' : 'shots-changes-wrap dev-thread-tiles-legend'\}/);
   // 26 Nov 2026 (#7180): the caption is never squeezed to a column of single
   // letters by a row of tiles. The row wraps and the caption asks for 12rem
   // of its own, so in a side panel it takes the line under the tiles.
@@ -137,8 +133,8 @@ test('a request with one change says it once: the card\'s summary covers the cha
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
   const changes = read(CHANGES);
   // The card's summary, written from the request and its change, is the one summary.
-  assert.match(head, /const covers = cardLook && !editing && summary\?\.basis === 'change';/);
-  assert.match(head, /useMemo\(\(\) => \(\{ card: cardLook, page, covers, row \}\), \[cardLook, page, covers, row\]\)/);
+  assert.match(head, /const covers = !editing && summary\?\.basis === 'change';/);
+  assert.match(head, /useMemo\(\(\) => \(\{ card: true, page, covers, row \}\), \[page, covers, row\]\)/);
   assert.match(changes, /covered=\{thread\.card && sole && !!thread\.covers\}/);
   assert.match(changes, /const summary = covered \? '' : view\?\.body\.summaryHtml \|\| '';/);
   assert.equal(message('project:topic.card.summaryByBotChange'), 'Summary by Homeroom bot, from the request and its change.');
@@ -146,8 +142,7 @@ test('a request with one change says it once: the card\'s summary covers the cha
   // step's note is a pale wash, not the header's yellow.
   const css = read('public/css/app.css');
   assert.match(css, /\.gc-tab-body:has\(> \.gc-spec-side-panel-open\) \.dev-request:has\(\.dev-request-rail:not\(:empty\)\) \.dev-request-sheet \{ border-top-color: transparent; box-shadow: none;/);
-  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
-  assert.match(brand, /--rail-note: color-mix\(in srgb, var\(--bl-wash\) 50%, var\(--bl-card\)\);/);
+  assert.match(css, /:where\(#dev-topic-thread\) \.dev-rail \{[^}]*--rail-note: color-mix\(in srgb, var\(--bl-wash\) 50%, var\(--bl-card\)\);/);
 });
 
 test('with no vote to cast, failed tests lead in red; running tests lead with how far they are', () => {
@@ -248,7 +243,7 @@ test('the card keeps to itself: the menu on its first line, a reason where a pic
   // No picture: why, where it would be (#6832: the change's diagram, not
   // "What it touches", which moved to its Technical details).
   assert.match(card, /export function NoPicture\(\{ none, phase, stopped, diagram, diagramLed = false \}/);
-  assert.match(read(CHANGE), /\{cardLook && !v\.shots \? <NoPicture none=\{!!v\.shotsNone\} phase=\{phaseOf\(v\)\} stopped=\{fixStanding\(v\.testing\) === 'stopped'\} diagram=\{body\.diagram\} diagramLed=\{!!readDiagram\(body\.diagram\)\} \/> : null\}/);
+  assert.match(read(CHANGE), /\{!v\.shots \? <NoPicture none=\{!!v\.shotsNone\} phase=\{phaseOf\(v\)\} stopped=\{fixStanding\(v\.testing\) === 'stopped'\} diagram=\{body\.diagram\} diagramLed=\{!!readDiagram\(body\.diagram\)\} \/> : null\}/);
   // #6832: a change with nothing visible draws its own picture where the box
   // was, and says it has none yet when there is none.
   assert.match(card, /if \(diagramLed\) return null;/);
@@ -356,14 +351,13 @@ test('the timeline: a passed test opens its checks, and the last step opens its 
   assert.equal(stepOpens(untracked[untracked.length - 1]), null);
 });
 
-test('both heads draw the card only outside the frame\'s looks, and keep Votes, Testing and the progress card in the page', () => {
+test('both heads draw the card, and keep Votes, Testing and the progress card in the page', () => {
   const change = read(CHANGE);
   const request = read(REQUEST);
   for (const src of [change, request]) {
-    assert.match(src, /const cardLook = !frame;/);
-    assert.match(src, /\{cardLook \? <ThreadKicker kind="(change|request)"/);
+    assert.match(src, /<ThreadKicker kind="(change|request)"/);
     assert.match(src, /useEffect\(\(\) => closeStep, \[page\]\);/, 'a step left open does not follow the reader to the next page');
-    assert.match(src, /<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{cardLook \? openNow : null\} \/>/);
+    assert.match(src, /<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{openNow\} \/>/);
   }
   // A change: the pair wraps itself in a layer that stays mounted, so the
   // declared checks and the doors to the vote still find the cards; shut,
@@ -377,13 +371,13 @@ test('both heads draw the card only outside the frame\'s looks, and keep Votes, 
   // The private suggestion rides at the foot's end, inside its band, so the
   // foot is the last thing in the card. The change's own page is the one
   // that folds its vote into the header (the test below).
-  assert.match(change, /\{cardLook \? <ChangeFoot id=\{id\} card=\{card\} v=\{v\} page=\{page\} tail=\{workWithBot\} float \/> : null\}/);
-  assert.match(change, /\{cardLook \? null : workWithBot\}/);
-  assert.match(change, /\{cardLook && body\.summaryBy \? <WordsBy who=\{body\.summaryBy\}/);
+  assert.match(change, /<ChangeFoot id=\{id\} card=\{card\} v=\{v\} page=\{page\} tail=\{workWithBot\} float \/>/);
+  assert.doesNotMatch(change, /[^=]\{workWithBot\}/, 'the suggestion is drawn only inside the foot');
+  assert.match(change, /\{body\.summaryBy \? <WordsBy who=\{body\.summaryBy\}/);
   assert.match(change, /<ThreadCardContext\.Provider value=\{cardContext\}>/);
   // A request: the old status box gives way to the foot, and the bot's
   // progress card is the content of the last step's layer.
-  assert.match(request, /\{\(working && !r\.status\.closed\) \|\| cardLook \? null : \(\s*<RequestStatus/);
+  assert.doesNotMatch(request, /<RequestStatus\b/);
   assert.match(request, /<StepLayer keep open=\{openNow\?\.kind === 'track'\} name="track"[\s\S]*?<div className="dev-request-track"/);
   assert.match(request, /<WordsBy who="asker" name=\{r\.asker \|\| null\} \/>/);
   assert.match(request, /<ThreadCardContext\.Provider value=\{cardContext\}>/);
@@ -406,13 +400,15 @@ test('the layer: over the card, × on its right, Escape and the dimmed card clos
   assert.doesNotMatch(head, /ChevronLeft|ArrowLeft/, 'no back arrow');
 });
 
-test('the stylesheet: the card\'s block sits after the rail\'s and before the bell\'s sheet, with a twin for reduced motion', () => {
+test('the stylesheet: the card\'s block sits after the rail\'s and before the faces, with a twin for reduced motion', () => {
   const css = read('public/css/app.css');
   const rail = css.indexOf("THE THREAD'S RAIL");
   const card = css.indexOf("THE THREAD'S CARD");
-  const bell = css.indexOf("THE BELL'S SHEET");
-  assert.ok(rail > 0 && card > rail && bell > card);
-  const block = css.slice(card, bell);
+  // The bell's sheet, which followed it, was drawn only under the frame's
+  // looks and went with them (26 Nov 2026); the fonts' block follows now.
+  const faces = css.indexOf('THE FACES THE PAGES NAME');
+  assert.ok(rail > 0 && card > rail && faces > card);
+  const block = css.slice(card, faces);
   assert.match(block, /\.dev-thread-card > :first-child:not\(\.min-w-0\) \{ display: none; \}/, 'the author\'s avatar gives way to the kicker');
   assert.match(block, /\.dev-thread-card \{ position: relative; --foot-x: 16px; --foot-b: 16px; \}/, 'the card is the layer\'s containing block, and names its own gutters');
   assert.match(block, /\.dev-step-layer \{ position: absolute; inset: 0;/, 'the layer lies over the card and adds no height');
@@ -512,26 +508,27 @@ test('a request with a summary shows it on the card, says what it was written fr
   assert.equal(message('project:topic.card.summaryByBotChange'), 'Summary by Homeroom bot, from the request and its change.');
   assert.equal(message('project:topic.card.summaryByBotChanges'), 'Summary by Homeroom bot, from the request and its changes.');
   const request = read(REQUEST);
-  assert.match(request, /const summary = !frame && r\.summary\?\.text \? r\.summary : null;/, 'the frame\'s looks keep the request as written');
-  assert.match(request, /\{unbuilt\.length && !cardLook \? \(/, 'the plan card gives way to Read plan in the foot');
+  assert.match(request, /const summary = r\.summary\?\.text \? r\.summary : null;/);
+  assert.match(request, /const \{ plans \} = useMemo\(\(\) => plansByChange\(/);
+  assert.doesNotMatch(request, /unbuilt\.map/, 'the plan card gives way to Read plan in the foot');
   assert.match(request, /data-thread-foot-plan=\{plan\.key\} onClick=\{\(\) => openStep\(page, \{ kind: 'plan', key: plan\.key \}\)\}/);
   // The view takes it from the request's read, and only a basis it knows.
   const av = read('public/js/app-view.js');
   assert.match(av, /summary: issue\.summary && typeof issue\.summary\.text === 'string' && issue\.summary\.text\.trim\(\)/);
 });
 
-test('the card\'s picture is the viewer read as one picture: After first, tiles for its screens, the legend beside them', () => {
+test('the card\'s picture is the one before & after viewer: the slider, tiles for its screens, the changes beside them', () => {
   const change = read(CHANGE);
-  assert.match(change, /if \(auto && after\) after\.checked = true;/, 'it starts on After, not side by side');
-  assert.match(change, /pick\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/, 'a tile presses the viewer\'s own screen pick');
-  assert.match(change, /<ShotsCard s=\{v\.shots\} single=\{cardLook\} status=\{v\.status\?\.key \|\| null\} \/>/);
-  assert.match(change, /className="dev-thread-tile"\s+aria-pressed=\{i === at\}/);
+  assert.match(change, /<ShotsCard s=\{v\.shots\} single status=\{v\.status\?\.key \|\| null\} \/>/);
+  const viewer = read('frontend/src/features/review-flow/shots-viewer.tsx');
+  assert.match(viewer, /className="dev-thread-tile"\s+data-shots-screen=\{one\.viewport\}\s+aria-pressed=\{i === at\}/);
+  assert.match(viewer, /onClick=\{\(\) => setPicked\(i\)\}/, 'a tile picks its screen');
   assert.equal(message('project:topic.card.shots.screenOf', { index: 2, total: 3 }), '2 of 3 screens');
+  // No viewer of radios and labels is laid over the picture any more.
   const css = read('public/css/app.css');
-  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf("THE BELL'S SHEET"));
-  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.dev-change-card-name, \.shots-seg-both, \.shots-screen-nav, \.shots-view-notes\) \{ display: none; \}/,
-    'side by side, the pager and the viewer\'s own legend give way; expanded to the window it is its usual self');
-  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) \.shots-bar \{\s*position: absolute;/, 'the switch lies over the picture');
+  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf('THE FACES THE PAGES NAME'));
+  assert.ok(block.length > 0);
+  assert.doesNotMatch(block, /\.dev-change-viewer/);
 });
 
 // ── 17 Nov 2026: closer to the prototype ────────────────────────────────
@@ -578,7 +575,7 @@ test('a request with competing changes is one card: a row each with Look, one fo
   assert.deepEqual(built[0].link.open, { kind: 'change', changeId: 7 });
   assert.equal(message('project:topic.rail.builtLettered', { letter: 'A' }), 'Change A built');
   const request = read(REQUEST);
-  assert.match(request, /if \(cardLook && open\.kind === 'change' && competes\(open\.changeId\)\) \{\s*openStep\(page, open\);/);
+  assert.match(request, /if \(open\.kind === 'change' && competes\(open\.changeId\)\) \{\s*openStep\(page, open\);/);
   assert.match(request, /else if \(competes\(open\.changeId\)\) openStep\(page, \{ kind: 'change', changeId: open\.changeId \}\);/);
 });
 
@@ -615,14 +612,14 @@ test('the foot is a band that runs to the card\'s end when it ends the card, wit
   assert.match(card, /el\.toggleAttribute\('data-thread-foot-end', end\);/);
   assert.match(card, /if \(next\.hidden \|\| next\.classList\.contains\('dev-step-layer'\)\) continue;/);
   const css = read('public/css/app.css');
-  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf("THE BELL'S SHEET"));
+  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf('THE FACES THE PAGES NAME'));
   assert.match(block, /\.dev-request-root\.dev-thread-card \{ padding: 4px var\(--foot-x\) var\(--foot-b\); \}/);
   assert.match(block, /\.dev-thread-foot \{[^}]*margin: 16px calc\(-1 \* var\(--foot-x\)\) 0; padding: 14px var\(--foot-x\);[^}]*background: var\(--thread-foot, transparent\);\s*\}/);
   assert.match(block, /\.dev-thread-foot\[data-thread-foot-end\] \{\s*margin-bottom: calc\(-1 \* var\(--foot-b\)\);/);
   assert.match(block, /\.dev-thread-foot-acts :is\(button, a\):not\(\.dev-change-gate-link\) \{\s*height: 40px;/);
   assert.match(block, /\.dev-thread-foot-acts \.dev-vote-caret \{ display: none; \}/, 'one Vote, and the question after');
-  // The brand look: the sun pill, white pills beside it, the foot's band.
-  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
+  // The thread page (the brand look's rules, kept for it): the sun pill, white pills beside it, the foot's band.
+  const brand = css.slice(css.indexOf('THE THREAD PAGE: a request'), css.indexOf('END OF THE THREAD PAGE.'));
   assert.match(brand, /--thread-foot: color-mix\(in srgb, var\(--bl-sun\) 9%, var\(--bl-card\)\);/);
   assert.match(brand, /\.dev-thread-foot-acts :is\(\.dev-vote-btn:not\(\.dev-vote-btn-yes\), \.dev-request-primary\),[^{]*\{\s*background: var\(--bl-sun\);\s*color: var\(--bl-on-sun\);\s*box-shadow: var\(--bl-pill-edge\);/);
   assert.match(brand, /\.dev-rail \{ --rail-now-box: var\(--bl-page\); --rail-now-box-line: var\(--app-sheet-line\); --rail-note-plain: transparent; \}/);
@@ -663,26 +660,23 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   assert.doesNotMatch(css, /:has\(\.dev-thread-float\) \.dev-request-rail \{/, 'the row is in the card\'s column, beside the timeline');
 });
 
-test('the picture\'s chip says what the side is for this change', () => {
+test('the picture\'s two sides say what each is for this change', () => {
   const change = read(CHANGE);
-  assert.match(change, /data-thread-chips=\{chips \? '' : undefined\}/);
-  assert.match(change, /'--thread-chip-after': JSON\.stringify\(chips\.after\), '--thread-chip-before': JSON\.stringify\(chips\.before\)/);
-  assert.equal(message('project:topic.card.shots.chipIfPasses'), 'If it passes · After');
-  assert.equal(message('project:topic.card.shots.chipTodayBefore'), 'Today · Before');
+  // Live or closed, the page's own words; up for a vote, the slider's own.
+  assert.match(change, /\? \{ before: t\('project:topic\.card\.shots\.chipWas'\), after: t\('project:topic\.card\.shots\.chipLive'\) \}/);
+  assert.match(change, /\? \{ before: t\('project:topic\.card\.shots\.chipToday'\), after: t\('project:topic\.card\.shots\.chipProposed'\) \}\s*: null;/);
+  assert.match(change, /<ShotsViewer source=\{source\} captions=\{chips\} onExpand=\{expand\} \/>/);
   assert.equal(message('project:topic.card.shots.chipLive'), 'Live now');
-  const css = read('public/css/app.css');
-  assert.match(css, /\.shots-flip-chip-after::after \{ content: var\(--thread-chip-after\); \}/);
-  assert.match(css, /\.shots-flip-chip-before::after \{ content: var\(--thread-chip-before\); \}/);
+  assert.equal(message('communities:review.compare.captionAfter'), '<0>If it passes ·</0> After');
 });
 
-test('a run that worked out its screens is drawn with the Needs you slider, not the tinted viewer', () => {
-  const PICTURE = 'frontend/src/features/dev-board/topic/thread-picture.tsx';
+test('a verified run is drawn with the Needs you slider, not the tinted viewer', () => {
+  const PICTURE = 'frontend/src/features/review-flow/shots-viewer.tsx';
   const change = read(CHANGE);
-  // The card look hands such a run to the slider; a run without screens keeps the viewer.
-  assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
-  assert.match(change, /return <ThreadPicture s=\{s\} captions=\{voting \? null : chips\} \/>;/);
+  // Every verified run is the slider's: one viewer, wherever it is drawn.
+  assert.match(change, /if \(s\.state === 'verified' && s\.source\) \{/);
   const picture = read(PICTURE);
-  assert.match(picture, /import \{ CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  assert.match(picture, /import \{ CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips \} from '\.\/compare';/);
   // Phone review #27: the caption's strip and the switch's are part of the
   // picture's height, and the screen is placed between them.
   assert.match(picture, /return \{ height: room \+ CAP_STRIP \+ FOOT_STRIP, place: withinStrips\(placeBox\(screen, focus, \{ w: width, h: room \}, 1\)\) \};/);
@@ -690,13 +684,13 @@ test('a run that worked out its screens is drawn with the Needs you slider, not 
   // before the shots come in and around a screen narrower than the picture.
   assert.match(picture, /ground="var\(--thread-well, var\(--messages-surface-2\)\)"/, 'the ground is the well\'s, never a tint');
   assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
-  assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
+  assert.match(read('frontend/src/features/dev-board/topic/shots-detail.ts'), /kind: 'shots',\s*ref: \{ changeId: source\.sessionId \}/, 'Expand opens the same viewer in the detail column');
   // The slider prints the page's own words for a change that is live or closed.
   const compare = read('frontend/src/features/review-flow/compare.tsx');
   assert.match(compare, /\{captions \? captions\.after : <RichMessage id="communities:review\.compare\.captionAfter"/);
   assert.match(compare, /\{captions \? captions\.before : <RichMessage id="communities:review\.compare\.captionBefore"/);
-  // The page's model carries the screens.
-  assert.match(read('public/js/app-view.js'), /return html \? \{ state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number\(item\.id\) \|\| null \} : null;/);
+  // The page's model carries the shots themselves, which the viewer shapes as Needs you does.
+  assert.match(read('public/js/app-view.js'), /return \{ state: 'verified', source: \{ shots, sessionId: Number\(item\.id\) \}, line: null, thumbs, changeId: Number\(item\.id\) \|\| null \};/);
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-thread-compare \{\s*--rf-black: var\(--text-primary\); --rf-cream: var\(--bg-primary\); --rf-line: var\(--app-sheet-line\);/);
 

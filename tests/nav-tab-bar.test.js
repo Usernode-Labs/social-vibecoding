@@ -580,8 +580,10 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', folded) > 0);
   // …and it is not drawn only while it is not peeking, which is what makes
   // the hot zone at the window's edge the way back from folded.
-  // N21: and drawn while it slides away (`platform-tabs-leaving`).
-  assert.match(css.slice(folded, folded + 140), /:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
+  // N21's `platform-tabs-leaving`, which kept a sliding rail drawn, went with
+  // the looks that slid it away: the standard look folds it to a strip.
+  assert.match(css.slice(folded, folded + 140), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
+  assert.ok(!css.replace(/\/\*[\s\S]*?\*\//g, '').includes('platform-tabs-leaving'), 'no rule names it');
   // The toggle itself is desktop-only by the same mechanism, and the group
   // that holds it goes with it when the back slot is empty — an
   // empty-but-present flex item still reserves the header's own `gap-4`,
@@ -1495,10 +1497,9 @@ test('a phone tab\'s side padding steps down with the bar: 8px, then 6px up to 3
   // At 8px the five labels, the lit one's bold, the tabs' margins and the
   // bar's own padding need 383px, so a 375px phone (iPhone mini, SE, X,
   // 11 Pro) printed "Homeroom…" on every tab and "Communiti…" with
-  // Communities lit. Every step has the same scope: the standard look and
-  // the brand look, never the side strip, which stacks its tabs and pads
-  // them itself.
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab';
+  // Communities lit. Every step has the same scope: never the side strip,
+  // which stacks its tabs and pads them itself.
+  const scope = 'html:root:not([data-side-strip]) #platform-tabs .platform-tab';
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const steps = [...css.matchAll(new RegExp(`${esc(scope)} \\{ padding-inline: (\\d+)px; \\}`, 'g'))].map((m) => {
     const query = /^@media \(max-width: ([\d.]+px)\) \{/.exec(css.slice(css.lastIndexOf('@media', m.index)));

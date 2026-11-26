@@ -18,9 +18,10 @@
  *
  * - an issue's body and a proposal's summary — `PlatformMarkdown.render`,
  *   the same pipeline the group chat's transcript uses.
- * - the before/after tiles — `AppView.visualsTilesHtml`, which other
- *   surfaces still call (the admin gallery and its own tests), so it stays
- *   a string builder.
+ * - a change from before shots: its route captures' tiles,
+ *   `AppView.visualsTilesHtml`, which the admin gallery still calls, so it
+ *   stays a string builder. A change's shots are the one before & after
+ *   viewer's (../../review-flow/shots-panel.tsx).
  *
  * A request's page is ./request-head.tsx (#4453): the request as a Messages
  * thread's root post, its GitHub comments in the thread's own stream.
@@ -35,6 +36,8 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { FRESH, watch } from '../../../lib/live-reads';
 import { TouchesPicture, readTouches } from '../workshop/touches';
+import { ShotDetails, ShotsPanel, shotDetailsShown } from '../../review-flow/shots-panel';
+import type { ShotsSource } from '../../review-flow/shots-viewer';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -1698,14 +1701,18 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '', touches }: {
+export function DetailsSheet({ id, prRef, steps, help, html, shots = null, touches }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
   help: boolean;
   html: string;
-  /** #4455: Shot details, what the change page's Before and after card leaves out. */
-  shotsHtml?: string;
+  /**
+   * #4455: Shot details, what the change page's Before and after card leaves
+   * out: the change's shots, and whether this viewer may take a failed run
+   * again (AppView._canRetakeShots).
+   */
+  shots?: { source: ShotsSource; canRetake: boolean } | null;
   /** #6832: "What it touches", which lived on the card and now belongs here. */
   touches?: unknown;
 }): ReactNode {
@@ -1758,11 +1765,12 @@ export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '', tou
             <TouchesPicture t={touchesPicture} />
           </section>
         ) : null}
-        {shotsHtml ? (
+        {shots && shotDetailsShown(shots.source.shots) ? (
           <section className="dev-details-part" data-details-part="shots" data-note="shots">
             <h5 className="dev-details-sub">{t('project:topic.details.shots')}</h5>
-            {/* AppView.shotsHtml's `details` reading, escaped where it is built. */}
-            <Html className="dev-shot-details" html={shotsHtml} />
+            <div className="dev-shot-details">
+              <ShotDetails source={shots.source} canRetake={shots.canRetake} />
+            </div>
           </section>
         ) : null}
       </div>
@@ -1789,7 +1797,7 @@ export function ChangeSheets({ id, row, body }: { id: number; row: any; body: To
         steps={body.steps}
         help={!!(body.details && body.details.help)}
         html={body.proposalBody?.html || ''}
-        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true, canRetake: !!av._canRetakeShots?.(row) }) : ''}
+        shots={row?.shots ? { source: { shots: row.shots, sessionId: id }, canRetake: !!av?._canRetakeShots?.(row) } : null}
         touches={row?.touches}
       />
       {av?._canEditDescription?.(row) ? (
@@ -1949,7 +1957,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
-              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true, canRetake: !!av._canRetakeShots?.(session) }) : ''}
+              shots={session?.shots ? { source: { shots: session.shots, sessionId: Number(id) }, canRetake: !!av?._canRetakeShots?.(session) } : null}
               touches={session?.touches}
             />
           ) : null}
@@ -2180,9 +2188,10 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
             : issueHtml ? <Html className="dev-topic-about-body" html={issueHtml} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
-              {/* AppView.visualsTilesHtml's markup — four other surfaces
-                  still call it, so it stays a string builder. */}
-              <Html className="usn-visuals-body" html={tiles.tilesHtml} />
+              {/* A change's shots, in the one before & after viewer; a change
+                  from before shots, AppView.visualsTilesHtml's tiles. */}
+              {tiles.source ? <ShotsPanel source={tiles.source} />
+                : <Html className="usn-visuals-body" html={tiles.tilesHtml || ''} />}
             </div>
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}

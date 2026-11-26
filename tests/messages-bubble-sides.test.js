@@ -159,9 +159,9 @@ test('the stylesheet puts your own channel row on the right too, picture and all
   // The row runs the other way, so your face sits at the trailing edge and
   // the words stack against it, with nothing tinted and no bubble; a frame
   // look keeps its own post.
-  assert.match(CSS, /html:not\(\[data-skin\]\) \.messages-message\.messages-message-end \{ flex-direction: row-reverse; \}/);
-  assert.match(CSS, /html:not\(\[data-skin\]\) \.messages-message\.messages-message-end > \.min-w-0 \{\n  display: flex;\n  flex-direction: column;\n  align-items: flex-end;\n\}/);
-  assert.match(CSS, /html:not\(\[data-skin\]\) \.messages-message\.messages-message-end > \.messages-message-gutter \{\n  margin-inline-start: 0;\n  margin-inline-end: -12px;\n  text-align: start;\n\}/);
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end \{ flex-direction: row-reverse; \}/);
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end > \.min-w-0 \{\n  display: flex;\n  flex-direction: column;\n  align-items: flex-end;\n\}/);
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end > \.messages-message-gutter \{\n  margin-inline-start: 0;\n  margin-inline-end: -12px;\n  text-align: start;\n\}/);
 });
 
 // ── 4. The declared checks ────────────────────────────────────────────────

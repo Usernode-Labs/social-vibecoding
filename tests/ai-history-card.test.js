@@ -128,7 +128,7 @@ test('History: Done runs on into it, quiet rows that say how each thing ended (2
   // week's in the one band, with no card and no month headings of their own.
   const html = lists({ history: historyState(rows, { next: '2026-09-10T12:00:00.000Z' }), historyKind: null, doneOpen: 1 });
   assert.doesNotMatch(html, /data-ai-sheet="history"|data-ai-history-month/, 'no History card, no months');
-  assert.doesNotMatch(html, new RegExp(`>${message('messages:ai.history.title')}<`), 'History is no heading');
+  assert.doesNotMatch(html, />History</, 'History is no heading');
   assert.match(html, /data-ai-sheet="live"[\s\S]*data-ai-line="history-change"/, 'in Done');
   const at = (needle) => html.indexOf(needle);
   assert.ok(at('Watering reminders') < at('Sign in with a code') && at('Sign in with a code') < at('Swap requests'), 'newest first');
@@ -139,7 +139,7 @@ test('History: Done runs on into it, quiet rows that say how each thing ended (2
   assert.match(row('Sign in with a code'), new RegExp(`data-ai-row-end="word">${message('messages:ai.history.closed')}<`));
   assert.doesNotMatch(row('Sign in with a code'), /data-ai-row-end="tick"/, 'a closed thing has no tick');
   assert.match(row('A new card picture'), new RegExp(message('messages:ai.history.yesPassed')));
-  assert.match(row('Swap requests'), new RegExp(`· ${message('messages:ai.history.left')}`), 'a community you left says so');
+  assert.match(row('Swap requests'), new RegExp(message('messages:ai.row.left', { line: '[^<]+' })), 'a community you left says so');
   assert.match(html, /data-ai-history-more=""/, 'Show more while there is more');
   assert.match(html, new RegExp(`data-ai-history-more="">${message('messages:ai.band.showMore')}`), 'with no count');
   for (const kind of ['all', 'change', 'request', 'vote', 'solo']) assert.match(html, new RegExp(`data-ai-history-kind="${kind}"`));

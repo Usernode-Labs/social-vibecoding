@@ -6,7 +6,7 @@
  * caller and exports the host the shell renders.
  *
  * Why a host component rather than a portal into a detached div: the editor's
- * card is reparented by the native kit (`adoptKitSurface`), so React's
+ * card is reparented by the native kit (lib/sheet.ts), so React's
  * delegated events only reach it while the portal container is `document.body`
  * itself. A portal into the main React tree with `document.body` as its
  * container keeps that true, and the host renders nothing until something is
