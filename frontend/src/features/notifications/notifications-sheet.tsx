@@ -1654,6 +1654,41 @@ function RunCount({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
+/**
+ * Request 7164 (the phone audit of 25 Nov 2026): on a phone the list loads
+ * its next page when the person reaches its end, as a native list does. A
+ * mark one pixel tall sits just above the pager's button, and when it comes
+ * within 200px of the scroller's foot the button's own request is made.
+ *
+ * The button stays, for the keyboard, for a screen reader, for a browser
+ * without IntersectionObserver, and for a page that failed: `rows` is how
+ * many rows the list draws, and one count is tried once. So a load that
+ * failed, or that brought nothing this filter shows, is not asked for again
+ * on its own, and a short list fills the screen and then stops. The pager's
+ * own guard (`loadOlder` while a page is in flight) covers the rest. From
+ * 768px it does nothing: the audit was of the phone, and the panel there
+ * keeps its press.
+ */
+function LoadAtEnd({ active, rows, onReach }: { active: boolean; rows: number; onReach: () => void }) {
+  const mark = useRef<HTMLDivElement | null>(null);
+  const tried = useRef<number | null>(null);
+  const reach = useRef(onReach);
+  reach.current = onReach;
+  useEffect(() => {
+    const node = mark.current;
+    if (!active || !node || typeof IntersectionObserver !== 'function') return undefined;
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 767px)').matches) return undefined;
+    const watcher = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting) || tried.current === rows) return;
+      tried.current = rows;
+      reach.current();
+    }, { root: node.closest('[data-notif-scroller]'), rootMargin: '0px 0px 200px 0px' });
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, [active, rows]);
+  return <div ref={mark} data-notif-load-at-end="" aria-hidden="true" className="h-px" />;
+}
+
 export function NotificationsSheetView() {
   const { open, adopted, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
@@ -2288,7 +2323,7 @@ export function NotificationsSheetView() {
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll" data-notif-scroller="">
       {/*
           Saved messages + collaborator invites, pinned above the rows — they
           moved here with the list from the drawer's notifications block.
@@ -2456,6 +2491,7 @@ export function NotificationsSheetView() {
         <>
           {snap.screenCanLoadMore ? (
             <div className="px-4 py-3">
+              <LoadAtEnd active={!!open} rows={shown.length} onReach={() => controller()?.loadOlder()} />
               <button
                 id="notifications-load-older"
                 type="button"
@@ -2480,6 +2516,7 @@ export function NotificationsSheetView() {
         </>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
+          <LoadAtEnd active={!!open} rows={shown.length} onReach={() => controller()?.loadOlder()} />
           <button
             id="notifications-load-older"
             type="button"
@@ -2494,6 +2531,11 @@ export function NotificationsSheetView() {
         // #6785: the same "load more as you scroll to the bottom" footer the
         // All tab wears, on the threads tab's own cursor.
         <div className="px-4 py-3">
+          <LoadAtEnd
+            active={!!open && !threadsLoading}
+            rows={threads ? threads.length : 0}
+            onReach={() => { if (threadsNext) void loadThreads(threadsNext); }}
+          />
           <button
             id="notifications-load-more-threads"
             type="button"
