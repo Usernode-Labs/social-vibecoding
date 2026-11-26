@@ -187,13 +187,32 @@ async function seedCopy(pool) {
 // database, and each test's two copies are made from it. Only the schema goes
 // in: seedCopy and ensureFullAdminIdentity stay per copy, because the full
 // admin identity depends on the copy's run and side.
+// A pool that waits for a free connection forever never reaches its statement
+// timeout: node-postgres starts that only once a query has a client. Bound the
+// wait too, so a busy server fails the step in seconds and names it.
+const CONNECT = { connectionTimeoutMillis: 10_000 };
 const TIMEOUTS = { statement_timeout: 30_000, query_timeout: 30_000 };
+
+// Race a promise against a timer, so a wait with no timeout of its own
+// (closing a pool, a setup step) fails with what it was waiting on. The timer
+// is unref'd and cleared, so it never holds the process open.
+function within(promise, ms, label) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} took over ${ms}ms`)), ms);
+    timer.unref();
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 let template = null;
 let templateReady = null;
 
 function ensureTemplate() {
   if (!templateReady) {
-    templateReady = (async () => {
+    // Bounded inside the memo, so a timeout rejects templateReady itself and
+    // every later test fails at once with the same message instead of each
+    // waiting its own minute.
+    templateReady = within((async () => {
       template = `sdst_${crypto.randomBytes(8).toString('hex')}_tpl`;
       const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, max: 1, ...TIMEOUTS });
       try {
@@ -204,13 +223,17 @@ function ensureTemplate() {
       const url = new URL(DSN); url.pathname = `/${template}`;
       // Ended before any copy is made: PostgreSQL will not use a template
       // that still has a connection open.
-      const pool = new Pool({ connectionString: String(url), max: 1, ...TIMEOUTS });
+      const pool = new Pool({ connectionString: String(url), max: 1, ...CONNECT, ...TIMEOUTS });
       try {
         await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
       } finally {
-        await pool.end();
+        try {
+          await within(pool.end(), 10_000, 'closing the schema template pool');
+        } catch (err) {
+          console.error(`shots-demo-states: ${err.message}`);
+        }
       }
-    })();
+    })(), 60_000, 'building the schema template');
   }
   return templateReady;
 }
@@ -230,7 +253,7 @@ async function dropCopy(admin, name, t) {
 }
 
 async function pairOfCopies(t) {
-  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, ...TIMEOUTS });
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, max: 2, ...TIMEOUTS });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -251,10 +274,10 @@ async function pairOfCopies(t) {
     const name = dbManager.shotsDbName(SLUG, runId, side);
     await admin.query(`CREATE DATABASE ${name} TEMPLATE ${template}`);
     const url = new URL(DSN); url.pathname = `/${name}`;
-    const pool = new Pool({ connectionString: String(url), max: 4, ...TIMEOUTS });
-    await seedCopy(pool);
+    const pool = new Pool({ connectionString: String(url), max: 4, ...CONNECT, ...TIMEOUTS });
+    await within(seedCopy(pool), 30_000, `seeding ${name}`);
     const input = { databaseUrl: String(url), slug: SLUG, runId, side, selfAppSlug: SLUG };
-    await shotsFixtures.ensureFullAdminIdentity(input);
+    await within(shotsFixtures.ensureFullAdminIdentity(input), 30_000, `setting up the full admin on ${name}`);
     sides[side] = { name, pool, input };
   }
   t.after(async () => {
@@ -262,10 +285,18 @@ async function pairOfCopies(t) {
       try { await close(); } catch (err) { t.diagnostic(`could not close a server: ${err.message}`); }
     }
     for (const { pool, name } of Object.values(sides)) {
-      await pool.end();
+      try {
+        await within(pool.end(), 10_000, `closing ${name}`);
+      } catch (err) {
+        t.diagnostic(err.message);
+      }
       await dropCopy(admin, name, t);
     }
-    await admin.end();
+    try {
+      await within(admin.end(), 10_000, 'closing the admin pool');
+    } catch (err) {
+      t.diagnostic(err.message);
+    }
   });
   return sides;
 }
@@ -284,7 +315,11 @@ after(async () => {
   } catch (err) {
     console.error(`shots-demo-states: could not drop ${template}: ${err.message}`);
   } finally {
-    await admin.end();
+    try {
+      await within(admin.end(), 10_000, 'closing the template admin pool');
+    } catch (err) {
+      console.error(`shots-demo-states: ${err.message}`);
+    }
   }
 });
 
