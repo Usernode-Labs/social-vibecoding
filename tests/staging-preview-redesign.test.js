@@ -163,14 +163,21 @@ test('bridge: setChange is a patch, so the change\'s name arrives without cleari
 
 test('bridge: the switch offers Before & after only when there are shots', () => {
   const b = bridgeMod.stagingBridge;
-  b.setShots('');
+  b.setShots(null);
   b.setView('shots');
   assert.equal(storeMod.stagingStore.get().view, 'preview', 'nothing to show on that side');
-  b.setShots('<div class="shots-viewer"></div>');
+  // The change's verified shots, which the one before & after viewer draws.
+  const shots = { state: 'verified', claims: [], artifacts: [] };
+  b.setShots({ shots, sessionId: 42 });
+  assert.deepEqual(storeMod.stagingStore.get().shots, { shots, sessionId: 42 });
   b.setView('shots');
   assert.equal(storeMod.stagingStore.get().view, 'shots');
-  b.setShots('');
+  // Anything else is no shots: no string of markup is taken any more.
+  b.setShots('<div class="shots-viewer"></div>');
+  assert.equal(storeMod.stagingStore.get().shots, null);
   assert.equal(storeMod.stagingStore.get().view, 'preview', 'shots gone: back to the preview');
+  b.setShots({ shots, sessionId: 0 });
+  assert.equal(storeMod.stagingStore.get().shots, null, 'they are of a change');
   b.close();
 });
 
@@ -762,7 +769,7 @@ test('not running: the before and after is offered over the loader only when the
   const b = bridgeMod.stagingBridge;
   b.open();
   b.setLoader(true, { title: 'This preview isn’t running right now', offerShots: true });
-  b.setShots('<div class="shots">before / after</div>');
+  b.setShots({ shots: { state: 'verified', claims: [], artifacts: [] }, sessionId: 9201 });
   // Rendered always, like every part of the island; a ref toggles `hidden`.
   assert.match(renderToHtml(createElement(overlay.StagingOverlay, {})),
     /<button type="button" class="hidden staging-link staging-loader-shots">See the before &amp; after instead<\/button>/);

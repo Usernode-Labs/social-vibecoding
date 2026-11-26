@@ -6863,14 +6863,6 @@
     "text": "Close",
     "description": "Accessible name of the × button, and of the dimmed area behind, on the panel that opens over a thread's card when a step of the \"How it got here\" timeline is pressed: closes the panel."
   },
-  "topic.card.shots.chipIfPasses": {
-    "text": "If it passes · After",
-    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change is not live yet: this is what the app will look like if the change is approved."
-  },
-  "topic.card.shots.chipTodayBefore": {
-    "text": "Today · Before",
-    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change is not live yet: this is what the app looks like today."
-  },
   "topic.card.shots.chipLive": {
     "text": "Live now",
     "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change has gone live: this is what the app looks like now."
@@ -7042,10 +7034,6 @@
   "topic.card.look.yes_other": {
     "text": "{{count}} yes",
     "description": "Chip under a competing change's summary, in the layer Look opens over a request's card: how many members voted yes for it, for example \"2 yes\" or \"0 yes\"."
-  },
-  "topic.card.shots.tile": {
-    "text": "Screen {{index}} of {{total}}",
-    "description": "Accessible name of a small picture under a change's before and after picture on its page: pressing it shows that screen in the picture above. {{index}} is the screen's position and {{total}} how many screens the change has."
   },
   "topic.card.shots.screenOf": {
     "text": "{{index}} of {{total}} screens",

@@ -63,6 +63,12 @@ export interface DetailPayload {
   html?: string | null;
   /** The text is an error or a 404, so it renders as text, never as a document. */
   error?: boolean;
+  /**
+   * A change's before & after (kind `shots`): its shots view model and the
+   * change they are of, and the names its page gives each side, for the one
+   * viewer (../review-flow/shots-viewer.tsx).
+   */
+  shots?: { source: { shots: unknown; sessionId: number }; captions?: { before: string; after: string } | null };
   /** A request draft's own copy, until the pane reads the saved row (#6248). */
   draft?: DetailDraftCopy;
   /**

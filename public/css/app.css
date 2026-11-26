@@ -20788,16 +20788,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-visuals { margin-top: 10px; }
 .dev-topic-visuals:first-child, .dev-topic-h + .dev-topic-visuals { margin-top: 0; }
 
-/* Before & after shots (AppView.shotsHtml): one screen at a time, in a frame
-   that keeps its size. Radios before the screens hold the state (the side,
-   one pair for every screen, and which screen is showing) and labels on each
-   screen set it, so it needs no script; :has() reads it. Every screen sits in
-   the same 16:10 stage, a phone one in the middle at the same zoom as a
-   desktop one, and the screens share one grid cell, so the card is as tall as
-   its tallest description and never changes size. The outlines are where the
-   run found the two screens differ (services/shots-diff.js): red where it
-   was, green where it is now, dashed grey for a difference no declared change
-   accounts for. */
+/* An HTML spec's drawn screens, before and after (AppView._shotsViewerHtml):
+   one screen at a time, in a frame that keeps its size. Radios before the
+   screens hold the state (the side, one pair for every screen, and which
+   screen is showing) and labels on each screen set it, so it needs no
+   script; :has() reads it. Every screen sits in the same 16:10 stage, a
+   phone one in the middle at the same zoom as a desktop one, and the screens
+   share one grid cell, so the viewer is as tall as its tallest description
+   and never changes size. A change's own shots are drawn by the one before &
+   after viewer instead (review-flow/shots-viewer.tsx), under ".shots-one". */
 .shots-viewer { position: relative; container-type: inline-size; border-radius: 14px; overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.1); }
 .dark .shots-viewer { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
@@ -20840,20 +20839,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-screen-step-off { opacity: 0.35; cursor: default; }
 .shots-screen-count { min-width: 3.4em; text-align: center; font-size: 13px; font-weight: 600; color: #52525b; }
 .dark .shots-screen-count { color: #d4d4d8; }
-/* The mode flip (#4459): the same 30px round grey disc as the screen arrows,
-   pushed to the bar's right end. One of the two labels is always hidden by
-   the theme pick (the one naming the mode already showing), so the bar ends
-   with one moon or one sun. */
-.shots-theme-flip { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer;
-  user-select: none; margin-inline-start: auto; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
-.shots-theme-flip:hover { background: rgba(24, 24, 27, 0.12); }
-.dark .shots-theme-flip { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
-.dark .shots-theme-flip:hover { background: rgba(255, 255, 255, 0.14); }
-.shots-theme-flip svg { width: 16px; height: 16px; flex: none; }
-.shots-theme-flip ~ .shots-screen-nav { margin-inline-start: 0; }
-.shots-viewer:has(.shots-theme-pick:focus-visible) .shots-theme-flip { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 /* The expand button (#5691): the same 30px round grey disc as the screen
-   arrows and the mode flip, at the bar's end. The viewer itself is its
+   arrows, at the bar's end. The viewer itself is its
    popover, so the button opens and closes it without script; the arrow
    pair points out while it is closed and in while it is open. */
 .shots-expand { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; cursor: pointer;
@@ -20862,7 +20849,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dark .shots-expand { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
 .dark .shots-expand:hover { background: rgba(255, 255, 255, 0.14); }
 .shots-expand svg { width: 16px; height: 16px; flex: none; }
-.shots-theme-flip ~ .shots-expand { margin-inline-start: 0; }
 .shots-expand ~ .shots-screen-nav { margin-inline-start: 0; }
 .shots-expand:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .shots-expand-out, .shots-expand-in { display: inline-flex; align-items: center; }
@@ -20893,12 +20879,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .shots-viewer:popover-open { width: min(calc(var(--platform-float-w) - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
 }
 .shots-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
-.shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
-.shots-viewer:has(.shots-theme-light:checked) .shots-theme-to-light { display: none; }
-/* Dark pick: a side that has a dark shot shows it instead of its light one;
-   one that has not keeps its light shot in both modes. */
-.shots-viewer:has(.shots-theme-dark:checked) .shots-flip-side:has(.shots-img-dark) .shots-img-light,
-.shots-viewer:has(.shots-theme-light:checked) .shots-img-dark { display: none; }
 @container (max-width: 430px) {
   .shots-seg-label { display: none; }
   .shots-seg-btn { padding: 0 9px; }
@@ -20911,8 +20891,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dark .shots-stage { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
 .shots-stage > .shots-flip-side { grid-area: 1 / 1; position: relative; display: block;
   width: min(100cqw, calc(100cqh * (var(--shots-shape, 16 / 10)))); aspect-ratio: var(--shots-shape, 16 / 10); }
-.shots-stage > .shots-flip-missing { width: 100%; height: 100%; aspect-ratio: auto; display: grid; place-items: center;
-  font-size: 12px; color: rgba(113, 113, 122, 1); }
 .shots-flip-side img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .shots-viewer:has(.shots-side-after:checked) .shots-flip-before,
 .shots-viewer:has(.shots-side-before:checked) .shots-flip-after { visibility: hidden; }
@@ -20924,29 +20902,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-flip-chip-before { background: #dc2626; }
 .shots-viewer:has(.shots-side-after:checked) .shots-flip-chip-before,
 .shots-viewer:has(.shots-side-before:checked) .shots-flip-chip-after { display: none; }
-.shots-box { position: absolute; border: 2px solid #16a34a; background: rgba(22, 163, 74, 0.1); border-radius: 6px; pointer-events: none;
-  transition: opacity 120ms ease; }
-.shots-flip-before .shots-box { border-color: #dc2626; background: rgba(220, 38, 38, 0.1); }
-.shots-stage .shots-box-other { border: 1.5px dashed rgba(113, 113, 122, 0.9); background: transparent; }
-/* Lifted by its own width, so a line at the very bottom of a shot shows. */
-.shots-mark { position: absolute; height: 0; margin-top: -2px; border-top: 2px dashed #16a34a; pointer-events: none; transition: opacity 120ms ease; }
-.shots-flip-before .shots-mark { border-top-color: #dc2626; }
-.shots-box-n { position: absolute; inset-inline-start: -10px; top: -10px; width: 20px; height: 20px; border-radius: 999px; display: grid;
-  place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; box-shadow: 0 0 0 2px #fff; }
-.shots-flip-before .shots-box-n { background: #dc2626; }
-.dark .shots-box-n { box-shadow: 0 0 0 2px #18181b; }
-/* Pointing at a change in the description picks out its outline. */
-.shots-view:has(.shots-change:hover) .shots-box,
-.shots-view:has(.shots-change:hover) .shots-mark { opacity: 0.2; }
-.shots-view:has(.shots-change[data-shots-n="1"]:hover) .shots-stage [data-shots-n="1"],
-.shots-view:has(.shots-change[data-shots-n="2"]:hover) .shots-stage [data-shots-n="2"],
-.shots-view:has(.shots-change[data-shots-n="3"]:hover) .shots-stage [data-shots-n="3"] { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .shots-box, .shots-mark { transition: none; } }
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .shots-box,
-:where(html[data-motion="reduce"]) .shots-mark { transition: none; }
-
-/* Under the screen: only the changes on it, numbered as their outlines. */
+/* Under the screen: only the changes on it, numbered. */
 .shots-view-notes { display: grid; gap: 10px; align-content: start; padding: 12px; }
 .shots-changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .shots-change { display: flex; gap: 10px; align-items: flex-start; margin: -4px; padding: 4px; border-radius: 8px; }
@@ -20955,11 +20911,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-change-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;
   font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; font-variant-numeric: tabular-nums; }
 .shots-viewer:has(.shots-side-before:checked) .shots-change-n { background: #dc2626; }
-.shots-keys, .shots-view-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.4; color: #68686c; }
-.dark .shots-keys, .dark .shots-view-meta { color: #8e8e93; }
-.shots-key { display: inline-flex; align-items: center; gap: 6px; }
-.shots-key-box { flex: none; width: 16px; height: 10px; border: 1.5px dashed rgba(113, 113, 122, 0.95); border-radius: 3px; }
-.shots-key-line { flex: none; width: 16px; height: 0; border-top: 2px dashed rgba(113, 113, 122, 0.95); }
+.shots-view-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.4; color: #68686c; }
+.dark .shots-view-meta { color: #8e8e93; }
 .shots-claims { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .shots-claim { display: flex; gap: 10px; align-items: flex-start; }
 .shots-claim-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;
@@ -20975,8 +20928,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-noticed-text { margin: 0; font-size: 14px; line-height: 1.4; color: var(--text-primary); }
 .shots-noticed-meta { margin-top: 2px; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
 
-/* An HTML spec's screens (#3699) use the same viewer (AppView._shotsViewerHtml)
-   with three things the card leaves off. Each is radios read by :has(), like
+/* An HTML spec's screens (#3699): three more things the viewer
+   (AppView._shotsViewerHtml) offers. Each is radios read by :has(), like
    the rest of the viewer:
      - Side by side: a third side option, before and after at once in the
        same fixed stage, before on the left.
@@ -21005,24 +20958,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dark .shots-viewer:has(.shots-zoom-close:checked) .shots-seg-close,
 .dark .shots-viewer:has(.shots-zoom-whole:checked) .shots-seg-whole { background: #3a3a3c; color: #f5f5f7; }
 .shots-viewer:has(.shots-side-both:checked) .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
-/* #5063: side by side crops both sides to the screen's declared changes
-   (the numbered outlines with a margin around them), drawn with CSS over
-   the existing stills: no new image. Nothing here matches when only one
-   side shows, so Before and After keep the whole screen. The crop wrapper
-   keeps the shot's own shape, so the img fills it exactly and the offsets
-   move the wanted part into view. */
-.shots-crop { position: absolute; inset: 0; display: block; }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-side[data-shots-crop] { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-crop-shape, 16 / 10)))); }
-/* direction: physical: a crop is a box on a PICTURE; --shots-crop-x is a
-   percentage of the shot itself, so it stays where it was drawn in Arabic. */
-.shots-viewer:has(.shots-side-both:checked) .shots-flip-side[data-shots-crop] > .shots-crop { inset: auto; left: var(--shots-crop-x, 0); top: var(--shots-crop-y, 0); width: var(--shots-crop-w, 100%); height: auto; aspect-ratio: var(--shots-shape, 16 / 10); }
-/* direction: logical */
-/* A crop wider than it is tall: before above after. */
-.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); column-gap: 0; row-gap: 12px; }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] > .shots-flip-side { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(100cqw, calc((50cqh - 6px) * (var(--shots-crop-shape, 16 / 10)))); }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] > .shots-flip-after { grid-area: 2 / 1; }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] .shots-flip-chip-after { inset-inline-start: 10px; top: calc(50% + 16px); }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack]::after { top: 50%; bottom: auto; inset-inline-start: 12px; inset-inline-end: 12px; width: auto; }
 .shots-viewer:has(.shots-zoom-pick:focus-visible) .shots-seg-zoom { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .shots-viewer:has(.shots-zoom-whole:checked) .shots-close-only,
 .shots-viewer:has(.shots-zoom-close:checked) .shots-whole-only { display: none; }
@@ -22123,15 +22058,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-change-upstream-skip-actions { width: 100%; justify-content: flex-start; }
 }
 
-/* Before and after: the viewer specs use, its switch beside the title. */
+/* Before and after: the card, its title, and the line that says where the shots stand. */
 .dev-change-card-name { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .dev-change-shots { margin-top: 8px; border-radius: 16px; overflow: hidden; background: var(--messages-surface); }
-.dev-change-shots .shots-viewer { border-radius: 0; box-shadow: none; background: transparent; }
-.dev-change-shots .shots-bar { padding-block: 10px 8px; padding-inline: 14px 10px; }
-.dev-change-shots .shots-stage { margin: 0 10px; border-radius: 12px; border: 0; }
-.dev-change-shots .shots-view-notes { padding: 12px 14px 4px; }
-.dev-change-shots .shots-claims { padding: 0 14px 12px; }
-.dev-change-shots .shots-noticed { padding: 4px 14px 14px; }
 .dev-change-shots-plain { padding: 12px 14px 14px; }
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 /* The previous version's shots keep their picture under a line that says
@@ -22156,9 +22085,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-thread-change-menu:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-thread-change-summary { margin-top: 6px; }
 .dev-thread-change-summary .dev-request-ask-text { font-size: 14px; }
-/* Its before and after, small: two stills side by side, then Expand. The
-   viewer they open is its page's, kept here as a closed popover: shut it
-   takes no room, open it is drawn over the page (.shots-viewer:popover-open). */
+/* Its before and after, small: two stills side by side, then Expand, which
+   opens the before & after viewer in the detail column. */
 .dev-thread-shots { margin-top: 8px; display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
 .dev-thread-shots-pair { display: flex; gap: 6px; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 10px; }
 .dev-thread-shots-pair:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -22171,9 +22099,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-thread-shots-expand { padding: 4px 10px; border: 0; border-radius: 9999px; font-size: 13px; font-weight: 600;
   color: var(--text-primary); background: var(--state-neutral-bg); }
 .dev-thread-shots-expand:hover { text-decoration: underline; }
-.dev-thread-shots-viewer { flex-basis: 100%; height: 0; }
-.dev-thread-shots-viewer > .dev-change-shots-body > :not(.shots-viewer),
-.dev-thread-shots-viewer .shots-viewer:not(:popover-open) { display: none; }
 /* Competing changes fold under their ballot: a line each, which opens. */
 .dev-thread-fold { padding: 8px 0; border-top: 1px solid var(--app-sheet-line); }
 .dev-thread-fold:first-child { border-top: 0; }
@@ -22217,8 +22142,6 @@ p.dev-change-issue-pointer {
     font-size: 11px;
   }
   .dev-change-root .messages-message-head { padding-inline-start: 32px; min-height: 24px; align-items: center; }
-  /* A taller frame for a shot on a phone. */
-  .dev-change-shots .shots-stage { margin: 0 8px; aspect-ratio: 4 / 5; }
   /* The card's buttons take a row of their own, under its line, so the
      name, figure and bar keep the card's width. */
   .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
@@ -32894,27 +32817,14 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    `data-detail` says which, and `:has()` lets a frame that has always
    been one flex row split by it. */
 
-/* The shots viewer is still a popover, even here; in the column only its
-   CLOSED state is flattened into the column's contents, scrolling under
-   the reader's header. Open, it must keep `.shots-viewer:popover-open`: it
-   goes to the top layer and is drawn as the window-sized card over a dim.
-   Flattening that too left a dim with nothing readable in it (#6382). */
+/* The before & after viewer, larger, as the column's contents, scrolling
+   under the reader's header. */
 .gc-detail-shots {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
   overflow: auto;
   padding: 0 4px 12px;
-}
-.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open) {
-  display: block !important;
-  position: static !important;
-  inset: auto !important;
-  width: auto;
-  max-width: none;
-  margin: 0;
-  border: 0;
-  padding: 0;
 }
 /* #6381: the before and after's own toolbar has no way out of the column,
    so this small head above it carries the close the design preview has in
@@ -34391,46 +34301,14 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-secondary);
 }
-/* The card's picture: the shots viewer read as one picture. The Before and
-   After switch lies over the picture's foot, the side's name is a chip at
-   its top end, and the screens are tiles under it with the legend of the
-   one showing. Expanded to the window (its popover) the viewer is its usual
-   self, so every rule here leaves the open popover alone. */
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-view { position: relative; }
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar {
-  position: absolute; z-index: 4; inset-inline: 0; bottom: 10px;
-  display: flex; justify-content: center; align-items: center; gap: 8px;
-  margin: 0; padding: 0; pointer-events: none;
-}
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar > * { pointer-events: auto; }
-[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.dev-change-card-name, .shots-seg-both, .shots-screen-nav, .shots-view-notes) { display: none; }
-/* The switch is a white pill over the picture in either scheme, so its
-   resting label keeps a dark ink; :where keeps the viewer's own rule for
-   the side that is showing on top. */
-:where([data-thread-picture] .dev-change-viewer:not(:popover-open)) .shots-seg-side .shots-seg-btn { color: #52525b; }
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-seg-side { margin-inline: auto; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-expand { position: absolute; inset-inline-end: 10px; bottom: 0; margin: 0; }
-[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { inset-inline-start: auto; inset-inline-end: 10px; }
-/* One picture, one switch (17 Nov 2026): the screen-size switch and the
-   light and dark flip are the expanded viewer's, a press on Expand away. */
-[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.shots-seg-size, .shots-theme-flip) { display: none; }
-/* The caption under the tiles is one quiet line a screen, not a heading:
-   the viewer's own bold claim and its key to the outlines are for the
-   expanded view. */
+/* The caption under the tiles is one quiet line a change, not a heading:
+   the bold claim is for the expanded view. */
 .dev-thread-tiles-legend .shots-change strong { font-size: 13.5px; line-height: 19px; font-weight: 400; color: var(--text-secondary); }
 .dev-thread-tiles-legend .shots-change-n { width: 18px; height: 18px; font-size: 11px; }
-.dev-thread-tiles-legend .shots-key { display: none; }
-/* The chip says what the side is for this change ("If it passes · After"):
-   the page hands the words as CSS strings (change-head.tsx), drawn in place
-   of the viewer's own one word. */
-[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip { font-size: 0; letter-spacing: 0.04em; text-transform: uppercase; }
-[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip::after { font-size: 11px; line-height: 14px; font-weight: 700; }
-[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-after::after { content: var(--thread-chip-after); }
-[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-before::after { content: var(--thread-chip-before); }
-/* The same picture where the run worked out its screens: the Needs you
-   page's slider (.rf-compare), in the card's own colours. No outline and no
-   tint: the seam is what tells the two sides apart. Expand opens the full
-   viewer in the detail column. */
+/* The one before & after viewer (review-flow/shots-viewer.tsx): the Needs
+   you page's slider (.rf-compare), in the card's own colours. No outline and
+   no tint: the seam is what tells the two sides apart. Expand opens the same
+   viewer, larger, in the detail column. */
 .dev-thread-picture { margin-top: 14px; overflow: visible; background: none; }
 .dev-thread-compare {
   --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
@@ -34444,8 +34322,29 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   background: var(--rf-cream); color: var(--rf-black); cursor: pointer;
 }
 .dev-thread-compare-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
-.dev-thread-tiles-said > li + li { margin-top: 4px; }
+/* A run that took dark shots too: the other mode, at the picture's other foot. */
+.dev-thread-compare-theme {
+  position: absolute; z-index: 5; inset-inline-start: 12px; bottom: 12px; width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center; border: 1.5px solid var(--rf-black); border-radius: 999px;
+  background: var(--rf-cream); color: var(--rf-black); cursor: pointer;
+}
+.dev-thread-compare-theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Under the picture: the changes it shows, numbered in the quiet ink of the
+   list below (no side owns a number), the changes no screen shows, what was
+   noticed besides, and each motion change's two clips. */
+.shots-one .shots-change-n { background: #3f3f46; }
+.dark .shots-one .shots-change-n { color: #18181b; background: #d4d4d8; }
+.shots-one .shots-change:hover { background: none; }
+.shots-one > .shots-claims, .shots-one > .shots-noticed { margin-top: 12px; padding: 0 2px; }
+.shots-one .shots-view-meta { margin-top: 8px; }
+.shots-after-only { margin: 0 0 6px; font-size: 13px; font-weight: 650; color: var(--text-primary); }
+.shots-missing { margin: 0; padding: 12px 14px; font-size: 13px; color: var(--state-err-ink, #b91c1c); }
+.shots-clips { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 8px; }
+.shots-clip { flex: 1 1 200px; min-width: 0; margin: 0; }
+.shots-clip-caption { margin-bottom: 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.shots-clip-video { display: block; width: 100%; max-height: 360px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); }
+.shots-clip-paired .shots-clip-video { margin-top: 6px; }
+.shots-clip-none { display: grid; place-items: center; height: 120px; border-radius: 8px; border: 1px dashed var(--app-sheet-line); font-size: 12px; color: var(--text-muted); }
 /* #7180: the row wraps, so the caption is never squeezed to a few letters by
    a row of six tiles. The room that matters is the card's, not the viewport's:
    a desktop side panel is about 540px wide, so the 520px media query below
@@ -34454,7 +34353,9 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-tiles { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
 .dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
-.dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
+/* The ring's gap falls back to the page's ground where the viewer is drawn
+   outside a thread (the detail column, the preview's tab, the admin gallery). */
+.dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface, var(--bg-primary, #fff)), 0 0 0 4px var(--text-primary); }
 .dev-thread-tiles-cap { flex: 1 1 12rem; min-width: min(12rem, 100%); }
 .dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-tiles-legend { display: block; }

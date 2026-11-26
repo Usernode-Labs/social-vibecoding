@@ -306,7 +306,9 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(css, /\.dev-change-gate\[data-done="true"\] \.dev-change-bar-fill\[data-state="done"\] \{ background: var\(--state-ok\); \}/);
   assert.match(css, /\.dev-change-gate\[data-tone="done"\] \.dev-change-gate-figure \{ color: var\(--state-ok\); font-weight: 600; \}/);
   assert.match(css, /\.dev-change-gate-check \{[^}]*color: var\(--state-ok\);/);
-  assert.match(css, /\.dev-change-shots \.shots-stage \{ margin: 0 8px; aspect-ratio: 4 \/ 5; \}/, 'a taller frame on a phone');
+  // The older viewer's 4:5 stage on a phone is gone with it: the one before
+  // & after viewer (review-flow/shots-viewer.tsx) sizes its picture to the screen.
+  assert.doesNotMatch(css, /\.dev-change-shots \.shots-stage/);
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 

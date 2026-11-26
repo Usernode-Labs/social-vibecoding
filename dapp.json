@@ -4465,6 +4465,12 @@
       "expectText": "All 5 screens"
     },
     {
+      "name": "One before & after viewer: a change's verified shots are the Needs you slider, with a tile per screen, the change numbered under it, and what the screenshot agent also noticed",
+      "path": "/#app/staging-demo-gallery-app/dev/proposals/900108",
+      "expectSelector": "#dev-topic-thread section.shots-one[data-change-shots=\"verified\"]:has(.dev-thread-compare .rf-compare[data-rf-compare]):has(.dev-thread-tiles[data-thread-tiles=\"2\"] .shots-change[data-shots-n=\"1\"]) .shots-noticed[data-shots-noticed=\"2\"]",
+      "expectText": "Also noticed"
+    },
+    {
       "name": "#2327: an author can edit an underway proposal title; the draft's steps are the path it will take, its own Submitted for review step first",
       "path": "/?demo=1&conversation=discussion#app/usernode-2d5619/dev/proposals/990101",
       "expectSelector": "body:has(.dev-step[data-note=\"review\"][data-req-state=\"waiting\"] ~ [data-note=\"votes\"] ~ [data-note=\"mergeability\"] ~ [data-note=\"checks\"] ~ [data-note=\"github\"]) #gc-thread-head .dev-change-root button[aria-label=\"Edit title\"]",

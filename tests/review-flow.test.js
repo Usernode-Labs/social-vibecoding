@@ -269,7 +269,7 @@ test('a placed picture draws its preview and picks a copy at its scaled width', 
   assert.match(lib, /\^\\\/api\\\/apps\\\/\[\^\/\?#\]\+\\\/proposals\\\/\\d\+\\\/shots\\\/\[0-9a-f\]\{32\}\(\?:\\\?\(\?:density=device\|size=\(\?:thumb\|screen\)\)\)\?\$/);
   // The preview is a 20 px WebP data URI, and nothing else.
   assert.match(lib, /\^data:image\\\/webp;base64,\[A-Za-z0-9\+\/=\]\+\$/);
-  assert.match(read('frontend/src/features/dev-board/topic/thread-picture.tsx'), /src=\{shotThumb\(one\.after\) \|\| one\.after\.url\}/,
+  assert.match(read('frontend/src/features/review-flow/shots-viewer.tsx'), /src=\{\(one\.screen \? shotThumb\(one\.screen\.after\) : null\) \|\| one\.thumb\}/,
     'a strip tile loads the thumbnail only');
 });
 
@@ -1103,13 +1103,12 @@ test('without a frame, the declared areas lead; then any area; then the screen\'
 
 test('the feed shapes a run\'s frames onto its screens, and outlines only its areas', () => {
   const src = read('public/js/app-view.js');
-  const shape = src.slice(src.indexOf('  _workshopVisuals(visuals, shots = null) {'), src.indexOf('  _workshopExcerpt(text'));
+  const shape = src.slice(src.indexOf('  _workshopVisuals(visuals, shots = null, theme = null) {'), src.indexOf('  _workshopExcerpt(text'));
   assert.match(shape, /const frames = \(Array\.isArray\(screen\.frames\) \? screen\.frames : \[\]\)\.map\(\(f\) => \(\{\n\s+n: f && f\.story \? Math\.max\(0, numberOf\(f\.story\)\) : 0,/);
   assert.match(shape, /\.\.\.\(frames\.length \? \{ frames \} : \{\}\),/);
-  // The legacy change page crops to the frame, and outlines its regions.
-  const view = src.slice(src.indexOf('const outlines = (screen, side) => {'), src.indexOf('const cropOf = (screen) => {'));
-  assert.doesNotMatch(view, /frames/, 'a frame is never drawn as an outline');
-  assert.match(src, /const framed = framesOn\(which\);\n\s+const rects = framed\.length \? framed :/);
+  // A change's page draws the same screens with the slider, which frames on
+  // them and outlines nothing (review-flow/shots-viewer.tsx).
+  assert.match(read('frontend/src/features/review-flow/shots-model.ts'), /const shaped = shape \? shape\(null, raw, mode\) : null;/);
   // The Workshop's picture crops to frames first, and outlines regions only.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);
