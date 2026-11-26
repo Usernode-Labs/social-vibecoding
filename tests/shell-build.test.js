@@ -72,6 +72,20 @@ const viteSsrConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.ssr.conf
 const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
 const kubernetesDockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile.kubernetes'), 'utf8');
 
+test('the served document carries no <h1> from the bar or a hidden screen (request #7166)', () => {
+  // The audit of 25 Nov 2026 found three on every address: the bar's title,
+  // holding only the logotype's drawing, and the titles of two screens that
+  // are hidden when the page is served. The screen that is shown names
+  // itself once it is drawn.
+  assert.doesNotMatch(html, /<h1[\s>]/);
+  const title = html.match(/<div id="header-title"[^>]*>/);
+  assert.ok(title, 'the bar\'s title is still in the page');
+  assert.doesNotMatch(title[0], /role="heading"/, 'and is no heading while it holds only the drawing');
+  // The hidden screens keep their level-1 heading for a screen reader.
+  assert.match(html, /<div role="heading" aria-level="1" class="settings-frame-title">Settings<\/div>/);
+  assert.match(html, /<div role="heading" aria-level="1" class="sr-only">Homeroom bot<\/div>/);
+});
+
 test('the build still gates on adjacent text children', () => {
   assert.match(
     prerenderSrc, /renderToString/,
