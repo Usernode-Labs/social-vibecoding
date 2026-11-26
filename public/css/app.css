@@ -34992,8 +34992,13 @@ html:root #ai-screen .ai-lists > :is([data-ai-search-empty], [data-ai-search-fai
 }
 
 /* ── The head card: the mark, the counts and the +; then search and the menu chip. ── */
-html:root #ai-screen [data-ai-sheet="head"] { display: grid; gap: 10px; padding: 12px; }
-html:root #ai-screen [data-ai-sheet="head"] > :is([data-ai-hero], [data-ai-tools]) { padding: 0; }
+/* The card is one column that can be narrower than its contents' min-content
+   (request #7231): an implicit auto track is as wide as the search field's
+   own width, which put the + and All projects past the card at the 280px
+   list floor. minmax(0, 1fr) lets the track be the card, and the two lines'
+   own min-width: 0 lets them wrap instead of overflowing. */
+html:root #ai-screen [data-ai-sheet="head"] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 12px; }
+html:root #ai-screen [data-ai-sheet="head"] > :is([data-ai-hero], [data-ai-tools]) { padding: 0; min-width: 0; }
 html:root #ai-screen [data-ai-hero] { gap: 10px; }
 html:root #ai-screen [data-ai-hero] > img { width: 40px; height: 40px; border-radius: 10px; }
 /* The mark keeps its place down to a 250px line (the 320px card beside a thread), as the design review drew it. */
@@ -35026,10 +35031,12 @@ html:root #ai-screen [data-ai-search-box] {
 }
 html:root #ai-screen [data-ai-search-box]:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 html:root #ai-screen [data-ai-search-box] > svg:first-child { width: 19px; height: 19px; }
-html:root #ai-screen [data-ai-search-box] > input { font-size: 16px; color: var(--one-ink); }
+/* The field's own width (about 20 characters) is no floor: it grows only by
+   flex-1, so the search can be as narrow as the label's 7rem. */
+html:root #ai-screen [data-ai-search-box] > input { width: 0; font-size: 16px; color: var(--one-ink); }
 html:root #ai-screen [data-ai-search-box] > input::placeholder { color: var(--one-ink-3); }
 /* All projects: the shared menu chip. It says what it shows, so no filter glyph before it; a picked project keeps its tile. */
-html:root #ai-screen [data-ai-project-more].one-chip { max-width: 100%; }
+html:root #ai-screen [data-ai-project-more].one-chip { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 html:root #ai-screen [data-ai-project-more].one-chip:hover:not(:disabled) { background: var(--one-surface); }
 html:root #ai-screen [data-ai-project-more].one-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 html:root #ai-screen [data-ai-project-more].one-chip:disabled { color: var(--one-ink-3); }
