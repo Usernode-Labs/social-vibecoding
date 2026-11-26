@@ -880,8 +880,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // picked, and carries that answer (with the line, if one was written).
   const submit = () => {
     if (!isVote) { send(spec, null); return; }
-    if (taken && side === taken) { shut(); return; }
     if (side === 'yes' && recordedYes) { noteAlready(); return; }
+    if (taken && side === taken) { shut(); return; }
     if (side === 'no') {
       if (!noChoice) return;
       send(no, composeNoReason(whyTexts(t)[noChoice], line,
