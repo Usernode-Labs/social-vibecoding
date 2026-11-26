@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { BTN } from './topochain/tokens.ts';
+import { Badge, EmptyState, Field, Figures, List, ScreenHeader } from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Invite links (#admin/codes) — activation codes, sent as links to Homeroom
 // itself. One per person: whoever signs up from /welcome/<code> is let in at
@@ -47,9 +50,6 @@ function welcomeLink(code: string): string {
   return `${location.origin}/welcome/${encodeURIComponent(code)}`;
 }
 
-const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-const LINK_BTN = 'text-xs text-zinc-500 dark:text-zinc-400 transition-colors';
-
 /**
  * A copy button that says so for a moment. The timer lives with the button,
  * so unmounting the row cancels it — the old shape reset `btn.textContent`
@@ -74,56 +74,44 @@ function CopyButton({ className, label, done, value }: {
   );
 }
 
-function CodeRow({ code, canWrite, onDelete }: {
-  code: Code; canWrite: boolean; onDelete: () => void;
-}) {
-  // Spent once it has a time: an account removed later clears `used_by`
-  // (ON DELETE SET NULL) but not the time, and the link stays spent.
-  const used = !!code.used_by_username || !!code.used_at;
-  return (
-    <div className={ROW}>
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className={`text-sm font-medium ${code.note ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-500 dark:text-zinc-400'}`}>
-            {code.note || 'No note'}
-          </span>
-          {used ? (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {code.used_by_username ? <>{'Used by '}<strong className="text-zinc-500 dark:text-zinc-400">{code.used_by_username}</strong></> : 'Used'}
-              {code.used_at ? ` on ${new Date(code.used_at).toLocaleDateString()}` : ''}
-            </span>
-          ) : <span className={AdminUI.badge.success}>Available</span>}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-          <code className={`font-mono ${used ? 'line-through' : 'text-violet-700 dark:text-violet-400'}`}>{code.code}</code>
-          {code.created_by_username ? <span>{`made by ${code.created_by_username}`}</span> : null}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {!used ? (
-          // The way to send it: /welcome/<code>, the sign-up sheet that
-          // skips the waitlist (src/routes/access-links.js).
-          <CopyButton className={`admin-share-code-btn ${LINK_BTN} hover:text-violet-800 dark:hover:text-violet-300`}
-            label="Copy link" done="Link copied!"
-            value={welcomeLink(code.code)} />
-        ) : null}
-        {!used ? (
-          // The raw code, for the older #register/<code> form.
-          <CopyButton className={`admin-copy-code-btn ${LINK_BTN} hover:text-violet-800 dark:hover:text-violet-300`}
-            label="Copy code" done="Copied!" value={code.code} />
-        ) : null}
-        {!used && canWrite ? (
-          <button type="button" className={`admin-delete-code-btn ${LINK_BTN} hover:text-red-400`}
-            data-id={code.id} aria-label="Delete code"
-            onClick={async () => {
-              await fetch(`/api/admin/codes/${code.id}`, { method: 'DELETE' });
-              onDelete();
-            }}>×</button>
-        ) : null}
-      </div>
-    </div>
-  );
+/** Spent once it has a time: an account removed later clears `used_by`
+ * (ON DELETE SET NULL) but not the time, and the link stays spent. */
+function isUsed(code: Code): boolean {
+  return !!code.used_by_username || !!code.used_at;
 }
+
+// The list is the shared table (26 Nov 2026). Each link was a hand-drawn grey
+// row, so this page's rows matched no other list in the console.
+const CODE_COLUMNS: Column<Code>[] = [
+  {
+    label: 'Who it is for',
+    primary: true,
+    cell: (code) => (
+      <span className={code.note ? 'font-medium' : 'text-zinc-500 dark:text-zinc-400'}>
+        {code.note || 'No note'}
+      </span>
+    ),
+  },
+  {
+    label: 'Status',
+    cell: (code) => (isUsed(code) ? (
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+        {code.used_by_username ? <>{'Used by '}<strong>{code.used_by_username}</strong></> : 'Used'}
+        {code.used_at ? ` on ${new Date(code.used_at).toLocaleDateString()}` : ''}
+      </span>
+    ) : <Badge tone="mint" label="Available" />),
+  },
+  {
+    label: 'Code',
+    cell: (code) => (
+      <code className={`font-mono text-xs ${isUsed(code) ? 'line-through text-zinc-500 dark:text-zinc-400' : 'text-violet-700 dark:text-violet-400'}`}>{code.code}</code>
+    ),
+  },
+  {
+    label: 'Made by',
+    cell: (code) => (code.created_by_username ? `made by ${code.created_by_username}` : ''),
+  },
+];
 
 function CodesSection() {
   const canWrite = !!(window as any).AdminConsole?.canWrite();
@@ -156,35 +144,65 @@ function CodesSection() {
     }
   }, [load]);
 
+  // Counted from the list the page already has: no second read.
+  const usedCount = codes ? codes.filter(isUsed).length : null;
+  const figures: Figure[] = [
+    { key: 'available', label: 'Available', value: codes && usedCount !== null ? (codes.length - usedCount).toLocaleString() : null, tone: 'green' },
+    { key: 'used', label: 'Used', value: usedCount === null ? null : usedCount.toLocaleString(), tone: 'sky' },
+  ];
+
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="mb-3">
-        <h2 className={AdminUI.cardTitle}>Invite links</h2>
-        <p className={AdminUI.cardDescription}>
-          One link per person. Whoever signs up from it gets in right away: no waitlist, and no project needed.
-        </p>
-      </div>
+    <>
+      <ScreenHeader
+        title="Invite links"
+        subtitle="One link per person. Whoever signs up from it gets in right away: no waitlist, and no project needed."
+      />
+      <Figures id="admin-code-figures" items={figures} />
       {canWrite ? (
-        <form className="flex flex-wrap items-end gap-2 mb-4"
+        <form className="mb-4 flex flex-wrap items-end gap-2"
           onSubmit={(e) => { e.preventDefault(); if (!making) make(); }}>
-          <label className="flex-1 min-w-[12rem] flex flex-col gap-1">
-            <span className={AdminUI.label}>Who is it for?</span>
+          <Field label="Who is it for?" htmlFor="admin-code-note" className="min-w-[12rem] flex-1">
             <input ref={note} id="admin-code-note" type="text" maxLength={200} autoComplete="off"
               className={AdminUI.input} placeholder="Name, and why (only admins see this)" />
-          </label>
-          <button id="admin-generate-code-btn" type="submit" className={AdminUI.btn.primary} disabled={making}>
+          </Field>
+          <button id="admin-generate-code-btn" type="submit" className={BTN.primary} disabled={making}>
             Make link
           </button>
         </form>
       ) : null}
-      <div id="admin-code-list" className="space-y-2">
-        {(codes || []).map((c) => <CodeRow key={c.id} code={c} canWrite={canWrite} onDelete={load} />)}
+      <div id="admin-code-list">
+        {codes && codes.length ? (
+          <List<Code>
+            items={codes}
+            columns={CODE_COLUMNS}
+            rowKey={(c) => c.id}
+            actions={(code) => (isUsed(code) ? null : (
+              <>
+                {/* The way to send it: /welcome/<code>, the sign-up sheet that
+                    skips the waitlist (src/routes/access-links.js). */}
+                <CopyButton className={`admin-share-code-btn ${BTN.rowPrimary}`}
+                  label="Copy link" done="Link copied!"
+                  value={welcomeLink(code.code)} />
+                {/* The raw code, for the older #register/<code> form. */}
+                <CopyButton className={`admin-copy-code-btn ${BTN.row}`}
+                  label="Copy code" done="Copied!" value={code.code} />
+                {canWrite ? (
+                  <button type="button" className={`admin-delete-code-btn ${BTN.rowDanger}`}
+                    data-id={code.id} aria-label="Delete code"
+                    onClick={async () => {
+                      await fetch(`/api/admin/codes/${code.id}`, { method: 'DELETE' });
+                      load();
+                    }}>×</button>
+                ) : null}
+              </>
+            ))}
+          />
+        ) : null}
       </div>
-      <p id="admin-code-empty"
-        className={`text-sm text-zinc-500 dark:text-zinc-400${codes && !codes.length ? '' : ' hidden'}`}>
-        No invite links yet.
-      </p>
-    </div>
+      <div id="admin-code-empty" className={codes && !codes.length ? '' : 'hidden'}>
+        <EmptyState title="No invite links yet." />
+      </div>
+    </>
   );
 }
 

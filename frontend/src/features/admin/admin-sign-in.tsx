@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { returnKeyHandler } from '../../lib/return-to-next';
+import { Field, ScreenHeader } from './topochain/ui.tsx';
 
 // Sign-in providers (#admin/sign-in): Continue with Apple and Continue with
 // Google on the sign-in sheet, beside the email code
@@ -46,8 +47,9 @@ interface ProviderView {
 }
 interface Payload { callbackOrigin: string | null; providers: ProviderView[] }
 
-const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
-const HELP = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+// Each labelled field is the shared kit's Field (topochain/ui.tsx) since
+// 26 Nov 2026, so a label and its help read as they do on every console form.
+// The page had its own label and help class strings.
 
 const APP_IDS_HELP: Record<Provider, string> = {
   apple: 'The app\'s bundle ID (com.onhomeroom.app), with Sign in with Apple switched on for its App ID. One per line.',
@@ -178,10 +180,12 @@ function ProviderCard({ view, canWrite, onSaved }: {
       <p className={`${AdminUI.muted} mb-4`}>{WHERE[view.provider]}</p>
 
       <div className="space-y-4" onKeyDown={returnKeyHandler()}>
-        <div>
-          <p className={LABEL}>{apple ? 'Return URL' : 'Authorized redirect URI'}</p>
+        <Field
+          label={apple ? 'Return URL' : 'Authorized redirect URI'}
+          help={view.callbackUrl ? undefined : 'This server has no canonical origin, so there is no address to register.'}
+        >
           {view.callbackUrl ? (
-            <p className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="flex flex-wrap items-center gap-2">
               <code id={`${id}-callback`} className={`${AdminUI.kbd} select-all break-all`}>{view.callbackUrl}</code>
               {apple ? (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -190,75 +194,78 @@ function ProviderCard({ view, canWrite, onSaved }: {
                 </span>
               ) : null}
             </p>
-          ) : (
-            <p className={HELP}>This server has no canonical origin, so there is no address to register.</p>
-          )}
-        </div>
+          ) : null}
+        </Field>
 
-        <label className="block" htmlFor={`${id}-client-id`}>
-          <span className={LABEL}>{apple ? 'Services ID' : 'Client ID'}</span>
+        <Field label={apple ? 'Services ID' : 'Client ID'} htmlFor={`${id}-client-id`}>
           <input
             id={`${id}-client-id`} type="text" autoComplete="off" spellCheck={false} enterKeyHint="next"
-            className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+            className={`${AdminUI.input} font-mono disabled:opacity-60`}
             placeholder={apple ? 'com.example.web' : '1234567890-abc.apps.googleusercontent.com'}
             disabled={dis} value={clientId} onChange={(e) => setClientId(e.target.value)}
           />
-        </label>
+        </Field>
 
         {apple ? (
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block" htmlFor={`${id}-team-id`}>
-              <span className={LABEL}>Team ID</span>
+            <Field label="Team ID" htmlFor={`${id}-team-id`}>
               <input
                 id={`${id}-team-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10} enterKeyHint="next"
-                className={`${AdminUI.input} mt-1 font-mono uppercase disabled:opacity-60`}
+                className={`${AdminUI.input} font-mono uppercase disabled:opacity-60`}
                 placeholder="ABCDE12345" disabled={dis} value={teamId} onChange={(e) => setTeamId(e.target.value)}
               />
-            </label>
-            <label className="block" htmlFor={`${id}-key-id`}>
-              <span className={LABEL}>Key ID</span>
+            </Field>
+            <Field label="Key ID" htmlFor={`${id}-key-id`}>
               <input
                 id={`${id}-key-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10} enterKeyHint="next"
-                className={`${AdminUI.input} mt-1 font-mono uppercase disabled:opacity-60`}
+                className={`${AdminUI.input} font-mono uppercase disabled:opacity-60`}
                 placeholder="XYZ9876543" disabled={dis} value={keyId} onChange={(e) => setKeyId(e.target.value)}
               />
-            </label>
+            </Field>
           </div>
         ) : null}
 
-        <label className="block" htmlFor={`${id}-secret`}>
-          <span className={LABEL}>{secretLabel}</span>
+        <Field
+          label={secretLabel}
+          htmlFor={`${id}-secret`}
+          help={secretHint ? <span id={`${id}-secret-hint`}>{secretHint}</span> : undefined}
+        >
           {apple ? (
             <textarea
               id={`${id}-secret`} rows={4} autoComplete="off" spellCheck={false}
-              className={`${AdminUI.textarea} mt-1 font-mono text-xs disabled:opacity-60`}
+              className={`${AdminUI.textarea} font-mono text-xs disabled:opacity-60`}
               placeholder={view.secretSaved ? 'Saved' : '-----BEGIN PRIVATE KEY-----'}
               disabled={dis} value={secret} onChange={(e) => setSecret(e.target.value)}
             />
           ) : (
             <input
               id={`${id}-secret`} type="password" autoComplete="new-password" spellCheck={false} enterKeyHint="next"
-              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+              className={`${AdminUI.input} font-mono disabled:opacity-60`}
               placeholder={view.secretSaved ? 'Saved' : ''}
               disabled={dis} value={secret} onChange={(e) => setSecret(e.target.value)}
             />
           )}
-          {secretHint ? <p id={`${id}-secret-hint`} className={HELP}>{secretHint}</p> : null}
-        </label>
+        </Field>
 
-        <label className="block" htmlFor={`${id}-app-client-ids`}>
-          <span className={LABEL}>App client IDs</span>
+        <Field
+          label="App client IDs"
+          htmlFor={`${id}-app-client-ids`}
+          help={(
+            <>
+              {APP_IDS_HELP[view.provider]}
+              <span id={`${id}-native`} className="block mt-1">{view.nativeOffered
+                ? `The Homeroom app offers Continue with ${view.label}, on builds that can show its sheet.`
+                : `The Homeroom app does not offer Continue with ${view.label}.`}</span>
+            </>
+          )}
+        >
           <textarea
             id={`${id}-app-client-ids`} rows={2} autoComplete="off" spellCheck={false}
-            className={`${AdminUI.textarea} mt-1 font-mono text-xs disabled:opacity-60`}
+            className={`${AdminUI.textarea} font-mono text-xs disabled:opacity-60`}
             placeholder={apple ? 'com.onhomeroom.app' : '1234567890-ios.apps.googleusercontent.com'}
             disabled={dis} value={appClientIds} onChange={(e) => setAppClientIds(e.target.value)}
           />
-          <p className={HELP}>{APP_IDS_HELP[view.provider]}</p>
-          <p id={`${id}-native`} className={HELP}>{view.nativeOffered
-            ? `The Homeroom app offers Continue with ${view.label}, on builds that can show its sheet.`
-            : `The Homeroom app does not offer Continue with ${view.label}.`}</p>
-        </label>
+        </Field>
 
         <label className="flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100" htmlFor={`${id}-enabled`}>
           <input
@@ -270,7 +277,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
           <span>{`Offer Continue with ${view.label} on the sign-in sheet`}</span>
         </label>
         {view.missing.length ? (
-          <p id={`${id}-missing`} className={HELP}>{`Still needed before it can be offered: ${view.missing.join(', ')}.`}</p>
+          <p id={`${id}-missing`} className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{`Still needed before it can be offered: ${view.missing.join(', ')}.`}</p>
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -317,25 +324,27 @@ function SignInSection({ initial = null }: { initial?: Payload | null }) {
 
   return (
     <div id="admin-sign-in" className="space-y-4">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Sign-in providers</h2>
-        </div>
-        <p id="admin-sign-in-intro" className={AdminUI.muted}>
-          The sign-in sheet offers Continue with Apple and Continue with Google beside the email
-          code once each is set up here and switched on. Somebody new gets an account from the
-          address the provider verified and picks a username; an existing account with that
-          address is signed in. Secrets are kept encrypted and never shown again. Inside the
-          Homeroom app the sheet offers the email code only.
-        </p>
+      <div>
+        <ScreenHeader
+          title="Sign-in providers"
+          subtitle={(
+            <span id="admin-sign-in-intro">
+              The sign-in sheet offers Continue with Apple and Continue with Google beside the email
+              code once each is set up here and switched on. Somebody new gets an account from the
+              address the provider verified and picks a username; an existing account with that
+              address is signed in. Secrets are kept encrypted and never shown again. Inside the
+              Homeroom app the sheet offers the email code only.
+            </span>
+          )}
+        />
         {data && !data.callbackOrigin ? (
-          <p id="admin-sign-in-no-origin" className={`${AdminUI.muted} mt-2`}>
+          <p id="admin-sign-in-no-origin" className={AdminUI.muted}>
             This server has no canonical origin (CLI_CANONICAL_ORIGIN), so neither provider can
             be offered here.
           </p>
         ) : null}
         {!data ? (
-          <p className={`${AdminUI.loading} mt-4`}>{loadFailed ? 'Could not load the providers.' : 'Loading…'}</p>
+          <p className={AdminUI.loading}>{loadFailed ? 'Could not load the providers.' : 'Loading…'}</p>
         ) : null}
       </div>
       {data ? data.providers.map((view) => (

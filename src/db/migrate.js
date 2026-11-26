@@ -2969,13 +2969,38 @@ async function seedStagingBotWaitingRows(pool) {
       // out. Its row on the bot's tab and its own page say it waits for
       // building credit and that the bot picks it up again by itself.
       { number: 9119, title: 'Staging demo: a request waiting for building credit', creditWait: true },
+      // #7215: a report filed on Homeroom's board from another project's
+      // page. Its body carries the About line the route writes, by app id
+      // only, and its reply (below) is the bot's answer that nothing needs
+      // building. Staging has no model, so the reply is stored.
+      {
+        number: 9121,
+        title: 'Staging demo: a report from another project\'s page',
+        body: '**About:** a private project (app id 412)\n\nStaging demo: a request still showed in the Requests column after its change was already in Done.',
+        // The before copy has main's schema, which has no about_app_id, so the
+        // same request there is the one filed without the About line. Both
+        // sides of the pair then show what the change altered.
+        bodyBefore: 'Staging demo: a request still showed in the Requests column after its change was already in Done.',
+      },
     ];
+    // #7215: this seed also runs on the before copy of a before & after pair,
+    // from the after copy's code against main's schema. That copy has no
+    // about_app_id column, so it gets the request as it was filed before this
+    // change: no About line, and the bot's old answer.
+    const aboutColumn = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback_reports' AND column_name = 'about_app_id' LIMIT 1`,
+    );
+    const hasAboutColumn = aboutColumn.rows.length > 0;
     for (const d of demo) {
+      const body = d.number === 9121 && !hasAboutColumn
+        ? d.bodyBefore
+        : (d.body || 'Staging demo: obviously fake.');
       await pool.query(
         `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
-         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+         SELECT $1, $2, $3, $5, $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
           WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
-        [appId, d.number, d.title, userId],
+        [appId, d.number, d.title, userId, body],
       );
       if (d.queue) {
         await pool.query(
@@ -3049,6 +3074,25 @@ async function seedStagingBotWaitingRows(pool) {
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
     );
     if (botRow.rows.length) {
+      // #7215: the bot's answer on the report filed from another project's
+      // page: it read that project and found the request had already closed
+      // by itself, so it built nothing. Idempotent by its stagingDemo mark.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9121, $4, NOW() - INTERVAL '20 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9121
+                               AND metadata->>'stagingDemo' = 'about-project-reply')`,
+        [
+          appId, botRow.rows[0].id,
+          hasAboutColumn
+            ? 'I checked the project you were looking at. That request closed by itself 13 seconds before you sent this, '
+              + 'as its change merged: Homeroom closes a merged change\'s requests a few seconds after the merge, and '
+              + 'your screenshot caught that moment. Nothing needs fixing, so I haven\'t built anything.'
+            : 'On this project a change is a pull request, numbered by GitHub. I\'ll hide any request whose change is in Done.',
+          JSON.stringify({ stagingDemo: 'about-project-reply', homeroomBot: { kind: 'person' } }),
+        ],
+      );
       await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
          SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '1 day'

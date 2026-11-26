@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { Badge, Segmented, TABLE, Toolbar } from './topochain/ui.tsx';
 import { requestBenchLaunch } from './admin-homeroom-bench';
 import type { BenchRequest } from './admin-homeroom-bench';
 import { EFFORTS, armOf, parseArm } from './bench-arms';
@@ -137,10 +138,11 @@ export interface BotConfigsPayload {
 }
 
 const ROLE_LABEL: Record<Role, string> = { current: 'Current', side: 'Side', retired: 'Retired' };
+// The shared Badge's soft tones (26 Nov 2026): a role is repeated down the list.
 const ROLE_BADGE: Record<Role, string> = {
-  current: AdminUI.badge.secondary,
-  side: AdminUI.badge.default,
-  retired: AdminUI.badge.outline,
+  current: 'mint',
+  side: 'sky',
+  retired: 'zinc',
 };
 
 export function usd(n: number | null | undefined): string {
@@ -306,33 +308,33 @@ export function DraftForm({ draft, busy, onChange, onSave, onCancel }: {
       <label className={AdminUI.label} htmlFor="admin-bot-configs-draft-label">Name</label>
       <input id="admin-bot-configs-draft-label" className={`${AdminUI.input} mb-3`} value={draft.label} maxLength={80}
         onChange={(e) => onChange({ ...draft, label: e.target.value })} />
-      <div className={AdminUI.tableWrap}>
-        <table className={`${AdminUI.table} min-w-[40rem]`}>
-          <thead className={AdminUI.thead}>
+      <div className={TABLE.wrap}>
+        <table className={`${TABLE.table} min-w-[40rem]`}>
+          <thead className={TABLE.thead}>
             <tr>
-              <th className={AdminUI.th}>Stage</th>
-              <th className={AdminUI.th}>Model</th>
-              <th className={AdminUI.th}>Effort</th>
-              <th className={AdminUI.th}>Clock (min)</th>
+              <th className={TABLE.th}>Stage</th>
+              <th className={TABLE.th}>Model</th>
+              <th className={TABLE.th}>Effort</th>
+              <th className={TABLE.th}>Clock (min)</th>
             </tr>
           </thead>
           <tbody>
             {stagesOf(draft.scope).map((st) => (
-              <tr key={st.key} className={AdminUI.trHover} data-draft-stage={st.key}>
-                <td className={AdminUI.td}>{st.label}</td>
-                <td className={AdminUI.td}>
+              <tr key={st.key} className={TABLE.tr} data-draft-stage={st.key}>
+                <td className={TABLE.td}>{st.label}</td>
+                <td className={TABLE.td}>
                   <input className={`${AdminUI.input} font-mono text-xs`} value={draft.models[st.key]} spellCheck={false}
                     placeholder={st.key === 'followup' ? 'the per-stage setting' : 'vendor/model'} aria-label={`${st.label} model`}
                     onChange={(e) => set('models', st.key, e.target.value.trim())} />
                 </td>
-                <td className={AdminUI.td}>
+                <td className={TABLE.td}>
                   <select className={AdminUI.select} value={draft.effort[st.key]} aria-label={`${st.label} effort`}
                     onChange={(e) => set('effort', st.key, e.target.value)}>
                     <option value="">Default</option>
                     {EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
                 </td>
-                <td className={AdminUI.td}>
+                <td className={TABLE.td}>
                   <input className={AdminUI.input} type="number" min="1" max={MAX_CLOCK_MINUTES} step="1" value={draft.clocks[st.key]}
                     placeholder="Default" aria-label={`${st.label} clock in minutes`}
                     onChange={(e) => set('clocks', st.key, e.target.value)} />
@@ -397,18 +399,18 @@ function Row({ v, canWrite, busy, onRole, onCopy, onCompare }: {
   const left = leftOutText(s.vsCurrent);
   const proposals = proposalsText(s.proposals);
   return (
-    <tr className={AdminUI.trHover} data-bot-config={v.id} data-role={v.role}>
-      <td className={AdminUI.td}>
+    <tr className={TABLE.tr} data-bot-config={v.id} data-role={v.role}>
+      <td className={TABLE.td}>
         <div className="font-medium text-zinc-900 dark:text-zinc-100">{v.label}</div>
         <div className={`${AdminUI.muted} text-xs`}>
           <span className="font-mono">{v.key}</span> v{v.version}
         </div>
       </td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>
-        <span className={ROLE_BADGE[v.role] || AdminUI.badge.default}>{ROLE_LABEL[v.role] || v.role}</span>
+      <td className={`${TABLE.td} whitespace-nowrap`}>
+        <Badge tone={ROLE_BADGE[v.role] || 'zinc'} label={ROLE_LABEL[v.role] || v.role} />
       </td>
-      <td className={`${AdminUI.td} text-xs`}>{v.recipeLine}</td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>
+      <td className={`${TABLE.td} text-xs`}>{v.recipeLine}</td>
+      <td className={`${TABLE.td} whitespace-nowrap`}>
         <div>{s.builds}</div>
         {s.builds > 0 && s.buildRate != null ? <div className={`${AdminUI.muted} text-xs`}>{pct(s.buildRate)} built</div> : null}
         {s.platformFailures ? (
@@ -418,19 +420,19 @@ function Row({ v, canWrite, busy, onRole, onCopy, onCompare }: {
         ) : null}
         {proposals ? <div className={`${AdminUI.muted} text-xs`}>{proposals}</div> : null}
       </td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>{usd(s.avgCostUsd) || 'None yet'}</td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>{minutes(s.medianActiveMs) || 'None yet'}</td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>{s.bootRate == null ? 'None yet' : pct(s.bootRate)}</td>
-      <td className={AdminUI.td}>
+      <td className={`${TABLE.td} whitespace-nowrap`}>{usd(s.avgCostUsd) || 'None yet'}</td>
+      <td className={`${TABLE.td} whitespace-nowrap`}>{minutes(s.medianActiveMs) || 'None yet'}</td>
+      <td className={`${TABLE.td} whitespace-nowrap`}>{s.bootRate == null ? 'None yet' : pct(s.bootRate)}</td>
+      <td className={TABLE.td}>
         <div className="whitespace-nowrap">{winRateText(s.vsCurrent, v.role)}</div>
         {left ? <div className={`${AdminUI.muted} text-xs`}>{left}</div> : null}
       </td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>{s.pairsWaiting}</td>
-      <td className={`${AdminUI.td} whitespace-nowrap`} data-bot-config-bench={v.id}>
+      <td className={`${TABLE.td} whitespace-nowrap`}>{s.pairsWaiting}</td>
+      <td className={`${TABLE.td} whitespace-nowrap`} data-bot-config-bench={v.id}>
         {benched || <span className={AdminUI.muted}>Not run</span>}
         {s.bench?.lastRunId ? <div className={`${AdminUI.muted} text-xs`}>{`Latest: studio run ${s.bench.lastRunId}`}</div> : null}
       </td>
-      <td className={`${AdminUI.td} whitespace-nowrap`}>
+      <td className={`${TABLE.td} whitespace-nowrap`}>
         {v.role === 'current'
           ? <span className={`${AdminUI.muted} text-xs`}>{v.scope === 'later' ? 'Builds every later change' : 'Builds every first version'}</span>
           : (canWrite ? (
@@ -496,18 +498,17 @@ export function BotConfigsView({
           {payload ? `${payload.pairsWaiting} pair${payload.pairsWaiting === 1 ? '' : 's'} waiting for a pick` : 'Loading…'}
         </span>
       </div>
-      <div className="flex gap-2 mb-3" id="admin-bot-configs-scope">
-        {SCOPES.map((o) => (
-          <button
-            key={o.scope}
-            type="button"
-            className={scope === o.scope ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm}
-            aria-pressed={scope === o.scope}
-            data-bot-config-scope={o.scope}
-            onClick={() => onScope?.(o.scope)}
-          >{o.label}</button>
-        ))}
-      </div>
+      {/* The shared toggle (26 Nov 2026), in place of two buttons drawn
+          here. Each option carries its scope in data-value. */}
+      <Toolbar>
+        <Segmented<Scope>
+          id="admin-bot-configs-scope"
+          label="Which builds the configurations are for"
+          value={scope}
+          options={SCOPES.map((o) => ({ value: o.scope, label: o.label }))}
+          onChange={(next) => onScope?.(next)}
+        />
+      </Toolbar>
       {scope === 'later' ? (
         <p className={`${AdminUI.muted} mb-2`} id="admin-bot-configs-about">
           How the Homeroom bot handles every request that is not a first version: the current configuration decides
@@ -557,28 +558,28 @@ export function BotConfigsView({
       ) : null}
       {error ? <p className="text-sm text-red-700 dark:text-red-300 mb-2" role="alert">{error}</p> : null}
       {draftForm}
-      <div className={AdminUI.tableWrap}>
-        <table className={`${AdminUI.table} min-w-[72rem]`} id="admin-bot-configs-table">
-          <thead className={AdminUI.thead}>
+      <div className={TABLE.wrap}>
+        <table className={`${TABLE.table} min-w-[72rem]`} id="admin-bot-configs-table">
+          <thead className={TABLE.thead}>
             <tr>
-              <th className={AdminUI.th}>Configuration</th>
-              <th className={AdminUI.th}>Role</th>
-              <th className={`${AdminUI.th} min-w-[16rem]`}>Recipe</th>
-              <th className={AdminUI.th}>Builds</th>
-              <th className={AdminUI.th}>Avg cost</th>
-              <th className={AdminUI.th}>Median time</th>
-              <th className={AdminUI.th}>Booted</th>
-              <th className={AdminUI.th}>Win rate vs current</th>
-              <th className={AdminUI.th}>Waiting</th>
-              <th className={AdminUI.th}>Benchmark</th>
-              <th className={AdminUI.th}>Actions</th>
+              <th className={TABLE.th}>Configuration</th>
+              <th className={TABLE.th}>Role</th>
+              <th className={`${TABLE.th} min-w-[16rem]`}>Recipe</th>
+              <th className={TABLE.th}>Builds</th>
+              <th className={TABLE.th}>Avg cost</th>
+              <th className={TABLE.th}>Median time</th>
+              <th className={TABLE.th}>Booted</th>
+              <th className={TABLE.th}>Win rate vs current</th>
+              <th className={TABLE.th}>Waiting</th>
+              <th className={TABLE.th}>Benchmark</th>
+              <th className={TABLE.th}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((v) => <Row key={v.id} v={v} canWrite={canWrite} busy={busy} onRole={onRole} onCopy={onCopy} onCompare={onCompare} />)}
             {payload && rows.length === 0 ? (
               <tr>
-                <td className={AdminUI.td} colSpan={11} id="admin-bot-configs-empty">
+                <td className={TABLE.td} colSpan={11} id="admin-bot-configs-empty">
                   No configurations yet. They are made when the platform starts.
                 </td>
               </tr>

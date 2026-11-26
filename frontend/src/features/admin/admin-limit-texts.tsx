@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { Badge, Field } from './topochain/ui.tsx';
 
 // Text alerts (Admin › Limits): the numbers Homeroom texts when a platform
 // limit is near, reached or over, or the bot's OpenRouter credit runs out.
@@ -42,8 +43,6 @@ type Availability = { ready: boolean; reason: 'firebase' | 'not_configured' | nu
 export type LimitTextsData = { availability: Availability; phones: Phone[]; maxPhones: number };
 
 type Status = { text: string; tone: 'ok' | 'err' };
-
-const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
 
 const UNAVAILABLE: Record<string, string> = {
   firebase: 'Texts can\'t go out: Admin › Platform › SMS delivery uses Firebase, which only sends sign-in codes. Switch it to Brevo or Twilio to add numbers.',
@@ -162,12 +161,13 @@ export function LimitTextsCard({ canWrite, initialData = null }: { canWrite: boo
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{phone.label}</span>
                       <span className="font-mono text-sm text-zinc-600 dark:text-zinc-300">{phone.number}</span>
+                      {/* A status down a list, so the kit's soft tones (26 Nov 2026). */}
                       {phone.verified ? (
-                        <span className={AdminUI.badge.success}>Confirmed</span>
+                        <Badge tone="mint" label="Confirmed" />
                       ) : phone.waitingForCode ? (
-                        <span className={AdminUI.badge.warn}>Waiting for its code</span>
+                        <Badge tone="sky" label="Waiting for its code" />
                       ) : (
-                        <span className={AdminUI.badge.outline}>Code expired</span>
+                        <Badge tone="amber" label="Code expired" />
                       )}
                     </div>
                     <p className={`mt-1 text-xs ${line.err ? 'text-red-600 dark:text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
@@ -232,18 +232,16 @@ export function LimitTextsCard({ canWrite, initialData = null }: { canWrite: boo
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] items-end gap-3">
-            <label className="block">
-              <span className={LABEL}>Label</span>
+            <Field label="Label" htmlFor="admin-limit-texts-label">
               <input id="admin-limit-texts-label" type="text" maxLength={60} placeholder="Evan's phone"
-                disabled={addOff} className={`${AdminUI.input} mt-1 disabled:opacity-60`}
+                disabled={addOff} className={`${AdminUI.input} disabled:opacity-60`}
                 value={label} onChange={(e) => setLabel(e.target.value)} />
-            </label>
-            <label className="block">
-              <span className={LABEL}>Phone number, with its country code</span>
+            </Field>
+            <Field label="Phone number, with its country code" htmlFor="admin-limit-texts-phone">
               <input id="admin-limit-texts-phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="+44 7700 900123"
-                disabled={addOff} className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+                disabled={addOff} className={`${AdminUI.input} font-mono disabled:opacity-60`}
                 value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} />
-            </label>
+            </Field>
             <button id="admin-limit-texts-add" type="button" className={AdminUI.btn.primary}
               disabled={addOff || !label.trim() || !phoneNumber.trim()}
               onClick={() => act('add', async () => {

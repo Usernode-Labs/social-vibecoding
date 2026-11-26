@@ -74,7 +74,9 @@ function SectionIcon({ of: key, className }: { of: string; className: string }) 
 const goTo = (key: string) => (window as any).AdminConsole?.goTo?.(key);
 
 // A project's status pill: green only while it runs, plain otherwise.
-const STATUS_TONE: Record<string, string> = { running: 'admin-pill is-ok', failed: 'admin-pill is-bad', error: 'admin-pill is-bad' };
+// The console's own badges, as every other section draws a
+// status: the dashboard had pills of its own until 26 Nov 2026.
+const STATUS_TONE: Record<string, string> = { running: AdminUI.badge.success, failed: AdminUI.badge.destructive, error: AdminUI.badge.destructive };
 
 function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
@@ -237,12 +239,12 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   const recentTables = <div className="admin-records-grid">
     <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Users</h2><p>Newest accounts</p></div><button type="button" onClick={() => goTo('users')}>View all →</button></div>
       <div className="admin-record-table"><div className="admin-record-head"><span>User</span><span>Joined</span><span>Role</span></div>
-        {users === null ? <p className={AdminUI.loading}>Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{dayWords(u.created_at)}</span><span><em className={u.is_admin ? 'admin-pill is-admin' : 'admin-pill'}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent members') ? 'The list did not load.' : 'No accounts yet.'}</p>}
+        {users === null ? <p className={AdminUI.loading}>Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{dayWords(u.created_at)}</span><span><em className={u.is_admin ? AdminUI.badge.warn : AdminUI.badge.default}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent members') ? 'The list did not load.' : 'No accounts yet.'}</p>}
       </div>
     </section>
     <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Content</h2><p>Recently active projects</p></div><button type="button" onClick={() => goTo('apps')}>View all →</button></div>
       <div className="admin-record-table"><div className="admin-record-head"><span>Project</span><span>Creator</span><span>Status</span></div>
-        {apps === null ? <p className={AdminUI.loading}>Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><SectionIcon of="apps" className="admin-record-mark" /><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className={STATUS_TONE[app.status || ''] || 'admin-pill'}>{app.status || 'unknown'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent projects') ? 'The list did not load.' : 'No projects yet.'}</p>}
+        {apps === null ? <p className={AdminUI.loading}>Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><SectionIcon of="apps" className="admin-record-mark" /><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className={STATUS_TONE[app.status || ''] || AdminUI.badge.default}>{app.status || 'unknown'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent projects') ? 'The list did not load.' : 'No projects yet.'}</p>}
       </div>
     </section>
   </div>;
@@ -252,7 +254,7 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   ];
   const dashboard = <div id="admin-dashboard">
     <header className="admin-dashboard-heading"><div><h1>Admin Dashboard</h1><p>Manage users, content, and community health on Homeroom.</p></div>
-      <button type="button" className="admin-dashboard-refresh" onClick={load} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+      <button type="button" className={`admin-dashboard-refresh ${AdminUI.btn.outline}`} onClick={load} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh'}</button>
     </header>
     <nav className="admin-mobile-shortcuts" aria-label="Admin areas">{shortCuts.map(([key, label]) => <button type="button" key={key} data-admin-section={key} onClick={() => goTo(key)} aria-current={key === 'overview' ? 'page' : undefined}>{label}</button>)}</nav>
     {failed.length ? <p id="admin-dashboard-error" role="alert" className="admin-dashboard-alert">
@@ -266,7 +268,7 @@ function OverviewSection({ compact }: { compact?: boolean }) {
       </button>)}
     </section>
     <div className="admin-dashboard-columns">{moderation}<section className="admin-dashboard-panel admin-health-panel"><div className="admin-dashboard-section-head"><div><h2>Community analytics</h2><p>New accounts each week, last eight weeks</p></div><button type="button" data-admin-section="analytics" onClick={() => goTo('analytics')}>View details →</button></div>
-      {growth === null ? <p className="admin-dashboard-muted">{failed.includes('the weekly chart') ? 'The chart did not load.' : 'Loading the chart…'}</p> : <div className="admin-analytics-chart" role="img" aria-label={`New accounts by week for the last eight weeks: ${chartValues.join(', ')}`}><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polygon points={`0,40 ${chartPoints} 100,40`} /><polyline points={chartPoints} /></svg><div><span>8 weeks ago</span><span>This week</span></div></div>}
+      {growth === null ? <p className="admin-dashboard-muted">{failed.includes('the weekly chart') ? 'The chart did not load.' : 'Loading the chart…'}</p> : <div className="admin-analytics-chart" role="img" aria-label={`New accounts by week for the last eight weeks: ${chartValues.join(', ')}`}><svg viewBox="0 0 100 40" preserveAspectRatio="none"><defs><linearGradient id="admin-chart-fade" x1="0" y1="0" x2="0" y2="1"><stop className="admin-chart-fade-top" offset="0" /><stop className="admin-chart-fade-end" offset="1" /></linearGradient></defs><polygon points={`0,40 ${chartPoints} 100,40`} /><polyline points={chartPoints} /></svg><div><span>8 weeks ago</span><span>This week</span></div></div>}
       <div className="admin-health-stat"><span>New accounts in eight weeks</span><strong>{growth === null ? '—' : chartTotal.toLocaleString()}</strong></div>
       <div className="admin-health-stat"><span>Weekly active users</span><strong>{analytics?.wau == null ? '—' : Number(analytics.wau).toLocaleString()}</strong></div>
     </section></div>

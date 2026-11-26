@@ -67,14 +67,19 @@ const bodyOf = (name) => {
 };
 
 test('the collapse state is a versioned key holding the COLLAPSED groups', () => {
-  assert.match(consoleJs, /const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v1'/,
+  // The key moved to v2 when the menu was regrouped and the groups began
+  // folded (request 7224), so a choice kept under the old names is not read.
+  assert.match(consoleJs, /const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v2'/,
     'one versioned localStorage key, declared once at module scope');
+  assert.equal((consoleJs.match(/admin_nav_collapsed_groups_v\d/g) || []).length, 1, 'and no other version of it is named');
 
   const load = sliceFn('_loadCollapsedGroups() {', 1400);
   assert.match(load, /localStorage\.getItem\(NAV_COLLAPSED_KEY\)/,
     'the load path reads that key');
   assert.match(load, /if \(typeof window === 'undefined'\) return;/,
     'guarded for the prerender pass, which evaluates this module in Node');
+  assert.match(load, /const arr = raw \? JSON\.parse\(raw\) : \[\.\.\.new Set\(AdminConsole\.SECTIONS\.map\(\(s\) => s\.group \|\| 'Other'\)\)\];/,
+    'with nothing stored every group starts folded; a stored choice is read as it was kept');
   assert.match(load, /Array\.isArray\(arr\)/,
     'a non-array stored value is rejected rather than iterated');
   assert.match(load, /try \{/, 'the whole read is inside try/catch…');

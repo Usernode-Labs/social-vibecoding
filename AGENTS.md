@@ -823,6 +823,30 @@ A section that draws with the recipes is aligned for free; the block also
 reads what a section wrote by hand, by the utility it used, so prefer a
 recipe to a new hand-written button, card or badge.
 
+**A console page is built from the kit's parts, not from parts of its own
+(#7224).** `topochain/ui.tsx` holds them, and a console section may import
+them too: `ScreenHeader` (a title and one line; only what acts on the whole
+page in its actions), `Figures` (the dashboard's tiles, for counts the page
+already has), `Tabs` / `TabPanel` (a page with more than one job: its list
+first, its settings in a Settings tab; panels stay mounted), `Toolbar` (one
+bar over a list: search, filters, then what acts on the list), `Segmented`
+(a choice of two to four short words, in place of a select), `List` (the
+table: a grey head, a row that answers the pointer, `details` behind an
+arrow at the row's start for what is read now and then) or the `TABLE`
+classes for a table `List` cannot draw, `Badge` (`sky` waiting, `mint`
+done, `red` failed, `amber` needs a look, for a status repeated down a
+list), `SettingsGroup` / `SettingRow` (a setting that saves when it is
+changed: a switch that says Yes or No, then its name; a field of a form
+with a Save button stays a checkbox), and `LoadMore` (a list that goes on
+as its foot scrolls into view, where the server pages it and gives a
+total). Each is drawn by one hook in the option A block of app.css
+(`.adm-tabs`, `.adm-seg`, `.adm-switch`, `.adm-row`, `.adm-toolbar`). A
+declared check's `expectText` reads what is visible, so words a check
+needs stay in a page's first tab. The menu's head is the dashboard and six
+tools (`NAV_HEAD_KEYS`); the rest are groups that start folded, in the
+order `NAV_GROUPS` gives, and a section's `group` in `SECTIONS` says which
+it is in.
+
 ### The console is React — add a section the same way
 
 **Every admin section renders from React.** `admin-console.js` is a chassis

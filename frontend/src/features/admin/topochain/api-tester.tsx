@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BTN, PANEL_CLS } from './tokens.ts';
-import { Input, Panel, ScreenHeader, Select, Textarea } from './ui.tsx';
+import { Badge, Field, Input, Panel, ScreenHeader, Select, Textarea } from './ui.tsx';
 
 // API tester — the programme console's "send a request with your own session"
 // screen. Same-origin requests, so the platform still applies every gate it
@@ -74,16 +74,14 @@ function ResultBlock({ result }: { result: Result }) {
       </p>
     );
   }
-  const okTone = result.ok
-    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
-    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400';
   return (
     <div className={`mt-4 ${PANEL_CLS} overflow-hidden`}>
       <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
         <h3 className="text-sm font-semibold">Response</h3>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${okTone}`}>
-          {`HTTP ${result.status} ${result.statusText}`}
-        </span>
+        <Badge
+          tone={result.ok ? 'mint' : 'amber'}
+          label={`HTTP ${result.status} ${result.statusText}`}
+        />
       </header>
       <pre className="text-xs font-mono bg-zinc-50 dark:bg-zinc-950 p-4 overflow-x-auto whitespace-pre-wrap max-h-[32rem]">
         {result.body}
@@ -234,20 +232,18 @@ function ApiTesterScreen() {
           </button>
         )}
       >
+        {/* Each label is the shared Field (26 Nov 2026). The note keeps its
+            own line under the first, since it is a live status with an id. */}
         <div className="min-w-0">
-          <label
-            htmlFor="admin-topo-api-endpoint"
-            className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
-          >
-            Endpoint
-          </label>
-          <Select
-            id="admin-topo-api-endpoint"
-            value={endpoint}
-            onChange={(e) => onEndpoint(e.target.value)}
-          >
-            <EndpointOptions routes={routes} />
-          </Select>
+          <Field label="Endpoint" htmlFor="admin-topo-api-endpoint">
+            <Select
+              id="admin-topo-api-endpoint"
+              value={endpoint}
+              onChange={(e) => onEndpoint(e.target.value)}
+            >
+              <EndpointOptions routes={routes} />
+            </Select>
+          </Field>
           <p
             id="admin-topo-api-catalog-note"
             className="mt-1 text-xs text-zinc-500 dark:text-zinc-400"
@@ -257,13 +253,7 @@ function ApiTesterScreen() {
           </p>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
-          <div className="sm:w-32">
-            <label
-              htmlFor="admin-topo-api-method"
-              className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
-            >
-              Method
-            </label>
+          <Field label="Method" htmlFor="admin-topo-api-method" className="sm:w-32">
             <Select
               id="admin-topo-api-method"
               value={method}
@@ -273,23 +263,26 @@ function ApiTesterScreen() {
                 <option key={m} value={m}>{m}</option>
               ))}
             </Select>
-          </div>
+          </Field>
           <div className={showPath ? 'min-w-0' : 'min-w-0 hidden'} id="admin-topo-api-path-row">
-            <label
+            <Field
+              label={(
+                <>
+                  {'Path '}
+                  <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400">(prefixed with /api/v4)</span>
+                </>
+              )}
               htmlFor="admin-topo-api-path"
-              className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
             >
-              {'Path '}
-              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400">(prefixed with /api/v4)</span>
-            </label>
-            <Input
-              id="admin-topo-api-path"
-              type="text"
-              className="font-mono"
-              placeholder="/admin/seasons"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-            />
+              <Input
+                id="admin-topo-api-path"
+                type="text"
+                className="font-mono"
+                placeholder="/admin/seasons"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+              />
+            </Field>
           </div>
         </div>
         <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
@@ -298,21 +291,23 @@ function ApiTesterScreen() {
             {target}
           </span>
         </p>
-        <div className="mt-4">
-          <label
-            htmlFor="admin-topo-api-body"
-            className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
-          >
-            {'JSON body '}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">(ignored for GET)</span>
-          </label>
+        <Field
+          className="mt-4"
+          htmlFor="admin-topo-api-body"
+          label={(
+            <>
+              {'JSON body '}
+              <span className="font-normal text-zinc-500 dark:text-zinc-400">(ignored for GET)</span>
+            </>
+          )}
+        >
           <Textarea
             id="admin-topo-api-body"
             rows={6}
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
-        </div>
+        </Field>
       </Panel>
       <div id="admin-topo-api-result">
         <ResultBlock result={result} />

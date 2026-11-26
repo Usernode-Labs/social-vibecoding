@@ -290,9 +290,11 @@ test('drawn in the website\'s look: the hero frame, the green, a soft sky, and e
   assert.match(html, /<div class="hr-demo-col" data-guest-groups-hub=""><div class="hr-demo"/);
   assert.match(css, /@media \(min-width: 1024px\) \{\s+#auth-landing-screen \.hr-points \{[^}]*\}\s+#auth-landing-screen \.hr-demo-col \{ display: flex; align-items: center; padding: 36px 32px; background: var\(--site-ground\); border-inline-start: 1px solid var\(--site-line\); \}/);
   // The first button is the landing's sun pill and the one beside it its
-  // white pill (features/auth/story.tsx).
-  assert.match(html, /<button type="button" data-guest-groups-start="" class="[^"]*bg-\[var\(--site-sun\)\] text-\[color:var\(--site-on-sun\)\]"/);
-  assert.match(src, /import \{ HERO_PRIMARY, HERO_SECONDARY, SITE_LABEL \} from '\.\.\/auth\/story';/);
+  // white pill (features/auth/story.tsx), both the Button primitive's site
+  // kinds.
+  assert.match(html, /<button type="button" data-guest-groups-start="" class="[^"]*bg-\[var\(--site-sun\)\] [^"]*text-\[color:var\(--site-on-sun\)\][^"]*"/);
+  assert.match(src, /import \{ HERO_SECONDARY, HERO_TAP, SITE_LABEL \} from '\.\.\/auth\/story';/);
+  assert.match(src, /<Button type="button" data-guest-groups-start="" layout="site" variant="sitePrimary" size="site" ink="siteOnSun" className=\{HERO_TAP\}/);
 
   // DOWN THE PAGE: the green with stars under what a group gets and under
   // the rules, the page's own ground between them, and a soft sky to close.

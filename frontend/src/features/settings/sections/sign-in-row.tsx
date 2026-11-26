@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { Button, type ButtonProps } from '@/components/ui/button';
 import { ListRow } from '@/components/ui/grouped-list';
 
 /**
@@ -19,10 +20,11 @@ import { ListRow } from '@/components/ui/grouped-list';
  */
 
 /** The Change / Add link at the end of a row: a button, because it opens a
- * form in place rather than going anywhere. */
-export const ROW_ACTION = 'ui-link shrink-0 -my-1 rounded-lg px-2 py-1 text-[15px] font-medium '
-  + 'text-violet-700 hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300 '
-  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
+ * form in place rather than going anywhere. The Button primitive's link kind,
+ * pulled into the row's height (`-my-1`). */
+export function RowAction(props: ButtonProps) {
+  return <Button {...props} layout="shrink" variant="link" size="link" ink="link" className="-my-1" />;
+}
 
 /** The open form under its row: inset to the row's text, a hairline above.
  * `kb-form` with `kb-form-actions` below: with the keys up the field a tap

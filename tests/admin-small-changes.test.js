@@ -65,7 +65,7 @@ function render(props) {
 test('the section is registered everywhere the console reads, inside the registry rules', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
   const sectionBlock = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['), consoleJs.indexOf('isOpen()'));
-  assert.match(sectionBlock, /\{ key: 'small-changes', label: 'Small changes', group: 'Platform' \}/);
+  assert.match(sectionBlock, /\{ key: 'small-changes', label: 'Small changes', group: 'Content & apps' \}/);
   assert.match(consoleJs, /'small-changes': 'AdminSmallChanges'/);
   assert.match(consoleJs, /'small-changes': '<svg class="w-5 h-5 shrink-0"/, 'it has a nav icon');
   assert.ok(read('frontend/src/features/admin/sections.ts').includes("import './admin-small-changes.tsx';"));

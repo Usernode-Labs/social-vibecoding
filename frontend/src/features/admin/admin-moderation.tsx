@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { Badge, EmptyState, List, ScreenHeader, Toolbar } from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 const LABELS: Record<string,string> = {
   new: 'New', in_review: 'In review', resolved: 'Resolved', dismissed: 'Dismissed',
@@ -28,6 +30,9 @@ const EFFECTS: Record<string,string> = {
   reopen: 'Return this case to the review queue. Existing restrictions remain.',
   release_evidence: 'Let the normal retention period apply again: this case’s evidence is cleared 180 days after it closes, and its reports and history after a year. This is recorded in the action history.',
 };
+// A case's status down the list, in the soft tones (26 Nov 2026): waiting,
+// being looked at, done, and set aside.
+const STATUS_TONE: Record<string,string> = { new: 'sky', in_review: 'amber', resolved: 'mint', dismissed: 'zinc' };
 async function request(url: string, init?: RequestInit) {
   const response = await fetch(url, init); const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'Could not load moderation data');
@@ -128,19 +133,30 @@ export function ModerationSection() {
     { action: restriction, completed, unavailable: !target ? 'This target no longer exists.' : restriction === 'suspend_app' && target.self_hosted ? 'Homeroom itself cannot be suspended here.' : '' },
     { action: closingAction, completed: !!closed, unavailable: '' },
   ] : [];
+  // The cases are the shared table (26 Nov 2026). The first cell is still the
+  // button that opens the case beside the list.
+  const caseColumns: Column<any>[] = [
+    { label: 'Report', primary: true, cell: (c) => <button type="button" className="block w-full text-start" aria-pressed={Number(selected)===Number(c.id)} onClick={()=>setSelected(c.id)} data-child-safety={c.child_safety ? '' : undefined}>{c.child_safety || c.preserve_evidence ? <span className="mb-1 flex flex-wrap gap-2">{c.child_safety ? <span className={AdminUI.badge.destructive}>Child safety</span> : null}{c.preserve_evidence ? <span className={AdminUI.badge.warn}>Evidence preserved</span> : null}</span> : null}<strong className="break-words">{c.target_label}</strong><span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">{LABELS[c.target_type]} · {c.report_count} reports</span><span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">{(c.reasons || []).join(', ')}</span></button> },
+    { label: 'Status', cell: (c) => <Badge tone={STATUS_TONE[c.status]} label={LABELS[c.status]} /> },
+    { label: 'Reported', tdClass: 'whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400', cell: (c) => new Date(c.created_at).toLocaleString() },
+  ];
   return <div className="space-y-4">
-    <h2 className={AdminUI.sectionTitle}>Moderation</h2>
-    <p className={AdminUI.muted}>Private reports about apps, messages and users. Reports alone never impose restrictions.</p>
-    <div className="grid gap-3 sm:grid-cols-4">
-      <label className={AdminUI.label}>Status<select className={AdminUI.select} value={filters.status} onChange={e=>setFilters({...filters,status:e.target.value})}>{['new','in_review','resolved','dismissed','all'].map(k=><option key={k} value={k}>{LABELS[k] || 'All'}</option>)}</select></label>
-      <label className={AdminUI.label}>Target<select className={AdminUI.select} value={filters.type} onChange={e=>setFilters({...filters,type:e.target.value})}><option value="">All targets</option>{['app','user','app_message','conversation_message'].map(k=><option key={k} value={k}>{LABELS[k]}</option>)}</select></label>
-      <label className={AdminUI.label}>Reason<select className={AdminUI.select} value={filters.reason} onChange={e=>setFilters({...filters,reason:e.target.value})}><option value="">All reasons</option>{REASONS.map(k=><option key={k} value={k}>{k.replace(/_/g,' ')}</option>)}</select></label>
-      <label className={AdminUI.label}>Reported since<input className={AdminUI.input} type="date" value={filters.since} onChange={e=>setFilters({...filters,since:e.target.value})}/></label>
-    </div>
+    <ScreenHeader title="Moderation" subtitle="Private reports about apps, messages and users. Reports alone never impose restrictions." />
+    <Toolbar>
+      <label className={`min-w-[10rem] flex-1 ${AdminUI.label}`}>Status<select className={AdminUI.select} value={filters.status} onChange={e=>setFilters({...filters,status:e.target.value})}>{['new','in_review','resolved','dismissed','all'].map(k=><option key={k} value={k}>{LABELS[k] || 'All'}</option>)}</select></label>
+      <label className={`min-w-[10rem] flex-1 ${AdminUI.label}`}>Target<select className={AdminUI.select} value={filters.type} onChange={e=>setFilters({...filters,type:e.target.value})}><option value="">All targets</option>{['app','user','app_message','conversation_message'].map(k=><option key={k} value={k}>{LABELS[k]}</option>)}</select></label>
+      <label className={`min-w-[10rem] flex-1 ${AdminUI.label}`}>Reason<select className={AdminUI.select} value={filters.reason} onChange={e=>setFilters({...filters,reason:e.target.value})}><option value="">All reasons</option>{REASONS.map(k=><option key={k} value={k}>{k.replace(/_/g,' ')}</option>)}</select></label>
+      <label className={`min-w-[10rem] flex-1 ${AdminUI.label}`}>Reported since<input className={AdminUI.input} type="date" value={filters.since} onChange={e=>setFilters({...filters,since:e.target.value})}/></label>
+    </Toolbar>
     {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400">{error} <button className={AdminUI.btn.link} onClick={()=>setVersion(v=>v+1)}>Refresh</button></p> : null}
-    <div className="grid gap-4 lg:grid-cols-2"><div className={`${AdminUI.card} min-w-0 p-4`}>
-      {loading ? <p className={AdminUI.loading}>Loading reports…</p> : !rows.length ? <p className={AdminUI.muted}>No reports match these filters.</p> : null}
-      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">{rows.map(c=><button key={c.id} type="button" className="block w-full py-3 text-start" aria-pressed={Number(selected)===Number(c.id)} onClick={()=>setSelected(c.id)} data-child-safety={c.child_safety ? '' : undefined}>{c.child_safety || c.preserve_evidence ? <span className="mb-1 flex flex-wrap gap-2">{c.child_safety ? <span className={AdminUI.badge.destructive}>Child safety</span> : null}{c.preserve_evidence ? <span className={AdminUI.badge.warn}>Evidence preserved</span> : null}</span> : null}<strong className="break-words">{c.target_label}</strong><div className={AdminUI.muted}>{LABELS[c.target_type]} · {c.report_count} reports · {LABELS[c.status]}</div><div className={AdminUI.muted}>{new Date(c.created_at).toLocaleString()} · {(c.reasons || []).join(', ')}</div></button>)}</div>
+    <div className="grid gap-4 lg:grid-cols-2"><div className="min-w-0 space-y-3">
+      {loading ? <p className={AdminUI.loading}>Loading reports…</p> : !rows.length ? <EmptyState title="No reports match these filters." /> : null}
+      {rows.length ? <List<any>
+        items={rows}
+        columns={caseColumns}
+        rowKey={(c)=>c.id}
+        rowClass={(c)=>Number(selected)===Number(c.id) ? 'bg-violet-50 dark:bg-violet-950/30' : ''}
+      /> : null}
       {next ? <button className={AdminUI.btn.outlineSm} disabled={loading} onClick={()=>void load(next)}>Load more</button> : null}
     </div><div className={`${AdminUI.card} min-w-0 p-4`}>
       {!selected ? <p className={AdminUI.muted}>Select a report to review its evidence and history.</p> : !detail ? <p className={AdminUI.loading}>Loading case…</p> : <div className="space-y-4">

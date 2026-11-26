@@ -110,6 +110,10 @@ test('at the most numbers, adding is off and the card says why', () => {
 
 test('the card sits in Admin › Limits after the limit settings, and has no em dash', () => {
   const src = read('frontend/src/features/admin/admin-limits.tsx');
-  assert.match(src, /<LiveDraftsCard canWrite=\{canWrite\} \/>\n\n\s+<LimitTextsCard canWrite=\{canWrite\} \/>/);
+  // Limits is three tabs now (request 7224): the limits, then the features'
+  // switches, which end with LiveDraftsCard, then this card alone in the
+  // last, Text alerts.
+  assert.match(src, /<LiveDraftsCard canWrite=\{canWrite\} \/>\s+<\/SettingsGroup>\s+<\/TabPanel>\s+<TabPanel tabsId=\{LIMITS_TABS_ID\} tab="texts" active=\{tab === 'texts'\}>\s+<LimitTextsCard canWrite=\{canWrite\} \/>\s+<\/TabPanel>/);
+  assert.match(src, /\{ key: 'limits', label: 'Limits' \},\s+\{ key: 'features', label: 'Features' \},\s+\{ key: 'texts', label: 'Text alerts' \},/, 'the tabs run in that order');
   assert.doesNotMatch(read(ENTRY), /—/);
 });

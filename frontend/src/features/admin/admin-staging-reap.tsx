@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // bundle, rather than the bare global read <script> order used to supply.
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The shared admin kit (26 Nov 2026): the page is drawn with the same header,
+// figures, bar, table and badges as every other admin page.
+import { Badge, Figures, ScreenHeader, TABLE, Toolbar } from './topochain/ui.tsx';
+import type { Figure } from './topochain/ui.tsx';
 
 // Stale previews — the preview half of the container rollover next door. A
 // staging preview's environment is fixed when it is BUILT, and previews live
@@ -100,24 +104,22 @@ function sleepLine(asleep: Asleep | null, sleepAfterMs: number | null, loaded: b
     + `${unmeasured > 0 ? ` (${unmeasured} not measured)` : ''}.`;
 }
 
-const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300';
-
-// Per-preview outcome → chip. Mirrors the outcome vocabulary in
+// Per-preview outcome and its badge. Mirrors the outcome vocabulary in
 // src/services/staging-reap.js; an unknown state falls back to the raw
 // string so a new outcome shows up rather than disappearing.
-const REAP_STATES: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Queued', cls: NEUTRAL_CHIP },
-  running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
-  torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  torn_down_no_db: { label: 'Shut down: database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  skipped_gone: { label: 'Skipped: already gone', cls: NEUTRAL_CHIP },
-  skipped_workflow: { label: 'Skipped: its workflow retires it', cls: NEUTRAL_CHIP },
-  skipped_vote: { label: 'Skipped: now up for a vote', cls: NEUTRAL_CHIP },
-  skipped_checks: { label: 'Skipped: checks now running', cls: NEUTRAL_CHIP },
-  skipped_busy: { label: 'Skipped: now being worked on', cls: NEUTRAL_CHIP },
-  skipped_current: { label: 'Skipped: up to date now', cls: NEUTRAL_CHIP },
-  skipped_unseen: { label: 'Skipped: not in the runtime\'s list', cls: NEUTRAL_CHIP },
-  failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
+const REAP_STATES: Record<string, { label: string; tone: string }> = {
+  pending: { label: 'Queued', tone: 'sky' },
+  running: { label: 'Shutting down…', tone: 'amber' },
+  torn_down: { label: 'Shut down', tone: 'mint' },
+  torn_down_no_db: { label: 'Shut down: database kept', tone: 'mint' },
+  skipped_gone: { label: 'Skipped: already gone', tone: 'zinc' },
+  skipped_workflow: { label: 'Skipped: its workflow retires it', tone: 'zinc' },
+  skipped_vote: { label: 'Skipped: now up for a vote', tone: 'zinc' },
+  skipped_checks: { label: 'Skipped: checks now running', tone: 'zinc' },
+  skipped_busy: { label: 'Skipped: now being worked on', tone: 'zinc' },
+  skipped_current: { label: 'Skipped: up to date now', tone: 'zinc' },
+  skipped_unseen: { label: 'Skipped: not in the runtime\'s list', tone: 'zinc' },
+  failed: { label: 'Failed', tone: 'red' },
 };
 
 // What each preview's session is doing. Presentational only: the service
@@ -137,27 +139,6 @@ const REAP_CLASSIFICATIONS: Record<string, string> = {
   promoted_unlinked: 'up for a vote, link lost',
   no_session_row: 'session no longer exists',
 };
-
-// Local class recipes — complete literals, because Tailwind's extractor is a
-// regex over this file's source (see the AdminUI note in admin-console.js).
-const ReapUI = Object.freeze({
-  tile: 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3',
-  tileLabel: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
-  tileValue: 'text-2xl font-bold mt-1',
-  lede: 'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-  fine: 'text-xs text-zinc-500 dark:text-zinc-400 mb-4',
-  viewOnly: 'text-xs text-zinc-500 dark:text-zinc-400',
-  startBtn: `${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600`,
-  summary: 'text-sm text-zinc-500 dark:text-zinc-400 mt-3',
-  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
-  rowMain: 'flex-1 min-w-0',
-  rowSlug: 'font-mono text-sm',
-  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ms-1',
-  rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5',
-  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
-  rowRight: 'flex items-center gap-2 shrink-0',
-  rowSecs: 'text-xs text-zinc-500 dark:text-zinc-400',
-});
 
 // "3 minutes ago" for the automatic pass's last run. Kept local and tiny:
 // the only consumer is the one line below.
@@ -188,13 +169,10 @@ function automaticLine(automatic: Automatic | null, loaded: boolean): string {
   return `${bits.join(' · ')}.`;
 }
 
-function Tile({ id, label, value }: { id: string; label: string; value: string }) {
-  return (
-    <div className={ReapUI.tile}>
-      <div className={ReapUI.tileLabel}>{label}</div>
-      <div id={id} className={ReapUI.tileValue}>{value}</div>
-    </div>
-  );
+// A figure's value with the id it has always had. The kit's figure has no
+// id of its own, and each of these is looked up by its id.
+function figureValue(id: string, value: string) {
+  return <span id={id}>{value}</span>;
 }
 
 // The summary line's four states, in the order the paint routine tested
@@ -221,24 +199,25 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
   );
 }
 
+// One preview of the sweep, as a row of the shared table. The row keeps its
+// `data-reap-name` / `data-reap-state` hooks, which is why the table is
+// written out here with the kit's classes: the kit's list has no row hooks.
 function PreviewRow({ preview }: { preview: ReapPreview }) {
-  const chip = REAP_STATES[preview.state] || { label: preview.state, cls: NEUTRAL_CHIP };
+  const chip = REAP_STATES[preview.state] || { label: preview.state, tone: 'zinc' };
   const session = REAP_CLASSIFICATIONS[preview.classification] || preview.classification;
   const why = preview.outOfDate ? `${session}, out of date` : session;
   const secs = preview.ms == null ? '' : `${(preview.ms / 1000).toFixed(1)}s`;
   return (
-    <div className={ReapUI.row} data-reap-name={preview.name} data-reap-state={preview.state}>
-      <span className={ReapUI.rowMain}>
-        <code className={ReapUI.rowSlug}>{preview.slug}</code>
-        <span className={ReapUI.rowSession}>{`#${preview.sessionId}`}</span>
-        <span className={ReapUI.rowWhy}>{why}</span>
-        {preview.error ? <span className={ReapUI.rowError}>{preview.error}</span> : null}
-      </span>
-      <span className={ReapUI.rowRight}>
-        {secs ? <span className={ReapUI.rowSecs}>{secs}</span> : null}
-        <span className={`text-xs px-2 py-0.5 rounded-full ${chip.cls}`}>{chip.label}</span>
-      </span>
-    </div>
+    <tr className={TABLE.tr} data-reap-name={preview.name} data-reap-state={preview.state}>
+      <td className={TABLE.td}>
+        <code className="font-mono text-sm">{preview.slug}</code>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-1">{`#${preview.sessionId}`}</span>
+        {preview.error ? <span className="block text-xs text-red-700 mt-0.5 dark:text-red-400">{preview.error}</span> : null}
+      </td>
+      <td className={`${TABLE.td} text-xs text-zinc-500 dark:text-zinc-400`}>{why}</td>
+      <td className={`${TABLE.td} text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap`}>{secs}</td>
+      <td className={TABLE.td}><Badge label={chip.label} tone={chip.tone} /></td>
+    </tr>
   );
 }
 
@@ -354,96 +333,99 @@ function StalePreviewsSection() {
       : (running ? 'Sweep in progress…' : 'Shut down stale previews'));
   const rows = job && job.total ? (job.previews || []) : [];
 
+  const figures: Figure[] = [
+    { key: 'open', label: 'Open previews', tone: 'sky', value: figureValue('admin-reap-stale', open == null ? '—' : String(open)) },
+    { key: 'due', label: 'To shut down', tone: 'yellow', value: figureValue('admin-reap-due', due == null ? '—' : String(due)) },
+    {
+      key: 'concurrency',
+      label: 'At a time',
+      tone: 'sky',
+      value: figureValue('admin-reap-concurrency', job ? String(job.concurrency) : (concurrency ? String(concurrency) : '—')),
+    },
+    { key: 'failed', label: 'Failed', tone: 'yellow', value: figureValue('admin-reap-failed', job ? String(job.failed) : '—') },
+    { key: 'asleep', label: 'Asleep', tone: 'sky', value: figureValue('admin-reap-asleep', asleep == null ? '—' : String(asleep.count)) },
+    {
+      key: 'asleep-storage',
+      label: 'Asleep storage',
+      tone: 'sky',
+      value: figureValue('admin-reap-asleep-storage', asleep == null ? '—' : gigabytes(asleep.bytes)),
+    },
+  ];
+
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Stale previews</h2>
-        <button
-          id="admin-refresh-reap"
-          type="button"
-          className={`${AdminUI.btn.link} text-xs`}
-          onClick={() => load()}
-        >
-          Refresh
-        </button>
-      </div>
-      <p className={ReapUI.lede}>
-        Shuts down previews nobody needs: those whose proposal merged, was
-        withdrawn or no longer exists, and those built before a platform
-        change to what gets injected into containers, which typically show a
-        login screen instead of the app. A preview backing a live vote is
+    <>
+      <ScreenHeader
+        title="Stale previews"
+        subtitle="Shuts down previews nobody needs: those whose proposal merged, was withdrawn or no longer exists, and those built before a platform change to what gets injected into containers, which typically show a login screen instead of the app."
+        actions={(
+          <button
+            id="admin-refresh-reap"
+            type="button"
+            className={AdminUI.btn.outlineSm}
+            onClick={() => load()}
+          >
+            Refresh
+          </button>
+        )}
+      />
+      <Figures items={figures} />
+      <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+        A preview backing a live vote is
         never shut down here; when it goes out of date it is rebuilt in place.
         The background sweep does the same work a few previews at a time;
         this button does all of it now.
       </p>
-      <p className={ReapUI.fine}>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
         Nothing is lost that matters: clicking Preview on a proposal rebuilds
         it automatically with current settings, the same way a preview the
         idle sweep gave back is rebuilt. A preview&apos;s throwaway test data is discarded, and
         rebuilding re-runs that proposal&apos;s automated checks.
       </p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <Tile
-          id="admin-reap-stale"
-          label="Open previews"
-          value={open == null ? '—' : String(open)}
-        />
-        <Tile
-          id="admin-reap-due"
-          label="To shut down"
-          value={due == null ? '—' : String(due)}
-        />
-        <Tile
-          id="admin-reap-concurrency"
-          label="At a time"
-          value={job ? String(job.concurrency) : (concurrency ? String(concurrency) : '—')}
-        />
-        <Tile
-          id="admin-reap-failed"
-          label="Failed"
-          value={job ? String(job.failed) : '—'}
-        />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <Tile
-          id="admin-reap-asleep"
-          label="Asleep"
-          value={asleep == null ? '—' : String(asleep.count)}
-        />
-        <Tile
-          id="admin-reap-asleep-storage"
-          label="Asleep storage"
-          value={asleep == null ? '—' : gigabytes(asleep.bytes)}
-        />
-      </div>
       <p id="admin-reap-sleep" className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
         {sleepLine(asleep, sleepAfterMs, loaded)}
       </p>
       <p id="admin-reap-automatic" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
         {automaticLine(automatic, loaded)}
       </p>
-      {canWrite ? (
-        <button
-          id="admin-reap-btn"
-          type="button"
-          className={ReapUI.startBtn}
-          disabled={running || preview || runtimeUnavailable || starting}
-          onClick={start}
-        >
-          {label}
-        </button>
-      ) : (
-        <p className={ReapUI.viewOnly}>
-          View-only admin: you can watch a sweep, but not start one.
+      {/* The sweep's bar: what starts it, then how it is going, over its rows. */}
+      <Toolbar>
+        {canWrite ? (
+          <button
+            id="admin-reap-btn"
+            type="button"
+            className={AdminUI.btn.primary}
+            disabled={running || preview || runtimeUnavailable || starting}
+            onClick={start}
+          >
+            {label}
+          </button>
+        ) : (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            View-only admin: you can watch a sweep, but not start one.
+          </p>
+        )}
+        <p id="admin-reap-summary" className="text-sm text-zinc-500 dark:text-zinc-400">
+          <Summary loaded={loaded} job={job} demo={demo} />
         </p>
-      )}
-      <p id="admin-reap-summary" className={ReapUI.summary}>
-        <Summary loaded={loaded} job={job} demo={demo} />
-      </p>
-      <div id="admin-reap-list" className="space-y-2 mt-3">
-        {rows.map((p) => <PreviewRow key={p.name} preview={p} />)}
+      </Toolbar>
+      <div id="admin-reap-list" className={rows.length ? TABLE.wrap : undefined}>
+        {rows.length ? (
+          <table className={TABLE.table}>
+            <thead className={TABLE.thead}>
+              <tr>
+                <th className={TABLE.th}>Preview</th>
+                <th className={TABLE.th}>Session</th>
+                <th className={TABLE.th}>Took</th>
+                <th className={TABLE.th}>Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => <PreviewRow key={p.name} preview={p} />)}
+            </tbody>
+          </table>
+        ) : null}
       </div>
-    </div>
+    </>
   );
 }
 

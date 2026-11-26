@@ -6,6 +6,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // depended on <script> order (admin-console.js loaded first); inside the
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, CheckField, EmptyState, Input, List, ScreenHeader, Segmented, Select, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Merge debug section of the admin console (#860) — the retired standalone
@@ -42,6 +47,15 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // have open stays open, and its steps are not re-fetched. That is the point
 // of the conversion rather than an accident of it, and it is the only
 // difference from the previous behaviour on this screen.
+//
+// ── Drawn from the shared admin kit (26 Nov 2026) ─────────────────────
+//
+// The runs are the shared `List` now, a run's steps behind its row's arrow
+// (`details`), and the filters are one `Toolbar` over it. `List` keeps which
+// rows are open by run id, so the behaviour above holds: a Live refresh
+// leaves an open run open. Its steps are read once and kept in a cache the
+// section owns, because `List` draws an open row twice (the table and the
+// phone cards) and unmounts it when it is closed.
 
 // Guarded for the SSG prerender pass, which evaluates this module in Node
 // (#1082 chunk E). In the browser this is the same boolean as before.
@@ -98,34 +112,40 @@ interface Filters {
 const EMPTY_FILTERS: Filters = { app: '', pr_number: '', session_id: '', outcome: '', kind: '' };
 
 // ── Outcome badge ───────────────────────────────────────────────────────
-const BADGES: Record<string, { label: string; cls: string; spin?: boolean }> = {
-  running:            { label: 'Running',              cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
-  merged:             { label: 'Merged',               cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
-  blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-300' },
-  conflict_resolving: { label: 'Conflict: resolving', cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
-  conflict_failed:    { label: 'Conflict: failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
-  awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-  noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
-  error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+// A status repeated down the list, so it wears the shared `Badge`'s soft
+// tones: sky while it runs, mint when it ended well, red or amber for trouble.
+const BADGES: Record<string, { label: string; tone: string; spin?: boolean }> = {
+  running:            { label: 'Running',              tone: 'sky', spin: true },
+  merged:             { label: 'Merged',               tone: 'mint' },
+  blocked:            { label: 'Blocked',              tone: 'amber' },
+  conflict_resolving: { label: 'Conflict: resolving', tone: 'sky', spin: true },
+  conflict_failed:    { label: 'Conflict: failed',    tone: 'red' },
+  awaiting_github:    { label: 'Awaiting GitHub',      tone: 'zinc' },
+  noop:               { label: 'No-op',                tone: 'zinc' },
+  error:              { label: 'Error',                tone: 'red' },
   // The proposal's PR is closed on GitHub and couldn't be reopened —
   // terminal, distinct from a conflict.
-  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+  pr_closed:          { label: 'PR closed',            tone: 'red' },
   // A kind='checks' run ends on the verdict its suite produced rather than
   // on a merge outcome. ('error' above is shared — a checks run whose
   // container broke reports the same thing a failed merge does.)
-  passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
-  failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
-  skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
+  passing:            { label: 'Checks passing',       tone: 'mint' },
+  failing:            { label: 'Checks failing',       tone: 'red' },
+  skipped:            { label: 'Checks skipped',       tone: 'zinc' },
 };
 
-function Badge({ status }: { status?: string }) {
-  const b = (status && BADGES[status])
-    || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300', spin: false };
+function OutcomeBadge({ status }: { status?: string }) {
+  const b = (status && BADGES[status]) || { label: status || '—', tone: 'zinc', spin: false };
   return (
-    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>
-      {b.spin ? <span className="inline-block w-2 h-2 me-1 rounded-full bg-current spin align-middle" /> : null}
-      {b.label}
-    </span>
+    <Badge
+      tone={b.tone}
+      label={(
+        <>
+          {b.spin ? <span className="inline-block w-2 h-2 me-1 rounded-full bg-current spin align-middle" /> : null}
+          {b.label}
+        </>
+      )}
+    />
   );
 }
 
@@ -198,72 +218,58 @@ function StepRow({ s }: { s: Step }) {
   );
 }
 
-function RunCard({ run }: { run: Run }) {
-  const [open, setOpen] = useState(false);
-  const [steps, setSteps] = useState<Step[] | null>(null);
-  const [stepsError, setStepsError] = useState<string | null>(null);
-  const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
-
-  const title = run.pr_title ? ` · ${run.pr_title}` : '';
-  const pr = run.pr_number ? `PR #${run.pr_number}` : `session ${run.session_id}`;
-  const kindLabel = run.kind === 'conflict_resolution' ? 'conflict resolution'
+function runKindLabel(run: Run): string {
+  return run.kind === 'conflict_resolution' ? 'conflict resolution'
     : run.kind === 'checks' ? 'checks'
       : 'merge';
-
-  const toggle = async () => {
-    const next = !open;
-    setOpen(next);
-    // Steps are fetched once and kept — the `loaded` closure flag, without
-    // the closure.
-    if (!next || steps || stepsError) return;
-    try {
-      const data = await getJSON(`/api/debug/merge-runs/${run.id}${qs()}`);
-      if (alive.current) setSteps(data.steps || []);
-    } catch (e: any) {
-      if (alive.current) setStepsError(String(e && e.message ? e.message : e));
-    }
-  };
-
-  return (
-    <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900 overflow-hidden">
-      <button
-        type="button"
-        className="run-head w-full text-start px-4 py-3 flex items-center gap-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-        aria-expanded={open}
-        onClick={toggle}
-      >
-        <span className="chev text-zinc-500 dark:text-zinc-400 transition-transform"
-          style={open ? { transform: 'rotate(90deg)' } : undefined}>▶</span>
-        <span className="flex-1 min-w-0">
-          <span className="block text-sm font-medium truncate">
-            {`${run.app_name || run.app_slug || 'unknown app'} · ${pr}${title}`}
-          </span>
-          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
-            {`${kindLabel} · trigger: ${run.trigger || '—'} · `}
-            {run.step_count != null ? `${run.step_count} steps · ` : ''}
-            {`${fmtTime(run.started_at)} · ${fmtDuration(run.started_at, run.ended_at)}`}
-          </span>
-        </span>
-        <Badge status={run.status} />
-      </button>
-      <div className={`run-body${open ? '' : ' hidden'} border-t border-zinc-200 dark:border-zinc-800 px-4 py-3`}>
-        {stepsError
-          ? <div className="text-xs text-red-700 dark:text-red-400">Failed to load steps: {stepsError}</div>
-          : steps == null
-            ? <div className={AdminUI.loading}>Loading steps…</div>
-            : steps.length
-              ? <ol className="space-y-1.5">{steps.map((s, i) => <StepRow key={i} s={s} />)}</ol>
-              : <div className="text-xs text-zinc-500 dark:text-zinc-400">No steps recorded.</div>}
-      </div>
-    </div>
-  );
 }
 
-const SELECT_CLASS = 'mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 '
-  + 'rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100';
-const SELECT_PLAIN = 'mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm';
-const TEXT_CLASS = 'mt-1 w-24 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm';
+const RUN_COLUMNS: Column<Run>[] = [
+  {
+    label: 'Run',
+    primary: true,
+    cell: (run) => {
+      const title = run.pr_title ? ` · ${run.pr_title}` : '';
+      const pr = run.pr_number ? `PR #${run.pr_number}` : `session ${run.session_id}`;
+      return `${run.app_name || run.app_slug || 'unknown app'} · ${pr}${title}`;
+    },
+  },
+  { label: 'Kind', cell: (run) => runKindLabel(run) },
+  // The column's heading says what each is, so the cell is the value alone.
+  { label: 'Trigger', cell: (run) => run.trigger || '—' },
+  { label: 'Steps', tdClass: 'tabular-nums', cell: (run) => (run.step_count != null ? run.step_count : '') },
+  { label: 'Started', tdClass: 'whitespace-nowrap', cell: (run) => fmtTime(run.started_at) },
+  { label: 'Took', tdClass: 'whitespace-nowrap tabular-nums', cell: (run) => fmtDuration(run.started_at, run.ended_at) },
+  { label: 'Outcome', cell: (run) => <OutcomeBadge status={run.status} /> },
+];
+
+// One read of a run's steps, shared by everything that draws them. A failed
+// read is kept too, as it was: the error stays until the section is left.
+type StepsCache = Map<number, Promise<Step[]>>;
+
+function RunSteps({ run, cache }: { run: Run; cache: StepsCache }) {
+  const [steps, setSteps] = useState<Step[] | null>(null);
+  const [stepsError, setStepsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    let read = cache.get(run.id);
+    if (!read) {
+      read = getJSON(`/api/debug/merge-runs/${run.id}${qs()}`).then((data) => data.steps || []);
+      cache.set(run.id, read);
+    }
+    read.then(
+      (next) => { if (alive) setSteps(next); },
+      (e: any) => { if (alive) setStepsError(String(e && e.message ? e.message : e)); },
+    );
+    return () => { alive = false; };
+  }, [run.id, cache]);
+
+  if (stepsError) return <div className="text-xs text-red-700 dark:text-red-400">Failed to load steps: {stepsError}</div>;
+  if (steps == null) return <div className={AdminUI.loading}>Loading steps…</div>;
+  if (!steps.length) return <div className="text-xs text-zinc-500 dark:text-zinc-400">No steps recorded.</div>;
+  return <ol className="space-y-1.5">{steps.map((s, i) => <StepRow key={i} s={s} />)}</ol>;
+}
 
 const OUTCOMES: Array<[string, string]> = [
   ['', 'Any'], ['running', 'Running'], ['merged', 'Merged'], ['blocked', 'Blocked'],
@@ -273,12 +279,15 @@ const OUTCOMES: Array<[string, string]> = [
   ['skipped', 'Checks skipped'],
 ];
 
-const KINDS: Array<[string, string]> = [
-  ['', 'Any'], ['merge', 'Merge'], ['conflict_resolution', 'Conflict resolution'],
+// [value, the word on the toggle, the full wording for its tooltip].
+// "Checks (timings)" stays whole on the toggle: a declared check reads it.
+const KINDS: Array<[string, string, string]> = [
+  ['', 'Any', 'Any kind'], ['merge', 'Merge', 'Merge'],
+  ['conflict_resolution', 'Conflict', 'Conflict resolution'],
   // kind='checks' runs are EXCLUDED from the unfiltered list on purpose
   // (several per proposal would bury the merge traces), so this chip is the
   // only way to reach them.
-  ['checks', 'Checks (timings)'],
+  ['checks', 'Checks (timings)', 'Checks (timings)'],
 ];
 
 function MergesSection() {
@@ -298,6 +307,7 @@ function MergesSection() {
   // keeps it without making the interval restart on every keystroke.
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+  const stepsCache = useRef<StepsCache>(new Map());
 
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -373,72 +383,78 @@ function MergesSection() {
 
   return (
     <div id="admin-merges-root">
-      <h2 className="text-lg font-semibold mb-4">Merge debug</h2>
+      <ScreenHeader
+        title="Merge debug"
+        subtitle={ready
+          ? 'Step-by-step trace of every PR merge and automatic conflict resolution. Each row is one merge attempt; expand it for the chronological steps.'
+          : undefined}
+      />
       {gate ? <div id="admin-merges-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
 
       {ready ? (
-        <main id="admin-merges-content" className="space-y-4">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Step-by-step trace of every PR merge and automatic conflict resolution.
-            Each row is one merge attempt; expand it for the chronological steps.
-          </p>
-
-          {/* Filter bar */}
-          <section className={`${AdminUI.card} p-3 flex flex-wrap items-end gap-3`}>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
-              <select id="admin-merges-f-app" className={SELECT_CLASS} value={filters.app} onChange={set('app')}>
+        <main id="admin-merges-content">
+          {/* The one bar over the runs: its filters, then what acts on the list. */}
+          <Toolbar>
+            <div className="min-w-[10rem] flex-1 sm:max-w-xs">
+              <Select id="admin-merges-f-app" aria-label="App" value={filters.app} onChange={set('app')}>
                 <option value="">All apps</option>
                 {apps.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-              </select>
-            </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">PR #
-              <input id="admin-merges-f-pr" type="text" inputMode="numeric" placeholder="any"
-                className={TEXT_CLASS} value={filters.pr_number} onChange={set('pr_number')} />
-            </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Session id
-              <input id="admin-merges-f-session" type="text" inputMode="numeric" placeholder="any"
-                className={TEXT_CLASS} value={filters.session_id} onChange={set('session_id')} />
-            </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Outcome
-              <select id="admin-merges-f-outcome" className={SELECT_PLAIN} value={filters.outcome} onChange={set('outcome')}>
-                {OUTCOMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Kind
-              <select id="admin-merges-f-kind" className={SELECT_PLAIN} value={filters.kind} onChange={set('kind')}>
-                {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
+              </Select>
+            </div>
+            <div className="w-28">
+              <Input id="admin-merges-f-pr" type="text" inputMode="numeric" aria-label="PR #" placeholder="PR #"
+                value={filters.pr_number} onChange={set('pr_number')} />
+            </div>
+            <div className="w-28">
+              <Input id="admin-merges-f-session" type="text" inputMode="numeric" aria-label="Session id" placeholder="Session id"
+                value={filters.session_id} onChange={set('session_id')} />
+            </div>
+            <div className="min-w-[10rem] sm:max-w-[14rem]">
+              <Select id="admin-merges-f-outcome" aria-label="Outcome" value={filters.outcome} onChange={set('outcome')}>
+                {OUTCOMES.map(([v, l]) => <option key={v} value={v}>{v ? l : 'Any outcome'}</option>)}
+              </Select>
+            </div>
+            <Segmented
+              id="admin-merges-f-kind"
+              label="Kind"
+              value={filters.kind}
+              options={KINDS.map(([value, label, title]) => ({ value, label, title }))}
+              onChange={(next) => setFilters((prev) => ({ ...prev, kind: next }))}
+            />
             <button id="admin-merges-apply" type="button"
               onClick={() => { setLive(false); loadFirstPage(); }}
-              className="ms-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
+              className={BTN.primarySm}>Apply</button>
             <button id="admin-merges-refresh" type="button" onClick={loadFirstPage}
-              className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
-              <input id="admin-merges-live" type="checkbox"
-                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
-                checked={live} onChange={(e) => setLive(e.target.checked)} />
-              <span>Live</span>
-            </label>
-          </section>
+              className={BTN.secondarySm}>Refresh</button>
+            <CheckField id="admin-merges-live" label="Live" checked={live} onChange={setLive} />
+          </Toolbar>
 
-          <div id="admin-merges-runs" className="space-y-2">
+          <div id="admin-merges-runs">
             {error
               ? <div className="text-sm text-red-700 dark:text-red-400">Failed to load: {error}</div>
-              : runs.map((r) => <RunCard key={r.id} run={r} />)}
+              : runs.length ? (
+                <List
+                  items={runs}
+                  columns={RUN_COLUMNS}
+                  rowKey={(r) => r.id}
+                  details={(r) => <RunSteps run={r} cache={stepsCache.current} />}
+                />
+              ) : null}
           </div>
 
-          <div className="flex justify-center py-4">
-            {hasMore ? (
+          {/* Paged by a cursor with no total, so the kit's LoadMore (which
+              says "n of total") does not fit; the button stays. */}
+          {hasMore ? (
+            <div className="flex justify-center py-4">
               <button id="admin-merges-load-older" type="button" onClick={loadOlder}
-                className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Load older</button>
-            ) : null}
-            {!error && !runs.length ? (
-              <span id="admin-merges-empty" className="text-zinc-500 dark:text-zinc-400 text-sm">
-                No merge runs match these filters yet.
-              </span>
-            ) : null}
-          </div>
+                className={BTN.secondarySm}>Load older</button>
+            </div>
+          ) : null}
+          {!error && !runs.length ? (
+            <div id="admin-merges-empty">
+              <EmptyState title="No merge runs match these filters yet." />
+            </div>
+          ) : null}
         </main>
       ) : null}
     </div>

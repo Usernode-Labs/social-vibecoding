@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import {
+  Badge, EmptyState, ErrorState, Figures, Input, List, Panel, ScreenHeader, TabPanel, Tabs, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Read-only mobile push diagnostics (#admin/push). The server deliberately
 // returns operational metadata only: this module never receives an FCM token,
@@ -25,6 +29,13 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // request sequence plus React's unmount covers the same two cases, and the
 // second one is no longer this module's problem to remember.
 
+//
+// Two tabs since 26 Nov 2026, built from the shared admin kit
+// (topochain/ui.tsx): Overview (the sender's health and the last day's
+// outcomes) and Account diagnostics (one account's devices and deliveries).
+// The registration counts are figures at the head of the page, and the plain
+// record lists are the kit's List, so they read like every other console list.
+
 interface PushRow { [key: string]: any }
 
 function fmtTime(value: any): string {
@@ -32,26 +43,29 @@ function fmtTime(value: any): string {
   try { return new Date(value).toLocaleString(); } catch { return String(value); }
 }
 
-function badge(status?: string): string {
+// A status repeated down a list is a soft pill: green for done, sky for
+// still on its way, amber for one to look at, red for one that failed.
+function statusTone(status?: string): string {
   switch (status) {
     case 'sent':
     case 'registration_active':
     case 'provider_accepted':
-      return AdminUI.badge.success;
+      return 'mint';
     case 'pending':
     case 'sending':
     case 'provider_retrying':
     case 'provider_sending':
+      return 'sky';
     case 'delivery_missing':
-      return AdminUI.badge.warn;
+      return 'amber';
     case 'dead':
     case 'cancelled':
     case 'registration_missing':
     case 'permission_ineligible':
     case 'session_inactive':
-      return AdminUI.badge.destructive;
+      return 'red';
     default:
-      return AdminUI.badge.default;
+      return 'zinc';
   }
 }
 
@@ -141,53 +155,61 @@ function Runtime({ runtime, deployment }: { runtime?: PushRow; deployment?: Push
   );
 }
 
+const PLATFORM_NAMES: Record<string, string> = { ios: 'iOS', android: 'Android' };
+
+function platformRows(overview?: PushRow): PushRow[] {
+  const platforms = new Map<string, PushRow>(((overview && overview.registrations) || []).map((row: PushRow) => [row.platform, row]));
+  return ['ios', 'android'].map((platform) => (
+    { platform, ...(platforms.get(platform) || { total: 0, eligible: 0, last_seen_at: null }) }
+  ));
+}
+
+// The registration counts, from the one read the page already makes. Before
+// it answers, each is a dash.
+function fleetFigures(overview?: PushRow | null): Figure[] {
+  const rows = platformRows(overview || undefined);
+  const out: Figure[] = [];
+  rows.forEach((row) => {
+    const name = PLATFORM_NAMES[row.platform];
+    out.push({
+      key: `${row.platform}-total`,
+      label: `${name} registrations`,
+      value: overview ? row.total : null,
+    });
+    out.push({
+      key: `${row.platform}-eligible`,
+      label: `${name} permission/session eligible`,
+      value: overview ? row.eligible : null,
+      tone: !overview ? 'sky' : Number(row.eligible) > 0 ? 'green' : 'yellow',
+    });
+  });
+  return out;
+}
+
+const OUTCOME_COLUMNS: Column<PushRow>[] = [
+  { label: 'Platform', primary: true, cell: (row) => <span className="font-medium">{row.platform}</span> },
+  { label: 'Status', cell: (row) => <Badge tone={statusTone(row.status)} label={deliveryStatusLabel(row.status)} /> },
+  {
+    label: 'Error code',
+    cell: (row) => (row.last_error_code ? <code className="font-mono text-xs break-all">{row.last_error_code}</code> : null),
+  },
+  { label: 'Last updated', tdClass: 'text-zinc-500 dark:text-zinc-400', cell: (row) => fmtTime(row.last_updated_at) },
+  { label: 'Total', tdClass: 'font-semibold', cell: (row) => row.total },
+];
+
 function Fleet({ overview }: { overview: PushRow }) {
-  const platforms = new Map<string, PushRow>((overview.registrations || []).map((row: PushRow) => [row.platform, row]));
   const activity = (overview.deliveriesLast24h || []).slice(0, 12);
   return (
-    <section>
-      <h3 className={`${AdminUI.sectionTitle} mb-3`}>Current registrations</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {['ios', 'android'].map((platform) => {
-          const row = platforms.get(platform) || { total: 0, eligible: 0, last_seen_at: null };
-          return (
-            <div key={platform} className={`${AdminUI.card} p-4`}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium">{platform === 'ios' ? 'iOS' : 'Android'}</span>
-                <span className={Number(row.eligible) > 0 ? AdminUI.badge.success : AdminUI.badge.warn}>
-                  {`${row.eligible} permission/session eligible`}
-                </span>
-              </div>
-              <div className="text-2xl font-semibold mt-2">{row.total}</div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                {`registrations · last seen ${fmtTime(row.last_seen_at)}`}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className={`${AdminUI.card} p-4 mt-3`}>
-        <div className="font-medium mb-2">Delivery outcomes · last 24 hours</div>
+    <>
+      <p className={AdminUI.muted}>
+        {platformRows(overview).map((row) => `${PLATFORM_NAMES[row.platform]} registrations last seen ${fmtTime(row.last_seen_at)}`).join(' · ')}
+      </p>
+      <Panel title="Delivery outcomes · last 24 hours">
         {activity.length ? (
-          <ul>
-            {activity.map((row: PushRow, i: number) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <li key={i} className="flex items-start justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800 py-2 last:border-0">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{row.platform}</span>
-                    <span className={badge(row.status)}>{deliveryStatusLabel(row.status)}</span>
-                    {row.last_error_code ? <code className="font-mono text-xs break-all">{row.last_error_code}</code> : null}
-                  </div>
-                  <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{`last updated ${fmtTime(row.last_updated_at)}`}</div>
-                </div>
-                <span className="text-sm font-semibold">{row.total}</span>
-              </li>
-            ))}
-          </ul>
-        ) : <p className={AdminUI.muted}>No delivery activity recorded.</p>}
-      </div>
-    </section>
+          <List<PushRow> items={activity} columns={OUTCOME_COLUMNS} rowKey={(_row, i) => i} />
+        ) : <EmptyState title="No delivery activity recorded." />}
+      </Panel>
+    </>
   );
 }
 
@@ -208,69 +230,70 @@ function Diagnostics({ items }: { items?: PushRow[] }) {
   );
 }
 
+const REGISTRATION_COLUMNS: Column<PushRow>[] = [
+  {
+    label: 'Registration',
+    primary: true,
+    cell: (row) => (
+      <>
+        <span className="font-semibold">{row.platform}</span>
+        <code className="ms-1 font-mono text-xs">{`#${row.id}`}</code>
+      </>
+    ),
+  },
+  {
+    label: 'State',
+    cell: (row) => (
+      <Badge tone={row.delivery_eligible ? 'mint' : 'red'}
+        label={row.delivery_eligible ? 'permission/session eligible' : 'inactive'} />
+    ),
+  },
+  { label: 'Permission', cell: (row) => <Badge tone={statusTone(row.permission_status)} label={row.permission_status} /> },
+  { label: 'Environment', tdClass: 'font-mono text-xs break-all', cell: (row) => row.environment },
+  { label: 'Installation', tdClass: 'font-mono text-xs break-all', cell: (row) => row.installation_id },
+  { label: 'Last seen', cell: (row) => fmtTime(row.last_seen_at) },
+];
+
 function Registrations({ rows }: { rows?: PushRow[] }) {
-  if (!(rows || []).length) return <p className={AdminUI.muted}>No current device registrations.</p>;
+  if (!(rows || []).length) return <EmptyState title="No current device registrations." />;
   return (
-    <>
-      {(rows || []).map((row) => (
-        <article key={row.id} className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-sm">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold">{row.platform}</span>
-              <span className={row.delivery_eligible ? AdminUI.badge.success : AdminUI.badge.destructive}>
-                {row.delivery_eligible ? 'permission/session eligible' : 'inactive'}
-              </span>
-              <span className={badge(row.permission_status)}>{row.permission_status}</span>
-            </div>
-            <code className="font-mono text-xs">{`#${row.id}`}</code>
-          </div>
-          <dl className="mt-3 grid gap-1 text-xs">
-            <KvInline label="Environment" mono>{row.environment}</KvInline>
-            <KvInline label="Installation" mono>{row.installation_id}</KvInline>
-            <KvInline label="Session expires">{fmtTime(row.session_expires_at)}</KvInline>
-            <KvInline label="Last seen">{fmtTime(row.last_seen_at)}</KvInline>
-            <KvInline label="Updated">{fmtTime(row.updated_at)}</KvInline>
-          </dl>
-        </article>
-      ))}
-    </>
+    <List<PushRow>
+      items={rows || []}
+      columns={REGISTRATION_COLUMNS}
+      rowKey={(row) => row.id}
+      details={(row) => (
+        <dl className="grid gap-1 text-xs">
+          <KvInline label="Session expires">{fmtTime(row.session_expires_at)}</KvInline>
+          <KvInline label="Updated">{fmtTime(row.updated_at)}</KvInline>
+        </dl>
+      )}
+    />
   );
 }
 
+const EVENT_COLUMNS: Column<PushRow>[] = [
+  { label: 'When', primary: true, tdClass: 'whitespace-nowrap text-zinc-500 dark:text-zinc-400', cell: (event) => fmtTime(event.createdAt) },
+  { label: 'Platform', cell: (event) => <span className="font-semibold">{event.platform || 'unknown'}</span> },
+  { label: 'Event', cell: (event) => <Badge tone="violet" label={String(event.eventKind || 'unknown').replace(/_/g, ' ')} /> },
+  {
+    label: 'Reason',
+    cell: (event) => (event.reasonCode ? <code className="font-mono text-xs break-all">{event.reasonCode}</code> : null),
+  },
+  { label: 'Environment', tdClass: 'font-mono text-xs break-all', cell: (event) => event.environment || 'unknown' },
+  { label: 'Installation', tdClass: 'font-mono text-xs break-all', cell: (event) => event.installationId || 'unknown' },
+  {
+    label: 'Registration',
+    tdClass: 'font-mono text-xs',
+    cell: (event) => (event.registrationId == null ? null : `#${event.registrationId}`),
+  },
+  { label: 'Permission', cell: (event) => (event.permissionStatus ? event.permissionStatus : null) },
+];
+
 function RegistrationEvents({ events }: { events?: PushRow[] }) {
   if (!(events || []).length) {
-    return <p className={AdminUI.muted}>No recent registration lifecycle events are available.</p>;
+    return <EmptyState title="No recent registration lifecycle events are available." />;
   }
-  return (
-    <>
-      {(events || []).map((event, i) => (
-        // eslint-disable-next-line react/no-array-index-key
-        <article key={i} className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-sm">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold">{event.platform || 'unknown'}</span>
-              <span className={AdminUI.badge.secondary}>
-                {String(event.eventKind || 'unknown').replace(/_/g, ' ')}
-              </span>
-              {event.reasonCode ? <code className="font-mono text-xs break-all">{event.reasonCode}</code> : null}
-            </div>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">{fmtTime(event.createdAt)}</span>
-          </div>
-          <dl className="mt-2 grid gap-1 text-xs">
-            <KvInline label="Environment" mono>{event.environment || 'unknown'}</KvInline>
-            <KvInline label="Installation" mono>{event.installationId || 'unknown'}</KvInline>
-            {event.registrationId == null ? null : (
-              <div>
-                <dt className="inline text-zinc-500 dark:text-zinc-400">Registration: </dt>
-                <dd className="inline font-mono">{`#${event.registrationId}`}</dd>
-              </div>
-            )}
-            {event.permissionStatus ? <KvInline label="Permission">{event.permissionStatus}</KvInline> : null}
-          </dl>
-        </article>
-      ))}
-    </>
-  );
+  return <List<PushRow> items={events || []} columns={EVENT_COLUMNS} rowKey={(_event, i) => i} />;
 }
 
 function Delivery({ d }: { d: PushRow }) {
@@ -278,7 +301,7 @@ function Delivery({ d }: { d: PushRow }) {
     <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 p-3 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-semibold">{d.platform}</span>
-        <span className={badge(d.status)}>{deliveryStatusLabel(d.status)}</span>
+        <Badge tone={statusTone(d.status)} label={deliveryStatusLabel(d.status)} />
         <span>{`${d.attempts} attempt${Number(d.attempts) === 1 ? '' : 's'}`}</span>
         {d.errorCode ? <code className="font-mono break-all">{d.errorCode}</code> : null}
       </div>
@@ -294,7 +317,7 @@ function Delivery({ d }: { d: PushRow }) {
 }
 
 function Notifications({ items }: { items?: PushRow[] }) {
-  if (!(items || []).length) return <p className={AdminUI.muted}>No recent push-capable inbox notifications.</p>;
+  if (!(items || []).length) return <EmptyState title="No recent push-capable inbox notifications." />;
   return (
     <>
       {(items || []).map((n) => (
@@ -334,11 +357,7 @@ function Notifications({ items }: { items?: PushRow[] }) {
 
 function UserResult({ data }: { data: PushRow }) {
   if (!data.lookup) {
-    return (
-      <div className={`${AdminUI.card} p-5 ${AdminUI.muted}`}>
-        Search for an account to inspect its device registrations and recent deliveries.
-      </div>
-    );
+    return <EmptyState title="Search for an account to inspect its device registrations and recent deliveries." />;
   }
   if (!data.lookup.found || !data.user) {
     return (
@@ -365,14 +384,14 @@ function UserResult({ data }: { data: PushRow }) {
       <div className="grid gap-2 md:grid-cols-2"><Diagnostics items={data.diagnostics} /></div>
       <div>
         <h3 className={`${AdminUI.sectionTitle} mb-3`}>Current registrations</h3>
-        <div className="grid gap-3 lg:grid-cols-2"><Registrations rows={data.registrations} /></div>
+        <Registrations rows={data.registrations} />
       </div>
       <div>
         <h3 className={`${AdminUI.sectionTitle} mb-1`}>Recent registration lifecycle</h3>
         <p className={`${AdminUI.muted} mb-3`}>
           Short-lived, best-effort debugging history. It may be incomplete, and missing events do not prove that nothing happened.
         </p>
-        <div className="grid gap-3 lg:grid-cols-2"><RegistrationEvents events={data.registrationEvents || []} /></div>
+        <RegistrationEvents events={data.registrationEvents || []} />
       </div>
       <div>
         <h3 className={`${AdminUI.sectionTitle} mb-3`}>Recent push-capable inbox activity</h3>
@@ -382,7 +401,11 @@ function UserResult({ data }: { data: PushRow }) {
   );
 }
 
+type PushTab = 'overview' | 'account';
+const PUSH_TABS_ID = 'admin-push-tabs';
+
 function PushSection() {
+  const [tab, setTab] = useState<PushTab>('overview');
   const [query, setQuery] = useState('');
   const [data, setData] = useState<PushRow | null>(null);
   const [failed, setFailed] = useState(false);
@@ -412,46 +435,53 @@ function PushSection() {
   useEffect(() => { load(null); }, [load]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Push delivery</h2>
-        <p className={`${AdminUI.muted} mt-1`}>
-          Inspect current registrations, recent delivery records and short-lived lifecycle events.
-          FCM acceptance does not confirm device receipt or notification presentation.
-          Provider tokens and credentials are never shown.
-        </p>
-      </div>
-      <div id="admin-push-overview" className="grid gap-4">
-        {failed
-          ? <p className="text-sm text-rose-600 dark:text-rose-400">Could not load mobile push diagnostics.</p>
-          : data
-            ? <><Runtime runtime={data.runtime} deployment={data.overview?.deployment} /><Fleet overview={data.overview || {}} /></>
-            : <p className={AdminUI.loading}>Loading push deployment health…</p>}
-      </div>
-      <section className={`${AdminUI.card} p-5`}>
-        <div className={AdminUI.cardHeader}>
-          <div>
-            <h3 className={AdminUI.cardTitle}>Account diagnostics</h3>
-            <p className={AdminUI.cardDescription}>Exact match by username, email address or numeric user ID.</p>
-          </div>
+    <div>
+      <ScreenHeader
+        title="Push delivery"
+        subtitle="Inspect current registrations, recent delivery records and short-lived lifecycle events. FCM acceptance does not confirm device receipt or notification presentation. Provider tokens and credentials are never shown."
+      />
+      <Figures id="admin-push-figures" items={fleetFigures(failed || !data ? null : (data.overview || {}))} />
+      <Tabs<PushTab>
+        id={PUSH_TABS_ID}
+        label="Push delivery"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'overview', label: 'Overview' },
+          { key: 'account', label: 'Account diagnostics' },
+        ]}
+      />
+      <TabPanel tabsId={PUSH_TABS_ID} tab="overview" active={tab === 'overview'}>
+        <div id="admin-push-overview" className="grid gap-4">
+          {failed
+            ? <ErrorState title="Could not load mobile push diagnostics." />
+            : data
+              ? <><Runtime runtime={data.runtime} deployment={data.overview?.deployment} /><Fleet overview={data.overview || {}} /></>
+              : <p className={AdminUI.loading}>Loading push deployment health…</p>}
         </div>
+      </TabPanel>
+      <TabPanel tabsId={PUSH_TABS_ID} tab="account" active={tab === 'account'}>
+        <p className={`${AdminUI.cardDescription} mb-3`}>Exact match by username, email address or numeric user ID.</p>
         <form
           id="admin-push-search"
-          className="flex flex-col gap-2 sm:flex-row"
           onSubmit={(e) => { e.preventDefault(); load(query.trim() || null); }}
         >
-          <input id="admin-push-user" className={AdminUI.input} maxLength={255} autoComplete="off"
-            placeholder="username, email or user ID"
-            value={query} onChange={(e) => setQuery(e.target.value)} />
-          <button type="submit" className={`${AdminUI.btn.primary} shrink-0`}>Inspect account</button>
+          <Toolbar>
+            <div className="min-w-[14rem] flex-1">
+              <Input id="admin-push-user" maxLength={255} autoComplete="off"
+                placeholder="username, email or user ID"
+                value={query} onChange={(e) => setQuery(e.target.value)} />
+            </div>
+            <button type="submit" className={`${AdminUI.btn.primary} shrink-0`}>Inspect account</button>
+          </Toolbar>
         </form>
-      </section>
-      <div id="admin-push-user-result">
-        {failed ? null
-          : loadingUser
-            ? <p className={AdminUI.loading}>Loading account diagnostics…</p>
-            : data ? <UserResult data={data} /> : null}
-      </div>
+        <div id="admin-push-user-result">
+          {failed ? null
+            : loadingUser
+              ? <p className={AdminUI.loading}>Loading account diagnostics…</p>
+              : data ? <UserResult data={data} /> : null}
+        </div>
+      </TabPanel>
     </div>
   );
 }

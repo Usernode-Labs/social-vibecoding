@@ -4,6 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The shared admin kit (26 Nov 2026): header, figures, tabs, bar, list and
+// badges are the same parts every other admin page is drawn with.
+import {
+  Badge, EmptyState, Figures, List, ScreenHeader, Segmented, TABLE, TabPanel, Tabs, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Compliance (#admin/compliance, #5634): every action of the compliance
 // plan with its status, what the scan found, and the history of both. The
@@ -77,11 +83,11 @@ export const NOTE_MAX = 1000;
 
 export const STATUS_LABEL: Record<Status, string> = { todo: 'To do', partial: 'Partly done', done: 'Done' };
 
-const STATUS_BADGE: Record<Status, string> = {
-  todo: AdminUI.badge.outline,
-  partial: AdminUI.badge.warn,
-  done: AdminUI.badge.default,
-};
+// A status is repeated down the list, so it takes the kit's soft tones:
+// waiting, needs attention, done.
+const STATUS_TONE: Record<Status, string> = { todo: 'sky', partial: 'amber', done: 'mint' };
+
+const STATUSES: Status[] = ['todo', 'partial', 'done'];
 
 const REASON_LABEL: Record<string, string> = {
   missing: 'no LICENSE file',
@@ -118,10 +124,10 @@ export function checkBadgeText(c: Pick<CheckResult, 'state' | 'checked' | 'faile
   return c.state === 'pass' ? 'Scan: passing' : 'Scan: failing';
 }
 
-function checkBadgeClass(state: CheckState): string {
-  if (state === 'fail') return AdminUI.badge.destructive;
-  if (state === 'error') return AdminUI.badge.warn;
-  return AdminUI.badge.success;
+function checkTone(state: CheckState): string {
+  if (state === 'fail') return 'red';
+  if (state === 'error') return 'amber';
+  return 'mint';
 }
 
 // The line under the heading: when the last scan finished and when the
@@ -197,11 +203,17 @@ function StatusForm({ item, onSaved }: { item: Item; onSaved: (r: Report) => voi
     <div className="space-y-2">
       <div className="grid grid-cols-1 sm:grid-cols-[12rem_1fr] gap-2">
         <div>
-          <label htmlFor={`${id}-status`} className={AdminUI.label}>Status</label>
-          <select id={`${id}-status`} className={`${AdminUI.select} mt-1`} value={status}
-            onChange={(e) => setStatus(e.target.value as Status)}>
-            {(['todo', 'partial', 'done'] as Status[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-          </select>
+          {/* Three short choices, all in view, where a select hid two of them. */}
+          <div className={AdminUI.label}>Status</div>
+          <div className="mt-1">
+            <Segmented<Status>
+              id={`${id}-status`}
+              label="Status"
+              value={status}
+              options={STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+              onChange={setStatus}
+            />
+          </div>
         </div>
         <div>
           <label htmlFor={`${id}-note`} className={AdminUI.label}>Note</label>
@@ -264,7 +276,7 @@ function ItemHistory({ code }: { code: string }) {
           <ul className="mt-1 space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
             {history.scans.map((s) => (
               <li key={`${s.scanId}:${s.key}`} className="break-words">
-                <span className={checkBadgeClass(s.state)}>{s.state === 'pass' ? 'Pass' : s.state === 'fail' ? 'Fail' : 'Error'}</span>
+                <Badge tone={checkTone(s.state)} label={s.state === 'pass' ? 'Pass' : s.state === 'fail' ? 'Fail' : 'Error'} />
                 {` ${fmtDate(s.at)} · ${s.summary}`}
               </li>
             ))}
@@ -275,81 +287,97 @@ function ItemHistory({ code }: { code: string }) {
   );
 }
 
-function ItemRow({ item, canWrite, onSaved }: { item: Item; canWrite: boolean; onSaved: (r: Report) => void }) {
-  const [open, setOpen] = useState(false);
+// The list's columns. The first one titles a row's card on a phone, where
+// it is drawn inside a paragraph, so it holds spans only.
+const ITEM_COLUMNS: Column<Item>[] = [
+  {
+    label: 'Action',
+    primary: true,
+    cell: (item) => (
+      <span className="block min-w-0" data-compliance-item={item.code}>
+        <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400">{item.code}</span>
+        <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100 break-words">{item.title}</span>
+        {item.note ? <span className="block text-xs font-normal text-zinc-600 dark:text-zinc-300 mt-1 break-words">{item.note}</span> : null}
+      </span>
+    ),
+  },
+  { label: 'Priority', cell: (item) => <Badge tone="zinc" label={item.priority} /> },
+  { label: 'Status', cell: (item) => <Badge tone={STATUS_TONE[item.status]} label={STATUS_LABEL[item.status]} /> },
+  {
+    label: 'Scan',
+    cell: (item) => (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        {item.checks.map((c) => (
+          <span key={c.key} title={c.summary}><Badge tone={checkTone(c.state)} label={checkBadgeText(c)} /></span>
+        ))}
+      </span>
+    ),
+  },
+  {
+    label: 'Set',
+    cell: (item) => (
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">{`${setLine(item)} · request #${item.issue}`}</span>
+    ),
+  },
+];
+
+// What a row's arrow opens: what each check found, the status form for an
+// admin who may write, and the item's history.
+function ItemDetails({ item, canWrite, onSaved }: { item: Item; canWrite: boolean; onSaved: (r: Report) => void }) {
   return (
-    <div className={`${AdminUI.card} p-4`} data-compliance-item={item.code}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">{item.code}</span>
-            <span className={AdminUI.badge.outline}>{item.priority}</span>
-            <span className={STATUS_BADGE[item.status]}>{STATUS_LABEL[item.status]}</span>
-            {item.checks.map((c) => (
-              <span key={c.key} className={checkBadgeClass(c.state)} title={c.summary}>{checkBadgeText(c)}</span>
-            ))}
-          </div>
-          <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mt-1 break-words">{item.title}</div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {`${setLine(item)} · request #${item.issue}`}
-          </div>
-          {item.note ? <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-1 break-words">{item.note}</p> : null}
+    <div className="space-y-4">
+      {item.checks.map((c) => (
+        <div key={c.key}>
+          <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{c.label}</div>
+          <p className="text-xs text-zinc-600 dark:text-zinc-300">{c.summary}</p>
+          <FailingList failing={c.failing} />
         </div>
-        <button type="button" className={`${AdminUI.btn.link} text-xs px-1 py-1 shrink-0`}
-          aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? 'Close' : 'Details'}
-        </button>
-      </div>
-      {open ? (
-        <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-4">
-          {item.checks.map((c) => (
-            <div key={c.key}>
-              <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{c.label}</div>
-              <p className="text-xs text-zinc-600 dark:text-zinc-300">{c.summary}</p>
-              <FailingList failing={c.failing} />
-            </div>
-          ))}
-          {canWrite ? <StatusForm item={item} onSaved={onSaved} /> : null}
-          <ItemHistory code={item.code} />
-        </div>
-      ) : null}
+      ))}
+      {canWrite ? <StatusForm item={item} onSaved={onSaved} /> : null}
+      <ItemHistory code={item.code} />
     </div>
   );
 }
 
+// A pivot (a scan down, a check across), so it is written out with the
+// kit's table classes: the kit's list draws plain records.
 function ScanHistory({ report }: { report: Report }) {
-  if (!report.scans.length) return null;
+  if (!report.scans.length) return <EmptyState title="No scan yet" />;
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <h3 className={AdminUI.cardTitle}>Scan history</h3>
-      <div className="mt-3 overflow-x-auto">
-        <table className={AdminUI.table}>
-          <thead className={AdminUI.thead}>
-            <tr>
-              <th className={AdminUI.th}>Scan</th>
-              {report.checks.map((c) => <th key={c.key} className={AdminUI.th} title={c.label}>{c.items.join(', ')}</th>)}
+    <div className={TABLE.wrap}>
+      <table className={TABLE.table}>
+        <thead className={TABLE.thead}>
+          <tr>
+            <th className={TABLE.th}>Scan</th>
+            {report.checks.map((c) => <th key={c.key} className={TABLE.th} title={c.label}>{c.items.join(', ')}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {report.scans.map((s) => (
+            <tr key={s.id} className={TABLE.tr}>
+              <td className={TABLE.td}>{fmtDate(s.finishedAt)}</td>
+              {report.checks.map((c) => {
+                const r = s.results.find((x) => x.key === c.key);
+                return (
+                  <td key={c.key} className={TABLE.td}>
+                    {r ? (
+                      <span title={r.summary}>
+                        <Badge tone={checkTone(r.state)} label={checkBadgeText(r).replace('Scan: ', '')} />
+                      </span>
+                    ) : '·'}
+                  </td>
+                );
+              })}
             </tr>
-          </thead>
-          <tbody>
-            {report.scans.map((s) => (
-              <tr key={s.id} className={AdminUI.trHover}>
-                <td className={AdminUI.td}>{fmtDate(s.finishedAt)}</td>
-                {report.checks.map((c) => {
-                  const r = s.results.find((x) => x.key === c.key);
-                  return (
-                    <td key={c.key} className={AdminUI.td}>
-                      {r ? <span className={checkBadgeClass(r.state)} title={r.summary}>{checkBadgeText(r).replace('Scan: ', '')}</span> : '·'}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
+
+type ComplianceTab = 'actions' | 'scans';
+const TABS_ID = 'admin-compliance-tabs';
 
 type Load =
   | { kind: 'loading' }
@@ -360,6 +388,7 @@ function ComplianceSection() {
   const canWrite = !!(window as any).AdminConsole?.canWrite();
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [area, setArea] = useState('');
+  const [tab, setTab] = useState<ComplianceTab>('actions');
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<{ text: string; ok: boolean } | null>(null);
   const alive = useRef(true);
@@ -396,68 +425,89 @@ function ComplianceSection() {
   const report = load.kind === 'ready' ? load.report : null;
   const items = report ? report.items.filter((i) => !area || i.area === area) : [];
 
+  const onSaved = (r: Report) => { if (alive.current) setLoad({ kind: 'ready', report: r }); };
+  // Counts the report already carries.
+  const figures: Figure[] = report ? [
+    { key: 'done', label: 'Done', value: report.counts.done.toLocaleString(), tone: 'green' },
+    { key: 'partial', label: 'Partly done', value: report.counts.partial.toLocaleString(), tone: 'yellow' },
+    { key: 'todo', label: 'To do', value: report.counts.todo.toLocaleString(), tone: 'sky' },
+    ...(report.attention ? [{
+      key: 'attention',
+      label: report.attention === 1 ? 'Item fails the latest scan' : 'Items fail the latest scan',
+      value: report.attention.toLocaleString(),
+      tone: 'yellow' as const,
+    }] : []),
+  ] : [];
+
   return (
-    <div id="admin-compliance-panel" className="space-y-4">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Compliance</h2>
-          <button id="admin-compliance-refresh" type="button" className={`${AdminUI.btn.link} text-xs px-1 py-1`}
-            onClick={() => { setStatus(null); refresh(); }}>Refresh</button>
-        </div>
-        <p className={AdminUI.cardDescription}>
-          Every action of the compliance plan. An admin sets each status by hand; the scan checks what a machine can
-          and never changes a status. An item a scan fails on is listed first.
-        </p>
-        {load.kind === 'loading' ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : null}
-        {load.kind === 'error' ? <p className="text-sm text-red-700 dark:text-red-400 mt-3">{load.error}</p> : null}
-        {report ? (
-          <div className="mt-4 space-y-3">
-            <div id="admin-compliance-counts" className="flex flex-wrap items-center gap-2">
-              <span className={STATUS_BADGE.done}>{`${report.counts.done} done`}</span>
-              <span className={STATUS_BADGE.partial}>{`${report.counts.partial} partly done`}</span>
-              <span className={STATUS_BADGE.todo}>{`${report.counts.todo} to do`}</span>
-              {report.attention ? (
-                <span className={AdminUI.badge.destructive}>
-                  {`${report.attention} ${report.attention === 1 ? 'item fails' : 'items fail'} the latest scan`}
-                </span>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span id="admin-compliance-scan-line" className="text-sm text-zinc-900 dark:text-zinc-100">{scanLine(report)}</span>
-              {canWrite ? (
-                <button id="admin-compliance-scan" type="button" className={AdminUI.btn.outlineSm}
-                  disabled={scanning} onClick={scanNow}>
-                  {scanning ? 'Scanning…' : 'Scan now'}
-                </button>
-              ) : null}
-              {status ? (
-                <span className={status.ok
-                  ? 'text-xs text-emerald-700 dark:text-emerald-400'
-                  : 'text-xs text-red-700 dark:text-red-400'}>{status.text}</span>
-              ) : null}
-            </div>
-            <div className="max-w-xs">
-              <label htmlFor="admin-compliance-area" className={AdminUI.label}>Area</label>
-              <select id="admin-compliance-area" className={`${AdminUI.select} mt-1`} value={area}
-                onChange={(e) => setArea(e.target.value)}>
-                <option value="">All areas</option>
-                {report.areas.map((a) => <option key={a.key} value={a.key}>{`${a.key} · ${a.label}`}</option>)}
-              </select>
-            </div>
-          </div>
-        ) : null}
-      </div>
-
+    <div id="admin-compliance-panel">
+      <ScreenHeader
+        title="Compliance"
+        subtitle="Every action of the compliance plan. An admin sets each status by hand; the scan checks what a machine can and never changes a status. An item a scan fails on is listed first."
+        actions={(
+          <>
+            <button id="admin-compliance-refresh" type="button" className={AdminUI.btn.outlineSm}
+              onClick={() => { setStatus(null); refresh(); }}>Refresh</button>
+            {report && canWrite ? (
+              <button id="admin-compliance-scan" type="button" className={AdminUI.btn.primarySm}
+                disabled={scanning} onClick={scanNow}>
+                {scanning ? 'Scanning…' : 'Scan now'}
+              </button>
+            ) : null}
+          </>
+        )}
+      />
+      {load.kind === 'loading' ? <p className={AdminUI.loading}>Loading…</p> : null}
+      {load.kind === 'error' ? <p className="text-sm text-red-700 dark:text-red-400">{load.error}</p> : null}
       {report ? (
-        <div id="admin-compliance-list" className="space-y-2">
-          {items.map((i) => (
-            <ItemRow key={i.code} item={i} canWrite={canWrite}
-              onSaved={(r) => { if (alive.current) setLoad({ kind: 'ready', report: r }); }} />
-          ))}
-        </div>
+        <>
+          <Figures id="admin-compliance-counts" items={figures} />
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <span id="admin-compliance-scan-line" className="text-sm text-zinc-900 dark:text-zinc-100">{scanLine(report)}</span>
+            {status ? (
+              <span className={status.ok
+                ? 'text-xs text-emerald-700 dark:text-emerald-400'
+                : 'text-xs text-red-700 dark:text-red-400'}>{status.text}</span>
+            ) : null}
+          </div>
+          {/* Two jobs: the plan's actions, and the log of what each scan found. */}
+          <Tabs<ComplianceTab>
+            id={TABS_ID}
+            label="Compliance"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { key: 'actions', label: 'Actions' },
+              { key: 'scans', label: 'Scan history' },
+            ]}
+          />
+          <TabPanel tabsId={TABS_ID} tab="actions" active={tab === 'actions'}>
+            {/* The areas come from the report and are more than four, so the
+                filter stays a select. */}
+            <Toolbar>
+              <label htmlFor="admin-compliance-area" className={AdminUI.label}>Area</label>
+              <div className="w-64 max-w-full">
+                <select id="admin-compliance-area" className={AdminUI.select} value={area}
+                  onChange={(e) => setArea(e.target.value)}>
+                  <option value="">All areas</option>
+                  {report.areas.map((a) => <option key={a.key} value={a.key}>{`${a.key} · ${a.label}`}</option>)}
+                </select>
+              </div>
+            </Toolbar>
+            <div id="admin-compliance-list">
+              <List<Item>
+                items={items}
+                columns={ITEM_COLUMNS}
+                rowKey={(i) => i.code}
+                details={(i) => <ItemDetails item={i} canWrite={canWrite} onSaved={onSaved} />}
+              />
+            </div>
+          </TabPanel>
+          <TabPanel tabsId={TABS_ID} tab="scans" active={tab === 'scans'}>
+            <ScanHistory report={report} />
+          </TabPanel>
+        </>
       ) : null}
-
-      {report ? <ScanHistory report={report} /> : null}
     </div>
   );
 }

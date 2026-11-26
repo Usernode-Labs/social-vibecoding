@@ -166,7 +166,8 @@ test('the header takes the grid or the arrow, and the titles, only while it appl
   assert.match(bar, /if \(drawerOn\) return null;\s*if \(!phone \|\| !slug \|\| mounted !== slug \|\| screen !== 'app-view'\) return null;/,
     'no places button: the Hub\'s rows are the way to the places');
   const drawer = read(`${DIR}/header-drawer.tsx`);
-  assert.match(drawer, /<button\s+ref=\{ref\}\s+type="button"/, 'a button: an href\'d arrow would turn on WebKit\'s history swipe');
+  // The Button primitive (its brandTint kind) renders a <button>.
+  assert.match(drawer, /<Button\s+ref=\{ref\}\s+type="button"/, 'a button: an href\'d arrow would turn on WebKit\'s history swipe');
   assert.doesNotMatch(drawer, /href=/);
   // Off, none of it renders: the prerendered header is untouched.
   const ui = loadTsx(`${DIR}/header-drawer.tsx`);
