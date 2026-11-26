@@ -828,7 +828,7 @@ export function AiLists({
           <button
             type="button"
             // One look: a menu chip, the shared part (white, the small sticker edge).
-            className={`inline-flex h-9 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-900/[0.04] active:bg-zinc-900/[0.07] disabled:text-zinc-400 dark:text-zinc-100 dark:hover:bg-white/[0.06] dark:active:bg-white/[0.1] dark:disabled:text-zinc-500 ${FOCUS} one-chip`}
+            className={`inline-flex h-9 min-w-0 max-w-full shrink items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-900/[0.04] active:bg-zinc-900/[0.07] disabled:text-zinc-400 dark:text-zinc-100 dark:hover:bg-white/[0.06] dark:active:bg-white/[0.1] dark:disabled:text-zinc-500 ${FOCUS} one-chip`}
             aria-haspopup="dialog"
             aria-expanded={!!more}
             aria-label={t('messages:ai.filter.button', { shown: filterWords })}
