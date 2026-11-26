@@ -3622,6 +3622,13 @@ const App = {
             // The global socket is transport only. The React-owned Messages
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);
+            // The hub's Discussion reads Homeroom's #general as posts and
+            // re-reads what a message, an edit or a reaction changed there
+            // (dev-board/workshop/discussion-feed.ts conversationSource).
+            if (data.type === 'conversation_message_created' || data.type === 'conversation_message_updated'
+              || data.type === 'conversation_reaction_updated') {
+              try { window.dispatchEvent(new CustomEvent('usernode:conversation-changed', { detail: data })); } catch (_) {}
+            }
             break;
           case 'live_draft_changed':
             // A live draft of this person's moved (services/live-drafts.js):
@@ -7212,7 +7219,9 @@ const App = {
       return null;
     }
     const replace = App._onChatAddress(slug);
-    AppView._landOnTab(slug, 'discussion');
+    // A message or a thread the address named opens on the Discussion's
+    // posts, as every other door to one does (AppView._landOnDiscussion).
+    AppView._landOnTab(slug, AppView._discussionPlaceFor?.(AppView._peekDiscussionTarget?.(slug)) || 'discussion');
     return { replace };
   },
 
