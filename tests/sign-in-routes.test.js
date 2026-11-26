@@ -296,7 +296,7 @@ test('inside the Homeroom app, a linked wallet still signs in and resets, and ou
   });
   // The sheet draws what each allows.
   const sheet = read(SHEET);
-  assert.match(sheet, /\{walletFast \? \(\s+<>\s+<button type="button" data-sign-in-sheet-wallet=""/);
+  assert.match(sheet, /\{walletFast \? \(\s+<>\s+<Button type="button" data-sign-in-sheet-wallet=""/);
   assert.match(sheet, /\{step === 'forgot' && wallet\?\.linked \? \(\s+<form data-sign-in-sheet-wallet-reset=""/);
   assert.equal(message('auth:signInSheet.wallet.submit'), 'Sign in with Wallet');
 });

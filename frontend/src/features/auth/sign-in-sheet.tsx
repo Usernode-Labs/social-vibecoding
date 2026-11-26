@@ -201,6 +201,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { reducedMotion } from '../../lib/reduced-motion';
 
 import { alertVariants } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, KeyIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -825,6 +826,12 @@ const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'min-h-11 w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
+// The Button primitive with no box, size or ink of its own, for a button
+// whose classes are already written (the caller's primary pill, which
+// landing.tsx builds from buttonVariants, QUIET, a note's own link): it
+// adds nothing to them. The steps the full sign-in pages brought here
+// draw their buttons this way (tests/button-primitive-ratchet.test.js).
+const OWN_CLASSES = { variant: 'unstyled', size: 'none', ink: 'none' } as const;
 // The Email code | Password switch (#5258): a grey track, the chosen one a
 // white segment on it, as Settings' Light / Dark / System.
 const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
@@ -1923,9 +1930,9 @@ export function SignInSheet({
       ) : null}
       {walletFast ? (
         <>
-          <button type="button" data-sign-in-sheet-wallet="" disabled={busy} className={`${primaryClass} flex items-center justify-center gap-2 disabled:opacity-60`} onClick={() => { void signInWithWallet(); }}>
+          <Button type="button" data-sign-in-sheet-wallet="" disabled={busy} {...OWN_CLASSES} className={`${primaryClass} flex items-center justify-center gap-2 disabled:opacity-60`} onClick={() => { void signInWithWallet(); }}>
             <KeyIcon className="h-5 w-5" aria-hidden="true" />{t('auth:signInSheet.wallet.submit')}
-          </button>
+          </Button>
           <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
             <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
             {t('auth:signInSheet.or')}
@@ -2025,9 +2032,9 @@ export function SignInSheet({
         ) : null}
         {/* The reset link's way back: to the password step, the link left (`leaveResetAddress`). */}
         {step === 'reset' ? (
-          <button type="button" data-sign-in-sheet-reset-back="" className={`${QUIET} mt-2 -ms-1 flex items-center gap-0.5`} onClick={() => { leaveResetAddress(); toStep('password'); }}>
+          <Button type="button" data-sign-in-sheet-reset-back="" {...OWN_CLASSES} className={`${QUIET} mt-2 -ms-1 flex items-center gap-0.5`} onClick={() => { leaveResetAddress(); toStep('password'); }}>
             <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.reset.back')}
-          </button>
+          </Button>
         ) : null}
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
@@ -2046,7 +2053,7 @@ export function SignInSheet({
           <div data-sign-in-sheet-offline="" className={OFFLINE_NOTE}>
             <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">{t('auth:signInSheet.offline.title')}</p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{t('auth:signInSheet.offline.body')}</p>
-            <button type="button" data-offline-retry="" className="mt-2 text-sm font-medium text-amber-800 underline underline-offset-2 dark:text-amber-300">{t('auth:signInSheet.offline.retry')}</button>
+            <Button type="button" data-offline-retry="" {...OWN_CLASSES} className="mt-2 text-sm font-medium text-amber-800 underline underline-offset-2 dark:text-amber-300">{t('auth:signInSheet.offline.retry')}</Button>
           </div>
         ) : null}
         {methodSwitch ? (
@@ -2236,7 +2243,7 @@ export function SignInSheet({
                 <PasswordInput ref={walletConfirmPassword} id="sign-in-sheet-wallet-confirm-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{t('auth:signInSheet.wallet.resetSubmit')}</button>
+            <Button type="submit" disabled={busy} {...OWN_CLASSES} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{t('auth:signInSheet.wallet.resetSubmit')}</Button>
           </form>
         ) : null}
 
@@ -2274,7 +2281,7 @@ export function SignInSheet({
                 <PasswordInput ref={confirmPasswordField} id="sign-in-sheet-confirm-password" name="confirm-password" required autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.reset.saving') : t('auth:signInSheet.reset.submit')}</button>
+            <Button type="submit" disabled={busy} {...OWN_CLASSES} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.reset.saving') : t('auth:signInSheet.reset.submit')}</Button>
           </form>
         ) : null}
 
@@ -2331,10 +2338,10 @@ export function SignInSheet({
                 </p>
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.register.registering') : t('auth:signInSheet.register.submit')}</button>
+            <Button type="submit" disabled={busy} {...OWN_CLASSES} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.register.registering') : t('auth:signInSheet.register.submit')}</Button>
             <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
               <RichMessage id="auth:signInSheet.register.haveAccount" components={[
-              <button type="button" data-sign-in-sheet-to-password="" onClick={() => toStep('password')} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
+              <Button type="button" data-sign-in-sheet-to-password="" onClick={() => toStep('password')} {...OWN_CLASSES} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
               ]} />
             </p>
           </form>

@@ -146,7 +146,7 @@ test('the new-password step is a form, so Return and its button take the same pa
   assert.ok(start > 0, 'the step is a form');
   const form = sheet.slice(start, sheet.indexOf('</form>', start));
   assert.match(form, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void chooseNewPassword\(\); \}\}/);
-  assert.match(form, /<button type="submit"/);
+  assert.match(form, /<Button type="submit"/, 'drawn with the Button primitive (tests/button-primitive-ratchet.test.js)');
   assert.match(form, /id="sign-in-sheet-new-password"[^>]*autoComplete="new-password"/);
   assert.match(form, /id="sign-in-sheet-confirm-password"[^>]*autoComplete="new-password"/);
 });
