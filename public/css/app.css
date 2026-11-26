@@ -22473,12 +22473,12 @@ p.dev-change-issue-pointer {
    composer 910px below the fold, in the NATIVE layout — the one whose
    definite scroller was supposed to bound it — and at a 34px inset as well
    as at none.
-   ONLY THAT TAB. The other two are meant to grow: #dev-forum-scroll is the
+   ONLY THAT TAB, and a topic's channel. The Discussion (#general's posts,
+   26 Nov 2026) is a page that grows like the Hub. The other two are meant to grow: #dev-forum-scroll is the
    scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
 #dev-workshop > .dev-ws[data-ws-tab="needs"],
-#dev-workshop > .dev-ws[data-ws-tab="discussion"],
 #dev-workshop > .dev-ws[data-ws-tab^="c:"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
@@ -22491,8 +22491,8 @@ p.dev-change-issue-pointer {
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
    "Unable to over scroll down on hub page (but can on workshop)", in the
@@ -22542,10 +22542,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
    you or Discussion either: those are fitted on purpose and scroll inside. */
 @media (max-width: 699.98px) and (pointer: coarse) {
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) {
     position: relative;
   }
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"]))::after {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"]))::after {
     content: '';
     position: absolute; inset-inline-start: 0; bottom: -1px;
     width: 1px; height: 1px;
@@ -26200,7 +26200,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    bottom as it does in Messages, so on a phone it spans the band's width:
    the screen's, by cancelling the same 4px of `#dev-body` the band does
    (#3499), not 12. */
-html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"],
 html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);

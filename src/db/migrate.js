@@ -2603,9 +2603,13 @@ async function seedStagingDiscussion(pool) {
       const photo = await sayWith(club, 'jo', 'the reading corner is ready.', 90, [SEED_PICTURE]);
       await react(photo, '😍', ['ana', 'priya']);
       await sayWith(club, 'priya', 'here is the schedule for the spring.', 85, [SEED_TEXT_FILE], photo);
-      const gone = await say(club, 'dev', 'Moving the meeting to Thursday.', 70);
+      // A post its author deleted after a reply came: written deleted, as the
+      // delete leaves it (no words), so the Discussion says so above its reply.
+      const gone = (await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, created_at, deleted_at)
+         VALUES ($1, $2, '', NOW() - make_interval(mins => 70), NOW()) RETURNING id`,
+        [club, people.dev])).rows[0].id;
       await say(club, 'ana', 'Thursday works for me.', 65, gone);
-      await tx.query("UPDATE chat_messages SET deleted_at = NOW(), content = '' WHERE id = $1", [gone]);
       for (let i = 0; i < 4; i += 1) {
         await tx.query(
           `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
