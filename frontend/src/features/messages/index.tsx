@@ -27,6 +27,7 @@ import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
+import { matchesSearch } from '../../lib/search-rank.js';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { getTimeZone, inZone, zonedDay } from '../../lib/time-zone';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -512,8 +513,7 @@ function PeopleHead({ aside }: { aside: string | null }) {
  * kinds, this says which of them, and an empty query is every row.
  */
 function inboxMatches(text: string | null | undefined, query: string): boolean {
-  if (!query) return true;
-  return String(text || '').toLowerCase().includes(query);
+  return matchesSearch(query, text);
 }
 
 /**
@@ -638,7 +638,7 @@ function ConversationList({ drawer = false }: {
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
 
-  const q = deferredQuery.trim().toLowerCase();
+  const q = deferredQuery.trim();
   const matches = (entry: { kind: string; key: string }) => {
     if (!q) return true;
     if (entry.kind === 'person') {

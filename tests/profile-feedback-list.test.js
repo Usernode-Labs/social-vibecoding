@@ -48,8 +48,9 @@ test('each report says what was sent, where, its status, and links to its reques
     ['20', 'received', 'Received', '#app/recipe-box/dev/issues/41'],
     ['10', 'received', 'Received', null],
   ]);
-  assert.equal(view.rows[0].meta, 'Homeroom · request #3001 · sent 3 days ago');
-  assert.equal(view.rows[1].meta, 'Recipe Box · request #41 · sent today');
+  // When, in the shell's one list form (lib/timestamp.ts agoStamp).
+  assert.equal(view.rows[0].meta, 'Homeroom · request #3001 · sent 3d ago');
+  assert.equal(view.rows[1].meta, 'Recipe Box · request #41 · sent 4h ago');
   assert.equal(view.rows[2].title, 'Feedback', 'an untitled report still has a name');
   assert.equal(view.rows[2].meta, 'An app', 'no app left to name, no request to link, no date to invent');
   assert.match(view.rows[0].statusClassName, /emerald/);

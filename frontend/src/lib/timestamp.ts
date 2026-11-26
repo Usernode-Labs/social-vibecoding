@@ -54,16 +54,18 @@
  *
  * ── Where the copies are ──────────────────────────────────────────────
  *
- * Three implementations, down from roughly ten, because two legacy classic
- * scripts sit outside this bundle and cannot import from here:
+ * Two implementations, down from roughly ten:
  *
  *   frontend/src/lib/timestamp.ts   both forms, for everything in the bundle
  *   public/js/group-chat.js         `GroupChat._stamp`  — form A
- *   public/js/app-view.js           `relStamp`          — form B
  *
- * They are kept in step by hand and pinned together by
- * tests/message-timestamp.test.js, which does not grep them — it EXECUTES
- * all of them against one table of instants and asserts they answer
+ * The modules that read the language runtime's global rather than import
+ * (public/js/app-view.js `relStamp`, public/js/build-log.js, the bell's
+ * notifications.js, leaderboard.js) keep no copy: lib/i18n/runtime.ts
+ * publishes `agoStamp`, `messageStamp` and `shortDate` on PlatformI18n, and
+ * they read them at call time. The chat's copy is kept in step by hand and
+ * pinned by tests/message-timestamp.test.js, which does not grep it — it
+ * EXECUTES both against one table of instants and asserts they answer
  * identically. Same arrangement, and the same reason, as `swatchFor` in
  * features/messages/format.tsx.
  *
@@ -208,6 +210,9 @@ const RELATIVE_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
  *
  * Never relative at or past a week — that boundary IS the fix for #1808 on
  * these surfaces, and tests/message-timestamp.test.js asserts it directly.
+ * The one exception is `relativeOnly`, for a lane too narrow for a date: a
+ * Pinned apps tile's "Opened 29d ago" (#4025), whose list keeps a month and
+ * whose date would carry its year across a new year. It counts days instead.
  *
  * A future instant (a clock skew between the server's stamp and the
  * reader's browser, which happens) clamps to "just now" rather than
@@ -215,7 +220,7 @@ const RELATIVE_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export function agoStamp(
   value: string | number | Date | null | undefined,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; relativeOnly?: boolean } = {},
 ): Stamp {
   const date = parse(value);
   if (!date) return { text: '', title: '' };
@@ -223,7 +228,7 @@ export function agoStamp(
   const now = opts.now ?? new Date(Date.now());
   const title = formatDate(date, 'full', FULL);
   const elapsed = now.getTime() - date.getTime();
-  if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
+  if (elapsed >= RELATIVE_FLOOR_MS && !opts.relativeOnly) return { text: datePart(date, now), title };
 
   const seconds = Math.max(0, Math.floor(elapsed / 1000));
   if (seconds < 60) return { text: t('core:time.ago.justNow'), title };
