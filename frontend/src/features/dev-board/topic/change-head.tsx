@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -75,7 +75,8 @@ import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
 import { ThreadRail } from './thread-rail';
-import { ThreadPicture } from './thread-picture';
+import { ShotsViewer } from '../../review-flow/shots-viewer';
+import { openShotsDetail } from './shots-detail';
 import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
@@ -608,112 +609,35 @@ export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
 /** The Before and after card: the shots, or the line that says where they are. */
 export function ShotsCard({ s, single = false, status = null }: {
   s: NonNullable<ChangeThreadView['shots']>;
-  /** The card's picture: it opens on After alone, one picture with the switch, not side by side. */
+  /** The card's picture: its two sides are named for what they are to this change. */
   single?: boolean;
   /** The change's status key, for what the picture's two sides are called. */
   status?: string | null;
 }): ReactNode {
   const t = useMessages('project');
-  const box = useRef<HTMLElement>(null);
-  const [tiles, setTiles] = useState<{ src: string; pick: string }[]>([]);
-  const [at, setAt] = useState(0);
-  const [legend, setLegend] = useState('');
-  // The card's picture is the viewer the change's shots are drawn in, read
-  // as one picture: it starts on After (the viewer's own start is side by
-  // side where there is room), its screens are tiles under it, and the
-  // legend of the screen showing sits beside them. The tiles and the legend
-  // are read off the viewer's own markup, in its order, and a tile presses
-  // the viewer's own screen pick; nothing is written into the viewer but
-  // which of its radios is checked.
-  useEffect(() => {
-    const el = box.current;
-    if (!single || s.state !== 'verified' || !el) { setTiles([]); setLegend(''); return undefined; }
-    const auto = el.querySelector<HTMLInputElement>('.shots-side-auto:checked');
-    const after = el.querySelector<HTMLInputElement>('.shots-side-after');
-    if (auto && after) after.checked = true;
-    const views = Array.from(el.querySelectorAll<HTMLElement>('.shots-view'));
-    const picks = Array.from(el.querySelectorAll<HTMLInputElement>('.shots-screen-pick'));
-    const read = () => {
-      const index = Math.max(0, picks.findIndex((pick) => pick.checked));
-      setAt(index);
-      setLegend(views[index]?.querySelector('.shots-view-notes')?.innerHTML || '');
-    };
-    setTiles(views.length > 1 && picks.length === views.length
-      ? views.map((view, i) => ({
-        src: view.querySelector<HTMLImageElement>('.shots-flip-after img, .shots-flip-before img')?.getAttribute('src') || '',
-        pick: picks[i].id,
-      }))
-      : []);
-    read();
-    el.addEventListener('change', read);
-    return () => el.removeEventListener('change', read);
-  }, [single, s.state, s.html]);
-  const legendInner = useMemo(() => ({ __html: legend }), [legend]);
   // What each side of the one picture is for this change: what the app does
   // today and what it will do if the change passes; once live, what it did
-  // and what it does now; closed, what was proposed. The viewer's own chip
-  // says only "Before" or "After" (app.css draws these in its place).
+  // and what it does now; closed, what was proposed. A change that is up for
+  // a vote keeps the slider's own words on each side.
   const chips = !single ? null
     : status === 'merged' || status === 'live' || status === 'deployed_reload' || status === 'merged_reload'
       ? { before: t('project:topic.card.shots.chipWas'), after: t('project:topic.card.shots.chipLive') }
       : status === 'closed' || status === 'archived'
         ? { before: t('project:topic.card.shots.chipToday'), after: t('project:topic.card.shots.chipProposed') }
-        : { before: t('project:topic.card.shots.chipTodayBefore'), after: t('project:topic.card.shots.chipIfPasses') };
-  const pickScreen = (id: string) => {
-    const pick = box.current?.querySelector<HTMLInputElement>(`#${CSS.escape(id)}`);
-    if (!pick) return;
-    pick.checked = true;
-    pick.dispatchEvent(new Event('change', { bubbles: true }));
-  };
+        : null;
   // The previous version's shots (AppView._changeShotsView `previous`): the
   // picture stays, under a line that says whose it is and where this
   // version's stand.
   const previous = s.previous ? <PreviousShotsLine s={s} /> : null;
-  // A run that worked out its screens is drawn with the Needs you page's
-  // slider (./thread-picture.tsx); the viewer stays behind its Expand. A
-  // change that is up for a vote keeps the slider's own words on each side.
-  if (single && s.state === 'verified' && s.screens && s.screens.length) {
-    const voting = !!chips && chips.after === t('project:topic.card.shots.chipIfPasses');
-    if (previous) {
-      return <div className="dev-change-shots-previous" data-change-shots="previous">{previous}<ThreadPicture s={s} captions={voting ? null : chips} /></div>;
-    }
-    return <ThreadPicture s={s} captions={voting ? null : chips} />;
-  }
-  if (s.state === 'verified') {
-    return (
-      <section
-        ref={box}
-        className="dev-change-shots"
-        data-change-shots={s.previous ? 'previous' : 'verified'}
-        data-thread-picture={single ? '' : undefined}
-        data-thread-chips={chips ? '' : undefined}
-        style={chips ? ({ '--thread-chip-after': JSON.stringify(chips.after), '--thread-chip-before': JSON.stringify(chips.before) } as CSSProperties) : undefined}
-      >
-        {previous}
-        {/* AppView.shotsHtml's `thread` reading — escaped where it is built. */}
-        <Html className="dev-change-shots-html" html={s.html} />
-        {single && (tiles.length || legend) ? (
-          <div className="dev-thread-tiles" data-thread-tiles={tiles.length}>
-            {tiles.map((tile, i) => (
-              <button
-                key={tile.pick}
-                type="button"
-                className="dev-thread-tile"
-                aria-pressed={i === at}
-                aria-label={t('project:topic.card.shots.tile', { index: i + 1, total: tiles.length })}
-                onClick={() => pickScreen(tile.pick)}
-              >
-                {tile.src ? <img src={tile.src} alt="" loading="lazy" decoding="async" /> : null}
-              </button>
-            ))}
-            <div className="dev-thread-tiles-cap">
-              {tiles.length ? <p className="dev-thread-tiles-count">{t('project:topic.card.shots.screenOf', { index: at + 1, total: tiles.length })}</p> : null}
-              {legend ? <div className="dev-thread-tiles-legend shots-view-notes" dangerouslySetInnerHTML={legendInner} /> : null}
-            </div>
-          </div>
-        ) : null}
-      </section>
-    );
+  if (s.state === 'verified' && s.source) {
+    const source = s.source;
+    // Expand opens the same viewer larger in the detail column beside the
+    // thread, as a design's preview and a plan do (#6230).
+    const expand = () => openShotsDetail(source, chips);
+    const viewer = <ShotsViewer source={source} captions={chips} onExpand={expand} />;
+    return previous
+      ? <div className="dev-change-shots-previous" data-change-shots="previous">{previous}{viewer}</div>
+      : viewer;
   }
   return (
     <section className="dev-change-shots dev-change-shots-plain" data-change-shots={s.state} aria-label={t('project:topic.change.shots.title')}>

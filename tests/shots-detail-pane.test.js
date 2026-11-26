@@ -6,9 +6,9 @@
 // The pane now heads the viewer with a close, as the design preview beside it
 // does: an × at the right where the column is a column, a back arrow at the
 // left where it is the whole screen. This RUNS the component — a hand-stepped
-// React whose useMemo just goes through, the i18n hook stubbed to the id —
-// then presses the control it drew and checks the detail store closed. The
-// before and after's own markup is still drawn beneath the head.
+// React, the i18n hook stubbed to the id — then presses the control it drew
+// and checks the detail store closed. The before and after viewer is still
+// drawn beneath the head.
 //
 // Run with: node --test tests/shots-detail-pane.test.js
 
@@ -62,7 +62,9 @@ function open(detail) {
     kind: 'shots',
     ref: { changeId: 9 },
     version: null,
-    payload: { html: '<div class="shots-viewer" id="shots-9-viewer"></div>' },
+    // The change's shots, which the one before & after viewer draws
+    // (review-flow/shots-viewer.tsx).
+    payload: { shots: { source: { shots: { state: 'verified', claims: [], artifacts: [] }, sessionId: 9 }, captions: null } },
   });
   return detail.detailEntry();
 }
@@ -77,8 +79,16 @@ test('a column draws a close over the viewer, and pressing it closes the detail'
   assert.ok(close, 'the pane draws a close');
   assert.equal(control(tree, 'back'), null, 'no back arrow where the column is a column');
   assert.equal(close.props['aria-label'], 'changes:shots.pane.close');
-  // The before and after still scroll under the head, unchanged.
+  // The before and after still scroll under the head: the one viewer, larger.
   assert.ok(classed(tree, 'gc-detail-shots'), 'the viewer is still drawn');
+  const viewer = (function find(node) {
+    if (!node || typeof node !== 'object') return null;
+    if (Array.isArray(node)) { for (const c of node) { const f = find(c); if (f) return f; } return null; }
+    if (node.props && node.props.source && node.props.expanded === true) return node;
+    return find(node.props && node.props.children);
+  })(tree);
+  assert.ok(viewer, 'the viewer is drawn expanded');
+  assert.deepEqual(viewer.props.source, entry.payload.shots.source);
 
   close.props.onClick();
   assert.equal(detail.isDetailOpen(), false, 'pressing it closes the column');

@@ -9396,10 +9396,11 @@ const AppView = {
     };
   },
 
-  // The Before and after card: the shots in the viewer specs use, once they
-  // are taken; until then one line inside the card that says so; a run
-  // that failed or was waived says that instead. Nothing when the change
-  // shows nothing (no shots and no captures, or none needed).
+  // The Before and after card: the shots in the one before & after viewer
+  // (review-flow/shots-viewer.tsx), once they are taken; until then one line
+  // inside the card that says so; a run that failed or was waived says that
+  // instead. Nothing when the change shows nothing (no shots and no
+  // captures, or none needed).
   _changeShotsView(kind, item) {
     const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
     if (!shots) {
@@ -9409,18 +9410,14 @@ const AppView = {
     const view = AppView._shotsView(shots);
     if (!view || view.state === 'not_required') return null;
     if (view.verified) {
-      const html = AppView.shotsHtml(shots, { sessionId: item.id, thread: true });
       // 1 Nov 2026 (one page per thread): a change on its request's page
       // shows its first screen's before and after small, as the Workshop's
-      // picture does, with Expand into this viewer.
-      const pic = html ? AppView._workshopVisuals(null, shots) : null;
+      // picture does, with Expand into the viewer.
+      const pic = AppView._workshopVisuals(null, shots);
       const thumbs = pic && (pic.before || pic.after)
-        ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
-      // The run's own screens and what changed on each, for the card's
-      // picture: the Needs you page's slider (topic/thread-picture.tsx).
-      const screens = pic && Array.isArray(pic.screens) ? pic.screens : [];
-      const changes = pic && Array.isArray(pic.changes) ? pic.changes : [];
-      return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
+        ? { before: pic.before || null, after: pic.after || null } : null;
+      // The viewer reads the shots themselves, as every surface does.
+      return { state: 'verified', source: { shots, sessionId: Number(item.id) }, line: null, thumbs, changeId: Number(item.id) || null };
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     // The previous version's shots (shots-view.js previous) stay on the card
@@ -9686,13 +9683,14 @@ const AppView = {
       // Once a proposal has entered shots v2, its state is authoritative.
       // In particular, pending/failed shots must never be visually
       // replaced by an older route capture that happens to exist.
-      const tilesHtml = item.shots
-        ? AppView.shotsHtml(item.shots, { sessionId: item.id })
-        : AppView.visualsTilesHtml(item.visuals);
       // Open: the tiles are the About sheet's before/after row now, not a
-      // toggle behind a button.
-      if (tilesHtml) {
-        visuals = { sessionId: item.id, open: true, tilesHtml };
+      // toggle behind a button. Shots are drawn by the one before & after
+      // viewer (review-flow/shots-panel.tsx), from the shots themselves.
+      if (item.shots && typeof item.shots === 'object') {
+        visuals = { sessionId: item.id, open: true, source: { shots: item.shots, sessionId: Number(item.id) } };
+      } else {
+        const tilesHtml = AppView.visualsTilesHtml(item.visuals);
+        if (tilesHtml) visuals = { sessionId: item.id, open: true, tilesHtml };
       }
     }
 
@@ -11206,7 +11204,7 @@ const AppView = {
     AppView._renderTopicHead();
   },
   // The card pictures are picked by the page's mode (_workshopVisuals), so a
-  // mode switch repaints what shows them: the open topic (its ThreadPicture
+  // mode switch repaints what shows them: the open topic (its before & after pair
   // and change cards, through _renderTopicHead) and the Workshop's recently
   // live list. Registered on Theme.onChange, which fires after the new
   // theme is on <html>.
@@ -13973,7 +13971,9 @@ const AppView = {
   // shot on, and whether it was a phone-frame capture (#768). Null when no
   // group has a still on either side; a group with one honest half is kept,
   // and the feed then shows that side alone.
-  _workshopVisuals(visuals, shots = null) {
+  // `theme` picks the shots' mode where the viewer has its own light/dark
+  // flip (review-flow/shots-viewer.tsx); left out, the page's mode decides.
+  _workshopVisuals(visuals, shots = null, theme = null) {
     if (shots && typeof shots === 'object') {
       // A v2 record is authoritative even while pending/failed: returning
       // null suppresses the legacy capture instead of substituting a picture
@@ -13986,7 +13986,7 @@ const AppView = {
       // shot where the run took one and the light one otherwise. A run
       // lists its dark shots before its light ones, so without this the
       // first match was nearly always dark (#6820).
-      const mode = AppView.resolvedTheme();
+      const mode = theme === 'dark' || theme === 'light' ? theme : AppView.resolvedTheme();
       const find = (claimValue, viewportName, side, variant, theme = 'light') => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
         && a.side === side && a.variant === variant && a.media === 'png' && (a.theme || 'light') === theme && urlOk(a.url)
@@ -27267,7 +27267,7 @@ const AppView = {
   // "What changes for you" (topic/topic-head.tsx): the declared changes,
   // which are the plainest statement of the change there is, as bullets, and
   // the run's state as one strip. A VERIFIED run keeps the before/after card
-  // (shotsHtml), which already leads with the declared changes.
+  // (review-flow/shots-viewer.tsx), which already leads with the declared changes.
   _shotsView(shots) {
     if (!shots || typeof shots !== 'object') return null;
     const state = String(shots.state || 'planned');
@@ -27337,17 +27337,17 @@ const AppView = {
     return width >= 120 && height >= 40;
   },
 
-  // The before/after viewer (#3699). One frame for two callers: the
-  // proposal card's shots (shotsHtml, <img> sides) and an HTML spec's drawn
-  // screens (frontend/src/lib/spec-html.ts, sandboxed-frame sides). Each
-  // caller builds a screen's two sides and the notes under it; this builds
-  // the rest: the radios that hold the state, the toolbar, the stage, the
-  // labels that flip it and the chips. It is markup only. The switching is
-  // CSS (:has() over the radios), so the card still needs no script.
+  // An HTML spec's drawn screens, before and after (#3699): the frame for
+  // frontend/src/lib/spec-html.ts, whose sides are sandboxed frames. A
+  // change's own shots are drawn by the one before & after viewer instead
+  // (review-flow/shots-viewer.tsx, the Needs you page's slider). The caller
+  // builds a screen's two sides and the notes under it; this builds the
+  // rest: the radios that hold the state, the toolbar, the stage, the labels
+  // that flip it and the chips. It is markup only. The switching is CSS
+  // (:has() over the radios), so it needs no script.
   //
   // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
-  // notesHtml, zoomable, stacked }. Three options the card leaves off, so
-  // its markup is what it always was:
+  // notesHtml, zoomable }. Three options, off unless asked for:
   //   sideBySide — a third side option: before and after at once, in the
   //                same fixed stage.
   //   autoSide   — start side by side when the viewer has room for that
@@ -27363,92 +27363,9 @@ const AppView = {
     screen: 'changes:shots.size.screen',
   },
 
-  // The same sizes inside a line of text, where English writes them small.
-  SHOTS_SIZE_WORD_IDS: {
-    desktop: 'changes:shots.sizeWord.desktop',
-    phone: 'changes:shots.sizeWord.phone',
-  },
-
   SHOTS_SCREEN_PICK_IDS: {
     desktop: 'changes:shots.viewer.pickDesktop',
     phone: 'changes:shots.viewer.pickPhone',
-  },
-
-  // What the shots agent did to both builds to reach a change, by kind
-  // (services/shots-files.js condition).
-  SHOTS_CONDITION_IDS: {
-    request_held: 'changes:shots.claim.requestHeld',
-    request_failed: 'changes:shots.claim.requestFailed',
-    sample_file: 'changes:shots.claim.sampleFile',
-  },
-
-  // "seen as …" under a shot, whole, by the people the screen's changes were
-  // viewed as, in the order they come up (persona keys joined with '+').
-  SHOTS_SEEN_AS_IDS: {
-    'member': 'changes:shots.seenAs.member',
-    'readOnlyAdmin': 'changes:shots.seenAs.readOnlyAdmin',
-    'fullAdmin': 'changes:shots.seenAs.fullAdmin',
-    'guest': 'changes:shots.seenAs.guest',
-    'member+readOnlyAdmin': 'changes:shots.seenAs.memberReadOnlyAdmin',
-    'member+fullAdmin': 'changes:shots.seenAs.memberFullAdmin',
-    'member+guest': 'changes:shots.seenAs.memberGuest',
-    'readOnlyAdmin+member': 'changes:shots.seenAs.readOnlyAdminMember',
-    'readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.readOnlyAdminFullAdmin',
-    'readOnlyAdmin+guest': 'changes:shots.seenAs.readOnlyAdminGuest',
-    'fullAdmin+member': 'changes:shots.seenAs.fullAdminMember',
-    'fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.fullAdminReadOnlyAdmin',
-    'fullAdmin+guest': 'changes:shots.seenAs.fullAdminGuest',
-    'guest+member': 'changes:shots.seenAs.guestMember',
-    'guest+readOnlyAdmin': 'changes:shots.seenAs.guestReadOnlyAdmin',
-    'guest+fullAdmin': 'changes:shots.seenAs.guestFullAdmin',
-    'member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminFullAdmin',
-    'member+readOnlyAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminGuest',
-    'member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminReadOnlyAdmin',
-    'member+fullAdmin+guest': 'changes:shots.seenAs.memberFullAdminGuest',
-    'member+guest+readOnlyAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdmin',
-    'member+guest+fullAdmin': 'changes:shots.seenAs.memberGuestFullAdmin',
-    'readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberFullAdmin',
-    'readOnlyAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminMemberGuest',
-    'readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminFullAdminMember',
-    'readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminGuest',
-    'readOnlyAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminGuestMember',
-    'readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestFullAdmin',
-    'fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdmin',
-    'fullAdmin+member+guest': 'changes:shots.seenAs.fullAdminMemberGuest',
-    'fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminMember',
-    'fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuest',
-    'fullAdmin+guest+member': 'changes:shots.seenAs.fullAdminGuestMember',
-    'fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdmin',
-    'guest+member+readOnlyAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdmin',
-    'guest+member+fullAdmin': 'changes:shots.seenAs.guestMemberFullAdmin',
-    'guest+readOnlyAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminMember',
-    'guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminFullAdmin',
-    'guest+fullAdmin+member': 'changes:shots.seenAs.guestFullAdminMember',
-    'guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminReadOnlyAdmin',
-    'member+readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminFullAdminGuest',
-    'member+readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminGuestFullAdmin',
-    'member+fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.memberFullAdminReadOnlyAdminGuest',
-    'member+fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminGuestReadOnlyAdmin',
-    'member+guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdminFullAdmin',
-    'member+guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberGuestFullAdminReadOnlyAdmin',
-    'readOnlyAdmin+member+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminMemberFullAdminGuest',
-    'readOnlyAdmin+member+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberGuestFullAdmin',
-    'readOnlyAdmin+fullAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminMemberGuest',
-    'readOnlyAdmin+fullAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminFullAdminGuestMember',
-    'readOnlyAdmin+guest+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestMemberFullAdmin',
-    'readOnlyAdmin+guest+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminGuestFullAdminMember',
-    'fullAdmin+member+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdminGuest',
-    'fullAdmin+member+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberGuestReadOnlyAdmin',
-    'fullAdmin+readOnlyAdmin+member+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminMemberGuest',
-    'fullAdmin+readOnlyAdmin+guest+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuestMember',
-    'fullAdmin+guest+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestMemberReadOnlyAdmin',
-    'fullAdmin+guest+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdminMember',
-    'guest+member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdminFullAdmin',
-    'guest+member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestMemberFullAdminReadOnlyAdmin',
-    'guest+readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminMemberFullAdmin',
-    'guest+readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminFullAdminMember',
-    'guest+fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminMemberReadOnlyAdmin',
-    'guest+fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.guestFullAdminReadOnlyAdminMember',
   },
 
   _shotsSizeName(size) {
@@ -27459,24 +27376,7 @@ const AppView = {
     return value.charAt(0).toUpperCase() + value.slice(1);
   },
 
-  _shotsSizeWord(size) {
-    const value = String(size);
-    const id = Object.prototype.hasOwnProperty.call(AppView.SHOTS_SIZE_WORD_IDS, value) ? AppView.SHOTS_SIZE_WORD_IDS[value] : '';
-    return id ? PlatformI18n.t(id) : value;
-  },
-
-  // #4459: which mode a viewer's shots show, remembered by viewer key (the
-  // session id) while the page stays open. Unset means follow the theme the
-  // card is drawn in.
-  _shotsThemePicks: new Map(),
-
-  _shotsThemePick(key, input) {
-    AppView._shotsThemePicks.set(String(key || ''), input?.classList.contains('shots-theme-dark') ? 'dark' : 'light');
-  },
-
-  // `barLead` (#4455): markup at the start of each screen's toolbar — a
-  // change page's card puts its title there, beside the switch.
-  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, themes = false, className = '', barLead = '' } = {}) {
+  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '' } = {}) {
     const esc = escapeHtml;
     const attr = escapeAttr;
     const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
@@ -27485,7 +27385,6 @@ const AppView = {
     const sideId = (side) => `shots-${key}-side-${side}`;
     const pickId = (index) => `shots-${key}-screen-${index}`;
     const zoomId = (which) => `shots-${key}-zoom-${which}`;
-    const themeId = (which) => `shots-${key}-theme-${which}`;
     const shownSizes = [...new Set(list.map((screen) => screen.viewport))];
     const indexesOf = (size) => list.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
     const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
@@ -27495,8 +27394,6 @@ const AppView = {
       phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
     };
     const bothIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/></svg>';
-    const moonIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
-    const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
     // #5691: the button that lifts the viewer to the top layer at window
@@ -27530,15 +27427,9 @@ const AppView = {
       const zoomSwitch = zooming && screen.zoomable
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}">${closeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}">${wholeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}</span></label></span>`
         : '';
-      // The mode flip (#4459), when the run took dark shots: two round
-      // labels at the bar's right end, before the arrows; the one that
-      // names the mode already showing is hidden by the theme pick.
-      const themeFlips = themes
-        ? `<label for="${themeId('dark')}" class="shots-theme-flip shots-theme-to-dark" title="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}">${moonIcon}</label><label for="${themeId('light')}" class="shots-theme-flip shots-theme-to-light" title="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}">${sunIcon}</label>`
-        : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${expand}${stepping ? stepper(screenIndex) : ''}</div>
-        <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
+        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${expand}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
           <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${PlatformI18n.htmlText('changes:shots.viewer.clickBefore')}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${PlatformI18n.htmlText('changes:shots.viewer.clickAfter')}" aria-hidden="true"></label>
@@ -27556,533 +27447,7 @@ const AppView = {
           ? PlatformI18n.t(AppView.SHOTS_SCREEN_PICK_IDS[String(screen.viewport)], { index: index + 1, total: list.length })
           : PlatformI18n.t('changes:shots.viewer.pickOther', { index: index + 1, total: list.length, size: screen.viewport }))}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
-    // The theme pick (#4459), when the run took dark shots: the checked one
-    // is the pick remembered for this viewer, else the theme the page is
-    // drawn in.
-    const rememberedTheme = AppView._shotsThemePicks.get(String(key));
-    const themePick = rememberedTheme === 'dark' || rememberedTheme === 'light'
-      ? rememberedTheme
-      : (typeof document !== 'undefined' && document.documentElement?.classList?.contains('dark') ? 'dark' : 'light');
-    const themePicks = themes
-      ? `<span class="shots-picks"><input type="radio" class="shots-theme-pick shots-theme-light" name="shots-${key}-theme" id="${themeId('light')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}"${themePick === 'light' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"><input type="radio" class="shots-theme-pick shots-theme-dark" name="shots-${key}-theme" id="${themeId('dark')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}"${themePick === 'dark' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"></span>`
-      : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
-  },
-
-  // #4455: two more readings for a change's page. `thread` is its Before
-  // and after card: the viewer specs use (side by side when there is room),
-  // the title in the switch's row, each change's claim and what the shots
-  // leave out, and nothing else. `details` is what that card moved into
-  // Details (Shot details): how each change is reached, at which screen
-  // sizes and as whom, and the builds the shots were taken on. Both are for
-  // a verified run only.
-  shotsHtml(shots, opts = {}) {
-    if (!shots || typeof shots !== 'object') return '';
-    const thread = !!opts.thread;
-    const detailsOnly = !!opts.details;
-    const state = String(shots.state || 'planned');
-    // A failed run's details reading is the one non-verified one that draws:
-    // the sheet says what happened and why, instead of linking to shots that
-    // do not exist. One the platform is already retrying reads as under way
-    // and draws nothing there.
-    const failedDetails = detailsOnly && state === 'failed' && shots.automaticRetryPending !== true;
-    if ((thread || detailsOnly) && state !== 'verified' && !failedDetails) return '';
-    const sessionId = Number(opts.sessionId);
-    const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
-    const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
-    const esc = escapeHtml;
-    const attr = escapeAttr;
-    const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
-      ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
-    const shotsUrl = (url) => {
-      const value = String(url || '');
-      // A sharp still has its own address, `?density=device`, and a smaller
-      // copy its own, `?size=thumb` or `?size=screen` (shots-view.js
-      // artifactUrl); nothing else may follow the id.
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.exec(value);
-      if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
-      return value;
-    };
-    const stateCopy = AppView._shotsStateCopy(shots);
-    // The previous version's shots (_shotsPrevious), drawn as published ones
-    // are but marked as the previous version's, with no retake of their own.
-    const previousVersion = state === 'verified' && shots.previousVersion === true;
-    const shownState = previousVersion ? 'previous' : 'verified';
-    const badge = previousVersion
-      ? `<span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" data-shots-previous-badge="1">${PlatformI18n.htmlText('changes:shots.card.previousBadge')}</span>`
-      : state === 'verified'
-      ? `<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.card.readyBadge')}</span>`
-      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label')])[0])}</span>`;
-    const code = (inner) => `<code>${inner}</code>`;
-    const provenance = `<span>${PlatformI18n.htmlRich('changes:shots.card.beforeCommit', { commit: shortSha(shots.baseSha) }, [code])}</span><span aria-hidden="true">→</span><span>${PlatformI18n.htmlRich('changes:shots.card.afterCommit', { commit: shortSha(shots.headSha) }, [code])}</span>`;
-
-    if (state !== 'verified') {
-      const copy = stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label'), PlatformI18n.t('changes:shots.state.pending.detail')];
-      const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
-      // #2601/#2558: the same control a failed run offers, on a run that
-      // never started. The rerun route already accepts a 'planned' run (it
-      // reruns the same head), and a stuck run is precisely the case where
-      // a reader needs a way to kick it.
-      // Not while an automatic retry is coming: two ways to start the same
-      // run again, one of them already under way, is one too many.
-      const retryable = (state === 'failed' && shots.automaticRetryPending !== true
-          && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
-        || AppView._shotsNotStarted(shots);
-      // The details reading of a failed run asks only whether this reader may
-      // start it again (`canRetake`, the author or an app admin); every other
-      // reading keeps the `retryable` rule above.
-      const wantsRetake = detailsOnly ? opts.canRetake === true : retryable;
-      const retry = wantsRetake && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button"${detailsOnly ? ' data-shots-retake="1"' : ''} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
-        : '';
-      const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
-        && Number.isInteger(sessionId) && sessionId > 0;
-      const stop = stoppable
-        ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
-        : '';
-      const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
-        : '';
-      // The previous version's shots, under this version's state, until
-      // this version's publish (the change page's card draws them itself:
-      // _changeShotsView).
-      const previous = !thread && !detailsOnly ? AppView._shotsPrevious(shots) : null;
-      const previousHtml = previous ? AppView.shotsHtml(previous, opts) : '';
-      return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
-        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
-        ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}${stop}</div>${override}
-      </section>${previousHtml ? `<div class="mt-3" data-shots-previous="1">${previousHtml}</div>` : ''}`;
-    }
-
-    const by = (storyId, viewport, side, variant, media = null, theme = 'light') => artifacts.find((a) => (
-      a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && (a.theme || 'light') === theme && shotsUrl(a.url)
-    ));
-    // One result per declared change; runs from before shots have none.
-    const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
-    // A project's first version (services/shots-starter.js): its before build
-    // was still the starter template's placeholder, so only the after side
-    // was taken. The card says so where a before would be.
-    const afterOnly = shots.afterOnly === true;
-    const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
-    // A failed change was tried on the after build and the app broke; like a
-    // skipped one it has no shots of its own, but it reads as a problem.
-    const failed = (claim) => resultOf(claim)?.status === 'failed';
-    const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
-    const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
-    // Who the shots agent was signed in as. `personaId` is the word on its
-    // own; `seenAs` is the whole "seen as …" fact for one or more of them.
-    const personaKey = (claim) => (claim.persona === 'read_only_admin' ? 'readOnlyAdmin'
-      : claim.persona === 'full_admin' ? 'fullAdmin'
-        : claim.persona === 'guest' ? 'guest' : 'member');
-    const personaId = {
-      readOnlyAdmin: 'changes:shots.persona.readOnlyAdmin',
-      fullAdmin: 'changes:shots.persona.fullAdmin',
-      guest: 'changes:shots.persona.guest',
-      member: 'changes:shots.persona.member',
-    };
-    const seenAs = (names) => PlatformI18n.t(AppView.SHOTS_SEEN_AS_IDS[names.length ? names.join('+') : 'member']);
-    const persona = (claim) => PlatformI18n.t(personaId[personaKey(claim)]);
-    const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
-
-    // One screen at a time, in a frame that keeps its size: a phone screen
-    // sits in the middle of the same 16:10 stage as a desktop one, at the
-    // same zoom, so stepping between them never resizes the card. Each
-    // declared change is outlined where the run found the two sides differ
-    // (services/shots-diff.js) and numbered as in the description under the
-    // screen, which describes only the changes on that screen. Changes on the
-    // same screen share it. A run from before that was worked out gets a
-    // screen per change and size, with nothing outlined.
-    let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => screen
-      && by(screen.shot, screen.viewport, 'base', 'context') && by(screen.shot, screen.viewport, 'head', 'context'));
-    if (!screens.length) {
-      for (const claim of claims.filter((entry) => !skipped(entry))) {
-        const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
-        for (const viewport of viewports) {
-          if (by(claim.id, viewport, 'base', 'context') || by(claim.id, viewport, 'head', 'context')) {
-            screens.push({ viewport, shot: claim.id, stories: [claim.id], regions: [] });
-          }
-        }
-      }
-    }
-    // Grouped by screen size, which the Desktop / Phone switch picks; the
-    // arrows step through the screens of one size.
-    const sizes = [...new Set(screens.map((screen) => screen.viewport))];
-    screens = sizes.flatMap((size) => screens.filter((screen) => screen.viewport === size)).slice(0, 6);
-    const onScreenOf = (screen) => (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
-      .map((id) => claims.find((claim) => claim.id === id)).filter((claim) => claim && !skipped(claim));
-
-    const pctOf = (value, total) => `${Math.max(0, Math.min(100, (Number(value) / total) * 100)).toFixed(3)}%`;
-    const outlines = (screen, side) => {
-      const width = Number(screen.width);
-      const height = Number(side === 'base' ? screen.heightBefore : screen.heightAfter);
-      if (!(width > 0 && height > 0)) return '';
-      return (Array.isArray(screen.regions) ? screen.regions : []).map((region) => {
-        const box = side === 'base' ? region.b : region.a;
-        const mark = side === 'base' ? region.bMark : region.aMark;
-        const n = region.story ? numberOf(region.story) : 0;
-        const label = n > 0 ? `<span class="shots-box-n">${n}</span>` : '';
-        if (Array.isArray(box)) {
-          return `<span${n > 0 ? ` data-shots-n="${n}"` : ''} class="shots-box${n > 0 ? '' : ' shots-box-other'}" style="left:${pctOf(box[0], width)};top:${pctOf(box[1], height)};width:${pctOf(box[2], width)};height:${pctOf(box[3], height)}">${label}</span>`;
-        }
-        if (Array.isArray(mark) && n > 0) {
-          return `<span data-shots-n="${n}" class="shots-mark" style="left:${pctOf(mark[0], width)};top:${pctOf(mark[1], height)};width:${pctOf(mark[2], width)}">${label}</span>`;
-        }
-        return '';
-      }).join('');
-    };
-    // The shape of a side's shot, so the stage can fit it without stretching.
-    const shapeOf = (artifact, width, height, narrow) => {
-      const w = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : Number(width);
-      const h = Number(artifact && artifact.height) > 0 ? Number(artifact.height) : Number(height);
-      return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
-    };
-    const sizeName = AppView._shotsSizeName;
-    // #5063: the change page's side-by-side view crops both sides to the
-    // screen's declared changes (the numbered outlines, with a margin), so
-    // a small change reads large. A crop wider than it is tall stacks the
-    // two sides, before above after, instead of beside each other. The crop
-    // is CSS over the existing stills: no new image. The proposal card has
-    // no side-by-side view, and an HTML spec's screens crop themselves.
-    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
-    const cropOf = (screen) => {
-      const width = Number(screen.width);
-      const hBefore = Number(screen.heightBefore);
-      const hAfter = Number(screen.heightAfter);
-      if (!(width > 0 && hBefore > 0 && hAfter > 0)) return null;
-      // What each change on the screen is about (its frame: the element its
-      // shots agent shot) when the run recorded one, else its outlines.
-      const framesOn = (which) => (Array.isArray(screen.frames) ? screen.frames : [])
-        .filter((frame) => frame && numberOf(frame.story) > 0)
-        .map((frame) => (which === 'base' ? frame.b : frame.a))
-        .filter((box) => Array.isArray(box) && box.length === 4 && box[2] > 0 && box[3] > 0);
-      const unionOf = (which) => {
-        const framed = framesOn(which);
-        const rects = framed.length ? framed : (Array.isArray(screen.regions) ? screen.regions : [])
-          .filter((region) => region && numberOf(region.story) > 0)
-          .map((region) => {
-            const box = which === 'base' ? region.b : region.a;
-            const mark = which === 'base' ? region.bMark : region.aMark;
-            if (Array.isArray(box)) return box;
-            if (Array.isArray(mark)) return [mark[0], mark[1], mark[2], 0];
-            return null;
-          })
-          .filter((box) => Array.isArray(box) && box.length === 4);
-        if (!rects.length) return null;
-        return rects.reduce((u, box) => [
-          Math.min(u[0], box[0]), Math.min(u[1], box[1]),
-          Math.max(u[0] + u[2], box[0] + box[2]) - Math.min(u[0], box[0]),
-          Math.max(u[1] + u[3], box[1] + box[3]) - Math.min(u[1], box[1]),
-        ]);
-      };
-      // A side whose region sits on the other side only (an added row) reads
-      // the same part of its own still.
-      const uBefore = unionOf('base') || unionOf('head');
-      const uAfter = unionOf('head') || unionOf('base');
-      if (!uBefore || !uAfter) return null;
-      const height = Math.min(hBefore, hAfter);
-      // 24px of margin each way; never below half the screen's width or a
-      // fifth of it tall, so a tiny change still shows its surroundings.
-      const cw = clamp(Math.round(Math.max(uBefore[2], uAfter[2]) + 48), Math.round(width / 2), width);
-      const ch = clamp(Math.round(Math.max(uBefore[3], uAfter[3]) + 48), Math.round(width / 5), height);
-      // A crop that would cover most of the screen shows no more than the
-      // whole screen does: keep today's whole-screen layout.
-      if (cw * ch >= 0.8 * width * height) return null;
-      const at = (u, h) => ({
-        x: clamp(Math.round(u[0] + u[2] / 2 - cw / 2), 0, width - cw),
-        y: clamp(Math.round(u[1] + u[3] / 2 - ch / 2), 0, h - ch),
-      });
-      return { cw, ch, stacked: cw > ch, before: at(uBefore, hBefore), after: at(uAfter, hAfter) };
-    };
-
-    // The switches are radios before the screens and labels on each screen,
-    // so the viewer needs no script: the side is one pair for every screen,
-    // the screens one group (the keyboard's arrow keys step both). The ids
-    // come from the proposal, so a repaint renders the same markup. The frame
-    // itself is _shotsViewerHtml, which an HTML spec's screens share.
-    const key = Number.isInteger(sessionId) && sessionId > 0 ? sessionId : 'card';
-
-    // The declared change's own words, how to reach it, what the shots
-    // leave out, and any clips of it at the given sizes.
-    const flowOf = (claim) => (Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((step) => esc(step)).join(' <span aria-hidden="true">→</span> ') : '');
-    const leadIn = (inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`;
-    // What the shots agent did to both builds to reach the change: an API GET
-    // it held unanswered or made fail, or sample files it uploaded. Said
-    // beside the shots, so a loading or error state it caused is never taken
-    // for the app's own.
-    const conditionsOf = (result) => (Array.isArray(result.conditions) ? result.conditions : []).slice(0, 4).map((entry) => {
-      const id = entry && AppView.SHOTS_CONDITION_IDS[entry.kind];
-      if (!id) return '';
-      const files = entry.kind === 'sample_file' && Array.isArray(entry.files)
-        ? entry.files.filter((name) => typeof name === 'string' && name) : [];
-      const request = entry.kind !== 'sample_file' && typeof entry.request === 'string' ? entry.request : '';
-      if (!files.length && !request) return '';
-      const values = files.length ? { files: PlatformI18n.listText(files) } : { request: `GET ${request}` };
-      return `<p data-shots-condition="${attr(entry.kind)}" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich(id, values, [leadIn])}</p>`;
-    }).join('');
-    const noteOf = (claim) => {
-      const result = resultOf(claim);
-      // An unchanged change (its before and after came out the same) is
-      // shown as a ready one, and its note says so.
-      if (!result || (result.status !== 'ready' && result.status !== 'unchanged')) return '';
-      // What the shots agent said its shots leave out of the claim.
-      const shotNote = typeof result.note === 'string' ? result.note : '';
-      return `${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [leadIn])}</p>` : ''}${conditionsOf(result)}`;
-    };
-    const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
-    const clipsOf = (claim, viewports) => viewports.map((viewport) => {
-      // A motion change has a clip per side; older runs stored one paired
-      // before/after recording instead.
-      const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
-      const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
-      const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-      const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
-      const clipIds = {
-        base: { caption: 'changes:shots.clip.beforeCaption', label: 'changes:shots.clip.beforeLabel' },
-        head: { caption: 'changes:shots.clip.afterCaption', label: 'changes:shots.clip.afterLabel' },
-      };
-      const clip = (which, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(clipIds[which].caption, { size: AppView._shotsSizeWord(viewport) })}</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(PlatformI18n.t(clipIds[which].label, { claim: claim.claim || '' }))}" style="${videoStyle}"></video>`
-            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">${PlatformI18n.htmlText('changes:shots.clip.none')}</div>`}
-        </figure>`;
-      if (baseClip || headClip) {
-        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${afterOnly ? '' : clip('base', baseClip, poster('base'))}${clip('head', headClip, poster('head'))}</div>`;
-      }
-      if (pairedClip) {
-        const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
-        return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">${videoKind === 'animation' ? PlatformI18n.htmlText('changes:shots.clip.playAnimation') : PlatformI18n.htmlText('changes:shots.clip.playInteraction')}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${attr(videoKind === 'animation' ? PlatformI18n.t('changes:shots.clip.animationLabel', { claim: claim.claim || '' }) : PlatformI18n.t('changes:shots.clip.interactionLabel', { claim: claim.claim || '' }))}" style="${videoStyle};margin-top:6px"></video></details>`;
-      }
-      return '';
-    }).join('');
-
-    // The run took dark shots (#4459) when any artifact is one: the viewer
-    // then shows them and offers the other mode. Every artifact above is a
-    // light shot, so callers from before the column read as light.
-    const themes = artifacts.some((artifact) => (artifact?.theme || 'light') === 'dark');
-    const screenParts = screens.map((screen) => {
-      const onScreen = onScreenOf(screen);
-      const before = by(screen.shot, screen.viewport, 'base', 'context');
-      const after = by(screen.shot, screen.viewport, 'head', 'context');
-      const absent = !afterOnly && onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
-      const who = seenAs([...new Set(onScreen.map(personaKey))]);
-      const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
-      const described = onScreen.map((claim) => claim.claim || '').join(' ');
-      const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
-      // The crop applies only while both sides show at once, and only on the
-      // change page's card: a Before or After pick keeps the whole screen, a
-      // new app's first version has no before to crop, and the proposal card
-      // has no side-by-side view.
-      const crop = thread && !afterOnly && before && after ? cropOf(screen) : null;
-      const side = (which, artifact, altId) => {
-        const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
-        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
-        const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        const alt = `alt="${attr(PlatformI18n.t(altId, { changes: described }))}"`;
-        // The same screen in the other mode (#4459), beside the light one;
-        // the theme pick and the stylesheet decide which shows. A side with
-        // no dark shot keeps its light one in both modes.
-        const dark = themes
-          ? by(screen.shot, screen.viewport, which === 'base' ? 'base' : 'head', 'context', null, 'dark')
-          : null;
-        // #6825: the still takes the smallest copy sharp for this slot (its
-        // stage is at most about 640 px wide), over its blurred preview, so
-        // the picture arrives sooner and nothing moves when it lands.
-        // Behind it, the thumbnail over the blurred preview, so the slot goes
-        // blur, then soft, then sharp.
-        const still = (artifact, cls) => {
-          const set = AppView._shotSrcSet(artifact);
-          const layers = [AppView._shotThumb(artifact), AppView._shotPlaceholder(artifact)].filter(Boolean);
-          const each = (value) => layers.map(() => value).join(',');
-          const style = layers.length ? ` style="${attr(`background-image:${layers.map((one) => `url("${one}")`).join(',')};background-size:${each('cover')};background-position:${each('center')}`)}"` : '';
-          // The slot's width, from the usable box (#THE USABLE BOX): the page
-          // less its own margins, up to the stage's 640 px.
-          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';
-          // The preview is this box's own background, so the box is fixed
-          // before a byte arrives: its width and height are the still's
-          // pixels, and the decoded picture covers the preview in place. If
-          // no copy loads at all, the preview gives way to the full-size
-          // picture rather than staying blurred forever.
-          const box = `${Number(artifact.width) > 0 ? ` width="${Math.round(Number(artifact.width))}"` : ''}${Number(artifact.height) > 0 ? ` height="${Math.round(Number(artifact.height))}"` : ''}`;
-          const fallback = set ? ` onerror="this.onerror=null;this.removeAttribute('srcset');this.removeAttribute('sizes');this.style.backgroundImage='none'"` : '';
-          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets}${box} ${alt} class="${cls}" loading="lazy"${style}${fallback}>`;
-        };
-        const inner = `${still(artifact, 'shots-img-light')}${dark ? still(dark, 'shots-img-dark') : ''}${drawn[which]}`;
-        if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
-        const at = which === 'base' ? crop.before : crop.after;
-        const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;
-        const style = `--shots-shape:${shape};--shots-crop-shape:${crop.cw} / ${crop.ch};--shots-crop-x:${pct(-at.x, crop.cw)};--shots-crop-y:${pct(-at.y, crop.ch)};--shots-crop-w:${pct(screen.width, crop.cw)};--shots-crop-h:${pct(which === 'base' ? screen.heightBefore : screen.heightAfter, crop.ch)}`;
-        return `<span class="shots-flip-side ${cls}" data-shots-crop="1" style="${style}"><span class="shots-crop">${inner}</span></span>`;
-      };
-      const changes = onScreen.map((claim) => {
-        const n = numberOf(claim.id);
-        const flow = thread ? '' : flowOf(claim);
-        return `<li class="shots-change" data-shots-n="${n}" data-shots-change="${attr(claim.id || '')}"><span class="shots-change-n">${n}</span>
-            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
-      }).join('');
-      // A dashed outline or line needs its words the first time it shows.
-      const shown = drawn.base + drawn.head;
-      const keys = [
-        shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
-        shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
-      ].join('');
-      // The still's own pixels over its density: the screen's size in CSS
-      // pixels, which is what the screen was declared at.
-      const density = Number(after && after.density) >= 1 ? Number(after.density) : 1;
-      const width = Number(after && after.width) / density;
-      const height = Number(after && after.height) / density;
-      const meta = width > 0 && height > 0
-        ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
-        : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
-      return {
-        viewport: screen.viewport,
-        afterHtml: side('head', after, 'changes:shots.screen.altAfter'),
-        beforeHtml: side('base', before, absent ? 'changes:shots.screen.altBeforeAbsent' : 'changes:shots.screen.altBefore'),
-        afterChip: PlatformI18n.t('changes:shots.viewer.chipAfter'),
-        beforeChip: absent ? PlatformI18n.t('changes:shots.viewer.chipBeforeAbsent') : PlatformI18n.t('changes:shots.viewer.chipBefore'),
-        stacked: !!crop && crop.stacked,
-        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${meta}</div>`}`,
-      };
-    });
-
-    // What no screen above describes: a change the shots agent skipped, one
-    // with no screen of its own, and clips at a size it has no screen for.
-    const shownAt = new Set();
-    for (const screen of screens) for (const claim of onScreenOf(screen)) shownAt.add(`${claim.id}|${screen.viewport}`);
-    const items = claims.map((claim) => {
-      const result = resultOf(claim);
-      const n = numberOf(claim.id);
-      if (failed(claim)) {
-        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
-          <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.claim.failedBadge')}</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.failedReason'))}</p></div>
-        </li>`;
-      }
-      if (skipped(claim)) {
-        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
-          <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.skippedBadge')}</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.skippedReason'))}</p></div>
-        </li>`;
-      }
-      const viewports = viewportsOf(claim);
-      const unseen = viewports.filter((viewport) => !shownAt.has(`${claim.id}|${viewport}`));
-      const clips = clipsOf(claim, unseen);
-      if (unseen.length < viewports.length && !clips) return '';
-      const flow = thread ? '' : flowOf(claim);
-      return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="ready" class="shots-claim">
-        <span class="shots-claim-n">${n}</span>
-        <div class="min-w-0 flex-1">
-          <strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>
-          ${thread ? '' : `<div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.where', { sizes: PlatformI18n.listText(viewports.map((viewport) => AppView._shotsSizeWord(viewport))), persona: persona(claim) })}</div>`}
-          ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
-          ${noteOf(claim)}
-          ${clips}
-        </div>
-      </li>`;
-    }).filter(Boolean);
-    if (!screenParts.length && !claims.some(skipped)) {
-      return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.card.missingDetails')}</section>`;
-    }
-    const withClips = artifacts.some((artifact) => artifact?.variant === 'animation');
-    const lookCopy = previousVersion
-      ? PlatformI18n.htmlText('changes:shots.card.previousIntro')
-      : afterOnly
-      ? PlatformI18n.htmlText(withClips ? 'changes:shots.card.introNewAppClips' : 'changes:shots.card.introNewApp')
-      : PlatformI18n.htmlText(withClips ? 'changes:shots.card.introClips' : 'changes:shots.card.intro');
-    if (detailsOnly) {
-      // Shot details (#4455): the steps and sizes the card leaves out.
-      const rows = claims.map((claim) => {
-        const flow = flowOf(claim);
-        return `<li class="dev-shot-details-claim" data-shots-detail="${attr(claim.id || '')}"><strong>${esc(claim.claim || '')}</strong>
-          <div class="dev-shot-details-meta">${PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.listText(viewportsOf(claim).map(sizeName)), second: seenAs([personaKey(claim)]) })}</div>
-          ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
-      }).join('');
-      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">${PlatformI18n.htmlText('changes:shots.details.builds')} ${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span></p>`;
-    }
-    const viewer = AppView._shotsViewerHtml(thread
-      ? { key, screens: screenParts, sideBySide: true, autoSide: true, themes, className: 'shots-viewer-spec dev-change-viewer', barLead: `<span class="dev-change-card-name">${PlatformI18n.htmlText('changes:shots.thread.title')}</span>` }
-      : { key, screens: screenParts, themes });
-    // What the shots agent noticed broken on the after build besides the
-    // declared changes (note_problem): quiet lines under a small-caps label,
-    // each saying where it shows and whether the before build has it too.
-    // They are not part of the change and decide nothing.
-    const notices = (Array.isArray(shots.shotNotices) ? shots.shotNotices : [])
-      .filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()).slice(0, 5);
-    // The meta line's facts are each a whole message, joined by the pair.
-    const noticedTitle = PlatformI18n.htmlText('changes:shots.noticed.title');
-    const noticed = notices.length
-      ? `<section class="shots-noticed" data-shots-noticed="${notices.length}" aria-label="${noticedTitle}"><h3 class="shots-noticed-head">${noticedTitle}</h3><ul class="shots-noticed-list">${notices.map((entry) => {
-        const n = numberOf(entry.change);
-        const also = entry.alsoBefore === true ? 'true' : entry.alsoBefore === false ? 'false' : 'unknown';
-        const meta = [
-          claims.length > 1 && n > 0 ? PlatformI18n.t('changes:shots.noticed.change', { number: n }) : '',
-          sizeName(entry.screen),
-          also === 'true' ? PlatformI18n.t('changes:shots.noticed.alsoBefore') : also === 'false' ? PlatformI18n.t('changes:shots.noticed.notBefore') : '',
-        ].filter(Boolean).reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second }));
-        return `<li class="shots-noticed-item" data-shots-notice="${attr(entry.change || '')}" data-also-before="${also}"><p class="shots-noticed-text">${esc(entry.text.trim())}</p><div class="shots-noticed-meta">${esc(meta)}</div></li>`;
-      }).join('')}</ul></section>`
-      : '';
-    if (thread) {
-      return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body"${afterOnly ? ' data-shots-after-only="1"' : ''}>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
-    }
-    // Ready shots can be taken again too: after better steps or hints, or to
-    // outline a run from before outlines were worked out. The route lets only
-    // the author or an app manager do it. The previous version's are not
-    // this version's to take again: its own state above says how.
-    const retake = Number.isInteger(sessionId) && sessionId > 0 && !previousVersion
-      ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
-      : '';
-    return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"${afterOnly ? ' data-shots-after-only="1"' : ''}><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
-      <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">${PlatformI18n.htmlText('changes:shots.card.details')}</summary>
-        <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span>${shotResults.length ? `<span>${PlatformI18n.htmlText('changes:shots.card.takenByAgent')}</span>` : ''}</div>
-      </details>${retake}</div></section>`;
-  },
-
-  // Authenticated shots uses full relative URLs rather than public
-  // artifact ids. Re-validate them at the DOM boundary before placing them
-  // in the React-owned comparison overlay.
-  openShotsComparison(triggerEl) {
-    if (!triggerEl) return;
-    const d = triggerEl.dataset || {};
-    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
-    const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
-    const head = urlOk(d.headUrl) ? d.headUrl : '';
-    if (!before && !head) return;
-    const named = d.claim || PlatformI18n.t('changes:shots.compare.fallbackTitle');
-    const label = d.viewport
-      ? PlatformI18n.t('changes:facts.pair', { first: named, second: AppView._shotsSizeWord(d.viewport) })
-      : named;
-    const baseAbsent = d.baseAbsent === '1';
-    const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
-    const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
-    // Each side's heading, the picture's description with and without the
-    // change's own words, and what stands in for a missing picture.
-    const sides = {
-      before: { heading: 'changes:shots.compare.before', alt: 'changes:shots.compare.altBefore', altUnnamed: 'changes:shots.compare.altBeforeUnnamed', missing: 'changes:shots.compare.noShot' },
-      beforeAbsent: { heading: 'changes:shots.compare.beforeAbsent', alt: 'changes:shots.compare.altBeforeAbsent', altUnnamed: 'changes:shots.compare.altBeforeAbsentUnnamed', missing: 'changes:shots.compare.notThereYet' },
-      after: { heading: 'changes:shots.compare.after', alt: 'changes:shots.compare.altAfter', altUnnamed: 'changes:shots.compare.altAfterUnnamed', missing: 'changes:shots.compare.noShot' },
-    };
-    const column = (side, url) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(sides[side].heading)}</div>${url
-      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(d.claim ? PlatformI18n.t(sides[side].alt, { claim: d.claim }) : PlatformI18n.t(sides[side].altUnnamed))}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.compare.openOriginal')}</a>`
-      : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${PlatformI18n.htmlText(sides[side].missing)}</div>`}</div>`;
-    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'beforeAbsent' : 'before', before)}${column('after', head)}</div>`;
-    const compare = AppView._visualCompare();
-    compare.open({ label, bodyHtml, openedAt: Date.now() });
-    compare.setHandlers({
-      onBack: () => AppView.closeVisualComparison(),
-      onBackdrop: () => {
-        if (AppView._visualCompareDismissGuarded()) return;
-        AppView.closeVisualComparison();
-      },
-    });
-    AppView._visualCompareKeyHandler = (event) => {
-      if (event.key === 'Escape') AppView.closeVisualComparison();
-    };
-    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   async rerunShots(sessionId, button) {
@@ -31250,7 +30615,7 @@ const AppView = {
       pending: !known && Number.isInteger(id) && id > 0,
     });
     staging.setVote(null);
-    staging.setShots('');
+    staging.setShots(null);
     try {
       staging.setNoteSeen(localStorage.getItem(AppView.PREVIEW_NOTE_KEY) === '1');
     } catch (_) {
@@ -31394,9 +30759,9 @@ const AppView = {
     AppView._rememberPreviewChange(id, row);
     try {
       const view = row.shots && typeof row.shots === 'object' ? AppView._shotsView(row.shots) : null;
-      staging.setShots(view && view.verified ? AppView.shotsHtml(row.shots, { sessionId: id, thread: true }) : '');
+      staging.setShots(view && view.verified ? { shots: row.shots, sessionId: Number(id) } : null);
     } catch (_) {
-      staging.setShots('');
+      staging.setShots(null);
     }
   },
 

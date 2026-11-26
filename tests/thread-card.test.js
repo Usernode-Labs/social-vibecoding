@@ -118,11 +118,11 @@ test('in a side panel the thread is the same three cards, and the picture is one
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
   assert.doesNotMatch(brand, /--thread-ground-look/, 'the brand look no longer paints the sheet\'s ground');
   assert.match(brand, /\.in-side-panel\.side-panel-beside-ai body:has\(\.dev-thread-card\) \{ background: var\(--bl-page\) !important; \}/);
-  // The picture: the size switch and the light and dark flip are the
-  // expanded viewer's; the caption is one quiet line.
-  assert.match(css, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.shots-seg-size, \.shots-theme-flip\) \{ display: none; \}/);
+  // The picture: one picture with one switch (the slider), and under it each
+  // change is one quiet line; the expanded viewer says more.
   assert.match(css, /\.dev-thread-tiles-legend \.shots-change strong \{[^}]*font-weight: 400;/);
-  assert.match(css, /\.dev-thread-tiles-legend \.shots-key \{ display: none; \}/);
+  assert.match(read('frontend/src/features/review-flow/shots-viewer.tsx'),
+    /className=\{expanded \|\| steps \? 'shots-changes-wrap' : 'shots-changes-wrap dev-thread-tiles-legend'\}/);
   // 26 Nov 2026 (#7180): the caption is never squeezed to a column of single
   // letters by a row of tiles. The row wraps and the caption asks for 12rem
   // of its own, so in a side panel it takes the line under the tiles.
@@ -520,18 +520,18 @@ test('a request with a summary shows it on the card, says what it was written fr
   assert.match(av, /summary: issue\.summary && typeof issue\.summary\.text === 'string' && issue\.summary\.text\.trim\(\)/);
 });
 
-test('the card\'s picture is the viewer read as one picture: After first, tiles for its screens, the legend beside them', () => {
+test('the card\'s picture is the one before & after viewer: the slider, tiles for its screens, the changes beside them', () => {
   const change = read(CHANGE);
-  assert.match(change, /if \(auto && after\) after\.checked = true;/, 'it starts on After, not side by side');
-  assert.match(change, /pick\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/, 'a tile presses the viewer\'s own screen pick');
   assert.match(change, /<ShotsCard s=\{v\.shots\} single=\{cardLook\} status=\{v\.status\?\.key \|\| null\} \/>/);
-  assert.match(change, /className="dev-thread-tile"\s+aria-pressed=\{i === at\}/);
+  const viewer = read('frontend/src/features/review-flow/shots-viewer.tsx');
+  assert.match(viewer, /className="dev-thread-tile"\s+data-shots-screen=\{one\.viewport\}\s+aria-pressed=\{i === at\}/);
+  assert.match(viewer, /onClick=\{\(\) => setPicked\(i\)\}/, 'a tile picks its screen');
   assert.equal(message('project:topic.card.shots.screenOf', { index: 2, total: 3 }), '2 of 3 screens');
+  // No viewer of radios and labels is laid over the picture any more.
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf("THE BELL'S SHEET"));
-  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.dev-change-card-name, \.shots-seg-both, \.shots-screen-nav, \.shots-view-notes\) \{ display: none; \}/,
-    'side by side, the pager and the viewer\'s own legend give way; expanded to the window it is its usual self');
-  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) \.shots-bar \{\s*position: absolute;/, 'the switch lies over the picture');
+  assert.ok(block.length > 0);
+  assert.doesNotMatch(block, /\.dev-change-viewer/);
 });
 
 // ── 17 Nov 2026: closer to the prototype ────────────────────────────────
@@ -663,26 +663,23 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   assert.doesNotMatch(css, /:has\(\.dev-thread-float\) \.dev-request-rail \{/, 'the row is in the card\'s column, beside the timeline');
 });
 
-test('the picture\'s chip says what the side is for this change', () => {
+test('the picture\'s two sides say what each is for this change', () => {
   const change = read(CHANGE);
-  assert.match(change, /data-thread-chips=\{chips \? '' : undefined\}/);
-  assert.match(change, /'--thread-chip-after': JSON\.stringify\(chips\.after\), '--thread-chip-before': JSON\.stringify\(chips\.before\)/);
-  assert.equal(message('project:topic.card.shots.chipIfPasses'), 'If it passes · After');
-  assert.equal(message('project:topic.card.shots.chipTodayBefore'), 'Today · Before');
+  // Live or closed, the page's own words; up for a vote, the slider's own.
+  assert.match(change, /\? \{ before: t\('project:topic\.card\.shots\.chipWas'\), after: t\('project:topic\.card\.shots\.chipLive'\) \}/);
+  assert.match(change, /\? \{ before: t\('project:topic\.card\.shots\.chipToday'\), after: t\('project:topic\.card\.shots\.chipProposed'\) \}\s*: null;/);
+  assert.match(change, /<ShotsViewer source=\{source\} captions=\{chips\} onExpand=\{expand\} \/>/);
   assert.equal(message('project:topic.card.shots.chipLive'), 'Live now');
-  const css = read('public/css/app.css');
-  assert.match(css, /\.shots-flip-chip-after::after \{ content: var\(--thread-chip-after\); \}/);
-  assert.match(css, /\.shots-flip-chip-before::after \{ content: var\(--thread-chip-before\); \}/);
+  assert.equal(message('communities:review.compare.captionAfter'), '<0>If it passes ·</0> After');
 });
 
-test('a run that worked out its screens is drawn with the Needs you slider, not the tinted viewer', () => {
-  const PICTURE = 'frontend/src/features/dev-board/topic/thread-picture.tsx';
+test('a verified run is drawn with the Needs you slider, not the tinted viewer', () => {
+  const PICTURE = 'frontend/src/features/review-flow/shots-viewer.tsx';
   const change = read(CHANGE);
-  // The card look hands such a run to the slider; a run without screens keeps the viewer.
-  assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
-  assert.match(change, /return <ThreadPicture s=\{s\} captions=\{voting \? null : chips\} \/>;/);
+  // Every verified run is the slider's: one viewer, wherever it is drawn.
+  assert.match(change, /if \(s\.state === 'verified' && s\.source\) \{/);
   const picture = read(PICTURE);
-  assert.match(picture, /import \{ CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  assert.match(picture, /import \{ CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips \} from '\.\/compare';/);
   // Phone review #27: the caption's strip and the switch's are part of the
   // picture's height, and the screen is placed between them.
   assert.match(picture, /return \{ height: room \+ CAP_STRIP \+ FOOT_STRIP, place: withinStrips\(placeBox\(screen, focus, \{ w: width, h: room \}, 1\)\) \};/);
@@ -690,13 +687,13 @@ test('a run that worked out its screens is drawn with the Needs you slider, not 
   // before the shots come in and around a screen narrower than the picture.
   assert.match(picture, /ground="var\(--thread-well, var\(--messages-surface-2\)\)"/, 'the ground is the well\'s, never a tint');
   assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
-  assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
+  assert.match(read('frontend/src/features/dev-board/topic/shots-detail.ts'), /kind: 'shots',\s*ref: \{ changeId: source\.sessionId \}/, 'Expand opens the same viewer in the detail column');
   // The slider prints the page's own words for a change that is live or closed.
   const compare = read('frontend/src/features/review-flow/compare.tsx');
   assert.match(compare, /\{captions \? captions\.after : <RichMessage id="communities:review\.compare\.captionAfter"/);
   assert.match(compare, /\{captions \? captions\.before : <RichMessage id="communities:review\.compare\.captionBefore"/);
-  // The page's model carries the screens.
-  assert.match(read('public/js/app-view.js'), /return html \? \{ state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number\(item\.id\) \|\| null \} : null;/);
+  // The page's model carries the shots themselves, which the viewer shapes as Needs you does.
+  assert.match(read('public/js/app-view.js'), /return \{ state: 'verified', source: \{ shots, sessionId: Number\(item\.id\) \}, line: null, thumbs, changeId: Number\(item\.id\) \|\| null \};/);
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-thread-compare \{\s*--rf-black: var\(--text-primary\); --rf-cream: var\(--bg-primary\); --rf-line: var\(--app-sheet-line\);/);
 

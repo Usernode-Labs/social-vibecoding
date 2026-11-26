@@ -13,7 +13,7 @@
 // - A copy as wide as the original takes its place in srcset, so the PNG is
 //   only ever the fallback.
 // - The review page's plates and the change page's tiles load a copy their
-//   own size, not the whole PNG (review-flow/model.ts, thread-picture.tsx).
+//   own size, not the whole PNG (review-flow/model.ts, review-flow/shots-viewer.tsx).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,7 +25,7 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const compare = loadTsx('frontend/src/features/review-flow/compare.tsx');
 const model = loadTsx('frontend/src/features/review-flow/model.ts');
-const picture = loadTsx('frontend/src/features/dev-board/topic/thread-picture.tsx');
+const picture = loadTsx('frontend/src/features/review-flow/shots-viewer.tsx');
 const shotImg = loadTsx('frontend/src/lib/shot-img.ts');
 
 // A screen-like PNG: a header band, rows of "text" and margins (as
@@ -202,7 +202,10 @@ test('the change page\'s tiles load the thumbnail, not the PNG', async () => {
   const { shots } = await shotsRow();
   const screens = AppView._workshopVisuals(null, shots).screens;
   const two = [screens[0], { ...screens[0], viewport: 'mobile-2' }];
-  const html = renderToHtml(createElement(picture.ThreadPicture, { s: { screens: two, changes: [] } }));
+  const html = renderToHtml(createElement(picture.ShotsViewer, {
+    source: { shots, sessionId: Number(/proposals\/(\d+)\//.exec(screens[0].after.url)[1]) },
+    shape: () => ({ screens: two }),
+  }));
   const tiles = html.match(/<button[^>]*class="dev-thread-tile"[^>]*>\s*<img[^>]*>/g) || [];
   assert.equal(tiles.length, 2);
   for (const tile of tiles) {
@@ -210,9 +213,11 @@ test('the change page\'s tiles load the thumbnail, not the PNG', async () => {
   }
 });
 
-test('the full viewer draws the same layers', () => {
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
-  assert.match(src, /const layers = \[AppView\._shotThumb\(artifact\), AppView\._shotPlaceholder\(artifact\)\]\.filter\(Boolean\);/);
+test('the expanded viewer is the same slider, drawing the same layers', () => {
+  // One viewer everywhere (review-flow/shots-viewer.tsx): expanded, it is the
+  // same slider, whose stills draw the thumbnail over the blurred preview.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'frontend/src/features/review-flow/compare.tsx'), 'utf8');
+  assert.match(src, /\.\.\.\(shot \? shotPreview\(shot, \{ stretch: placed \}\) : null\),/);
   assert.equal(AppView._shotThumb({ sizes: [{ size: 'thumb', url: `${base('c')}?size=thumb`, width: 277 }] }), `${base('c')}?size=thumb`);
   assert.equal(AppView._shotThumb({ sizes: [{ size: 'thumb', url: 'https://example.com/x.webp', width: 277 }] }), '');
   assert.equal(AppView._shotThumb({}), '');
