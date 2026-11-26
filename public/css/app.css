@@ -36450,6 +36450,20 @@ html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:hover:not(:disab
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:disabled { opacity: 0.45; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach svg { width: 18px; height: 18px; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-staged { flex-basis: 100%; padding-block-end: 4px; }
+/* #2884, as the chat drew it: a run of card-only posts is its first card,
+   then "… N more" under it until opened. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run { display: flex; flex-direction: column; gap: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run-more {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--one-quiet);
+  color: var(--one-ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
 /* A visitor's "Start a post…": the box as a member sees it, "Sign in to
    post" at its far end; the whole of it asks them to sign in. */
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in-door { width: auto; align-items: center; cursor: pointer; }

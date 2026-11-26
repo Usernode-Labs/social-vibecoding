@@ -86,6 +86,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { messageStamp, shortDate } from '../../../lib/timestamp';
 import { enterSends, isTouchInput } from '../../../lib/enter-sends';
 import { watch as watchLiveReads } from '../../../lib/live-reads';
+import { cardRunLabel, cardRunStarts } from '../../../lib/card-runs';
 import { useStoreState } from '../../../lib/use-store-state';
 import { MAX_ATTACHMENTS, stageFiles } from '../../attachments/limits';
 import { PendingStripRows, type PendingAttachmentView } from '../../attachments/pending-strip';
@@ -777,6 +778,7 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   const state = useStoreState(feed);
   const [sort, setSort] = useState<DiscussionSort>('newest');
   const [limit, setLimit] = useState(POSTS_SHOWN);
+  const [openRuns, setOpenRuns] = useState<ReadonlySet<string>>(() => new Set());
   const items = useMemo(() => sortItems(feed.items(), mode === 'preview' ? 'newest' : sort), [feed, state, sort, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const startRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -867,6 +869,7 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   }
 
   const shown = items.slice(0, limit);
+  const runs = cardRunStarts(shown, isCardPost);
   const canMore = items.length > limit || (sort === 'replies' ? state.rankedMore : feed.morePosts());
   return (
     <>
@@ -896,9 +899,28 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
         <FeedLoading status={state.status} onRetry={() => void feed.load()} rows={3} />
       ) : shown.length ? (
         <div className="dh-list" data-ws-discussion-posts={String(shown.length)}>
-          {shown.map((item) => (
-            <Thread key={item.key} item={item} feed={feed} slug={slug} channel={channel} viewer={viewer} readId={state.readId} busy={state.busy} opened={state.opened} marked={marked} />
-          ))}
+          {shown.map((item, at) => {
+            // #2884, as the chat drew it: a run of posts that only share a
+            // card is its first card and "… N more", until opened.
+            const runAt = [...runs.entries()].find(([start, length]) => at > start && at < start + length);
+            if (runAt && !openRuns.has(shown[runAt[0]].key)) return null;
+            const run = runs.get(at);
+            const thread = <Thread key={item.key} item={item} feed={feed} slug={slug} channel={channel} viewer={viewer} readId={state.readId} busy={state.busy} opened={state.opened} marked={marked} />;
+            if (!run || openRuns.has(item.key)) return thread;
+            return (
+              <div key={item.key} className="dh-card-run" data-ws-discussion-card-run={String(run)}>
+                {thread}
+                <button
+                  type="button"
+                  className="dh-card-run-more"
+                  data-ws-discussion-card-run-more=""
+                  onClick={() => setOpenRuns((was) => new Set([...was, item.key]))}
+                >
+                  {cardRunLabel(run - 1)}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="dh-empty" data-ws-discussion-empty="">{t('project:hub.discussion.empty')}</p>
@@ -1215,6 +1237,13 @@ function PostWords({ item, clamp = false }: { item: DiscussionItem; clamp?: bool
   const t = useMessages('project');
   if (item.kind === 'earlier') return <p className={clamp ? 'dh-words dh-clamp' : 'dh-words'}>{t('project:hub.discussion.earlier.body')}</p>;
   return <Words said={item.root} clamp={clamp} className="dh-words" />;
+}
+
+/** A post that only shares a card (a plan, a request, a change): no words, no files, no replies. */
+export function isCardPost(item: DiscussionItem): boolean {
+  if (item.kind !== 'post' || item.replyCount > 0) return false;
+  const said = item.root;
+  return !said.deleted && !said.content.trim() && !said.attachments.length && (!!said.spec || said.cards.length > 0);
 }
 
 /** Which project the room is, and whether its reader may only read (a visitor): for what the rows draw. */

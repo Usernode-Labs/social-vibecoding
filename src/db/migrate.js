@@ -618,13 +618,15 @@ const STAGING_SEEDS = Object.freeze([
   // #7170: one fake request in an emoji project, so a thread header's tile can
   // be shot with an emoji in it. Obviously fake, idempotent.
   stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
-  // The hub's Discussion (26 Nov 2026): two fake private projects with a
-  // #general to draw as posts, one of them folded into "Earlier in #general".
+  // The hub's Discussion (26 Nov 2026): two fake private projects with
+  // posts to draw, one of them folded into "Earlier discussion".
   stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
   // The signed-out project page's shots (26 Nov 2026): one obviously fake
   // public project busy enough to show who is around, changes approved by
   // several people and by its creator alone, and Top contributors.
   stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
+  // Its Discussion, for a visitor to read (posts, replies, a picture).
+  stagingSeed('seedStagingGuestDiscussion', async (pool, config) => { await seedStagingGuestDiscussion(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2570,6 +2572,11 @@ async function seedStagingDiscussion(pool) {
            ON CONFLICT DO NOTHING`, [messageId, people[name], emoji]);
       }
     };
+    // A post or reply with files (the follow-up's attachments): the files
+    // are obviously fake, a placeholder picture and a short text file.
+    const sayWith = (appId, who, content, ago, files, rootId = null) => seedDiscussionFiles(tx, {
+      appId, userId: people[who], content: content ? `Staging demo: ${content}` : '', ago, files, rootId,
+    });
     const club = await project('staging-demo-discussion', 'Staging demo: Book Club', '📖');
     if (club) {
       const library = await say(club, 'dev', 'the library has four copies of Piranesi on hold for us. Pick up by Friday.', 26 * 60);
@@ -2590,6 +2597,21 @@ async function seedStagingDiscussion(pool) {
       const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
       await react(chairs, '🙌', ['priya', 'ana']);
       await say(club, 'ana', 'In, and I will bring dessert.', 40, host);
+      // The follow-up's states: formatting, files, a deleted post with its
+      // replies, and a run of shared plans the Discussion folds (#2884).
+      await say(club, 'marcus', '**Reading for March:** _Klara and the Sun_. Bring one question each.', 120);
+      const photo = await sayWith(club, 'jo', 'the reading corner is ready.', 90, [SEED_PICTURE]);
+      await react(photo, '😍', ['ana', 'priya']);
+      await sayWith(club, 'priya', 'here is the schedule for the spring.', 85, [SEED_TEXT_FILE], photo);
+      const gone = await say(club, 'dev', 'Moving the meeting to Thursday.', 70);
+      await say(club, 'ana', 'Thursday works for me.', 65, gone);
+      await tx.query("UPDATE chat_messages SET deleted_at = NOW(), content = '' WHERE id = $1", [gone]);
+      for (let i = 0; i < 4; i += 1) {
+        await tx.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
+           VALUES ($1, $2, '', 'spec_share', $3::jsonb, NOW() - make_interval(mins => $4::int))`,
+          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), 30 * 60 - i]);
+      }
     }
     const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
     if (busy) {
@@ -2613,11 +2635,89 @@ async function seedStagingDiscussion(pool) {
       await react(route, '👍', ['jo', 'ana']);
       await say(busy, 'jo', 'Yes please, the hills are wrecking my knees.', null, route);
       await say(busy, 'priya', 'Race day photos are up on the shared album.', null);
+      // The Earlier post's own reactions, on the project's anchor.
+      for (const name of ['jo', 'ana', 'dev']) {
+        await tx.query(
+          `INSERT INTO discussion_earlier_reactions (app_id, user_id, emoji)
+           SELECT a.id, $2, '❤️' FROM apps a WHERE a.slug = $1 ON CONFLICT DO NOTHING`,
+          ['staging-demo-discussion-busy', people[name]]);
+      }
     }
     await tx.query('COMMIT');
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging discussion seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// An obviously fake picture and text file for the Discussion's seeds.
+const SEED_PICTURE = Object.freeze({ kind: 'image', filename: 'staging-demo-reading-corner.png', contentType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACMCAIAAADN17N/AAAB30lEQVR42u3coQ3AMAxFQY+dSTpDcGcoLOwYBRmh1CTQxD3pD/BkHXaczyravN+iada8Wzi0ZqAdWjPQcGgGGg7NQGsG2qE1A+3QmoGGQzPQcGgGWjPQDq0ZaIfWDDQcmoGGQzPQmoF2aM1AO7RmoOHQDLRmzUBrBtqhNQPt0JqBhkMz0Jo1A60ZaIfWDLRDawYaDs1Aa9acQDuH5k7NQGsG2qE1Aw2HZqDh0Ay0ZqAdWjPQDq0ZaDg0Aw2HZqA1A+3QmoF2aM1Aw6EZaDg0A60ZaIfWDLRDawYaDs1Aw6EZaM1AO7RmoB1aM9BwaAZas2agNQPt0JqBdmjNQMOhGWjNmjNo59DsP7RDawYaDs1Aw6EZaM1AO7RmoB1aM9BwaAYaDs1AawbaoTUD7dCagYZDM9BwaAZaM9AOrRloh9YMNByagdasGWjNQDu0ZqAdWjPQcGgGWrNmoDUD7dCagXZozUDDoRlozZqB1twV9HENszYD2oA2A9oMaDOgDWgzoM2ANgPaDGgD2gxoM6DNgDYD2oA2A9oMaDOgzYA2oM2ANgPaDGgzoA1oM6DNgDYD2gxoA9oMaDOgzYA2A9qANgPaDGgzoA1oVzCgzYA2A9oMaAPaDGgzoM2ANgPafrcPyHxo0DKcOWgAAAAASUVORK5CYII=' });
+const SEED_TEXT_FILE = Object.freeze({ kind: 'text', filename: 'staging-demo-schedule.txt', contentType: 'text/plain', text: 'Staging demo: obviously fake.\nMarch 14: Klara and the Sun\nApril 11: Piranesi\n' });
+
+/**
+ * A post or a reply carrying files, as the chat's upload and send write them
+ * (chat_message_attachments rows linked to the message, and the message's
+ * metadata.attachments). Returns the message's id.
+ */
+async function seedDiscussionFiles(db, { appId, userId, content, ago, files, rootId = null }) {
+  const crypto = require('crypto');
+  const rows = files.map((file) => {
+    const data = file.base64 ? Buffer.from(file.base64, 'base64') : Buffer.from(file.text || '', 'utf8');
+    return { ...file, id: crypto.randomBytes(16).toString('hex'), data };
+  });
+  const metadata = { attachments: rows.map((f) => ({ id: f.id, kind: f.kind, filename: f.filename, sizeBytes: f.data.length })) };
+  const id = (await db.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, CASE WHEN $7::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $7::int) END)
+     RETURNING id`,
+    [appId, userId, content, rootId ? 'message' : null, rootId, JSON.stringify(metadata), ago])).rows[0].id;
+  for (const f of rows) {
+    await db.query(
+      `INSERT INTO chat_message_attachments (id, app_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [f.id, appId, id, userId, f.kind, f.filename, f.contentType, f.data.length, f.data]);
+  }
+  return id;
+}
+
+// The signed-out project page's Discussion (26 Nov 2026): the busy public
+// project seedStagingGuestProjectPage makes has no posts, so a few are
+// written there by its own fake people, in its own "[Mock]" voice: posts
+// with replies, reactions and a picture, for a visitor to read. Idempotent:
+// a project that has any message is left alone.
+async function seedStagingGuestDiscussion(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const app = (await tx.query("SELECT id, created_by FROM apps WHERE slug = 'staging-guest-page-busy'")).rows[0];
+    if (!app) { await tx.query('ROLLBACK'); return seedSkipped('no project staging-guest-page-busy'); }
+    if ((await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0]) {
+      await tx.query('ROLLBACK');
+      return seedSkipped('staging-guest-page-busy already has a discussion');
+    }
+    const people = (await tx.query(
+      `SELECT c.user_id FROM app_collaborators c WHERE c.app_id = $1 ORDER BY c.user_id LIMIT 4`, [app.id])).rows.map((r) => r.user_id);
+    const [a, b, c, d] = [app.created_by, ...people].filter(Boolean);
+    if (!a || !b) { await tx.query('ROLLBACK'); return seedSkipped('staging-guest-page-busy has too few people'); }
+    const say = async (who, content, ago, rootId = null) => (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() - make_interval(mins => $6::int)) RETURNING id`,
+      [app.id, who, `[Mock] ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+    const react = (messageId, emoji, who) => Promise.all(who.filter(Boolean).map((u) => tx.query(
+      'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [messageId, u, emoji])));
+    const welcome = await say(a, 'Welcome, everyone. Post what you would like this project to do next.', 600);
+    await react(welcome, '👋', [b, c, d]);
+    const idea = await say(b, 'Could the list remember where I left off?', 240);
+    await say(c || a, 'Yes please, I lose my place every time.', 230, idea);
+    await say(a, 'Put it up as a change and we can vote on it.', 220, idea);
+    await react(idea, '👍', [a, c, d]);
+    const picture = await seedDiscussionFiles(tx, { appId: app.id, userId: d || b, content: '[Mock] A sketch of the new layout.', ago: 60, files: [SEED_PICTURE] });
+    await react(picture, '🎉', [a, b]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging guest discussion seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
