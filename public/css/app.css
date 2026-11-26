@@ -32555,6 +32555,11 @@ body {
     flex: none; min-height: 40px; padding-block: 6px 6px; padding-inline: 7px 13px; gap: 7px; cursor: pointer;
     border-radius: 999px; background: var(--state-neutral-bg);
   }
+  /* Request 7029: a tab is drawn 40px tall and pressed at 44. The strip
+     clips what is past it, so its 2px of room above is padding here, not
+     margin, and the tab's hit box reaches 2px into it and into the 2px below. */
+  .dev-kanban-stages { margin-top: 0; padding-block: 2px; }
+  .dev-kanban-step::after { content: ""; position: absolute; inset: -2px 0; }
   .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
   .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
   .dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"] { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
@@ -32567,6 +32572,14 @@ body {
   /* #5820: the grouping stays at the left and the filters at the right edge,
      so the line reads as two groups. It still scrolls when it overflows. */
   .dev-ws-allbar #dev-filter-chips { flex: 0 1 auto; margin-inline-start: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  /* Request 7029: the row's scrollbar is put away in every browser (it
+     fades at the end that has more, kanban-filters.tsx), and a chip, drawn
+     28 to 36px tall, is pressed at 44: the row keeps room above and below
+     its chips for that, pulled back so the head is no taller. */
+  .dev-ws-allbar #dev-filter-chips::-webkit-scrollbar { display: none; }
+  .dev-ws-allbar #dev-filter-chips { padding-block: 8px; margin-block: -8px; }
+  .dev-ws-allbar #dev-filter-chips button { position: relative; flex: none; }
+  .dev-ws-allbar #dev-filter-chips button::after { content: ""; position: absolute; inset-inline: 0; top: 50%; height: 44px; transform: translateY(-50%); }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 /* Where the board is one column (the container query above) the steps are
@@ -32581,6 +32594,9 @@ body {
     flex: none; min-height: 40px; padding-block: 6px 6px; padding-inline: 7px 13px; gap: 7px; cursor: pointer;
     border-radius: 999px; background: var(--state-neutral-bg);
   }
+  /* Request 7029: pressed at 44px, as on a phone (above). */
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages { margin-top: 0; padding-block: 2px; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step::after { content: ""; position: absolute; inset: -2px 0; }
   .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
   .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
   .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"]) { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
