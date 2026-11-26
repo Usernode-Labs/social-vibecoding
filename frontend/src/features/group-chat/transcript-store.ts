@@ -472,9 +472,10 @@ export interface TranscriptMessage {
   /**
    * 1 Nov 2026 (one page per thread): on a request's page, a row written on
    * one of its changes (GroupChat._messageView), which the stream tags with
-   * that change. Absent on every other row.
+   * that change. Absent on every other row; `null` marks a row built for the
+   * page (change-model.ts `voteReasonPost`) that deliberately carries none.
    */
-  changeOf?: { sessionId: number | null };
+  changeOf?: { sessionId: number | null } | null;
   /**
    * #7216: on a request's page, a vote row drawn as the note above the post
    * that carries the voter's reason ("evan voted no"), not as a line of its

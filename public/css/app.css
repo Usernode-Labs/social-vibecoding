@@ -21809,6 +21809,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    with its post, with no gap under it, so the two read as one entry. */
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .dev-request-event.dev-request-vote-note,
 .dev-request-event.dev-request-vote-note { padding-bottom: 0; }
+/* #7221: the change named on a vote's line ("evan voted no · on Change #N")
+   wraps as one piece, so a narrow line never starts with a lone "·". */
+.dev-request-vote-note-on { white-space: nowrap; }
 /* (#116) The time, and the change it was on, under the sentence. */
 .dev-request-event-time { display: block; font-size: 0.8125rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-request-event-link {
