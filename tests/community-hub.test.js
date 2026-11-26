@@ -150,8 +150,12 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   }));
   assert.match(quiet, /<span data-ws-channel-empty="">No messages yet\.<\/span>/,
     'with nothing said yet the Discussion row says so, and opens the Discussion place');
-  assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
-  assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
+  assert.doesNotMatch(hub, /<WorkshopDoor|data-ws-since=""/, 'no Workshop door, and the since list is the Workshop\'s');
+  // 26 Nov 2026 (the owner's two-column hub): the parts stack in a thin column
+  // (.dev-ws-hub-side) beside the Discussion card, from 1024px only; under it
+  // the page is one column again.
+  assert.match(hub, /<div className="dev-ws-hub-cols" data-ws-hub-cols=\{talkHere \? 'two' : 'one'\}>\s*<div className="dev-ws-hub-side">/);
+  assert.match(read('public/css/app.css'), /@media \(min-width: 1024px\) \{\n  html:root #dev-workshop \.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody \.dev-ws-hub-cols\[data-ws-hub-cols="two"\] \{\n    display: grid;\n    grid-template-columns: minmax\(0, 340px\) minmax\(0, 1fr\);/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
   assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
   // The Workshop tab is the front page (./front-page.tsx;
@@ -168,12 +172,14 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // visited and never reopened on.
   const av = read('public/js/app-view.js');
   // 16 Oct 2026: and `?ws=bot`, Homeroom bot's slots, a page under the Workshop.
-  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'bot'\],/);
+  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'posts', 'bot'\],/);
   // #4417: and so is a topic's channel, `c:<handle>`, a place like the others.
   assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
-  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
-  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan'\) return stored;/);
+  // 26 Nov 2026: the Discussion page under the Hub (`posts`) is not reopened on either: the hub draws it.
+  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' && key !== 'posts' \? key : 'status';/);
+  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan' && stored !== 'posts'\) return stored;/);
   const { litPlace } = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  assert.equal(litPlace('posts'), 'status', 'Hub stays lit over the Discussion page');
   assert.equal(litPlace('plan'), 'status', 'Hub stays lit over the plan');
   assert.equal(litPlace('all'), 'workshop');
   assert.equal(litPlace('bot'), 'workshop', 'and over the bot\'s slots');

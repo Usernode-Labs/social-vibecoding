@@ -2163,7 +2163,7 @@
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > .dev-ws-hub-cols > .dev-ws-hub-side > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
       "expectText": "Workshop"
     },
     {
@@ -2405,7 +2405,7 @@
     {
       "name": "A project's page opens on its Hub, the place bar naming it, with who is around this week on the hero and the votes you owe as For you's first door",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has(.dev-ws-hero [data-ws-active-people]) > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has(.dev-ws-hero [data-ws-active-people]) > .dev-ws-tabbody > .dev-ws-hub-cols > .dev-ws-hub-side > [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
       "expectText": "to vote"
     },
     {
@@ -2544,7 +2544,7 @@
     {
       "name": "A project's hub ends on what went live lately: the last three changes as pictures that open their pages, with its door to the Workshop, where what landed is listed week by week (#3510)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-recent]:has(button[data-ws-recent-all]) li:nth-child(3) > a.dev-ws-recent-card[href*=\"/dev/changes/\"] > .dev-ws-recent-pic + .dev-ws-recent-title",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > .dev-ws-hub-cols > .dev-ws-hub-side > [data-ws-hub-recent]:has(button[data-ws-recent-all]) li:nth-child(3) > a.dev-ws-recent-card[href*=\"/dev/changes/\"] > .dev-ws-recent-pic + .dev-ws-recent-title",
       "expectText": "Recently live"
     },
     {
@@ -2560,10 +2560,16 @@
       "expectText": "Homeroom"
     },
     {
-      "name": "The hub's discussion is For you's Discussion row (its last line, a door to the Discussion place, with no composer on the hub), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
+      "name": "The hub's discussion is its Discussion card (#general as posts, with a Start a post box and the sort), beside the thin column on a wide window, For you has no #general row, and Suggest an improvement leads the hero's ⋯, Build it now next (#852 review, B8; 26 Nov 2026)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has([data-ws-hub-for-you] button[data-ws-channel=\"preview\"][data-ws-channel-open]):not(:has([data-ws-channel-compose])):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(> .dev-ws-tabbody > .dev-ws-hub-cols[data-ws-hub-cols=\"two\"] > [data-ws-hub-discussion=\"full\"] > form[data-ws-discussion-compose=\"post\"] + [data-ws-discussion-sort]):not(:has([data-ws-hub-for-you] [data-ws-channel])):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
+    },
+    {
+      "name": "A phone's Discussion opens as a page under the Hub: the way back to the Hub, then the posts with the box to start one (26 Nov 2026)",
+      "path": "/?demo=1&ws=posts#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"posts\"] [data-ws-discussion-page] > [data-ws-pagehead]:has(button[data-ws-page-back]) + [data-ws-hub-discussion=\"page\"] > form[data-ws-discussion-compose=\"post\"]",
+      "expectText": "Posts and replies from everyone in Homeroom"
     },
     {
       "name": "The Workshop's path: four stops a change travels, in order, under In the workshop now, the approval rule its last line, and for an admin Private requests' quiet row at the page's foot (#3487, #3528, #5048; 24 Nov 2026)",

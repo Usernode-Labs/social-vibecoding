@@ -47,7 +47,8 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
 
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   // At every width.
-  assert.match(ws, /\{slug \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
+  // 26 Nov 2026: in the hub's thin column (.dev-ws-hub-side), which is drawn only with a project.
+  assert.match(ws, /<div className="dev-ws-hub-side">[\s\S]*?<TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/>/,
     'at every width, not the phone alone');
   const css = read('public/css/app.css');
   // A wide window's hub is one centred column of at most 1132px, a request page's width (asked 24 Nov 2026):
@@ -66,7 +67,8 @@ test('For you\'s Workshop row is there at every width, opening the Workshop, and
   // the Homeroom bot tab. 6 Nov 2026: it takes Your work's place, at every
   // width, as For you's door to the project's Workshop.
   assert.match(cards, /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
-  assert.match(cards, /if \(!needs && !work && !talk\) return null;/, 'there for a signed-in viewer, with no phone-only flag');
+  // 26 Nov 2026: `room` is the #general row, there unless the hub draws the Discussion card itself.
+  assert.match(cards, /if \(!needs && !work && !room\) return null;/, 'there for a signed-in viewer, with no phone-only flag');
   assert.doesNotMatch(cards, /places=\{drawerOn\}|data-ws-mine-card/, 'no Your work row on the Hub any more');
   assert.match(cards, /title=\{placeName\('workshop'\)\}\s+subtitle=\{t\('project:hub\.workshop\.sub'\)\}/);
 });

@@ -74,12 +74,14 @@ test('the switch is two labelled buttons, and an empty month has its own line', 
   assert.equal(message('project:hub.contributors.emptyMonth'), 'Nobody has taken part yet this month.');
 });
 
-test('the hub mounts it after Topics, and the route sends the list best-effort', () => {
+test('the hub mounts it last in its thin column, after Recently live, and the route sends the list best-effort', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const topics = lander.indexOf('<TopicsCard data={community}');
   const mine = lander.indexOf('<ContributorsCard data={community} />');
   const versions = lander.indexOf('<FromVersionsCard slug={slug}');
-  assert.ok(topics > 0 && topics < mine && mine < versions, 'For you and Topics stay adjacent, so their side-by-side pairing holds');
+  const recent = lander.indexOf('<RecentlyLive slug={slug}');
+  // 26 Nov 2026 (the owner's two-column hub): For you, Recently live, then Top contributors, one under another.
+  assert.ok(topics > 0 && topics < versions && versions < recent && recent < mine, 'For you, then Recently live, then Top contributors');
   const route = read('src/routes/apps.js');
   const handler = route.slice(route.indexOf("router.get('/api/apps/:slug/community'"));
   const at = handler.indexOf('let contributors = null;');
@@ -96,7 +98,8 @@ test('the standard look puts it last, across the hub', () => {
   const base = 'html:root .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]';
   assert.ok(!css.includes(`${base} + [data-ws-hub-contributors] { grid-column: 1; }`));
   // The look's hub rules are scoped `html:root` since the standard look took the brand kit's hub (#6923).
-  assert.ok(css.includes('html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }'));
+  // 26 Nov 2026: the hub's parts sit in its thin column (.dev-ws-hub-side), so the look reaches them inside the page's body.
+  assert.ok(css.includes('html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] { order: 5; }'));
   // The count is the hub's muted count, never a pill.
   assert.match(css, /\.dev-ws-foryou-count \{[^}]*color: var\(--text-muted\)/);
 });
