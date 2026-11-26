@@ -411,6 +411,13 @@
     {
       "source": "src/routes/feedback.js",
       "kind": "structural-template",
+      "fingerprint": "a9b88cbfef4272622fbc",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, repo_url FROM apps WHERE slug = $1`"
+    },
+    {
+      "source": "src/routes/feedback.js",
+      "kind": "structural-template",
       "fingerprint": "d15136901fbcf6a52a60",
       "count": 1,
       "preview": "`SELECT name, repo_url, ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1`"
@@ -1443,6 +1450,13 @@
       "fingerprint": "d7a070a025b2937f44aa",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, community_id FROM apps WHERE slug = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-about-project.js",
+      "kind": "structural-template",
+      "fingerprint": "b9371705801b4510dd73",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, repo_url FROM apps WHERE id = $1`"
     },
     {
       "source": "src/services/homeroom-bot-activity.js",
