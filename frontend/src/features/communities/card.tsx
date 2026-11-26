@@ -114,12 +114,13 @@ export function CommunityPicture({ community, eager = false, attrs, children, fa
             src={url!}
             alt=""
             loading={eager ? 'eager' : 'lazy'}
+            decoding={eager ? undefined : 'async'}
             draggable={false}
             onError={() => setFailed(true)}
             className={dark ? 'cm-card-img dark:hidden' : 'cm-card-img'}
           />
           {dark ? (
-            <img src={dark} alt="" loading={eager ? 'eager' : 'lazy'} draggable={false} onError={() => setFailed(true)} className="cm-card-img hidden dark:block" />
+            <img src={dark} alt="" loading={eager ? 'eager' : 'lazy'} decoding={eager ? undefined : 'async'} draggable={false} onError={() => setFailed(true)} className="cm-card-img hidden dark:block" />
           ) : null}
         </>
       ) : (

@@ -1,4 +1,4 @@
-// #2145 — the Activity feed's reply box answers ⌘/Ctrl+Enter and suggests
+// #2145 — the Activity feed's reply box sends from the keyboard and suggests
 // people on `@`.
 //
 // ── What is pinned, and why it is pinned this way ─────────────────────
@@ -46,42 +46,31 @@ const composer = () => FEED.slice(
   FEED.indexOf('\nexport function FeedThread'),
 );
 
-// ── ⌘/Ctrl+Enter ────────────────────────────────────────────────────
+// ── The send keys ───────────────────────────────────────────────────
 
-test('⌘/Ctrl+Enter is the send chord; plain, Shift and any other key are not', () => {
-  const { isSendChord } = feed();
-  assert.equal(isSendChord({ key: 'Enter', metaKey: true, ctrlKey: false }), true, 'macOS');
-  assert.equal(isSendChord({ key: 'Enter', metaKey: false, ctrlKey: true }), true, 'everywhere else');
-  assert.equal(isSendChord({ key: 'Enter', metaKey: false, ctrlKey: false }), false,
-    'plain Enter stays a newline');
-  assert.equal(isSendChord({ key: 'a', metaKey: true, ctrlKey: false }), false);
-});
-
-test('the chord submits a non-empty draft and does nothing while posting or empty', () => {
+test('the box sends by the rule every message box keeps, and only a non-empty draft', () => {
   const src = composer();
   // The list's keys come first: an open menu owns Enter.
   assert.match(src, /if \(mention\.onKeyDown\(e\)\) return;/);
-  // Then the chord — preventDefault unconditionally (#920: the keystroke must
-  // never leave a stray newline as its only visible effect), and submit only
-  // through the same gate the arrow is disabled by.
+  // Then the send keys (lib/enter-sends.ts) — preventDefault unconditionally
+  // (#920: the keystroke must never leave a stray newline as its only visible
+  // effect), and submit only through the same gate the arrow is disabled by.
   assert.match(src,
-    /if \(!isSendChord\(e\)\) return;[\s\S]{0,400}?e\.preventDefault\(\);\s*if \(!posting && draft\.trim\(\)\) void onSubmit\(\);/);
+    /if \(!enterSends\(e\.nativeEvent\)\) return;[\s\S]{0,400}?e\.preventDefault\(\);\s*if \(!posting && draft\.trim\(\)\) void onSubmit\(\);/);
   assert.match(src, /disabled=\{posting \|\| !draft\.trim\(\)\}/, 'the arrow keeps the same gate');
   // An IME confirmation is never a send.
   assert.match(src, /if \(e\.nativeEvent\.isComposing\) return;/);
+  assert.doesNotMatch(FEED, /isSendChord/, 'no chord-only rule of its own');
 });
 
-test('the two chat composers take the same chord, on touch too', () => {
-  // Desktop already sent on Enter; the chord is what makes a hardware
-  // keyboard on a touch screen able to send at all. The inline message
-  // editor is not a reply box and keeps its Enter-saves rule as it was.
-  const thread = /if \(e\.key !== 'Enter'\) return;\s*if \(\(e\.metaKey \|\| e\.ctrlKey\) \|\| \(!e\.shiftKey && !GroupChat\._isTouch\(\)\)\) \{\s*e\.preventDefault\(\);\s*submitThread\(\);/;
-  const general = /if \(e\.key !== 'Enter'\) return;\s*if \(\(e\.metaKey \|\| e\.ctrlKey\) \|\| \(!e\.shiftKey && !GroupChat\._isTouch\(\)\)\) \{\s*e\.preventDefault\(\);\s*submitGeneral\(\);/;
+test('the two chat composers and the inline editor take the same rule', () => {
+  const thread = /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*submitThread\(\);/;
+  const general = /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*submitGeneral\(\);/;
   assert.match(GC_JS, thread, 'the topic thread composer');
   assert.match(APP_VIEW, general, 'the general chat composer');
   assert.match(GC_JS,
-    /if \(e\.key === 'Enter' && !e\.shiftKey && !GroupChat\._isTouch\(\)\) \{\s*e\.preventDefault\(\);\s*GroupChat\._saveEdit/,
-    'the inline editor is untouched');
+    /if \(GroupChat\._enterSends\(e\)\) \{\s*e\.preventDefault\(\);\s*GroupChat\._saveEdit/,
+    'the inline editor saves on the same keys');
 });
 
 // ── The `@` list ────────────────────────────────────────────────────

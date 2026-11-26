@@ -100,8 +100,10 @@ test('B9: the card, and no chip for the room', () => {
   assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: translate\('chat:group\.menu\.makeRequest'\)/);
-  assert.equal(message('chat:group.menu.makeRequest'), 'Make this a request');
+  assert.match(row, /makeRequest: surface === 'main' && msg\.canAskBot \? \(\) => \{ void chat\?\.makeBotRequest\?\.\(id\); \} : null,/);
+  assert.match(read('frontend/src/features/message-actions/message-menu.ts'),
+    /if \(spec\.makeRequest\) items\.push\(\{ key: 'ask-bot', label: t\('messages:row\.menu\.makeRequest'\)/);
+  assert.equal(message('messages:row.menu.makeRequest'), 'Make this a request');
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
   assert.match(gc, /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');
