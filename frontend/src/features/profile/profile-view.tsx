@@ -36,13 +36,14 @@ import {
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
+import { ensureSettings } from '../settings/facade.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
 import { ProfileHistoryList } from './profile-history-list';
 import { ProfileRecentActivity } from './profile-recent-activity';
 import { ProfileLiveProjects } from './profile-live-projects';
 import { InlineBioEdit, InlineNameEdit } from './identity-inline-edit';
-import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AccountPanel, AdminConsoleLink, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
@@ -69,6 +70,31 @@ function IdentityAvatar({ url }: { url: string | null }): ReactNode {
       className="profile-id-avatar w-14 h-14 rounded-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-800"
       aria-hidden="true"
     />
+  );
+}
+
+/** Sign out, on Me (26 Nov 2026). The one sign-out is Settings' own
+ *  (settings.js `logout`, reached through its facade, which loads the chunk):
+ *  this presses it from the head of the page. While it runs the button is
+ *  disabled and says so (#3915); a sign-out that failed gives it back, and
+ *  Settings has already shown why. */
+function SignOutButton(): ReactNode {
+  const t = useMessages('profile');
+  const [busy, setBusy] = useState(false);
+  async function signOut() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const settings = await ensureSettings();
+      if (!settings || await settings.logout() === false) setBusy(false);
+    } catch {
+      setBusy(false);
+    }
+  }
+  return (
+    <button id="profile-signout-btn" type="button" className="one-btn one-btn-d" disabled={busy} onClick={signOut}>
+      {busy ? t('profile:identity.signingOut') : t('profile:identity.signOut')}
+    </button>
   );
 }
 
@@ -151,18 +177,25 @@ function IdentityCard({ identity, user }: { identity: any; user?: any }): ReactN
             ) : null}
           </div>
         </div>
-        <Button
-          id="profile-edit-btn"
-          layout="shrink"
-          variant="neutral"
-          size="sm"
-          ink="neutral"
-          className="self-start ms-[68px] sm:self-auto sm:ms-0"
-          onClick={() => Profile.showEditSheet()}
-        >
-          <PencilSquareIcon aria-hidden="true" />
-          {t('profile:identity.edit')}
-        </Button>
+        {/* The page's three actions, together at the head (26 Nov 2026): Edit
+            profile, the way in to the console for an admin, and Sign out,
+            which had been at the foot of Settings alone. They wrap on a
+            phone, under the text and lined up with it. */}
+        <div id="profile-id-actions" className="flex flex-wrap items-center gap-2 self-start ms-[68px] sm:self-auto sm:ms-0">
+          <Button
+            id="profile-edit-btn"
+            layout="shrink"
+            variant="neutral"
+            size="sm"
+            ink="neutral"
+            onClick={() => Profile.showEditSheet()}
+          >
+            <PencilSquareIcon aria-hidden="true" />
+            {t('profile:identity.edit')}
+          </Button>
+          <AdminConsoleLink />
+          <SignOutButton />
+        </div>
       </div>
 
     </div>
@@ -507,8 +540,9 @@ export function ProfileRoot(): ReactNode {
           Settings. "Your work" (UI overhaul): Your changes, Your requests
           and Your votes, each a view of the Your work screen. "Rewards":
           Challenges & standings and Kudos. "Account": Friends and App
-          slots. Admin & moderation, the native node / wallet / staking rows
-          and Log out are in Settings (features/settings/account-rows.tsx);
+          slots. Admin & moderation and Sign out are buttons in the identity
+          card, beside Edit profile. The native node / wallet / staking rows
+          are in Settings (features/settings/account-rows.tsx);
           the Settings card under this ends the screen at every width (#5557).
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
@@ -540,7 +574,6 @@ export function ProfileRoot(): ReactNode {
           <ProfilePreferences />
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
-          <AdminPanel />
         </div>
       </div>
     </>

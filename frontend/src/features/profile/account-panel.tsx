@@ -60,8 +60,9 @@
  *
  * ── Admin (admins only) ────────────────────────────────────────────────
  *
- * Admin & moderation came back here from Settings in #5281 (AdminPanel,
- * last): the console is a place an admin goes, not one of their settings.
+ * Admin & moderation came back here from Settings in #5281: the console is
+ * a place an admin goes, not one of their settings. It is AdminConsoleLink,
+ * a button at the head of Me beside Edit profile.
  *
  * ── How the rows got here ──────────────────────────────────────────────
  *
@@ -308,7 +309,7 @@ export function AccountPanel({ rows }: {
 export function SettingsPanel(): ReactNode {
   // The wallet is a Settings row only in the native app (its store reveals
   // it with the bridge's capability), so the line names it only there. The
-  // admin console is not in Settings any more (#5281); it is AdminPanel below.
+  // admin console is not in Settings any more (#5281); it is AdminConsoleLink below.
   const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
   const t = useMessages('profile');
   const settingsLine = wallet ? t('profile:more.settings.hintWallet') : t('profile:more.settings.hint');
@@ -365,6 +366,9 @@ export function SettingsPanel(): ReactNode {
  * phone's list one row longer; the console is a PLACE, so it is a way in on
  * Me, the screen about you, on both layouts (the sidebar's gear is
  * Settings', and nothing else in the sidebar is a destination for one role).
+ * It was a card of its own at the foot of Me until 26 Nov 2026; it is a
+ * button at the head now, beside Edit profile (profile-view.tsx,
+ * `#profile-id-actions`), where an admin finds it without scrolling.
  *
  * A CAPABILITY, published rather than fetched: App.renderAdminButton in
  * public/js/app.js writes it after the session resolves. View-only admins
@@ -373,25 +377,14 @@ export function SettingsPanel(): ReactNode {
  * never reach a find-in-page; ProfileRoot renders nothing until its store has
  * data, so the flag cannot disagree with a first render.
  */
-export function AdminPanel(): ReactNode {
+export function AdminConsoleLink(): ReactNode {
   const isAdmin = useVisibility('switcher-row-admin', false);
   const t = useMessages('profile');
   if (!isAdmin) return null;
   return (
-    <section id="profile-admin" className="mt-2">
-      <SectionHeader>{t('profile:admin.heading')}</SectionHeader>
-      <GroupedList className="mx-0" tone="plane">
-        <ListRow
-          as="a"
-          id="profile-row-admin"
-          href="#admin"
-          leading={<IconTile size="sm"><ShieldCheckIcon /></IconTile>}
-          title={t('profile:admin.console.title')}
-          titleClassName={TITLE}
-          subtitle={t('profile:admin.console.hint')}
-          subtitleClassName={SUBTITLE}
-        />
-      </GroupedList>
-    </section>
+    <a id="profile-admin-btn" href="#admin" className="one-btn one-btn-2">
+      <ShieldCheckIcon aria-hidden="true" />
+      {t('profile:admin.console.title')}
+    </a>
   );
 }
