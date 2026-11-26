@@ -548,7 +548,11 @@ is no replay plan to write and nothing to verify locally.
   - `frontend/src/Shell.tsx` — the whole `<body>`: a static tree that composes
     the converted screens' island components (see the statefulness rule
     below). It holds no state itself.
-  - `frontend/src/head.html` — the `<head>`, carried over verbatim.
+  - `frontend/src/head.html` — the `<head>`, carried over tag for tag. Its
+    comments stay in the source: the build takes them out of the served
+    document (`frontend/scripts/slim-document.cjs`, checked by a parser), so
+    explain as much as you need there. A comment the served page must keep
+    is added to that call's `keep` list.
   - `frontend/@/components/ui/` — shadcn primitives, restyled to the
     platform's existing `zinc`/`violet` palette (`cssVariables: false`).
 - **Never add or commit `public/index.html` or
