@@ -128,6 +128,14 @@ function catalogFixtures(curation = false) {
       name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
+    // A name with an accent, so a search shows it is found however it is
+    // typed: "cafe" finds "Café" on Home, Communities and the guest's page,
+    // as it finds an app (frontend/src/lib/search-rank.js).
+    {
+      ...base, id: 990037, slug: 'staging-demo-cafe',
+      name: 'Staging demo Café', icon_emoji: '☕', active_users: 3,
+      created_at: demoAgo(20 * 24), last_deploy_at: demoAgo(9 * 24),
+    },
   ];
   // ?curation=1: one app of each kind Discover tells apart
   // (services/discovery-curation.js). Listed (and featured), flagged by an

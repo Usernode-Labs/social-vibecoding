@@ -2803,8 +2803,8 @@ test('the footnote says what is actually happening to the grouping', () => {
   const stamp = Date.parse(themes([], {}).discoveredAt);
   assert.ok(Date.now() - stamp < REL_FLOOR_MS,
     'the fixture stamp is relative to now, not a wall-clock date that ages out');
-  assert.match(APP_VIEW_SRC, /const REL_FLOOR_MS = 7 \* 24 \* 60 \* 60 \* 1000;/,
-    'and that window is still seven days where relStamp defines it');
+  assert.match(read('frontend/src/lib/timestamp.ts'), /const RELATIVE_FLOOR_MS = 7 \* 24 \* 60 \* 60 \* 1000;/,
+    'and that window is still seven days where lib/timestamp.ts (relStamp\'s agoStamp) defines it');
   assert.match(html, /Categories were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\./);
   assert.match(html, /3 new cards are being placed\./);
   // The name is preceded by the theme's glyph now (#1787); the pin is still

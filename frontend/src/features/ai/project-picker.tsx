@@ -39,6 +39,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { matchesSearch } from '../../lib/search-rank.js';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import type { ProjectTally } from './model';
@@ -70,8 +71,7 @@ function PickerBody({ ranked, picked, onToggle, onClear, onClose, search }: Pick
   const t = useMessages('messages');
   const note = useNote();
   const [query, setQuery] = useState('');
-  const q = query.trim().toLowerCase();
-  const shown = q ? ranked.filter((p) => (p.app.name || p.app.slug).toLowerCase().includes(q)) : ranked;
+  const shown = ranked.filter((p) => matchesSearch(query, p.app.name || p.app.slug));
   const groups = [
     { key: 'needs', head: t('messages:ai.filter.group.needs'), items: shown.filter((p) => p.needs) },
     { key: 'busy', head: t('messages:ai.filter.group.busy'), items: shown.filter((p) => !p.needs && (p.progress || p.waiting)) },

@@ -1,4 +1,6 @@
-// One rule for every search that finds apps or communities by name (#5891):
+// One rule for every search in the shell (#5891): what counts as a match
+// (matchesSearch), and, for the searches that find apps or communities by
+// name, which match leads (rankSearch):
 // Home's search over your apps and Discover's (features/home/home.js
 // Home.filterApps), All communities, the community switcher and the phone
 // drawer (features/workshop/sections.ts matchRows), and the guest directory
@@ -42,6 +44,20 @@ export function searchKey(value) {
 }
 
 /**
+ * Does `query` find any of `texts`? Inside one of them, in searchKey's form,
+ * so "cafe" finds "Café" and case never matters. An empty query finds
+ * everything; a missing text finds nothing. The one test of "is it a match"
+ * every search in the shell makes, whether or not it ranks what it finds
+ * (Home's lists of communities, the guest directory, the bot's thread list,
+ * the notifications sheet, the Messages inbox).
+ */
+export function matchesSearch(query, ...texts) {
+  const q = searchKey(query);
+  if (!q) return true;
+  return texts.some((text) => text != null && searchKey(text).includes(q));
+}
+
+/**
  * The items that match `query`, an exact name first (letter for letter, then
  * accents aside). `names(item)` lists the texts that count as the item's name;
  * `texts(item)`, when given, lists every text a match may be found in
@@ -55,7 +71,7 @@ export function rankSearch(items, query, names, texts) {
   const q = searchKey(query);
   if (!q) return list.filter(() => true);
   const within = texts || names;
-  const matches = list.filter((item) => within(item).some((text) => searchKey(text).includes(q)));
+  const matches = list.filter((item) => matchesSearch(query, ...within(item)));
   const exactQ = exactKey(query);
   const tier = (item) => {
     const own = names(item);

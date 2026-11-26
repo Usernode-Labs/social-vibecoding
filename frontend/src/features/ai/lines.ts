@@ -10,6 +10,7 @@
  * Nothing here draws: a glyph is a name (`Glyph`), and each face has its own
  * icon for it.
  */
+import { matchesSearch } from '../../lib/search-rank.js';
 import { dayNumber, inZone, zonedDay } from '../../lib/time-zone';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import { useMessages } from '../../lib/i18n/react';
@@ -370,15 +371,15 @@ export function useAiLines({
   };
   // SEARCH (#6398, 6 Nov 2026): a row matches when its title, its number
   // ("6011" or "#6011") or its project's name or address contains what was
-  // typed, in either case. It narrows the rows the chips already chose, so
-  // the two apply together. History is searched as far as it has loaded.
-  const q = query.trim().toLowerCase();
+  // typed, in any case and accents aside (lib/search-rank.js, the shell's one
+  // matcher). It narrows the rows the chips already chose, so the two apply
+  // together. History is searched as far as it has loaded.
+  const q = query.trim();
   const searching = !!q;
   function matches(line: Line): boolean {
     if (!searching) return true;
     const number = line.number == null ? '' : String(line.number);
-    return [line.title, number, number ? `#${number}` : '', line.app?.name || '', line.app?.slug || '']
-      .some((text) => text.toLowerCase().includes(q));
+    return matchesSearch(q, line.title, number, number ? `#${number}` : '', line.app?.name, line.app?.slug);
   }
   function kept<T extends Line>(lines: T[]): T[] {
     return searching ? lines.filter(matches) : lines;

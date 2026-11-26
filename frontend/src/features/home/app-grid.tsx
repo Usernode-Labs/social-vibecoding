@@ -66,6 +66,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
+import { agoStamp } from '../../lib/timestamp';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
@@ -166,16 +167,6 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-/** How long ago, in the shell's short words: "just now", "12m ago", "2h ago", "30d ago". */
-function openedAgo(at: number, t: (id: string, params?: Record<string, unknown>) => string): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - at) / 60000));
-  if (minutes < 1) return t('core:time.ago.justNow');
-  if (minutes < 60) return t('core:time.ago.minutes', { count: minutes });
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t('core:time.ago.hours', { count: hours });
-  return t('core:time.ago.days', { count: Math.floor(hours / 24) });
-}
-
 function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
   /** Standard (WIP): under the name, the app's sentence and its contributors. */
   rich?: boolean;
@@ -189,8 +180,8 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
   // it is read from is empty until an effect fills it (recent-apps-store.js).
   // Always "30d ago" at most, never a date: lib/timestamp.ts's agoStamp turns
   // to a date past a week, and across a new year that date carries its year,
-  // which a phone's tile has no room for.
-  const openedWhen = openedAt && !app.statusLabel && !app.buildLine ? openedAgo(openedAt, t) : '';
+  // which a phone's tile has no room for, so it counts days (relativeOnly).
+  const openedWhen = openedAt && !app.statusLabel && !app.buildLine ? agoStamp(openedAt, { relativeOnly: true }).text : '';
   const opened = openedWhen ? t('home:grid.tile.opened', { when: openedWhen }) : '';
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {

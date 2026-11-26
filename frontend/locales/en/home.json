@@ -249,7 +249,7 @@
   },
   "menu.updated": {
     "text": "Updated {{when}}",
-    "description": "Line in the header of an app tile's menu: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
+    "description": "Line in the header of an app tile's menu: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\", or, a week or more back, the day, such as \"Jun 16\"."
   },
   "menu.details.label": {
     "text": "Go to community",
@@ -450,50 +450,6 @@
   "check.finished": {
     "text": "Check finished: {{status}}",
     "description": "Brief notice after \"Check for updates\" ended with an outcome this screen has no sentence for. {{status}} is the server's own status code, such as no_change."
-  },
-  "time.justNow": {
-    "text": "just now",
-    "description": "A relative time inside \"Updated …\" in an app tile's menu: less than a minute ago. Lower case because it follows another word."
-  },
-  "time.minutesAgo_one": {
-    "text": "{{count}}m ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of minutes; \"m\" abbreviates minutes."
-  },
-  "time.minutesAgo_other": {
-    "text": "{{count}}m ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of minutes; \"m\" abbreviates minutes."
-  },
-  "time.hoursAgo_one": {
-    "text": "{{count}}h ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "time.hoursAgo_other": {
-    "text": "{{count}}h ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "time.daysAgo_one": {
-    "text": "{{count}}d ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "time.daysAgo_other": {
-    "text": "{{count}}d ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "time.monthsAgo_one": {
-    "text": "{{count}}mo ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of months; \"mo\" abbreviates months."
-  },
-  "time.monthsAgo_other": {
-    "text": "{{count}}mo ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of months; \"mo\" abbreviates months."
-  },
-  "time.yearsAgo_one": {
-    "text": "{{count}}y ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of years; \"y\" abbreviates years."
-  },
-  "time.yearsAgo_other": {
-    "text": "{{count}}y ago",
-    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of years; \"y\" abbreviates years."
   },
   "widget.heading": {
     "text": "Homeroom widget",

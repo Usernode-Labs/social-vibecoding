@@ -73,6 +73,7 @@ import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckI
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
+import { capCount } from '../../../lib/count-cap';
 import { changeHref } from '../../../lib/change-href';
 import { BuildLine, type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
@@ -745,7 +746,7 @@ function DiscussionRow({ data, onOpen, outsider = false }: {
         />
       ), unread > 0 ? (
         <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-channel-unread={String(unread)}>
-          {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
+          {t('project:hub.channel.unread', { count: unread, shown: capCount(unread) })}
         </span>
       ) : null)}
       subtitle={sub}
@@ -863,7 +864,7 @@ export function TopicsCard({ data, onOpen }: {
                 </>
               ), unread ? (
                 <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-hub-topic-unread={String(unread)}>
-                  {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
+                  {t('project:hub.channel.unread', { count: unread, shown: capCount(unread) })}
                 </span>
               ) : null)}
               subtitle={topic.about || undefined}

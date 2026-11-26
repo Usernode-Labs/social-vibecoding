@@ -33782,53 +33782,12 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = AppView;
 }
 
-// #1808: the legacy copy of `agoStamp` from frontend/src/lib/timestamp.ts —
-// form B, the age for a card, feed or list row. This file is a classic script
-// loaded by a <script> tag and cannot import from the bundle, and bridging it
-// through `window.UsernodeReact` would make the live format depend on which of
-// the two loaded first. So it is a hand-kept copy, and
-// tests/message-timestamp.test.js EXECUTES both against one table of instants
-// and asserts they answer identically. Read that file's header for the rule;
-// change both together or the test says so.
-//
-// Two things it fixes over the shape it replaces: the relative form stops at
-// SEVEN days (it used to run to thirty, so rows read "23d ago", which is a
-// duration and not information), and every caller now has a `title` carrying
-// the unelided stamp.
-const REL_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
-function relStamp(iso, now) {
-  const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
-  if (Number.isNaN(date.getTime())) return { text: '', title: '' };
-  const ref = now || new Date();
-  // Interface language, device region (#6103), as GroupChat._stamp and
-  // lib/timestamp.ts read it; the device default where the runtime predates it.
-  const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
-  // The zone the account picked (#6479); the device's where none is.
-  const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
-  const zone = timeZone ? { timeZone } : {};
-  const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
-  const title = date.toLocaleString(locale, {
-    ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  });
-  const elapsed = ref.getTime() - date.getTime();
-  if (elapsed >= REL_FLOOR_MS) {
-    return {
-      text: date.toLocaleDateString(locale, yearOf(date) === yearOf(ref)
-        ? { ...zone, month: 'short', day: 'numeric' }
-        : { ...zone, year: 'numeric', month: 'short', day: 'numeric' }),
-      title,
-    };
-  }
-  // A future instant (server/browser clock skew) clamps to "just now" rather
-  // than printing a negative age.
-  const seconds = Math.max(0, Math.floor(elapsed / 1000));
-  if (seconds < 60) return { text: PlatformI18n.t('changes:age.justNow'), title };
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { text: PlatformI18n.t('changes:age.minutes', { count: minutes }), title };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { text: PlatformI18n.t('changes:age.hours', { count: hours }), title };
-  return { text: PlatformI18n.t('changes:age.days', { count: Math.floor(hours / 24) }), title };
-}
+// #1808: the age for a card, feed or list row, with the unelided stamp for
+// `title`. It is lib/timestamp.ts's `agoStamp`, the one formatter, which the
+// bundle publishes on PlatformI18n for this classic script (lib/i18n/runtime.ts);
+// read at call time, as every PlatformI18n.t here is. Its rule is in that
+// file's header: relative under a week, the date from then on.
+function relStamp(iso) { return PlatformI18n.agoStamp(iso); }
 
 // The text alone, for the callers that have nowhere to hang a title.
 function relTime(iso) { return relStamp(iso).text; }

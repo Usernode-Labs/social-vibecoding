@@ -124,6 +124,8 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 import { matchesNotificationQuery, normalizeNotificationQuery } from './notifications-search.js';
+import { matchesSearch } from '../../lib/search-rank.js';
+import { COUNT_CAP, capCount } from '../../lib/count-cap';
 import { NOTIFICATION_KIND_FILTER_KEYS, matchesKindFilter } from './notifications-kinds.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
@@ -1623,7 +1625,7 @@ function RowLabel({ view, hideCount = false }: { view: ScreenRowView; hideCount?
       {view.label}
       {count ? (
         <span className="ms-1.5" aria-label={t('notifications:row.runCount', { count })}>
-          {count > 99 ? '99+' : count}
+          {capCount(count)}
         </span>
       ) : null}
     </span>
@@ -1649,7 +1651,7 @@ function RunCount({ view }: { view: ScreenRowView }): ReactNode {
           : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
       aria-label={t('notifications:row.runCount', { count: view.count })}
     >
-      {view.count > 99 ? '99+' : view.count}
+      {capCount(view.count)}
     </span>
   );
 }
@@ -1943,7 +1945,7 @@ export function NotificationsSheetView() {
   // #6785: the search field narrows Recent threads too, by the thread's title
   // and its project's name — the two things a thread row prints.
   const threadMatches = isThreads && needle
-    ? (threads || []).filter((thread) => `${thread.title} ${thread.appName}`.toLowerCase().includes(needle))
+    ? (threads || []).filter((thread) => matchesSearch(needle, `${thread.title} ${thread.appName}`))
     : (threads || []);
   // #6785: the wait begins on the tab's FIRST paint, not on the fetch's first
   // state update. Between choosing the tab and the effect that starts the
@@ -2234,7 +2236,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unreadCount > 99 ? t('notifications:sheet.tab.unreadCountCapped')
+          {unreadCount > COUNT_CAP ? t('notifications:sheet.tab.unreadCountCapped')
             : unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount })
               : t('notifications:sheet.tab.unread')}
         </button>

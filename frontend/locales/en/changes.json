@@ -8079,34 +8079,6 @@
     "text": "Your own API key must be enabled while platform credits are locked.",
     "description": "Error in the AI access dialog when the person unticked the own-API-key checkbox although they have no platform credits to use instead."
   },
-  "age.justNow": {
-    "text": "just now",
-    "description": "Compact age of a card or row on a project's page: less than a minute ago."
-  },
-  "age.minutes_one": {
-    "text": "{{count}}m ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of minutes; \"m\" abbreviates minutes."
-  },
-  "age.minutes_other": {
-    "text": "{{count}}m ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of minutes; \"m\" abbreviates minutes."
-  },
-  "age.hours_one": {
-    "text": "{{count}}h ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of hours; \"h\" abbreviates hours."
-  },
-  "age.hours_other": {
-    "text": "{{count}}h ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of hours; \"h\" abbreviates hours."
-  },
-  "age.days_one": {
-    "text": "{{count}}d ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of days; \"d\" abbreviates days."
-  },
-  "age.days_other": {
-    "text": "{{count}}d ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of days; \"d\" abbreviates days."
-  },
   "page.menu.editRequests": {
     "text": "Edit requests",
     "description": "Row in the ⋯ menu of a change's page, for its owner, when the change is already linked to requests (filed issues): opens the editor that changes which requests it is linked to. \"Edit\" is a verb."

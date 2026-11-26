@@ -42,6 +42,7 @@
 // not through an import of the runtime: that would pull the bundler-resolved
 // catalog into a module node must be able to load by itself.
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface.ts';
+import { capCount } from '../../lib/count-cap.ts';
 
 export type DevConsoleLevel = 'error' | 'warn' | 'info' | 'log' | 'debug' | string;
 
@@ -310,7 +311,7 @@ export class DevConsoleStore {
   }
 
   _updateBadge(): void {
-    const label = this.unseenErrors > 99 ? '99+' : String(this.unseenErrors);
+    const label = capCount(this.unseenErrors);
     const show = this.unseenErrors > 0;
     // Only the staging one is left: the header badge went with
     // #dev-console-btn (see _refreshButtonVisibility above).

@@ -18,9 +18,9 @@ import { reducedMotion } from '../../lib/reduced-motion';
 //
 //   * the app-card delegation is an import now instead of a `window.AppCard`
 //     read (see renderAppPillsHtml / iconTileFor below), and
-//   * escapeHtml and formatRelativeTime at the bottom of the file are
-//     module-local rather than ambient globals. That has a consequence outside
-//     this file, spelled out in the note above them.
+//   * escapeHtml at the bottom of the file is module-local rather than an
+//     ambient global. That has a consequence outside this file, spelled out in
+//     the note above it.
 //
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
@@ -28,7 +28,8 @@ import { reducedMotion } from '../../lib/reduced-motion';
 import { t as message, htmlText, errorText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
-import { rankSearch, searchKey } from '../../lib/search-rank.js';
+import { agoStamp } from '../../lib/timestamp';
+import { matchesSearch, rankSearch, searchKey } from '../../lib/search-rank.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -491,13 +492,11 @@ const Home = {
     return searchKey(value);
   },
 
-  // Case-insensitive substring match on name and slug. An empty /
-  // whitespace-only query matches everything (the default view).
+  // Case-insensitive substring match on name and slug, accents aside (the
+  // shell's one matcher, lib/search-rank.js). An empty / whitespace-only
+  // query matches everything (the default view).
   matchesQuery(app, query) {
-    const q = Home.searchKey(query);
-    if (!q) return true;
-    return Home.searchKey(app?.name).includes(q)
-      || Home.searchKey(app?.slug).includes(q);
+    return matchesSearch(query, app?.name, app?.slug);
   },
 
   // True when the query IS the app's name or slug (trimmed, any case, any
@@ -4073,11 +4072,12 @@ const Home = {
           includePrContext: false,
         })
       : `<span class="text-xs font-mono">${escapeHtml(app.slug)} · ${escapeHtml(app.version?.shortSha || 'dev')}</span>`;
-    // "Updated Xh ago" lives here rather than on the card face; falls
-    // back to created_at when last_deploy_at is null (pre-migration
+    // "Updated Xh ago" lives here rather than on the card face, in the
+    // shell's one list form (lib/timestamp.ts agoStamp: a date past a week);
+    // falls back to created_at when last_deploy_at is null (pre-migration
     // apps — schema.sql backfills last_deploy_at = created_at, so this
-    // is mostly defensive).
-    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
+    // is mostly defensive). An unreadable instant drops the line.
+    const updatedRel = agoStamp(app.last_deploy_at || app.created_at).text;
     // The app's FULL pill set (missing secrets / to vote / in dev /
     // issues / privacy) — the card face carries no chips at all, so
     // this header is the one place they render.
@@ -5499,16 +5499,13 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
   });
 }
 
-// escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
-// script's top-level function declarations they were `window.escapeHtml` /
-// `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
-// so it won a last-writer-wins chain. Inside a module they are module-local,
-// which is the right scope and matches what browse.js, app-card.js, kudos.js and
-// leaderboard.js already did when they moved.
-//
-// formatRelativeTime has no ambient consumer left: browse.js carries its own
-// copy and build-log.js's comment says it deliberately kept one local so load
-// order wouldn't matter. Nothing else ever read it.
+// escapeHtml used to be AMBIENT here: as a classic script's top-level function
+// declaration it was `window.escapeHtml`, and home.js was the LAST tag to
+// declare it, so it won a last-writer-wins chain. Inside a module it is
+// module-local, which is the right scope and matches what browse.js,
+// app-card.js, kudos.js and leaderboard.js already did when they moved. (The
+// relative-time formatter that sat beside it is gone: the menu's "Updated …"
+// reads lib/timestamp.ts's agoStamp, the shell's one.)
 //
 // escapeHtml has one, and it changes which copy it resolves to.
 // app-secrets.js calls `escapeHtml` (and `escapeAttr`, which
@@ -5527,24 +5524,6 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-// Compact "Nx ago" formatter shared by the home-card meta line. Kept
-// locally instead of pulling in a date library — the granularity here
-// only needs to be readable at a glance, not exact to the second.
-// Returns null for unparseable input so callers can drop the segment
-// rather than render "NaN ago".
-function formatRelativeTime(input) {
-  if (!input) return null;
-  const t = new Date(input);
-  if (Number.isNaN(t.getTime())) return null;
-  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return message('home:time.justNow');
-  if (seconds < 3600) return message('home:time.minutesAgo', { count: Math.floor(seconds / 60) });
-  if (seconds < 86400) return message('home:time.hoursAgo', { count: Math.floor(seconds / 3600) });
-  if (seconds < 86400 * 30) return message('home:time.daysAgo', { count: Math.floor(seconds / 86400) });
-  if (seconds < 86400 * 365) return message('home:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
-  return message('home:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Back online: refill a grid that could only show the offline note, or
