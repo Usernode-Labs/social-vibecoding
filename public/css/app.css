@@ -4008,6 +4008,40 @@ html[data-browser-scroller^="auth-"] :is(
   .admin-quick-actions button span { flex: 1; font: 600 16px Georgia,serif; }
   #admin-home-status { margin: 0 0 12px; font-size: 13px; color: var(--text-muted,#666); }
 }
+
+/* The Admin console follows the Homeroom reference artwork: its sky carries
+   through the shared header and the title area, then dissolves into the same
+   warm paper ground as the dashboard cards. Keep this scoped to the Admin
+   route so the shell's shared navigation looks unchanged everywhere else. */
+html:not(.dark):not([data-app-tone="dark"]) body:has(#admin-screen:not(.hidden)) #platform-header#platform-header {
+  background-color: #79bce7 !important;
+  background-image: url('/brand/sky.webp') !important;
+  background-position: center 42% !important;
+  background-size: cover !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html:not(.dark):not([data-app-tone="dark"]) #admin-screen {
+  isolation: isolate;
+  background: #faf8f0;
+}
+html:not(.dark):not([data-app-tone="dark"]) #admin-screen::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: clamp(190px, 22vw, 270px);
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, rgba(250,248,240,0) 38%, rgba(250,248,240,.44) 72%, #faf8f0 100%),
+    url('/brand/sky.webp') center 34% / cover no-repeat;
+}
+html:not(.dark):not([data-app-tone="dark"]) #admin-root {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
 @media (max-width: 767px) {
   #admin-root { padding: 12px 14px calc(var(--platform-tabs-h, 0px) + 24px) !important; }
   #admin-console-bar { margin-bottom: 12px; }
