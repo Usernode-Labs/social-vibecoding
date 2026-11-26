@@ -373,24 +373,16 @@ test('a card is the same signed in or out: no Pin, no Join, no footer, one count
   assert.doesNotMatch(read(JOIN), /footerFor|home:join\.votes|home:join\.button/);
 });
 
-test('an app open for a visitor is pinned from the landing\'s bar, to this device, and Home shows it (#6433)', () => {
+test('an app open for a visitor is no longer pinned from the landing\'s bar; Discover pins it, to this device, and Home shows it (#6433)', () => {
   const src = read(LANDING);
-  const actions = src.slice(src.indexOf('data-landing-actions'));
-  // Only while an app is open and there is no session, beside Sign in.
-  assert.match(actions, /\{openApp && !session \? \(\s+<button\s+type="button"\s+data-landing-pin-app=\{openApp\.slug\}\s+aria-pressed=\{devicePins\.apps\.includes\(openApp\.slug\)\}/);
-  assert.match(actions, /onClick=\{\(\) => \{ toggleDevicePin\('apps', openApp\.slug\); \}\}/);
-  assert.match(src, /const devicePins = useStoreState\(devicePinsStore\);/);
-  // The bar's own quiet button, so the bar keeps its height.
-  assert.match(actions, /className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-\[15px\] font-semibold /);
-  assert.equal(message('auth:landing.pinApp'), 'Pin');
-  assert.equal(message('auth:landing.pinnedApp'), 'Pinned');
-  // Pin and Sign in sit over the bar's trailing box and are wider than the
-  // title's px-10 keeps clear, so while Pin is there the title keeps 112px
-  // at its end and the app's name ends before them (visual audit, Nov
-  // 2026). Pixels: a rem grows with the text size and the buttons hardly do.
-  assert.match(src, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 [^"]* \[#landing-header:has\(\[data-landing-pin-app\]\)_&\]:pe-\[112px\]"/);
-  assert.equal(message('auth:landing.pinAppNamed', { app: 'Game Corner' }), 'Pin Game Corner to Home');
-  // Pressing it writes this device's list, which Home's Pinned apps reads.
+  // The bar's Pin gave way to the Homeroom mark and its menu
+  // (tests/visitor-app-menu.test.js): no Pin button, no Pin words.
+  assert.doesNotMatch(src, /data-landing-pin-app|toggleDevicePin|devicePinsStore|auth:landing\.pin/);
+  const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
+  for (const key of ['landing.pinApp', 'landing.pinnedApp', 'landing.pinAppNamed']) {
+    assert.equal(catalog[key], undefined, `${key} went with the button`);
+  }
+  // A pin is still this device's list, which Home's Pinned apps reads.
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const pins = loadTsx('frontend/src/features/guest/device-pins.ts');
   assert.equal(pins.toggleDevicePin('apps', 'todo-list'), true);
