@@ -665,7 +665,7 @@ test('app.js forgets the shared answers on a pull, on news from the events socke
   assert.match(announce, /try \{ window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\); \} catch/,
     'and it drops the shared answers, so a pull always asks the server');
   const socket = appJs.slice(appJs.indexOf('App.eventsWs.onmessage = (event) => {'), appJs.indexOf("case 'resync_hint':"));
-  assert.match(socket, /if \(data\.type !== 'pong'\) window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\);[\s\S]*switch \(data\.type\)/,
+  assert.match(socket, /window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\);\s*const data = JSON\.parse\(event\.data\);[\s\S]*switch \(data\.type\)/,
     'before any handler re-reads because of the frame');
   assert.match(appJs, /if \(isReconnect\) window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\);\s*if \(isReconnect\) App\.resyncCurrentView\(\);/);
 });

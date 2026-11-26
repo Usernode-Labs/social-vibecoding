@@ -3478,11 +3478,12 @@ const App = {
       // on a slow link is not taken for a dead one (lib/offline.ts answered).
       try { window.Offline?.answered?.(); } catch (_) { /* no probe */ }
       try {
-        const data = JSON.parse(event.data);
         // News from the server: whatever re-reads because of it asks the
         // server, never an answer shared from before the news (the shared
-        // reads of lib/api-cache-identity.ts, request 7165).
-        if (data.type !== 'pong') window.UsernodeReact?.apiCache?.forget?.();
+        // reads of lib/api-cache-identity.ts, request 7165). Any frame
+        // counts, before it is read: a `pong` only costs one shared answer.
+        window.UsernodeReact?.apiCache?.forget?.();
+        const data = JSON.parse(event.data);
         // The Homeroom bot page keeps its lists current from these: it
         // picks the events that move a thread it lists (features/ai/live.ts).
         window.UsernodeReact?.aiScreen?.handleEvent?.(data);
