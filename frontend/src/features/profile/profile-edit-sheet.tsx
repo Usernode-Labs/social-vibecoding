@@ -2,12 +2,11 @@
  * `#profile-edit-sheet` — the editable profile's card (#982), as React
  * (#1191 slice 6, conversion 1), rebuilt as inset-grouped sections (#1285).
  *
- * It is NOT one of the nine static-modal dialogs, so it does not go through
- * lib/static-modal.ts: there is no root in the shipped markup whose card gets
- * lifted. It is created on demand and handed to `PlatformUI.modal`, which is
- * exactly what lib/kit-surface.ts's `kind: 'modal'` presentation does — and
- * doing it there rather than by hand is what keeps the roll-back correct when
- * the kit refuses.
+ * It is NOT one of the static-modal dialogs, so it does not go through
+ * `useDialog`: there is no root in the shipped markup whose card gets lifted.
+ * It is created on demand and presented by the Sheet (lib/sheet.ts) as the
+ * kit's modal, the same lift the dialogs use, which owns the roll-back when
+ * the kit refuses, the backdrop, Escape, Back and focus.
  *
  * ── Why the kit MODAL and not the kit bottom sheet (#1285) ────────────
  *
@@ -32,23 +31,23 @@
  *
  * Three constraints, all from the lift:
  *
- * - **`className` on the root AND the card is a constant.** `adoptKitSurface`
+ * - **`className` on the root AND the card is a constant.** The kit lift
  *   writes `platform-modal-adopted` onto the root and `platform-modal-card`
  *   onto the card, and React writes the whole attribute when the prop changes,
  *   so a re-render with a computed class string would silently drop either one
  *   mid-presentation.
  * - **The card is restored before React unmounts it.** The kit has physically
- *   reparented it; the layout-effect cleanup runs before React detaches the
- *   node, so bringing it home there is what stops a `NotFoundError` on close.
- *   `release()` does that and leaves a snapshot in the kit's shell for the
- *   exit, which otherwise faded out an empty box where the card had been.
+ *   reparented it; the Sheet's layout-effect cleanup runs before React
+ *   detaches the node, so bringing it home there is what stops a
+ *   `NotFoundError` on close, and it leaves a snapshot in the kit's shell for
+ *   the exit, which otherwise faded out an empty box where the card had been.
  * - **The root is the flagged node, the card is the lifted one.** Exactly the
  *   dialogs' split (lib/static-modal.ts): `.platform-modal-adopted` is
  *   `display: none !important`, so it cannot go on the node the kit is
  *   showing. The root is also where the no-kit card chrome lives — while
  *   adopted it is hidden, so that chrome costs nothing.
  *
- * `home: 'placeholder'` because the card's home is inside the root inside
+ * The Sheet's `home: 'placeholder'` because the card's home is inside the root inside
  * `#profile-root`, which is the no-kit presentation the legacy code fell back
  * to (`root.insertBefore(panel, root.firstChild)`) so the editor is never
  * unreachable.
@@ -111,8 +110,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
+import { useSheet } from '../../lib/sheet';
 import type { CropRect } from './avatar-crop';
 import { AvatarCropDialog, type CropSource } from './avatar-crop-dialog';
 import { Profile } from './profile.js';
@@ -331,8 +330,13 @@ export function ProfileEditSheet({
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
 
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Lifted into the kit's modal while it is mounted (lib/sheet.ts). The
+  // backdrop, Escape and Back are a dismissal, not a decision, so what was
+  // typed is kept for the next open.
+  const { rootRef, panelRef } = useSheet({
+    kind: 'modal',
+    onClose: () => Profile._dismissSheet({ keepDraft: true }),
+  });
   const fileRef = useRef<HTMLInputElement | null>(null);
   const chooseRef = useRef<HTMLButtonElement | null>(null);
 
@@ -362,40 +366,6 @@ export function ProfileEditSheet({
   const [saving, setSaving] = useState(false);
   // A generated picture is not a photo to remove; only a real upload is (#7135).
   const [showRemove, setShowRemove] = useState(!!user.hasPhoto);
-
-  // Hand the card to the native kit, exactly once, and put it back before
-  // React ever tries to remove it.
-  useIsomorphicLayoutEffect(() => {
-    const contentEl = panelRef.current;
-    const flagEl = rootRef.current;
-    if (!contentEl || !flagEl) return;
-    let adoption: KitAdoption | null = null;
-    adoption = adoptKitSurface({
-      kind: 'modal',
-      contentEl,
-      adoptedOn: flagEl,
-      home: 'placeholder',
-      gate: 'kit',
-      // The backdrop or Escape: a dismissal, not a decision, so what was
-      // typed is kept for the next open, as Back keeps it.
-      //
-      // The teardown below dismisses the kit as well, and its callback lands
-      // here after the exit fade. That close has already happened (and a
-      // reopen inside the fade must not be closed by it), so it is ignored:
-      // the teardown clears `adoption` before it dismisses.
-      onDismiss: () => {
-        if (!adoption) return;
-        adoption = null;
-        Profile._dismissSheet({ keepDraft: true });
-      },
-    });
-    return () => {
-      if (!adoption) return;
-      const handle = adoption;
-      adoption = null;
-      handle.release();
-    };
-  }, []);
 
   // The staged photo's object URL is revoked by Profile._clearPendingAvatar;
   // closing the card any other way (route change, a second showEditSheet) goes

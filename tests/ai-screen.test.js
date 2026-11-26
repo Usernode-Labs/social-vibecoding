@@ -710,7 +710,7 @@ test('the filter: projects ranked by what needs you most, one control that opens
   assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,
     'a sheet on a phone, a menu under the chip on a wide window; nothing in the prerender');
   assert.match(picker, /type="checkbox"[\s\S]*?checked=\{picked\.includes\(p\.app\.slug\)\}[\s\S]*?onChange=\{\(\) => onToggle\(p\.app\.slug\)\}/, 'a pick applies at once');
-  assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
+  assert.match(picker, /inside: \(target\) => !!target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
   // #7126: Show all projects clears the ticks and then closes, so the lists
   // behind show every project again rather than the panel staying as it was.
   assert.match(picker, /onClick=\{\(\) => \{ onClear\(\); onClose\(\); \}\}\s+disabled=\{!picked\.length\}\s+data-ai-pick-all=""/,

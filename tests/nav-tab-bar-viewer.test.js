@@ -110,7 +110,9 @@ test('the bridge trims the name and treats a blank one as nobody', () => {
   // so this loads its own copy of the bundle with one in place.
   const hadWindow = 'window' in globalThis;
   const saved = globalThis.window;
-  globalThis.window = {};
+  // addEventListener: the switcher's Sheet and Menu import the back stack,
+  // which listens for popstate as it loads.
+  globalThis.window = { addEventListener() {} };
   try {
     const live = loadTsx('tests/fixtures/tab-bar-api.ts');
     const nav = globalThis.window.UsernodeReact && globalThis.window.UsernodeReact.nav;

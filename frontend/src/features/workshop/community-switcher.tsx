@@ -29,9 +29,9 @@
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *
- * On a phone it is a sheet from the floor, handed to the native kit when one
- * is there (lib/kit-surface.ts, the same hand-off as the staking sheet) and a
- * CSS sheet over a scrim when not. From 768px up it is a menu hung off
+ * On a phone it is a sheet from the floor, presented by the Sheet
+ * (lib/sheet.ts, as the staking sheet is): the native kit's when one is
+ * there and a CSS sheet over a scrim when not. From 768px up it is a menu hung off
  * whatever opened it: under the header's name, or, from ⌘K, in the middle
  * of the window near its top.
  *
@@ -48,8 +48,8 @@ import { CheckIcon, PlusIcon, SearchIcon, UserGroupIcon } from '@/components/ui/
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useMenu } from '../../lib/menu';
+import { useSheet } from '../../lib/sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { useCommunityColor } from '../../lib/community-color';
 import { navStore } from '../nav/nav-store.js';
@@ -294,39 +294,24 @@ export function SwitcherBody(): ReactNode {
  * it, else the row you are on (a phone's keyboard does not jump up under a
  * tap on the header's name).
  */
-function focusOnOpen(panel: HTMLElement, from: SwitcherFrom | null): void {
-  if (from === 'shortcut') {
-    panel.querySelector<HTMLInputElement>('#community-switcher-search')?.focus();
-    return;
-  }
-  panel.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus();
+function focusTarget(panel: HTMLElement, from: SwitcherFrom | null): HTMLElement | null {
+  if (from === 'shortcut') return panel.querySelector<HTMLInputElement>('#community-switcher-search');
+  return panel.querySelector<HTMLButtonElement>('[aria-current="true"]');
 }
 
 function SwitcherSheet(): ReactNode {
   const { switcher } = useStoreState(communityScopeStore);
-  const panel = useRef<HTMLDivElement | null>(null);
-  const [adopted, setAdopted] = useState(false);
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; closeSwitcher(); },
-    });
-    setAdopted(!!adoption);
-    focusOnOpen(panel.current, switcher);
-    return () => {
-      if (adoption) adoption.release();
-      previousFocus?.focus?.();
-    };
-  }, []);
+  // The kit's sheet when there is one (lib/sheet.ts), which owns Escape,
+  // Back, the scrim and giving focus back to what opened it.
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose: closeSwitcher,
+    initialFocus: (el) => focusTarget(el, switcher),
+  });
   return (
     <div
       className={adopted ? 'contents' : 'community-switcher-scrim'}
-      onClick={(e) => { if (e.target === e.currentTarget) closeSwitcher(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -335,7 +320,6 @@ function SwitcherSheet(): ReactNode {
         role="dialog"
         aria-modal="true"
         aria-labelledby="community-switcher-title"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); closeSwitcher(); } }}
       >
         {adopted ? null : <span className="community-switcher-grab" aria-hidden="true" />}
         <SwitcherBody />
@@ -347,31 +331,18 @@ function SwitcherSheet(): ReactNode {
 function SwitcherMenu(): ReactNode {
   const st = useStoreState(communityScopeStore);
   const panel = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    if (panel.current) focusOnOpen(panel.current, st.switcher);
-    const onDown = (e: Event) => {
-      const t = e.target as Node | null;
-      if (t && panel.current?.contains(t)) return;
-      // The opener toggles on its own; a press on it must not close and reopen.
-      // (Not the rail's Communities row: it opens nothing since #3701, so a
-      // press on it closes the menu like a press anywhere else.)
-      if (t instanceof Element && t.closest('[data-community-switch]')) return;
-      closeSwitcher();
-    };
-    // Escape gives focus back to whatever opened it.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      closeSwitcher();
-      previousFocus?.focus?.();
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, []);
+  // A press outside it, Escape, Back, and focus: in on open, back to what
+  // opened it on close (lib/menu.ts). The opener toggles on its own, so a
+  // press on it is not outside. (Not the rail's Communities row: it opens
+  // nothing since #3701, so a press on it closes the menu like a press
+  // anywhere else.)
+  const { panelProps } = useMenu(true, {
+    panel,
+    onClose: closeSwitcher,
+    keys: 'panel',
+    inside: (target) => !!target.closest('[data-community-switch]'),
+    initialFocus: (el) => focusTarget(el, st.switcher),
+  });
   // Under what opened it (the header's name, or its "Communities ⌄"); with no box
   // to hang from, under the header's left edge. ⌘K opens it from nowhere in
   // particular, so it comes down in the middle of the window, as a search.
@@ -389,6 +360,7 @@ function SwitcherMenu(): ReactNode {
       role="dialog"
       aria-labelledby="community-switcher-title"
       style={style}
+      {...panelProps}
     >
       <SwitcherBody />
     </div>

@@ -235,7 +235,7 @@ test('the project is chosen from the "Your communities" rows, Any project first'
   const src = read('frontend/src/features/messages/project-picker.tsx');
   // A sheet from the floor on a phone (the kit's when it is there), a menu from 768px.
   assert.match(src, /wide\n\s+\? <PickerMenu slug=\{slug\} anchor=\{anchor\} onPick=\{onPick\} onClose=\{onClose\} \/>\n\s+: <PickerSheet slug=\{slug\} onPick=\{onPick\} onClose=\{onClose\} \/>/);
-  assert.match(src, /adoptKitSurface\(\{\n\s+kind: 'sheet',/);
+  assert.match(src, /useSheet\(\{\n\s+kind: 'sheet',/);
   assert.match(src, /className="community-switcher community-switcher-sheet"/);
   assert.match(src, /className="community-switcher community-switcher-menu"/);
   assert.match(src, /import \{ switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');
