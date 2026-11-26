@@ -148,6 +148,18 @@ function makeMockPool() {
     // The pictures anybody may see of those changes (services/shots-public.js):
     // none here; tests/shots-public-postgres.test.js runs that query.
     if (/FROM shot_artifacts|JOIN shot_artifacts f/i.test(s)) return { rows: [] };
+    // Contributor UNION CTE — params[0] is an int[] of app ids. Read before
+    // the change queries below: the merged branch is itself a `chat_sessions
+    // cs` read with `status = 'merged'` (#7189 credited a bot build to its
+    // requester there), and would answer these with session rows.
+    if (/contributor_ids/i.test(s)) {
+      const ids = params[0] || [];
+      const rows = [];
+      for (const id of ids) {
+        for (const r of CONTRIBUTORS[id] || []) rows.push({ ...r });
+      }
+      return { rows };
+    }
     // The overview's changes up for a vote, and voted in.
     if (/FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
       return { rows: params[0] === 1 ? VOTES.map((r) => ({ ...r })) : [] };
@@ -170,15 +182,6 @@ function makeMockPool() {
     // The hub's Top contributors (contributorsSummary), for app-one.
     if (/WITH acts AS/.test(s) && /AS all_time/.test(s)) {
       return { rows: params[0] === 1 ? TOP_CONTRIBUTORS.map((r) => ({ ...r })) : [] };
-    }
-    // Contributor UNION CTE — params[0] is an int[] of app ids.
-    if (/contributor_ids/i.test(s)) {
-      const ids = params[0] || [];
-      const rows = [];
-      for (const id of ids) {
-        for (const r of CONTRIBUTORS[id] || []) rows.push({ ...r });
-      }
-      return { rows };
     }
     throw new Error(`unhandled mock SQL: ${s.slice(0, 80)}`);
   }
