@@ -9,7 +9,7 @@
 //
 // A post is a message in #general's main stream and its replies are the
 // reply thread under it; with more than eight messages from before
-// Discussion, those are one "Earlier in #general" post.
+// Discussion, those are one "Earlier discussion" post.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,7 +45,10 @@ test('the history from before Discussion folds into one post above eight message
   const summary = (count, foldAt) => ({ since: SINCE, fold_at: foldAt, earlier: { count, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', last_id: 40 } });
   assert.equal(feed.EARLIER_FOLD_AT, 8, 'the owner\'s "say 8"');
   assert.equal(feed.earlierFold(summary(8)), null, 'eight are eight posts');
-  assert.deepEqual(feed.earlierFold(summary(9)), { count: 9, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', lastId: 40, since: SINCE });
+  assert.deepEqual(feed.earlierFold(summary(9)), { count: 9, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', lastId: 40, since: SINCE, reactions: [] });
+  // Its own reactions ride with the summary (the project's anchor).
+  const reacted = { since: SINCE, earlier: { count: 9, last_id: 40, reactions: [{ emoji: '❤️', count: 2, users: ['jo', 'me'], reacted: true }, { emoji: '👍', count: 0 }] } };
+  assert.deepEqual(feed.earlierFold(reacted).reactions, [{ emoji: '❤️', count: 2, reacted: true, users: ['jo', 'me'] }]);
   assert.equal(feed.earlierFold(summary(9, 12)), null, 'the server\'s number wins');
   assert.equal(feed.earlierFold({ since: SINCE, earlier: null }), null);
   assert.equal(feed.earlierFold({ since: null, earlier: { count: 50, last_id: 4 } }), null, 'no marker, no fold');
@@ -137,6 +140,12 @@ test('an app channel\'s rows and a Messages room\'s messages are read into one s
   assert.equal(feed.fromAppRow({ ...row, thread_type: 'issue', thread_ref: 3 }, null), null, 'a request\'s thread is not #general');
   assert.equal(feed.fromAppRow({ ...row, thread_type: 'category', thread_ref: 3 }, null), null, 'nor is a topic\'s');
   assert.equal(feed.fromAppRow({ ...row, msg_type: 'system' }, null), null, 'nor a platform line');
+  // #4238: Homeroom bot's first-version post keeps its Open button, as the chat drew it.
+  const first = { ...row, metadata: { kind: 'first_version', actions: [{ type: 'open', label: 'Open Plant Pal', target: '#app/plant-pal' }] } };
+  assert.deepEqual({ ...feed.fromAppRow(first, null).openApp }, { label: 'Open Plant Pal', target: '#app/plant-pal' });
+  assert.equal(feed.appOpenApp({ ...first, deleted: true }), null, 'a deleted post has none');
+  assert.equal(feed.appOpenApp({ ...first, metadata: { kind: 'first_version', actions: [{ type: 'open', label: 'x', target: 'https://elsewhere' }] } }), null, 'only an address in the app');
+  assert.equal(feed.appOpenApp(row), null);
   const conv = feed.fromConversationMessage({
     id: 8, conversationId: 1, sender: { id: 4, username: 'jo' }, content: 'yo', createdAt: SINCE,
     reactions: [], attachments: [], objects: [], threadRootId: null,
@@ -163,14 +172,38 @@ test('the card draws its frame first and reads in effects; no channel, no card',
   assert.match(preview, /data-ws-discussion-open=""/, 'the phone\'s card is a door to the page');
   assert.match(preview, /data-ws-discussion-start-door=""/);
   assert.doesNotMatch(preview, /<textarea/, 'and writes nothing itself');
-  const page = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(channel), mode: 'page', onBack: () => {} }));
-  assert.match(page, /^<div class="dev-ws-discussion-page" data-ws-discussion-page=""><div class="dev-ws-pagehead" data-ws-pagehead="">/);
-  assert.match(page, /data-ws-hub-discussion="page"/);
+  // The page is a place: its own heading, and no chat view to open.
+  const page = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(channel), mode: 'page' }));
+  assert.match(page, /^<div class="dev-ws-discussion-page" data-ws-discussion-page=""><section class="dev-ws-hub-section dev-ws-hub-discussion" data-ws-hub-discussion="page"/);
+  assert.match(page, /<h2 id="[^"]+" class="dev-ws-hub-discussion-title">Discussion<\/h2><p class="dev-ws-hub-discussion-about">Posts and replies from everyone in Book Club<\/p><\/div>/);
+  assert.doesNotMatch(page, /data-ws-pagehead|Open as chat/, 'no way back of its own, and no chat view');
+  // The post box wears the chat's formatting row and takes files.
+  assert.match(page, /<form class="dh-composer dh-composer-post" data-ws-discussion-compose="post"><div class="dh-format-bar messages-format-bar" role="toolbar" aria-label="[^"]+" data-ws-discussion-format="">[\s\S]*?data-format="bold"[\s\S]*?data-format="link"/);
+  assert.match(page, /<button type="button" class="dh-attach" data-ws-discussion-attach=""[^>]*aria-label="Attach files"/);
+  // The place before its record has landed draws its loading rows; a viewer it gives no channel is told so.
+  assert.match(renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: null, mode: 'page' })), /data-ws-discussion-loading=""/);
+  assert.match(renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(null), mode: 'page' })), /data-ws-discussion-none="">This project has no discussion you can read\./);
+  // A visitor reads: "Start a post…" asks them to sign in, and nothing is written.
+  const { visitorData } = loadTsx(CARD);
+  const visitor = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: visitorData('book-club'), mode: 'full', visitor: { onSignIn: () => {} } }));
+  // The Button primitive draws it (tests/button-primitive-ratchet.test.js), its classes as they were.
+  assert.match(visitor, /<button type="button" data-ws-discussion-sign-in="" class="dh-composer dh-composer-door dh-sign-in-door dh-composer-post">[\s\S]*?Start a post…[\s\S]*?<span class="dh-sign-in">Sign in to post<\/span><\/button>/);
+  assert.doesNotMatch(visitor, /<textarea|<form/, 'no box to write in');
 });
 
 test('reactions and replies are the platform\'s own: the hover bar, the long-press sheet, Enter sends', () => {
   const src = read(CARD);
-  assert.match(src, /import \{ MessageActionBar \} from '\.\.\/\.\.\/message-actions\/action-bar';/);
+  assert.match(src, /import \{ MessageActionBar, MessageMenu, placementFor, type MenuItem \} from '\.\.\/\.\.\/message-actions\/action-bar';/);
+  // The ⋯ menu every chat's rows open: Edit (in place) and Delete for your own, Report and Block for somebody else's.
+  assert.match(src, /import \{ messageMenu, messageSheet \} from '\.\.\/\.\.\/message-actions\/message-menu';/);
+  assert.match(src, /edit: mine && said\.content\.trim\(\) \? \(\) => setEdit\(/);
+  assert.match(src, /remove: mine \? \(\) => feed\.remove\(said\.id\) : null,/);
+  assert.match(src, /targetType: 'app_message'/);
+  assert.match(read(FEED), /method: 'PATCH', credentials: 'same-origin', headers: json, body: JSON\.stringify\(\{ content \}\)/);
+  assert.match(read(FEED), /messagesApi\.editMessage\(conversationId, messageId, content\)/);
+  const chat = read('src/routes/chat.js');
+  assert.match(chat, /router\.patch\('\/api\/apps\/:slug\/messages\/:id', groupChatWriteLimiter, sameOriginBrowserOnly,/);
+  assert.match(read('src/services/ws.js'), /return \{ ok: true, content, editedAt \};/, 'the socket\'s edit answers, for its REST twin');
   assert.match(src, /import \{ MessageActionSheet, useLongPress \} from '\.\.\/\.\.\/message-actions\/action-sheet';/);
   assert.match(src, /import \{ enterSends, isTouchInput \} from '\.\.\/\.\.\/\.\.\/lib\/enter-sends';/);
   assert.doesNotMatch(src, /rx-add|data-ws-discussion-add-reaction/, 'no always-visible add-reaction button');
@@ -192,19 +225,221 @@ test('For you has no #general row where the hub draws the Discussion', () => {
   assert.match(here, /data-ws-workshop-row/, 'Needs you and the Workshop stay');
 });
 
-test('the hub mounts the card beside its thin column, and the phone\'s card opens the page under the Hub', () => {
+test('the hub mounts the card beside its thin column, and the phone\'s card opens the Discussion place', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /<DiscussionCard slug=\{slug\} name=\{projectName\} data=\{community\} mode="full" \/>/);
-  assert.match(lander, /<DiscussionCard slug=\{slug\} name=\{projectName\} data=\{community\} mode="preview" onOpenPage=\{\(\) => openTab\('posts'\)\} \/>/);
-  assert.match(lander, /\{tab === 'posts' && slug \? \(\s*<DiscussionCard slug=\{slug\} name=\{app\.name \|\| community\?\.name \|\| slug\} data=\{community\} mode="page" onBack=\{\(\) => upTab\('status'\)\} \/>/);
+  assert.match(lander, /<DiscussionCard slug=\{slug\} name=\{projectName\} data=\{community\} mode="preview" onOpenPage=\{\(\) => openTab\('discussion'\)\} \/>/);
+  // #general's place IS the Discussion: the page draws it, with no chat view
+  // and no hand-off; `posts`, its first address, is the same place. A
+  // topic's channel is the only room ProjectDiscussion draws.
+  assert.match(lander, /\{\(tab === 'discussion' \|\| tab === 'posts'\) && slug \? \(\s*<DiscussionCard slug=\{slug\} name=\{app\.name \|\| community\?\.name \|\| slug\} data=\{community\} mode="page" \/>/);
+  assert.match(lander, /\{isChannelPlace\(tab\) && tab !== 'discussion' \? \(\s*<ProjectDiscussion/);
+  assert.doesNotMatch(lander, /onChat=|onMissing=|asChat/);
   const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
   assert.equal(places.isPlaceKey('posts'), true);
-  assert.equal(places.litPlace('posts'), 'status');
+  assert.equal(places.litPlace('posts'), 'discussion');
+  assert.equal(places.placeName('discussion'), 'Discussion');
+});
+
+// Part 2: a link to a #general message lands on the Discussion, which opens
+// the post it is in and marks it; what the posts do not show goes to the chat.
+test('a link to a message finds its post: the thread opened, older pages read; or hands it on', async () => {
+  const { DiscussionFeed, PLACE_PAGES } = loadTsx(CARD);
+  assert.equal(PLACE_PAGES, 10);
+  const all = new Map();
+  const put = (m) => { all.set(m.id, m); return m; };
+  [said(10, { replyCount: 5 }), said(20), said(30)].forEach(put);
+  for (let id = 11; id <= 15; id += 1) put(said(id, { rootId: 10 }));
+  [said(1), said(2), said(3), said(4, { rootId: 2 })].forEach(put);
+  const pages = [];
+  const source = {
+    key: 'test', streamHoldsReplies: true,
+    async page(before) {
+      pages.push(before);
+      // The newest page holds the posts since 20 and the last two replies of 10;
+      // older pages hold 10 and its first replies, then the oldest posts.
+      if (before == null) return { messages: [all.get(14), all.get(15), all.get(20), all.get(30)], more: true, readId: 0 };
+      if (before === 14) return { messages: [10, 11, 12, 13].map((i) => all.get(i)), more: true, readId: null };
+      return { messages: [1, 2, 3, 4].map((i) => all.get(i)), more: false, readId: null };
+    },
+    async thread(rootId) {
+      return { root: all.get(rootId) || null, replies: [...all.values()].filter((m) => m.rootId === rootId).sort((a, b) => a.id - b.id) };
+    },
+    async post() { return null; }, async react() { return null; },
+    async readPosition() { return 0; }, async markRead() {},
+  };
+  const feedOf = () => new DiscussionFeed(source, { since: null, fold_at: 8, earlier: null }, { current: 'me' });
+
+  // A reply: its post, with the whole thread read and open.
+  let room = feedOf();
+  assert.deepEqual(await room.place({ threadRootId: 10, focusMessageId: 12 }), { key: 'post:10', messageId: 12 });
+  assert.ok(room.get().opened.has(10), 'its replies box is open');
+  assert.deepEqual(room.items().find((i) => i.key === 'post:10').replies.map((r) => r.id), [11, 12, 13, 14, 15]);
+
+  // A post further back: older pages read until it is there; not opened.
+  room = feedOf();
+  assert.deepEqual(await room.place({ threadRootId: null, focusMessageId: 2 }), { key: 'post:2', messageId: 2 });
+  assert.equal(room.get().opened.size, 0, 'a post alone opens nothing');
+
+  // Gone, or past what the posts read: the page opens at its top.
+  room = feedOf();
+  assert.equal(await room.place({ threadRootId: null, focusMessageId: 999 }), null);
+  assert.equal(await feedOf().place({ threadRootId: null, focusMessageId: null }), null);
+
+  // With the fold, an older message's own thread is inside the Earlier post:
+  // it opens, and so do the older message's replies (no chat to hand it to).
+  const folded = new DiscussionFeed(source, { since: SINCE, fold_at: 8, earlier: { count: 12, from: SINCE, to: SINCE, last_id: 3 } }, { current: 'me' });
+  assert.deepEqual(await folded.place({ threadRootId: 2, focusMessageId: 4 }), { key: 'earlier', messageId: 4 }, 'a reply to an older message');
+  assert.ok(folded.get().opened.has(3) && folded.get().opened.has(2), 'the Earlier post and the older message\'s replies open');
+  const old = await folded.place({ threadRootId: null, focusMessageId: 2 });
+  assert.deepEqual(old, { key: 'earlier', messageId: 2 }, 'an old message is a reply of the Earlier post');
+  // A link to an older message's own thread opens that thread under it, inline.
+  const inline = new DiscussionFeed(source, { since: SINCE, fold_at: 8, earlier: { count: 12, from: SINCE, to: SINCE, last_id: 3 } }, { current: 'me' });
+  assert.deepEqual(await inline.place({ threadRootId: 2, focusMessageId: null }), { key: 'earlier', messageId: 2 });
+  assert.ok(inline.get().opened.has(3) && inline.get().opened.has(2), 'the Earlier post open, and the old message\'s thread in it');
+  // A thread the server answers by another root (staging's demo addresses):
+  // that root is the one placed.
+  const aliased = new DiscussionFeed({ ...source, async thread(rootId) { return source.thread(rootId === 9100 ? 10 : rootId); } },
+    { since: null, fold_at: 8, earlier: null }, { current: 'me' });
+  assert.deepEqual(await aliased.place({ threadRootId: 9100, focusMessageId: null }), { key: 'post:10', messageId: 10 });
+
+  // The page takes a target, and one it cannot place leaves it at its top.
+  const card = read(CARD);
+  assert.match(card, /const target = takeDiscussionTarget\(slug, null\);/);
+  assert.match(card, /if \(!gone && found\) setFocus\(found\);/);
+  assert.doesNotMatch(card, /asChat|missing\.current|openInGeneral/, 'there is no chat view to hand anything on to');
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/project-discussion.tsx'), /_discussionPlaceFor|function GeneralChannel/);
+  assert.match(read('public/css/app.css'), /\.dh-msg\[data-ws-discussion-marked\] \{[^}]*animation: dh-marked 2\.4s ease-out;/);
+});
+
+// Part 2: the room live. A project's chat socket says what was said; Homeroom's
+// #general (a Messages room) names what changed, and the card reads it again.
+test('the room live: a socket frame is drawn as it lands, a changed room is read again', async () => {
+  const me = 'priya';
+  const chat = feed.liveFromAppFrame({ type: 'chat', id: 50, userId: 2, username: 'dev', content: 'hi', msgType: 'message', createdAt: SINCE }, me);
+  assert.equal(chat.kind, 'said');
+  assert.deepEqual([chat.said.id, chat.said.rootId, chat.said.who.username, chat.said.content], [50, null, 'dev', 'hi']);
+  const reply = feed.liveFromAppFrame({ type: 'chat', id: 51, userId: 2, username: 'dev', content: 'yes', thread: { type: 'message', ref: 10 }, createdAt: SINCE }, me);
+  assert.equal(reply.said.rootId, 10);
+  assert.equal(feed.liveFromAppFrame({ type: 'chat', id: 52, userId: 2, username: 'dev', content: 'x', thread: { type: 'category', ref: 3 } }, me), null, 'a topic\'s message is not #general\'s');
+  assert.equal(feed.liveFromAppFrame({ type: 'typing', username: 'dev' }, me), null);
+  assert.deepEqual(feed.liveFromAppFrame({ type: 'thread_summary', root_id: 10, thread: { reply_count: 4, last_reply_at: SINCE } }, me),
+    { kind: 'thread', rootId: 10, replyCount: 4, lastReplyAt: SINCE });
+  assert.deepEqual(feed.liveFromAppFrame({ type: 'chat_edit', messageId: 10, content: 'edited' }, me), { kind: 'edit', id: 10, content: 'edited' });
+  assert.deepEqual(feed.liveFromAppFrame({ type: 'reaction', messageId: 10, reactions: [{ emoji: '👍', count: 2, users: ['dev', 'priya'] }] }, me),
+    { kind: 'reactions', id: 10, reactions: [{ emoji: '👍', count: 2, reacted: true, users: ['dev', 'priya'] }] });
+  assert.deepEqual(feed.liveFromAppFrame({ type: 'chat_delete', id: 10 }, me), { kind: 'gone', id: 10 });
+  assert.deepEqual(feed.liveFromAppFrame({ type: 'resync_hint' }, me), { kind: 'stale', messageId: null, rootId: null });
+  assert.deepEqual(feed.liveFromConversationEvent({ type: 'conversation_message_created', conversationId: 7, messageId: 9, threadRootId: 4 }, 7),
+    { kind: 'stale', messageId: 9, rootId: 4 });
+  assert.equal(feed.liveFromConversationEvent({ conversationId: 8, messageId: 9 }, 7), null, 'another room\'s');
+
+  // The feed draws each as it lands.
+  const { DiscussionFeed } = loadTsx(CARD);
+  let reads = 0;
+  const source = {
+    key: 'live', streamHoldsReplies: true,
+    async page() { reads += 1; return { messages: [said(10, { replyCount: 1 }), said(11, { rootId: 10 })], more: false, readId: 0 }; },
+    async thread() { return { root: null, replies: [] }; },
+    async post() { return null; }, async react() { return null; },
+    async readPosition() { return 0; }, async markRead() {},
+    async ranked() { return { ids: [], more: false }; },
+    live() { return () => {}; },
+  };
+  const room = new DiscussionFeed(source, null, { current: me });
+  await room.load();
+  room.heard(feed.liveFromAppFrame({ type: 'chat', id: 60, userId: 2, username: 'dev', content: 'new post', createdAt: SINCE }, me));
+  room.heard(feed.liveFromAppFrame({ type: 'chat', id: 61, userId: 2, username: 'dev', content: 'a reply', thread: { type: 'message', ref: 10 }, createdAt: SINCE }, me));
+  let post = room.items().find((i) => i.key === 'post:10');
+  assert.deepEqual([post.replyCount, post.replies.map((r) => r.id)], [2, [11, 61]], 'a reply lands under its post, which counts it');
+  assert.ok(room.items().some((i) => i.key === 'post:60'), 'a new post is drawn');
+  room.heard(feed.liveFromAppFrame({ type: 'chat', id: 61, userId: 2, username: 'dev', content: 'a reply', thread: { type: 'message', ref: 10 }, createdAt: SINCE }, me));
+  assert.equal(room.items().find((i) => i.key === 'post:10').replyCount, 2, 'the same message twice is counted once');
+  room.heard({ kind: 'thread', rootId: 10, replyCount: 5, lastReplyAt: SINCE });
+  room.heard({ kind: 'edit', id: 60, content: 'new post, edited' });
+  room.heard({ kind: 'reactions', id: 60, reactions: [{ emoji: '🎉', count: 1, reacted: false, users: ['dev'] }] });
+  room.heard({ kind: 'gone', id: 11 });
+  post = room.items().find((i) => i.key === 'post:10');
+  assert.equal(post.replyCount, 5);
+  assert.deepEqual(post.replies.map((r) => r.id), [61], 'a reply taken back leaves its post');
+  const fresh = room.items().find((i) => i.key === 'post:60');
+  assert.deepEqual([fresh.root.content, fresh.root.reactions[0].emoji], ['new post, edited', '🎉']);
+  // A room that only says something changed is read again, once for a burst.
+  const before = reads;
+  room.heard({ kind: 'stale', messageId: 9, rootId: null });
+  room.heard({ kind: 'stale', messageId: 10, rootId: null });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(reads, before + 1);
+
+  // Held while on screen: the source's live events and the page's own "read it again".
+  const card = read(CARD);
+  assert.match(card, /const stopSource = this\.source\.live\(\(event\) => this\.heard\(event\)\);\s*const stopReads = watchLiveReads\(\(\) => this\.refresh\(\)\);/);
+  assert.match(read(FEED), /new WebSocket\(`\$\{proto\}\/\/\$\{location\.host\}\/ws\/chat\/\$\{encodeURIComponent\(slug\)\}\$\{qs\}`\)/);
+  assert.match(read(FEED), /window\.addEventListener\('usernode:conversation-changed', changed\)/);
+  assert.match(read('public/js/app.js'), /window\.UsernodeReact\?\.messages\?\.handleEvent\?\.\(data\);[\s\S]{0,500}window\.dispatchEvent\(new CustomEvent\('usernode:conversation-changed', \{ detail: data \}\)\)/);
+});
+
+test('Most replies is the whole room\'s: the server ranks, the card reads the busiest posts in', async () => {
+  const { DiscussionFeed } = loadTsx(CARD);
+  const asked = [];
+  const threads = [];
+  const source = {
+    key: 'rank', streamHoldsReplies: true,
+    async page() { return { messages: [said(40), said(41)], more: true, readId: 0 }; },
+    async thread(rootId) {
+      threads.push(rootId);
+      return { root: said(rootId, { replyCount: 2 }), replies: [said(rootId + 100, { rootId }), said(rootId + 101, { rootId })] };
+    },
+    async post() { return null; }, async react() { return null; },
+    async readPosition() { return 0; }, async markRead() {},
+    async ranked(after, offset, limit) {
+      asked.push([after, offset, limit]);
+      return offset === 0 ? { ids: [7, 3, 40], more: true } : { ids: [2], more: false };
+    },
+    live() { return () => {}; },
+  };
+  const fold = { since: SINCE, fold_at: 8, earlier: null };
+  const room = new DiscussionFeed(source, fold, { current: 'me' });
+  await room.load();
+  await room.rankTo(8);
+  assert.deepEqual(asked[0], [0, 0, 8], 'from the start of the room, a page of eight');
+  assert.deepEqual(threads.sort((a, b) => a - b), [2, 3, 7], 'each ranked post not here is read with its thread');
+  const top = feed.sortItems(room.items(), 'replies').map((i) => i.key);
+  assert.deepEqual(top.slice(0, 3), ['post:7', 'post:3', 'post:2']);
+  assert.deepEqual(room.get().ranked, [7, 3, 40, 2]);
+  assert.equal(room.get().rankedMore, false);
+  // With the fold, the ranking starts after its last message.
+  const folded = new DiscussionFeed(source, { since: SINCE, fold_at: 8, earlier: { count: 9, from: SINCE, to: SINCE, last_id: 30 } }, { current: 'me' });
+  await folded.load();
+  asked.length = 0;
+  await folded.rankTo(1);
+  assert.deepEqual(asked[0], [30, 0, 8]);
+  // A ranking that cannot be read leaves the posts sorted as they are.
+  const offline = new DiscussionFeed({ ...source, async ranked() { throw new Error('down'); } }, fold, { current: 'me' });
+  await offline.load();
+  await offline.rankTo(8);
+  assert.equal(offline.get().rankedMore, false);
+  const view = read(CARD);
+  assert.match(view, /if \(sort !== 'replies' \|\| mode === 'preview' \|\| state\.status !== 'ready'\) return;\s*void feed\.rankTo\(limit\);/);
+  // The route: who gets the channel may rank it.
+  const route = read('src/routes/apps.js');
+  assert.match(route, /router\.get\('\/api\/apps\/:slug\/discussion\/most-replied'/);
+  assert.match(route, /return res\.json\(await discussion\.rankedInConversation\(pool, conversationId, opts\)\);/);
+  assert.match(route, /if \(!\(await appAccess\.checkAppAccess\(pool, app, req\.user, 'collab'\)\)\) \{\s*return res\.status\(404\)/);
+  const server = require('../src/services/discussion');
+  const sql = [];
+  const pool = { query: async (text, args) => { sql.push([text, args]); return { rows: [{ id: '5', reply_count: 3, active_at: new Date(SINCE) }, { id: '4', reply_count: 0, active_at: SINCE }] }; } };
+  assert.deepEqual(await server.rankedInApp(pool, 9, { viewerId: 1, afterId: 'x', limit: 1, offset: -4 }),
+    { posts: [{ id: 5, reply_count: 3, active_at: SINCE }], more: true });
+  assert.deepEqual(sql[0][1], [9, 0, 1, 2, 0], 'bad bounds are read as none');
+  assert.match(sql[0][0], /ORDER BY reply_count DESC, active_at DESC, m\.id DESC/);
+  await server.rankedInConversation(pool, 3, { limit: 500 });
+  assert.equal(sql[1][1][3], server.RANKED_MAX + 1, 'a page is at most RANKED_MAX');
 });
 
 test('the server says what was said before Discussion, best-effort, beside the channel', async () => {
   const route = read('src/routes/apps.js');
-  assert.match(route, /discussion: await discussion\.discussionSummary\(pool, \{ conversationId, viewerId: req\.user\?\.id \}\),/);
+  assert.match(route, /discussion: await discussion\.discussionSummary\(pool, \{ conversationId, viewerId: req\.user\?\.id, anchorAppId: app\.id \}\),/);
   assert.match(route, /discussion: await discussion\.discussionSummary\(pool, \{ appId: app\.id, viewerId: req\.user\?\.id \}\),/);
   assert.match(read('src/db/reference-data.js'), /\('discussion_posts_since', to_char\(NOW\(\) AT TIME ZONE 'UTC'/);
   const server = require('../src/services/discussion');
@@ -214,17 +449,30 @@ test('the server says what was said before Discussion, best-effort, beside the c
   server.resetDiscussionSinceForTest();
   const rows = (sql) => (sql.includes('platform_settings')
     ? { rows: [{ value: SINCE }] }
-    : { rows: [{ n: 12, first_at: '2026-10-02T00:00:00Z', last_at: '2026-11-24T00:00:00Z', last_id: 40 }] });
+    : sql.includes('discussion_earlier_reactions')
+      ? { rows: [{ emoji: '❤️', count: 2, users: ['jo', 'ana'], reacted: true }] }
+      : { rows: [{ n: 12, first_at: '2026-10-02T00:00:00Z', last_at: '2026-11-24T00:00:00Z', last_id: 40 }] });
   const seen = [];
   const pool = { query: async (sql, params) => { seen.push([sql, params]); return rows(sql); } };
   assert.deepEqual(await server.discussionSummary(pool, { appId: 3, viewerId: 7 }), {
     since: SINCE, fold_at: 8,
-    earlier: { count: 12, from: '2026-10-02T00:00:00.000Z', to: '2026-11-24T00:00:00.000Z', last_id: 40 },
+    earlier: {
+      count: 12, from: '2026-10-02T00:00:00.000Z', to: '2026-11-24T00:00:00.000Z', last_id: 40,
+      // The Earlier post's own reactions, on the project's anchor.
+      reactions: [{ emoji: '❤️', count: 2, users: ['jo', 'ana'], reacted: true }],
+    },
   });
   assert.match(seen[1][0], /FROM chat_messages m[\s\S]*m\.thread_type IS NULL[\s\S]*m\.created_at < \$2::timestamptz/);
   assert.deepEqual(seen[1][1], [3, SINCE, 7]);
-  await server.discussionSummary(pool, { conversationId: 5, viewerId: 7 });
-  assert.match(seen[seen.length - 1][0], /FROM conversation_messages m[\s\S]*m\.thread_root_id IS NULL/);
+  assert.deepEqual(seen[2][1], [3, 7], 'read on the project\'s anchor, as the viewer');
+  // Homeroom's #general is a conversation; its anchor is the platform project's row.
+  await server.discussionSummary(pool, { conversationId: 5, viewerId: 7, anchorAppId: 9 });
+  assert.match(seen[seen.length - 2][0], /FROM conversation_messages m[\s\S]*m\.thread_root_id IS NULL/);
+  assert.deepEqual(seen[seen.length - 1][1], [9, 7]);
+  // A visitor gets the counts alone: no names, nothing about themselves.
+  const visitor = await server.discussionSummary(pool, { appId: 3, visitor: true, viewerId: 7 });
+  assert.deepEqual(visitor.earlier.reactions, [{ emoji: '❤️', count: 2 }]);
+  assert.deepEqual(seen[seen.length - 1][1], [3, null]);
   server.resetDiscussionSinceForTest();
 });
 
@@ -253,6 +501,13 @@ test('every word is the catalog\'s', () => {
   assert.equal(message('project:hub.discussion.start.placeholder'), 'Start a post…');
   assert.equal(message('project:hub.discussion.reply.placeholder'), 'Reply in thread…');
   assert.equal(message('project:hub.discussion.sort.replies'), 'Most replies');
-  assert.equal(message('project:hub.discussion.earlier.title'), 'Earlier in #general');
+  assert.equal(message('project:hub.discussion.earlier.title'), 'Earlier discussion');
+  assert.equal(message('project:hub.discussion.signInToPost'), 'Sign in to post');
+  assert.equal(message('auth:guest.sheet.chat', { project: 'Puzzle Club' }), 'Sign up to post in Puzzle Club');
+  // To people it is the project's Discussion, made of posts: no #general in its words.
+  const catalog = JSON.parse(read('frontend/locales/en/project.json'));
+  for (const [key, entry] of Object.entries(catalog)) {
+    if (key.startsWith('hub.discussion.') || key.startsWith('places.')) assert.doesNotMatch(entry.text, /#general/, key);
+  }
   assert.equal(message('project:page.title.discussion'), 'Discussion');
 });

@@ -33,6 +33,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { PencilSquareIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -41,14 +42,13 @@ import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
 
 /**
- * The back button's own frame — the tinted round disc, the header's ink —
- * narrowed on a phone (`px-1.5` and the word `hidden sm:inline`) so the
+ * Where Suggest stands in the bar: hidden on a phone, a 28px row from `sm`.
+ * Its frame is the Button primitive's quiet kind in the header's colours
+ * (`brandTint`, the back button's tinted round disc and ink), narrowed on a
+ * phone (size `chip`'s `px-1.5`, and the word `hidden sm:inline`) so the
  * app's name keeps some room.
  */
-const SUGGEST_CLASS = 'shrink-0 hidden sm:inline-flex items-center justify-center gap-1.5 h-7 '
-  + 'min-w-7 px-1.5 sm:px-2.5 rounded-full border border-[color:var(--brand-line)] '
-  + 'bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] '
-  + 'text-[0.8125rem] font-semibold un-touch-target';
+const SUGGEST_PLACE = 'shrink-0 hidden sm:inline-flex items-center justify-center gap-1.5 h-7 min-w-7 un-touch-target';
 
 /**
  * Whether the controls have somewhere to stand right now: a project's app,
@@ -88,16 +88,19 @@ export function InAppControls(): ReactNode {
           Drawn like the back button, per the header's own controls; on a
           phone the word goes and the pencil stands alone.
       */}
-      <button
+      <Button
         id="header-in-app-suggest"
         type="button"
-        className={SUGGEST_CLASS}
+        variant="brandTint"
+        size="chip"
+        ink="brand"
+        className={SUGGEST_PLACE}
         aria-label={t('core:header.inApp.suggestLabel')}
         onClick={() => Improve.giveFeedback({ target: 'app' })}
       >
         <PencilSquareIcon className="w-4 h-4" aria-hidden="true" />
         <span className="hidden sm:inline">{t('core:header.inApp.suggest')}</span>
-      </button>
+      </Button>
     </>
   );
 }

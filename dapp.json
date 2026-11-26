@@ -2520,9 +2520,10 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's Discussion is its channel, #general, in place: the room is drawn in the project page under its own header and tabs, like any project's channel, rather than opening Messages (#3494)",
+      "name": "Homeroom's Discussion is a place of its own: #general as posts under the page's own header, the box to start one wearing the formatting row (Bold through Insert link, #6035/#6653), and Mute at the end of its heading (#5303), with no chat view of #general left (26 Nov 2026)",
       "path": "/?demo=1&ws=discussion#app/usernode-2d5619/workshop",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded:not(:has(.messages-thread-header))"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:has(> .dev-ws-hub-discussion-head > button[data-ws-channel-mute]) > form[data-ws-discussion-compose=\"post\"] > .messages-format-bar[data-ws-discussion-format][role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]",
+      "expectText": "Discussion"
     },
     {
       "name": "Back from a project's Workshop returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop's place, then goes Back",
@@ -2554,10 +2555,10 @@
       "expectText": "Recently live"
     },
     {
-      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels, with no Topics group (#4417)",
+      "name": "A project page's places are Hub, Needs you and Workshop, a line, then the Discussion (its #general, as posts) under Channels, with no Topics group (#4417)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"]:last-child > [data-place=\"discussion\"]",
-      "expectText": "general"
+      "expectText": "Discussion"
     },
     {
       "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin at the row's end (#3709, D; One Home #6361; #7070)",
@@ -2572,10 +2573,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "A phone's Discussion opens as a page under the Hub: the way back to the Hub, then the posts with the box to start one (26 Nov 2026)",
+      "name": "The Discussion's first address (?ws=posts) still opens it, with the box to start a post and its row lit in the places list (26 Nov 2026)",
       "path": "/?demo=1&ws=posts#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"posts\"] [data-ws-discussion-page] > [data-ws-pagehead]:has(button[data-ws-page-back]) + [data-ws-hub-discussion=\"page\"] > form[data-ws-discussion-compose=\"post\"]",
-      "expectText": "Posts and replies from everyone in Homeroom"
+      "expectSelector": "body:has([data-places=\"usernode-2d5619\"] [data-place=\"discussion\"][aria-current=\"page\"]) #dev-workshop .dev-ws[data-ws-tab=\"posts\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] > form[data-ws-discussion-compose=\"post\"]"
     },
     {
       "name": "The Workshop's path: four stops a change travels, in order, under In the workshop now, the approval rule its last line, and for an admin Private requests' quiet row at the page's foot (#3487, #3528, #5048; 24 Nov 2026)",
@@ -3024,51 +3024,30 @@
       "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
     },
     {
-      "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines (in Homeroom's Discussion tab, where its address opens since #3653)",
+      "name": "#3653: #general's address opens Homeroom's Discussion in place, under the page's own header and tabs, not a page of its own on the Messages screen (#general is posts since 26 Nov 2026)",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
+      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"usernode-2d5619\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] :is([data-ws-discussion-posts], [data-ws-discussion-empty])"
     },
     {
-      "name": "#3653: #general's address opens Homeroom's Discussion tab, the room in place under the page's own header and tabs (the page names the community, so the room draws no header of its own), not a page of its own on the Messages screen",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded.messages-thread-channel:not(:has(.messages-thread-header))"
+      "name": "#2783: #1 in a reply reads as the project's request, a link to it; a post carries its picture and a reply its file, as the chat drew them (26 Nov 2026)",
+      "path": "/app/staging-demo-discussion/dev/discussion",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:has([data-ws-discussion-files] img.dc-msg-att-img):has([data-ws-discussion-replies] [data-ws-discussion-files] a.dc-msg-att-chip[download]) [data-ws-discussion-replies] .messages-markdown a.gc-ref.gc-ref-issue[data-ref-number=\"1\"]"
     },
     {
-      "name": "#2783: #name in a message is a link to that channel",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-message .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
-      "expectText": "#general"
-    },
-    {
-      "name": "#6035/#6653: a community channel's message box wears the formatting row, Bold through Insert link, above the field, and (#7164) it starts closed, which on a phone hides it until the plus menu opens it, with no extra button beside the field",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card:has(.messages-composer-add + textarea) > .messages-format-bar[role=\"toolbar\"]:not([data-open]) > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]"
-    },
-    {
-      "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-message .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
-    },
-    {
-      "name": "#2884: four shared cards in a row in #general draw as the first card and a “… 3 more” row, the rest folded",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "name": "#2884: four shared plans in a row in the Discussion draw as the first and a \"… 3 more\" row, the rest folded, and the plain post before the run is not folded into it",
+      "path": "/app/staging-demo-discussion/dev/discussion",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-posts] > [data-ws-discussion-thread]:not(:has([data-ws-discussion-spec])) + [data-ws-discussion-card-run=\"4\"] > [data-ws-discussion-thread]:has([data-ws-discussion-spec]) + button[data-ws-discussion-card-run-more]",
       "expectText": "… 3 more"
     },
     {
-      "name": "#2884: a plain message before the run is not folded into it",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message:not(:has(.messages-object-card)) + .messages-message:has(.messages-object-card) + .messages-card-run"
-    },
-    {
-      "name": "#general is what people said: Homeroom posts no proposal or merge line there, so the room is people's messages alone",
+      "name": "#general is what people said: its channel address opens Homeroom's Discussion, posts with no line from Homeroom about a proposal or a merge",
       "path": "/#messages/channel/general",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel:not(:has(.messages-message-system)) .messages-message:not(.messages-message-system)"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"usernode-2d5619\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:not(:has(.messages-message-system, .gc-event)) > form[data-ws-discussion-compose=\"post\"]"
     },
     {
-      "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
+      "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286); #2905: a message's report and block sit behind one ⋯ disc",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group:has(.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"]) .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",
@@ -3113,15 +3092,6 @@
       "name": "Consecutive messages from one conversation collapse to a counted row",
       "path": "/?shot=notifications-all&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
-    },
-    {
-      "name": "#2905: a follow-up message's report and block sit behind one ⋯ disc, not three, so the line keeps its width on a phone",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-channel .messages-message-grouped > .msgx-bar.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
-      "impact": [
-        "frontend/src/features/messages/**",
-        "public/css/app.css"
-      ]
     },
     {
       "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon; a message that asked Homeroom bot wears no status chip for the room (5 Nov 2026: where a request stands is on its page)",
@@ -3855,16 +3825,16 @@
       "expectText": "Programme users"
     },
     {
-      "name": "Admin Users explains what excluding a user from ranking does (#1558)",
+      "name": "Admin Users keeps the line on what excluding a user from ranking does, in its Programme users tab (#1558)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-topo-u-ranking-help",
-      "expectText": "non-podium"
+      "expectSelector": "#admin-users-programme #admin-topo-u-ranking-help",
+      "expectText": "Programme users"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
+      "name": "Admin Waitlist is a first-class menu section (#1179): its figures, its tabs, and its settings loaded as switch rows",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-switch .text-xs):has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
-      "expectText": "Signed-out visitors"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-figures [data-figure=\"waiting\"]):has(#admin-topo-wl-tabs [role=\"tab\"][aria-selected=\"true\"]):has(#admin-topo-wl-switch .adm-setting-title):has(#admin-topo-wl-story .adm-setting-title):has(#admin-topo-wl-search)",
+      "expectText": "Longest wait"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
@@ -3879,10 +3849,10 @@
       "expectText": "of 7 answered"
     },
     {
-      "name": "Admin Waitlist has an Analytics button just before Export CSV (#2748)",
+      "name": "Admin Waitlist's totals and trend are its Trends tab (#2748)",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-wl-analytics",
-      "expectText": "Analytics"
+      "expectSelector": "#admin-topo-wl-tabs #admin-topo-wl-analytics[role=\"tab\"]",
+      "expectText": "Trends"
     },
     {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
@@ -4306,9 +4276,9 @@
       "expectSelector": ".dev-request-sheet > .messages-composer.messages-composer-thread.platform-safe-bar > #gc-thread-form.messages-composer-card .messages-composer-add > #gc-thread-attach-btn"
     },
     {
-      "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's); its old full-screen address opens the project page's Discussion tab, where the channel is (#3653)",
+      "name": "A project's channel's old full-screen address opens its Discussion, where its posts are written, the box to start one in place (#3653; 26 Nov 2026)",
       "path": "/?demo=1#app/staging-demo-app/dev/chat",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .dev-ws-discussion-host > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] > form[data-ws-discussion-compose=\"post\"] textarea"
     },
     {
       "name": "Settings is a frosted strip with each section as a sheet inside it",
@@ -4411,10 +4381,10 @@
       ]
     },
     {
-      "name": "A project's channel is what people said: where nobody has spoken it is the quiet card alone, with no line from Homeroom about a proposal, a merge or anything else",
+      "name": "A project's Discussion is what people said: where nobody has posted it says so, with no line from Homeroom about a proposal, a merge or anything else",
       "path": "/app/staging-demo-quiet/dev/chat",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] #gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
-      "expectText": "Nobody has said anything here yet"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:not(:has([data-ws-discussion-message], .gc-event)) [data-ws-discussion-empty]",
+      "expectText": "Nothing posted yet"
     },
     {
       "name": "An app's channel draws a person's message as a Discord-style named row, flat text under their name and stamp with no bubble (#2783)",
@@ -4422,10 +4392,10 @@
       "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg:not(.gc-msg-self) > .min-w-0 > div > .gc-msg-content"
     },
     {
-      "name": "The same channel by its old Messages address is the quiet card alone too, in its project page's Discussion tab (#3653): Homeroom's activity is not a line in any channel",
+      "name": "The same project by its channel's old Messages address is its Discussion, saying nothing was posted, too (#3653): Homeroom's activity is not a post",
       "path": "/#messages/app/staging-demo-quiet",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] #gc-messages:not(:has(.gc-event, .gc-msg)) > .gc-quiet[data-quiet-chat]:only-child",
-      "expectText": "Nobody has said anything here yet"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-quiet\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:not(:has([data-ws-discussion-message], .gc-event)) [data-ws-discussion-empty]",
+      "expectText": "Nothing posted yet"
     },
     {
       "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
@@ -4720,15 +4690,15 @@
       "expectText": "New chat"
     },
     {
-      "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-thread-channel .messages-message:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more",
-      "expectText": "3 replies"
+      "name": "#2387/#2905: every post carries one hover bar (recent reactions, the picker, reply, and one ⋯ disc for the rest), and a post with replies says how many",
+      "path": "/app/staging-demo-discussion/dev/discussion",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread]:has([data-ws-discussion-replies] .dh-reply) > article.dh-post > .dh-actions.msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
+      "expectText": "2 replies"
     },
     {
-      "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own (#general's, in Homeroom's Discussion tab since #3653)",
+      "name": "#2387: a link to an older message's thread opens the Discussion on Earlier discussion, the thread's replies under that message inside it; #2783: #general in it is a link to that channel",
       "path": "/?demo=1#messages/910004/thread/9100404",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-layout-embedded.messages-has-reply-thread > .messages-reply-pane[data-reply-thread] .messages-composer-thread",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"earlier\"] .dh-msg:has(a.gc-channel-ref[href=\"#messages/channel/general\"]):has([data-ws-discussion-old-thread][aria-expanded=\"true\"]) [data-ws-discussion-old-replies] > .dh-msg",
       "expectText": "Threads keep the room readable"
     },
     {
@@ -4738,38 +4708,39 @@
       "expectText": "Message deleted"
     },
     {
-      "name": "#3653: an app channel's Messages address opens its project page's Discussion tab, the room in place under the page's header and tabs, not a page of its own on the Messages screen",
+      "name": "#3653: an app channel's Messages address opens its project's Discussion under the Communities tab, in place under the page's header with no back button of the room's own, not a page on the Messages screen",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] section.dev-ws-discussion[data-discussion-app=\"staging-demo-app\"] > .dev-ws-discussion-host #gc-messages"
+      "expectSelector": "body:has(#messages-screen.hidden):has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#platform-header a#back-btn.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-posts]"
     },
     {
-      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder; #4238: Homeroom bot's first-version line carries its Open button",
+      "name": "#2387: a project's posts carry the same hover bar and a post with replies its count, a deleted one its placeholder; #4238: Homeroom bot's first-version post carries its Open button",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text):has([data-gc-open-app]) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
+      "expectSelector": "[data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:has([data-ws-discussion-message=\"9902000\"] .dh-deleted):has([data-ws-discussion-open-app]) [data-ws-discussion-thread=\"post:9902003\"] > article.dh-post > .dh-actions > [aria-label=\"Add reaction\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
       "expectText": "3 replies"
     },
     {
-      "name": "#2387: a link to a reply in an app channel opens the reply thread it is in, beside the channel, in its project page's Discussion tab (#3653)",
+      "name": "#2387: a link to a reply in an app channel opens its project's Discussion on the post it is under, with that post's replies open (#3653; #general as posts, 26 Nov 2026)",
       "path": "/?demo=1#messages/app/staging-demo-app/m/9902022",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .dev-ws-discussion.dev-ws-discussion-threaded[data-discussion-app=\"staging-demo-app\"] > .messages-reply-pane-app[data-reply-thread=\"9902003\"] .messages-reply-host",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"post:9902003\"] > [data-ws-discussion-replies] > [data-ws-discussion-message=\"9902022\"]",
       "expectText": "Replies stay in here"
     },
     {
-      "name": "#2387 follow-up: a thread's replies show in #general where they landed, one card for the run, and the card under the first message shows the newest reply",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-thread-channel:has(.messages-message .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
-      "expectText": "3 replies in thread"
+      "name": "#2387 follow-up: a post's replies are drawn under it, newest last, and a member's reply field is always below them (26 Nov 2026)",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "[data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"post:9902003\"] > [data-ws-discussion-replies] > .dh-reply + form[data-ws-discussion-compose=\"reply\"]:last-child"
     },
     {
-      "name": "#2387 follow-up: an app channel draws its reply thread's replies where they landed, and the thread card shows the newest reply",
-      "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#gc-messages:has([data-msg-id=\"9902003\"] .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card",
-      "expectText": "3 replies in thread"
+      "name": "Earlier discussion is a post of its own: it takes reactions on its own anchor, and shows who reacted (26 Nov 2026)",
+      "path": "/app/staging-demo-discussion-busy/dev/discussion",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"earlier\"] [data-ws-discussion-earlier-reactions] > button[data-emoji=\"❤️\"]"
     },
     {
-      "name": "An open channel belongs to its community (#3653): its old address opens the project page under the Communities tab, with no back button of the room's own",
-      "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "body:has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#platform-header a#back-btn.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"]"
+      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026)",
+      "path": "/app/staging-guest-page-busy?shot=anon",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols] > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
+      "expectText": "Sign in to post",
+      "allowConsoleErrors": true
     },
     {
       "name": "QA 2026-09-24 Q14: a group invitation's header reads \"Invitation pending\", not a member count the invitee is not shown",

@@ -52,7 +52,10 @@ function list(props) {
   }));
 }
 
-test('the list: the pages, a line, then Channels over #general, and no Topics group', () => {
+// #general IS THE DISCUSSION (26 Nov 2026): the row under Channels is the
+// project's Discussion, its posts with replies (`discussion`); there is no
+// chat view of it, and `posts`, its first address, lights it.
+test('the list: the pages, a line, then Channels over the Discussion, and no Topics group', () => {
   const html = list({});
   const order = [...html.matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(order, ['status', 'needs', 'workshop', 'discussion'],
@@ -68,18 +71,19 @@ test('the list: the pages, a line, then Channels over #general, and no Topics gr
   assert.doesNotMatch(html, /data-places-group="topics"/, 'no Topics group (#6709)');
   assert.doesNotMatch(html, />Topics</, 'and no Topics heading');
   assert.doesNotMatch(html, /data-place="c:/, 'and no topic channel row');
-  // #general by its handle, a channel's glyph the #.
-  assert.match(html, /data-place="discussion"[^>]*><svg[^>]*dev-ws-place-hash[\s\S]*?<span class="dev-ws-place-label">general<\/span>/);
+  // The Discussion by its name, a speech bubble its glyph, not a channel's #.
+  assert.match(html, /data-place="discussion"[^>]*><svg class="dev-ws-place-glyph"[^>]*>[\s\S]*?<\/svg><span class="dev-ws-place-label">Discussion<\/span>/);
+  assert.doesNotMatch(html, /dev-ws-place-hash/);
   // Every entry is a link with an address of its own.
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/hub" data-place="status"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/discussion" data-place="discussion"/);
 });
 
-test('a project with no topics has no Topics heading: Hub, Needs you, Workshop and #general', () => {
+test('a project with no topics has no Topics heading: Hub, Needs you, Workshop and the Discussion', () => {
   const html = list({ places: { owed: 0, channels: [channel({ kind: 'general', handle: 'general' })] } });
   assert.deepEqual([...html.matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]), ['status', 'needs', 'workshop', 'discussion']);
   assert.doesNotMatch(html, />Topics</);
-  // Before the record lands, the same: #general is always there.
+  // Before the record lands, the same: the Discussion is always there.
   assert.deepEqual([...list({ places: null }).matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]),
     ['status', 'needs', 'workshop', 'discussion']);
 });
@@ -90,6 +94,7 @@ test('the open place is the current page, lit as the rail lights a row; a page u
   // #6709: no topic channel is a row, so none is lit, even the one you read.
   assert.deepEqual(lit('c:homeroom-bot'), []);
   assert.deepEqual(lit('discussion'), ['discussion']);
+  assert.deepEqual(lit('posts'), ['discussion'], 'its first address lights it too');
   assert.deepEqual(lit('all'), ['workshop'], 'All items lights the Workshop');
   assert.deepEqual(lit('plan'), ['status'], 'the plan lights the Hub');
   assert.deepEqual(lit('c:signup'), [], 'a retired topic is not in the list to light');
@@ -112,7 +117,7 @@ test('counts say what they count aloud, and a zero says nothing', () => {
   assert.equal(countPhrase('c:x', 150), '150 unread');
   const html = list({ owed: 29 });
   assert.match(html, /data-place="needs"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span><\/a>/);
-  // #general is the list's one channel row, and it counts like any channel.
+  // The Discussion is the list's one channel row, #general's, and it counts like any channel.
   const unread = list({ places: { owed: 0, channels: [channel({ kind: 'general', handle: 'general', unread: 2 })] } });
   assert.match(unread, /data-place="discussion"[\s\S]*?title="2 unread">2 unread<\/span><span class="sr-only"> \(2 unread\)<\/span><\/a>/);
   // #general has nothing unread here, and the Hub never counts: no number.
@@ -126,10 +131,13 @@ test('counts say what they count aloud, and a zero says nothing', () => {
 // Needs you stays while you are there: the rule is for channels.
 test('the channel on screen draws no count; Needs you keeps its own while lit', () => {
   const places = { owed: 0, channels: [channel({ kind: 'general', handle: 'general', unread: 4 })] };
-  const reading = list({ place: 'discussion', places });
-  const general = reading.slice(reading.indexOf('data-place="discussion"'), reading.indexOf('</a>', reading.indexOf('data-place="discussion"')));
-  assert.doesNotMatch(general, /data-place-count/, 'no pill while you read there');
-  assert.doesNotMatch(general, /sr-only/, 'and no phrase for a screen reader');
+  // Reading the Discussion, at either of its addresses.
+  for (const place of ['discussion', 'posts']) {
+    const reading = list({ place, places });
+    const general = reading.slice(reading.indexOf('data-place="discussion"'), reading.indexOf('</a>', reading.indexOf('data-place="discussion"')));
+    assert.doesNotMatch(general, /data-place-count/, `no pill while you read there (${place})`);
+    assert.doesNotMatch(general, /sr-only/, 'and no phrase for a screen reader');
+  }
   assert.match(list({ places }), /data-place="discussion"[\s\S]*?title="4 unread">4 unread<\/span>/, 'away from it, it keeps its pill');
   const needs = list({ place: 'needs', owed: 29 });
   assert.match(needs, /data-place="needs" aria-current="page"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span>/,
@@ -242,6 +250,10 @@ test('places: keys, handles, aliases and addresses', () => {
   assert.equal(p.channelPlace('general'), 'discussion');
   assert.equal(p.channelPlace('#Onboarding'), 'c:onboarding');
   assert.equal(p.placeHandle('discussion'), 'general');
+  // Its name is words: the header, the title and the place bar say Discussion (26 Nov 2026).
+  assert.equal(p.placeTitleHandle('discussion'), null);
+  assert.equal(p.placeTitleHandle('posts'), null);
+  assert.equal(p.placeTitleHandle('c:infra'), 'infra');
   assert.equal(p.placeHandle('c:infra'), 'infra');
   assert.equal(p.placeHandle('workshop'), null);
   assert.equal(p.isPlaceKey('c:9bad'), false, 'a handle starts with a letter');

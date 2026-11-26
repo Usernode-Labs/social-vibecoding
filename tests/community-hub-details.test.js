@@ -366,12 +366,13 @@ test('the Your work row counts in the Homeroom bot tab\'s own words, for the Wor
   assert.equal(message('project:workshop.desk.empty'), 'Nothing of yours here right now.');
 });
 
-test('the hub\'s channel record names each room\'s own write route, which the Discussion reads', () => {
+test('the hub\'s channel record names each room\'s own write route, which the Discussion writes to', () => {
   // The hub's composer is gone with its channel card; the record still names
-  // where a message goes, and the Discussion place reads it to say whether it
-  // can be written in.
+  // where a message goes (for CLI and connector clients), and the Discussion
+  // writes a project's posts to that same route (discussion-feed.ts
+  // appSource), Homeroom's through Messages' own.
   assert.doesNotMatch(read(HUB), /function HubComposer|data-ws-channel-compose/, 'no composer on the hub');
-  assert.match(read('frontend/src/features/dev-board/workshop/project-discussion.tsx'), /const readOnly = !channel\?\.post_url;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/discussion-feed.ts'), /const base = `\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/messages`;/);
   const route = read('src/routes/apps.js');
   assert.match(route, /post_url: `\/api\/conversations\/\$\{conversationId\}\/messages`,/);
   assert.match(route, /post_url: `\/api\/apps\/\$\{encodeURIComponent\(app\.slug\)\}\/messages`,/);

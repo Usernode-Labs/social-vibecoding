@@ -504,10 +504,38 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(await discussion.earlierForApp(pool, other.id, since, member.id), null, 'the blocked author\'s message is not counted for the blocker');
     await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [member.id, owner.id]);
     const told = await discussion.discussionSummary(pool, { appId: other.id, viewerId: owner.id });
-    assert.deepEqual(told, { since, fold_at: 8, earlier });
+    assert.deepEqual(told, { since, fold_at: 8, earlier: { ...earlier, reactions: [] } });
+    // The Earlier post takes reactions on its own anchor (26 Nov 2026): the
+    // project's row in discussion_earlier_reactions, read with the summary;
+    // a visitor's summary has the counts alone.
+    await discussion.toggleEarlierReaction(pool, other.id, member.id, '❤️', true);
+    const liked = await discussion.discussionSummary(pool, { appId: other.id, viewerId: member.id });
+    assert.deepEqual(liked.earlier.reactions, [{ emoji: '❤️', count: 1, users: [member.username], reacted: true }]);
+    const seen = await discussion.discussionSummary(pool, { appId: other.id, visitor: true });
+    assert.deepEqual(seen.earlier.reactions, [{ emoji: '❤️', count: 1 }]);
+    await discussion.toggleEarlierReaction(pool, other.id, member.id, '❤️', false);
+    assert.deepEqual((await discussion.discussionSummary(pool, { appId: other.id, viewerId: member.id })).earlier.reactions, []);
     const inGeneral = await discussion.discussionSummary(pool, { conversationId: general, viewerId: member.id });
     assert.equal(inGeneral.earlier, null, '#general\'s messages here were all written after the marker');
     discussion.resetDiscussionSinceForTest();
+
+    // Part 2, "Most replies" across the room: the posts busiest first, a
+    // page at a time, after the fold's last message; a blocked author's
+    // posts and replies are not counted for the person who blocked them.
+    const { rows: talk } = await pool.query(
+      `SELECT id, content FROM chat_messages WHERE app_id = $1 AND content IN ('hello', 'there') ORDER BY id`, [other.id]);
+    const ranked = await discussion.rankedInApp(pool, other.id, { viewerId: owner.id, limit: 2 });
+    assert.deepEqual(ranked.posts.map((p) => [p.id, p.reply_count]), [[past.id, 1], [talk[1].id, 0]], 'the post with a reply first, then the newest');
+    assert.equal(ranked.more, true);
+    const next = await discussion.rankedInApp(pool, other.id, { viewerId: owner.id, limit: 2, offset: 2 });
+    assert.deepEqual(next, { posts: [{ id: talk[0].id, reply_count: 0, active_at: next.posts[0].active_at }], more: false });
+    assert.deepEqual((await discussion.rankedInApp(pool, other.id, { viewerId: owner.id, afterId: past.id })).posts, [], 'only posts after the fold');
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [owner.id, member.id]);
+    assert.deepEqual((await discussion.rankedInApp(pool, other.id, { viewerId: owner.id })).posts.map((p) => [p.id, p.reply_count]), [[past.id, 0]]);
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [owner.id, member.id]);
+    assert.equal(await discussion.generalConversationId(pool), general);
+    const inRoom = await discussion.rankedInConversation(pool, general, { viewerId: member.id, limit: 20 });
+    assert.ok(inRoom.posts.length > 0 && inRoom.posts.every((p) => Number.isInteger(p.id) && p.reply_count === 0), '#general\'s posts, ranked');
 
     // Members & activity: who did something this week, what shipped this month.
     const { rows: s } = await pool.query(

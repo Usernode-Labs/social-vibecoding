@@ -1,23 +1,16 @@
 /**
- * #5303: #general's LINE, above its room.
+ * #5303: MUTE for a project's Discussion (its #general).
  *
- * The navigation review of 15 October found #general drawn with its name
- * alone: nothing said what the channel is for, how many people it reaches,
- * or how to quiet it. This is the line a topic has (./topic-head.tsx), for
- * #general: what it is for, then how many members it reaches, in 13px
- * muted text, with Mute at its end.
+ * #general had a line above its room: what it is for, how many members it
+ * reaches, and Mute. The room is the Discussion now (26 Nov 2026), whose
+ * page head says what it is for, so what is left of the line is Mute, at
+ * the end of that head (hub-discussion.tsx, page mode).
  *
- *   Everyone in Homeroom talks here · 263 members          [🔔 Mute]
- *
- * The channel's name is the bar's (a phone) or the page title's (desktop),
- * so the line does not say it again. A zero says nothing (AGENTS.md): no
- * member count before the record has one.
- *
- * MUTE is the viewer's own (services/channel-mutes.js): the channel's unread
- * stops counting on the places list, the bar's dot and the sidebar, and a
- * small group's "every message" ring passes them by. Mentions and replies
- * still reach them, as the button's hover text says. It is drawn for a
- * signed-in viewer whose record says whether the channel is muted (the
+ * MUTE is the viewer's own (services/channel-mutes.js): the Discussion's
+ * unread stops counting on the places list, the bar's dot and the sidebar,
+ * and a small group's "every message" ring passes them by. Mentions and
+ * replies still reach them, as the button's hover text says. It is drawn for
+ * a signed-in viewer whose record says whether the channel is muted (the
  * places block), and pressed it turns at once, writes, and turns back if
  * the write is refused.
  */
@@ -38,10 +31,8 @@ export function generalMuted(data: CommunityPayload | null | undefined): boolean
   return general.muted;
 }
 
-export function ChannelHead({ slug, name, data }: {
+export function ChannelMute({ slug, data }: {
   slug: string;
-  /** The project's name, as the page says it. */
-  name: string;
   data: CommunityPayload | null;
 }): ReactNode {
   const t = useMessages('project');
@@ -50,12 +41,6 @@ export function ChannelHead({ slug, name, data }: {
   const [busy, setBusy] = useState(false);
   // The record is the truth once it lands or is read again.
   useEffect(() => { setMuted(known); }, [known]);
-
-  const members = Math.max(0, Number(data?.member_count) || 0);
-  const about = t('project:places.generalHead.about', { project: name });
-  const line = members > 0
-    ? t('project:places.generalHead.aboutThenMembers', { about, members: t('project:places.generalHead.members', { count: members }) })
-    : about;
 
   const toggle = async () => {
     if (busy || muted == null) return;
@@ -78,27 +63,23 @@ export function ChannelHead({ slug, name, data }: {
     }
   };
 
+  if (muted == null) return null;
   return (
-    <div className="dev-ws-channel-head" data-ws-channel-head="general">
-      <p className="dev-ws-topic-head dev-ws-channel-head-line">{line}</p>
-      {muted != null ? (
-        <Button
-          type="button"
-          variant="pillNeutral"
-          size="sm"
-          ink="neutral"
-          layout="iconRow"
-          className="dev-ws-channel-mute shrink-0"
-          data-ws-channel-mute={muted ? 'on' : 'off'}
-          aria-pressed={muted}
-          disabled={busy}
-          title={muted ? t('project:places.generalHead.unmuteHint') : t('project:places.generalHead.muteHint')}
-          onClick={() => { void toggle(); }}
-        >
-          <BellIcon className="h-4 w-4" aria-hidden="true" />
-          {muted ? t('project:places.generalHead.muted') : t('project:places.generalHead.mute')}
-        </Button>
-      ) : null}
-    </div>
+    <Button
+      type="button"
+      variant="pillNeutral"
+      size="sm"
+      ink="neutral"
+      layout="iconRow"
+      className="dev-ws-channel-mute shrink-0"
+      data-ws-channel-mute={muted ? 'on' : 'off'}
+      aria-pressed={muted}
+      disabled={busy}
+      title={muted ? t('project:places.generalHead.unmuteHint') : t('project:places.generalHead.muteHint')}
+      onClick={() => { void toggle(); }}
+    >
+      <BellIcon className="h-4 w-4" aria-hidden="true" />
+      {muted ? t('project:places.generalHead.muted') : t('project:places.generalHead.mute')}
+    </Button>
   );
 }

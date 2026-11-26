@@ -192,7 +192,7 @@ function loadClient() {
     fetch: async () => ({ ok: true, json: async () => ({ ok: true }) }),
     PlatformUI: { isTouch: () => false, toast() {} },
     App: { user: { id: 1 }, openAppTab: (...args) => calls.push(['openAppTab', ...args]), _isScreenVisible: () => false },
-    UsernodeReact: { messages: { openDiscussion: (slug) => calls.push(['discussion', slug]) } },
+    UsernodeReact: { messages: { openDiscussion: (slug) => calls.push(['discussion', slug]), openAddress: (href) => calls.push(['address', href]) } },
     GroupChat: { revealMessage: (slug, id) => calls.push(['reveal', slug, id]) },
   };
   sandbox.window = sandbox;
@@ -244,7 +244,8 @@ test('tapping it (or its push) opens the project\'s Discussion, on the message',
   const { N, calls } = loadClient();
   N.items = [{ ...ROW }];
   N._onItemClick(41);
-  assert.deepEqual(plain(calls), [['reveal', 'flat-4b', 812], ['discussion', 'flat-4b']]);
+  // The message's own address: the router lands it on its post (26 Nov 2026).
+  assert.deepEqual(plain(calls), [['address', '#messages/app/flat-4b/m/812']]);
 });
 
 test('a row that comes back grown is not a second unread, and moves to the top', () => {

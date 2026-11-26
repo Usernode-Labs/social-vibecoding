@@ -513,6 +513,10 @@ const STAGING_SEEDS = Object.freeze([
   // such row for the shots' member fixture, so one is seeded, with the news
   // that the same change went live beside it (that row stays after).
   stagingSeed('seedStagingMergedVoteRow', async (pool, config) => { await seedStagingMergedVoteRow(pool, config); }),
+  // #7216's shots: a request whose bot-built change carries a No vote whose
+  // reason was handed to the bot, so its page has a vote line with a reason
+  // to show beside a Yes that kept its own.
+  stagingSeed('seedStagingVoteReasonOnRequest', async (pool, config) => { await seedStagingVoteReasonOnRequest(pool, config); }),
   // After it: a private thread about that live change, for the shots'
   // member fixture. Since a thread about a change is finished with its
   // change, History has it ("Live") and Needs you does not.
@@ -614,13 +618,15 @@ const STAGING_SEEDS = Object.freeze([
   // #7170: one fake request in an emoji project, so a thread header's tile can
   // be shot with an emoji in it. Obviously fake, idempotent.
   stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
-  // The hub's Discussion (26 Nov 2026): two fake private projects with a
-  // #general to draw as posts, one of them folded into "Earlier in #general".
+  // The hub's Discussion (26 Nov 2026): two fake private projects with
+  // posts to draw, one of them folded into "Earlier discussion".
   stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
   // The signed-out project page's shots (26 Nov 2026): one obviously fake
   // public project busy enough to show who is around, changes approved by
   // several people and by its creator alone, and Top contributors.
   stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
+  // Its Discussion, for a visitor to read (posts, replies, a picture).
+  stagingSeed('seedStagingGuestDiscussion', async (pool, config) => { await seedStagingGuestDiscussion(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2553,12 +2559,17 @@ async function seedStagingDiscussion(pool) {
       const said = (await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0];
       return said ? null : app.id;
     };
-    // `ago` is minutes before now; null is now, after the Discussion marker.
-    const say = async (appId, who, content, ago, rootId = null) => (await tx.query(
+    // `ago` is minutes before now; null is now. Where a message lands beside
+    // the Discussion marker decides whether it is a post or part of the
+    // Earlier post, and a staging copy takes that marker from production, so
+    // the times are held to their side of it (seedDiscussionClock).
+    // The oldest post is the library's, 26 hours back.
+    const at = await seedDiscussionClock(tx, 26 * 60);
+    const say = async (appId, who, content, ago, rootId = null, earlier = false) => (await tx.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
-       VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $6::int) END)
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
        RETURNING id`,
-      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, at(ago, earlier)])).rows[0].id;
     const react = async (messageId, emoji, who) => {
       for (const name of who) {
         await tx.query(
@@ -2566,6 +2577,11 @@ async function seedStagingDiscussion(pool) {
            ON CONFLICT DO NOTHING`, [messageId, people[name], emoji]);
       }
     };
+    // A post or reply with files (the follow-up's attachments): the files
+    // are obviously fake, a placeholder picture and a short text file.
+    const sayWith = (appId, who, content, ago, files, rootId = null) => seedDiscussionFiles(tx, {
+      appId, userId: people[who], content: content ? `Staging demo: ${content}` : '', at: at(ago), files, rootId,
+    });
     const club = await project('staging-demo-discussion', 'Staging demo: Book Club', '📖');
     if (club) {
       const library = await say(club, 'dev', 'the library has four copies of Piranesi on hold for us. Pick up by Friday.', 26 * 60);
@@ -2585,7 +2601,27 @@ async function seedStagingDiscussion(pool) {
       await react(host, '🎉', ['ana']);
       const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
       await react(chairs, '🙌', ['priya', 'ana']);
-      await say(club, 'ana', 'In, and I will bring dessert.', 40, host);
+      // #2783: `#1` reads as the project's request.
+      await say(club, 'ana', 'In, and I will bring dessert. The list is in #1.', 40, host);
+      // The follow-up's states: formatting, files, a deleted post with its
+      // replies, and a run of shared plans the Discussion folds (#2884).
+      await say(club, 'marcus', '**Reading for March:** _Klara and the Sun_. Bring one question each.', 120);
+      const photo = await sayWith(club, 'jo', 'the reading corner is ready.', 90, [SEED_PICTURE]);
+      await react(photo, '😍', ['ana', 'priya']);
+      await sayWith(club, 'priya', 'here is the schedule for the spring.', 85, [SEED_TEXT_FILE], photo);
+      // A post its author deleted after a reply came: written deleted, as the
+      // delete leaves it (no words), so the Discussion says so above its reply.
+      const gone = (await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, created_at, deleted_at)
+         VALUES ($1, $2, '', $3::timestamptz, NOW()) RETURNING id`,
+        [club, people.dev, at(70)])).rows[0].id;
+      await say(club, 'ana', 'Thursday works for me.', 65, gone);
+      for (let i = 0; i < 4; i += 1) {
+        await tx.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
+           VALUES ($1, $2, '', 'spec_share', $3::jsonb, $4::timestamptz)`,
+          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), at(100 - i)]);
+      }
     }
     const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
     if (busy) {
@@ -2599,21 +2635,130 @@ async function seedStagingDiscussion(pool) {
       let last = null;
       for (let i = 0; i < old.length; i += 1) {
         const ago = (old.length - i) * 24 * 60 + 300;
-        last = await say(busy, old[i][0], old[i][1], ago);
-        // One of them had a reply thread of its own, which stays in #general.
-        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last);
+        last = await say(busy, old[i][0], old[i][1], ago, null, true);
+        // One of them had a reply thread of its own, inside the Earlier post.
+        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last, true);
       }
-      // Written into "Earlier in #general" since: a reply under its last message.
+      // Written into "Earlier discussion" since: a reply under its last message.
       await say(busy, 'ana', 'Catching up on all of this. Count me in for the next long run.', null, last);
       const route = await say(busy, 'marcus', 'Proposing a new Sunday route along the river. Thoughts?', null);
       await react(route, '👍', ['jo', 'ana']);
       await say(busy, 'jo', 'Yes please, the hills are wrecking my knees.', null, route);
       await say(busy, 'priya', 'Race day photos are up on the shared album.', null);
+      // The Earlier post's own reactions, on the project's anchor.
+      for (const name of ['jo', 'ana', 'dev']) {
+        await tx.query(
+          `INSERT INTO discussion_earlier_reactions (app_id, user_id, emoji)
+           SELECT a.id, $2, '❤️' FROM apps a WHERE a.slug = $1 ON CONFLICT DO NOTHING`,
+          ['staging-demo-discussion-busy', people[name]]);
+      }
     }
     await tx.query('COMMIT');
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging discussion seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// An obviously fake picture and text file for the Discussion's seeds.
+const SEED_PICTURE = Object.freeze({ kind: 'image', filename: 'staging-demo-reading-corner.png', contentType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACMCAIAAADN17N/AAAB30lEQVR42u3coQ3AMAxFQY+dSTpDcGcoLOwYBRmh1CTQxD3pD/BkHXaczyravN+iada8Wzi0ZqAdWjPQcGgGGg7NQGsG2qE1A+3QmoGGQzPQcGgGWjPQDq0ZaIfWDDQcmoGGQzPQmoF2aM1AO7RmoOHQDLRmzUBrBtqhNQPt0JqBhkMz0Jo1A60ZaIfWDLRDawYaDs1Aa9acQDuH5k7NQGsG2qE1Aw2HZqDh0Ay0ZqAdWjPQDq0ZaDg0Aw2HZqA1A+3QmoF2aM1Aw6EZaDg0A60ZaIfWDLRDawYaDs1Aw6EZaM1AO7RmoB1aM9BwaAZas2agNQPt0JqBdmjNQMOhGWjNmjNo59DsP7RDawYaDs1Aw6EZaM1AO7RmoB1aM9BwaAYaDs1AawbaoTUD7dCagYZDM9BwaAZaM9AOrRloh9YMNByagdasGWjNQDu0ZqAdWjPQcGgGWrNmoDUD7dCagXZozUDDoRlozZqB1twV9HENszYD2oA2A9oMaDOgDWgzoM2ANgPaDGgD2gxoM6DNgDYD2oA2A9oMaDOgzYA2oM2ANgPaDGgzoA1oM6DNgDYD2gxoA9oMaDOgzYA2A9qANgPaDGgzoA1oVzCgzYA2A9oMaAPaDGgzoM2ANgPafrcPyHxo0DKcOWgAAAAASUVORK5CYII=' });
+const SEED_TEXT_FILE = Object.freeze({ kind: 'text', filename: 'staging-demo-schedule.txt', contentType: 'text/plain', text: 'Staging demo: obviously fake.\nMarch 14: Klara and the Sun\nApril 11: Piranesi\n' });
+
+/**
+ * The Discussion seeds' clock. A message before the Discussion marker
+ * (platform_settings.discussion_posts_since, services/discussion.js) is part
+ * of the Earlier post once there are enough of them; one after it is a post.
+ * A staging copy's marker may be minutes old (a fresh database's) or
+ * production's, so a time "N minutes ago" could land on either side of it.
+ * `at(ago)` is a post's time: as asked when the marker is older than the
+ * seed's oldest post (`span` minutes ago), else the seed's span pressed in
+ * between the marker and now, in the same order. `at(ago, true)` is held
+ * before the marker, in the order asked (the Earlier post's).
+ */
+async function seedDiscussionClock(db, span) {
+  const row = (await db.query("SELECT value FROM platform_settings WHERE key = 'discussion_posts_since'")).rows[0];
+  const since = row ? Date.parse(String(row.value).replace(/^"|"$/g, '')) : NaN;
+  const now = Date.now();
+  const oldest = now - span * 60000;
+  let before = 0;
+  return (ago, earlier = false) => {
+    const t = now - (Number(ago) || 0) * 60000;
+    if (!Number.isFinite(since)) return new Date(t).toISOString();
+    if (earlier) {
+      before += 1;
+      return new Date(Math.min(t, since - (400 - before) * 3600000)).toISOString();
+    }
+    if (since < oldest) return new Date(t).toISOString();
+    const start = Math.min(since + 1000, now);
+    return new Date(start + ((Math.max(t, oldest) - oldest) * (now - start)) / (now - oldest || 1)).toISOString();
+  };
+}
+
+/**
+ * A post or a reply carrying files, as the chat's upload and send write them
+ * (chat_message_attachments rows linked to the message, and the message's
+ * metadata.attachments). Returns the message's id.
+ */
+async function seedDiscussionFiles(db, { appId, userId, content, at, files, rootId = null }) {
+  const crypto = require('crypto');
+  const rows = files.map((file) => {
+    const data = file.base64 ? Buffer.from(file.base64, 'base64') : Buffer.from(file.text || '', 'utf8');
+    return { ...file, id: crypto.randomBytes(16).toString('hex'), data };
+  });
+  const metadata = { attachments: rows.map((f) => ({ id: f.id, kind: f.kind, filename: f.filename, sizeBytes: f.data.length })) };
+  const id = (await db.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
+     RETURNING id`,
+    [appId, userId, content, rootId ? 'message' : null, rootId, JSON.stringify(metadata), at])).rows[0].id;
+  for (const f of rows) {
+    await db.query(
+      `INSERT INTO chat_message_attachments (id, app_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [f.id, appId, id, userId, f.kind, f.filename, f.contentType, f.data.length, f.data]);
+  }
+  return id;
+}
+
+// The signed-out project page's Discussion (26 Nov 2026): the busy public
+// project seedStagingGuestProjectPage makes has no posts, so a few are
+// written there by its own fake people, in its own "[Mock]" voice: posts
+// with replies, reactions and a picture, for a visitor to read. Idempotent:
+// a project that has any message is left alone.
+async function seedStagingGuestDiscussion(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const app = (await tx.query("SELECT id, created_by FROM apps WHERE slug = 'staging-guest-page-busy'")).rows[0];
+    if (!app) { await tx.query('ROLLBACK'); return seedSkipped('no project staging-guest-page-busy'); }
+    if ((await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0]) {
+      await tx.query('ROLLBACK');
+      return seedSkipped('staging-guest-page-busy already has a discussion');
+    }
+    const people = (await tx.query(
+      `SELECT c.user_id FROM app_collaborators c WHERE c.app_id = $1 ORDER BY c.user_id LIMIT 4`, [app.id])).rows.map((r) => r.user_id);
+    const [a, b, c, d] = [app.created_by, ...people].filter(Boolean);
+    if (!a || !b) { await tx.query('ROLLBACK'); return seedSkipped('staging-guest-page-busy has too few people'); }
+    const at = await seedDiscussionClock(tx, 600);
+    const say = async (who, content, ago, rootId = null) => (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz) RETURNING id`,
+      [app.id, who, `[Mock] ${content}`, rootId ? 'message' : null, rootId, at(ago)])).rows[0].id;
+    const react = (messageId, emoji, who) => Promise.all(who.filter(Boolean).map((u) => tx.query(
+      'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [messageId, u, emoji])));
+    const welcome = await say(a, 'Welcome, everyone. Post what you would like this project to do next.', 600);
+    await react(welcome, '👋', [b, c, d]);
+    const idea = await say(b, 'Could the list remember where I left off?', 240);
+    await say(c || a, 'Yes please, I lose my place every time.', 230, idea);
+    await say(a, 'Put it up as a change and we can vote on it.', 220, idea);
+    await react(idea, '👍', [a, c, d]);
+    const picture = await seedDiscussionFiles(tx, { appId: app.id, userId: d || b, content: '[Mock] A sketch of the new layout.', at: at(60), files: [SEED_PICTURE] });
+    await react(picture, '🎉', [a, b]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging guest discussion seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
@@ -2824,13 +2969,38 @@ async function seedStagingBotWaitingRows(pool) {
       // out. Its row on the bot's tab and its own page say it waits for
       // building credit and that the bot picks it up again by itself.
       { number: 9119, title: 'Staging demo: a request waiting for building credit', creditWait: true },
+      // #7215: a report filed on Homeroom's board from another project's
+      // page. Its body carries the About line the route writes, by app id
+      // only, and its reply (below) is the bot's answer that nothing needs
+      // building. Staging has no model, so the reply is stored.
+      {
+        number: 9121,
+        title: 'Staging demo: a report from another project\'s page',
+        body: '**About:** a private project (app id 412)\n\nStaging demo: a request still showed in the Requests column after its change was already in Done.',
+        // The before copy has main's schema, which has no about_app_id, so the
+        // same request there is the one filed without the About line. Both
+        // sides of the pair then show what the change altered.
+        bodyBefore: 'Staging demo: a request still showed in the Requests column after its change was already in Done.',
+      },
     ];
+    // #7215: this seed also runs on the before copy of a before & after pair,
+    // from the after copy's code against main's schema. That copy has no
+    // about_app_id column, so it gets the request as it was filed before this
+    // change: no About line, and the bot's old answer.
+    const aboutColumn = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback_reports' AND column_name = 'about_app_id' LIMIT 1`,
+    );
+    const hasAboutColumn = aboutColumn.rows.length > 0;
     for (const d of demo) {
+      const body = d.number === 9121 && !hasAboutColumn
+        ? d.bodyBefore
+        : (d.body || 'Staging demo: obviously fake.');
       await pool.query(
         `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
-         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+         SELECT $1, $2, $3, $5, $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
           WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
-        [appId, d.number, d.title, userId],
+        [appId, d.number, d.title, userId, body],
       );
       if (d.queue) {
         await pool.query(
@@ -2904,6 +3074,25 @@ async function seedStagingBotWaitingRows(pool) {
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
     );
     if (botRow.rows.length) {
+      // #7215: the bot's answer on the report filed from another project's
+      // page: it read that project and found the request had already closed
+      // by itself, so it built nothing. Idempotent by its stagingDemo mark.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9121, $4, NOW() - INTERVAL '20 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9121
+                               AND metadata->>'stagingDemo' = 'about-project-reply')`,
+        [
+          appId, botRow.rows[0].id,
+          hasAboutColumn
+            ? 'I checked the project you were looking at. That request closed by itself 13 seconds before you sent this, '
+              + 'as its change merged: Homeroom closes a merged change\'s requests a few seconds after the merge, and '
+              + 'your screenshot caught that moment. Nothing needs fixing, so I haven\'t built anything.'
+            : 'On this project a change is a pull request, numbered by GitHub. I\'ll hide any request whose change is in Done.',
+          JSON.stringify({ stagingDemo: 'about-project-reply', homeroomBot: { kind: 'person' } }),
+        ],
+      );
       await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
          SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '1 day'
@@ -8939,6 +9128,97 @@ async function seedStagingMergedVoteRow(pool, config) {
   } catch (err) {
     log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
   }
+}
+
+// #7216's shots: a request's thread where a No vote's reason was handed to
+// Homeroom bot. The reason is the voter's own reply in the change's
+// discussion (routes/votes.js postOnProposal) and the vote row names it
+// (`metadata.vote.reasonMessageId`), so the request's page can draw one vote
+// line, "usernode-capture voted no: “…”", in place of the plain message it
+// used to be.
+// A fresh staging copy has no such state (nothing there runs the hand-off),
+// so it is seeded here, obviously fake: the shots' member fixture is the
+// voter and a second fixture account is the Yes that kept its own reason.
+// Idempotent by request number; strictly a no-op outside staging.
+async function seedStagingVoteReasonOnRequest(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const number = 900719;
+  const changeNumber = 900719;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const app = (await tx.query('SELECT id, community_id FROM apps WHERE slug = $1', [config.selfAppSlug])).rows[0];
+    if (!app) { await tx.query('ROLLBACK'); return seedSkipped('no self-app row'); }
+    const people = (await tx.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'homeroom_bot')",
+    )).rows;
+    const member = people.find((row) => row.username === 'usernode-capture');
+    const other = people.find((row) => row.username === 'usernode-capture-admin');
+    const bot = people.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture or homeroom_bot'); }
+    const { rowCount } = await tx.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Staging demo: keep the request list in its order after a refresh',
+               'Staging demo: obviously fake. Its change waits on a vote, and a No came with a reason for Homeroom bot.',
+               $3, NOW() - INTERVAL '4 days', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`,
+      [app.id, number, member.id],
+    );
+    if (!rowCount) { await tx.query('ROLLBACK'); return; }
+    // The feed lists a project the viewer is a MEMBER of.
+    if (app.community_id) {
+      await tx.query(
+        `INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [app.community_id, member.id],
+      );
+    }
+    const change = (await tx.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues,
+          promoted_at, check_state, created_at, last_activity_at)
+       VALUES ($1, $2, 'staging-fixture/vote-reason-on-request',
+               'Staging demo: sort the request list on the server',
+               'Staging demo: sort the request list on the server', $3, 'promoted',
+               ARRAY[$4::int]::int[], NOW() - INTERVAL '1 day', 'passing',
+               NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       RETURNING id`,
+      [app.id, bot.id, changeNumber, number],
+    )).rows[0];
+    const reasonText = 'I do not agree with the approach. Sorting should happen on the server.';
+    const reason = (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, $2, $3, 'message', 'session', $4, $5, NOW() - INTERVAL '20 hours')
+       RETURNING id`,
+      [app.id, member.id, reasonText, change.id, JSON.stringify({ stagingDemo: 'vote-reason-on-request' })],
+    )).rows[0];
+    // The vote row names the reply that carried its reason (#7216).
+    await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, NULL, $2, 'vote', 'session', $3, $4, NOW() - INTERVAL '20 hours' + INTERVAL '20 seconds')`,
+      [app.id, `${member.username} voted no on PR #${changeNumber}: Staging demo: sort the request list on the server`,
+        change.id, JSON.stringify({ vote: { sessionId: change.id, prNumber: changeNumber, reason: null, reasonMessageId: reason.id } })],
+    );
+    // A Yes that kept its own reason on the row, as every vote not handed to
+    // the bot does, and a person's reply that stays a message.
+    if (other) {
+      await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         VALUES ($1, NULL, $2, 'vote', 'session', $3, $4, NOW() - INTERVAL '19 hours')`,
+        [app.id, `${other.username} voted yes: “Small and right.”`, change.id,
+          JSON.stringify({ vote: { sessionId: change.id, prNumber: changeNumber, reason: 'Small and right.' } })],
+      );
+      await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         VALUES ($1, $2, 'Looks fine on my phone. The sort order is the one thing to check.', 'message', 'session', $3, '{}'::jsonb, NOW() - INTERVAL '18 hours')`,
+        [app.id, other.id, change.id],
+      );
+    }
+    await tx.query('COMMIT');
+    log.info('db', 'Staging vote-reason-on-request seeded', { appId: app.id, number, sessionId: change.id });
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging vote-reason-on-request seeding failed', { message: err.message });
+  } finally { tx.release(); }
 }
 
 // #6124: a change renamed before it has a pull request is saved as the name

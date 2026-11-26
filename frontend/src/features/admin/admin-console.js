@@ -221,7 +221,7 @@ import { TABS_KEY, parseStoredTabs, addTab, closeTab, searchSections } from './a
 // Email delivery, Estimator accuracy, Seasons), so "absent means expanded" is
 // what keeps every future section visible to someone whose store predates it.
 // It also makes "all four expanded on a first visit" the empty-store default.
-const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v1';
+const NAV_COLLAPSED_KEY = 'admin_nav_collapsed_groups_v2';
 const NAV_FOLDED_KEY = 'admin:nav-folded:v1';
 
 const AdminConsole = {
@@ -284,7 +284,7 @@ const AdminConsole = {
     // #4296: errors the platform is designed never to make, logged by
     // services/platform-incidents.js. Admin-only; view-only admins read it.
     { key: 'incidents', label: 'Unexpected events', group: 'Operations' },
-    { key: 'push', label: 'Push delivery', group: 'Operations' },
+    { key: 'push', label: 'Push delivery', group: 'Delivery & sign-in' },
     { key: 'merges', label: 'Merge debug', group: 'Operations' },
     { key: 'rollover', label: 'Container rollover', group: 'Operations' },
     { key: 'staging-reap', label: 'Stale previews', group: 'Operations' },
@@ -329,7 +329,7 @@ const AdminConsole = {
     // answering account, points, event and kudos questions. See
     // features/admin/admin-support.tsx.
     { key: 'support', label: 'Support', group: 'People' },
-    { key: 'users', label: 'Users', group: 'People' },
+    { key: 'users', label: 'Users', group: 'Growth' },
     // Test accounts: make a new account for first-time-user testing, see the
     // live ones, retire one when done (routes/test-accounts.js, the routes
     // the connector's *_test_account tools wrap). Full admins only, the list
@@ -340,19 +340,19 @@ const AdminConsole = {
     // list. Full admins only. See features/admin/admin-access-review.tsx.
     { key: 'access-review', label: 'Access review', group: 'People' },
     { key: 'reports', label: 'Moderation', group: 'People' },
-    { key: 'codes', label: 'Invite links', group: 'People' },
+    { key: 'codes', label: 'Invite links', group: 'Growth' },
     { key: 'limits', label: 'Limits', group: 'People' },
     // Programme people screens, promoted by the same #1179 reshuffle.
-    { key: 'waitlist', label: 'Waitlist', group: 'People' },
+    { key: 'waitlist', label: 'Waitlist', group: 'Growth' },
     // Welcome messages: somebody let in gets a group with the people chosen
     // there, opened by a message from the first of them. Beside Waitlist
     // because both are about the moment someone is let in.
     { key: 'welcome-dm', label: 'Welcome messages', group: 'People' },
-    { key: 'onchain-accounts', label: 'Onchain accounts', group: 'People' },
+    { key: 'onchain-accounts', label: 'Onchain accounts', group: 'Programme' },
     { key: 'user-activities', label: 'User activities', group: 'People' },
     // Read-only view over the testnet accounts' staking delegation
     // periods (the mobile app is the delegation actor; admins only look).
-    { key: 'delegations', label: 'Delegations', group: 'People' },
+    { key: 'delegations', label: 'Delegations', group: 'Programme' },
 
     // Apps & usage: every app with its members, contributors and activity
     // (features/admin/admin-apps-usage.tsx, services/admin-apps-usage.js).
@@ -362,68 +362,64 @@ const AdminConsole = {
     // Journey (#3369): the user journey and the North Star, active groups.
     // Its own definitions and routes (/api/admin/journey/*); Analytics is
     // deliberately left as it is. See features/admin/admin-journey.tsx.
-    { key: 'journey', label: 'Journey', group: 'Insights' },
+    { key: 'journey', label: 'Journey', group: 'Growth' },
     // Onboarding flows: every person as one thread from where they arrived
     // from to where they are now, over all time, in five views. Journey reads
     // the same people week by week. See features/admin/admin-onboarding-flows.tsx.
-    { key: 'onboarding-flows', label: 'Onboarding flows', group: 'Insights' },
-    { key: 'analytics', label: 'Analytics', group: 'Insights' },
+    { key: 'onboarding-flows', label: 'Onboarding flows', group: 'Growth' },
+    { key: 'analytics', label: 'Analytics', group: 'Growth' },
     // Estimator accuracy (#898): platform analytics, split out of the
     // Analytics section, which is otherwise entirely USER analytics.
     { key: 'estimator', label: 'Estimator accuracy', group: 'Insights' },
     { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
     { key: 'features', label: 'Submitted features', group: 'Insights' },
-    // The last full end-to-end sweep of the product against production.
-    // A generated REPORT, not a runner — the counterpart to the unit and
-    // dapp suites, which cover components rather than journeys.
-    { key: 'e2e', label: 'E2E coverage', group: 'Insights' },
 
-    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
+    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Operations' },
     // The home screen's "Featured apps" row. NOT the `features` key
     // above — that one is "Submitted features" (user feature requests).
-    { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
-    { key: 'db-export', label: 'Database export', group: 'Platform' },
+    { key: 'featured-apps', label: 'Featured apps', group: 'Content & apps' },
+    { key: 'db-export', label: 'Database export', group: 'Developer' },
     // #2253: how much of its database each app is using against the
     // per-app cap, and the levers that undo a freeze.
-    { key: 'storage', label: 'App storage', group: 'Platform' },
+    { key: 'storage', label: 'App storage', group: 'Content & apps' },
     // #4405: every custom domain a project has claimed, and the levers that
     // check, disable, enable or remove one.
-    { key: 'domains', label: 'Domains', group: 'Platform' },
+    { key: 'domains', label: 'Domains', group: 'Content & apps' },
     // Ready-made apps' images, built ahead of the projects made from them,
     // and Rebuild (features/admin/admin-templates.tsx, services/starter-images.js).
-    { key: 'templates', label: 'Templates', group: 'Platform' },
+    { key: 'templates', label: 'Templates', group: 'Content & apps' },
     // #2570: the note and the expected cost the model picker states for
     // each model, beside what changes on that model actually cost.
-    { key: 'model-costs', label: 'Model costs', group: 'Platform' },
+    { key: 'model-costs', label: 'Model costs', group: 'Developer' },
     // #2684: the Homeroom bot's shadow-mode verdicts — what it would have
     // asked or built on each open request — and the ratings that calibrate it.
-    { key: 'homeroom-bot', label: 'Homeroom bot', group: 'Platform' },
+    { key: 'homeroom-bot', label: 'Homeroom bot', group: 'Delivery & sign-in' },
     // The watch-only small-change tag: which proposal versions read as small
     // and undoable, and what ruled the rest out (features/admin/admin-small-changes.tsx).
-    { key: 'small-changes', label: 'Small changes', group: 'Platform' },
+    { key: 'small-changes', label: 'Small changes', group: 'Content & apps' },
     // Platform outbound mail: configuration, a test send, and the
     // delivery ledger. Separate from the programme's Settings section
     // (which keeps its own read-only status/activity card) because the
     // audience is every mail flow, not just the programme's.
-    { key: 'mail', label: 'Email delivery', group: 'Platform' },
+    { key: 'mail', label: 'Email delivery', group: 'Delivery & sign-in' },
     // What every platform email says: its templates and the layouts they are
     // wrapped in, edited and previewed here (features/admin/admin-email-templates.tsx).
-    { key: 'email-templates', label: 'Email templates', group: 'Platform' },
+    { key: 'email-templates', label: 'Email templates', group: 'Content & apps' },
     // Firebase Phone Auth's texts: whether phone sign-in is set up, and a
     // test send through the real path (features/admin/admin-sms.tsx).
-    { key: 'sms', label: 'SMS delivery', group: 'Platform' },
+    { key: 'sms', label: 'SMS delivery', group: 'Delivery & sign-in' },
     // Continue with Apple / Continue with Google on the sign-in sheet: the
     // keys from each provider, and the switch that offers it
     // (features/admin/admin-sign-in.tsx, services/sign-in-providers.js).
-    { key: 'sign-in', label: 'Sign-in providers', group: 'Platform' },
+    { key: 'sign-in', label: 'Sign-in providers', group: 'Delivery & sign-in' },
     // Programme operator tooling, promoted by #1179 — deliberately last:
     // these are the sharp ones (raw SQL, arbitrary API calls, the
     // settings that change how the mobile app behaves).
-    { key: 'settings', label: 'Settings', group: 'Platform' },
-    { key: 'app-version', label: 'App version', group: 'Platform' },
-    { key: 'text-translations', label: 'Translations', group: 'Platform' },
-    { key: 'sql-console', label: 'SQL console', group: 'Platform' },
-    { key: 'api-tester', label: 'API tester', group: 'Platform' },
+    { key: 'settings', label: 'Settings', group: 'Developer' },
+    { key: 'app-version', label: 'App version', group: 'Content & apps' },
+    { key: 'text-translations', label: 'Translations', group: 'Content & apps' },
+    { key: 'sql-console', label: 'SQL console', group: 'Developer' },
+    { key: 'api-tester', label: 'API tester', group: 'Developer' },
   ],
 
   // Retired section keys that must keep resolving forever, so links and
@@ -437,6 +433,9 @@ const AdminConsole = {
     // Bot configurations became the Homeroom bot's Configurations tab
     // (#admin/homeroom-bot/configs); app.js rewrites the address to it.
     'bot-configs': 'homeroom-bot',
+    // E2E coverage was removed on 26 Nov 2026 (a report generated once and
+    // never refreshed); an old link to it opens the dashboard.
+    e2e: 'overview',
   },
 
   // Heroicons v2 outline, one per section — same icon treatment as
@@ -474,7 +473,6 @@ const AdminConsole = {
     'gallery': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg>',
     'features': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"/></svg>',
     // E2E coverage (#1862): clipboard-document-check — a checked-off report.
-    'e2e': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0118 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3l1.5 1.5 3-3.75"/></svg>',
     'campaigns': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46"/></svg>',
     'featured-apps': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>',
     'db-export': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>',
@@ -939,7 +937,10 @@ const AdminConsole = {
     if (typeof window === 'undefined') return;
     try {
       const raw = localStorage.getItem(NAV_COLLAPSED_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
+      // Nothing chosen yet: every group starts folded (26 Nov 2026), under the
+      // head's six rows; arriving at a section opens its group
+      // (_ensureActiveGroupExpanded).
+      const arr = raw ? JSON.parse(raw) : [...new Set(AdminConsole.SECTIONS.map((s) => s.group || 'Other'))];
       if (!Array.isArray(arr)) return;
       // Prune names no SECTIONS entry carries any more, so the store can't
       // grow unbounded and a RENAMED group resets to expanded — the safe
@@ -987,6 +988,9 @@ const AdminConsole = {
   _ensureActiveGroupExpanded() {
     const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);
     if (!s) return;
+    // A section of the rail's head is in view there already: opening the
+    // dashboard must not unfold Operations under it.
+    if (AdminConsole.NAV_HEAD_KEYS.includes(s.key)) return;
     const name = String(s.group || 'Other');
     const set = AdminConsole._collapsed();
     if (!set.has(name)) return;
@@ -1043,7 +1047,33 @@ const AdminConsole = {
   // The visible sections bucketed by `group`, in first-appearance order.
   // Shared by the desktop sidebar and the mobile level-1 menu so the two
   // can never drift into different groupings.
+  // The menu's groups and the order inside each (26 Nov 2026). SECTIONS above
+  // says what exists and which group a section is in; this says the order a
+  // person reads them in, so a section can move without its entry and its
+  // note moving in the source. A section this list does not name goes last
+  // in its group, and a group it does not name goes last: nothing is ever
+  // left out of the menu by forgetting it here.
+  // The rows of the desktop rail's head, in _topBarHtml's order.
+  NAV_HEAD_KEYS: ['overview', 'waitlist', 'codes', 'users', 'journey', 'onboarding-flows', 'analytics'],
+  NAV_GROUPS: [
+    { name: 'Growth', keys: ['waitlist', 'codes', 'users', 'journey', 'onboarding-flows', 'analytics'] },
+    { name: 'Delivery & sign-in', keys: ['homeroom-bot', 'sms', 'mail', 'sign-in', 'push'] },
+    { name: 'People', keys: ['support', 'reports', 'welcome-dm', 'access-review', 'limits', 'test-accounts', 'user-activities'] },
+    { name: 'Insights', keys: ['apps', 'estimator', 'features', 'gallery'] },
+    { name: 'Content & apps', keys: ['featured-apps', 'templates', 'email-templates', 'text-translations', 'domains', 'storage', 'small-changes', 'app-version'] },
+    { name: 'Programme', keys: ['seasons', 'season-events', 'challenge-templates', 'challenge-scoring', 'onchain-accounts', 'delegations'] },
+    { name: 'Operations', keys: ['overview', 'status', 'incidents', 'node', 'merges', 'rollover', 'staging-reap', 'workflows', 'campaigns', 'approvals', 'compliance'] },
+    { name: 'Developer', keys: ['settings', 'model-costs', 'db-export', 'sql-console', 'api-tester'] },
+  ],
+
   _groupedSections() {
+    const order = AdminConsole.NAV_GROUPS;
+    const groupAt = (name) => { const i = order.findIndex((g) => g.name === name); return i === -1 ? order.length : i; };
+    const keyAt = (name, key) => {
+      const g = order.find((x) => x.name === name);
+      const i = g ? g.keys.indexOf(key) : -1;
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
     const groups = [];
     for (const s of AdminConsole._visibleSections()) {
       const name = s.group || 'Other';
@@ -1051,7 +1081,10 @@ const AdminConsole = {
       if (!g) { g = { name, items: [] }; groups.push(g); }
       g.items.push(s);
     }
-    return groups;
+    // Array.prototype.sort is stable, so what the list does not name keeps
+    // its SECTIONS order.
+    for (const g of groups) g.items.sort((x, y) => keyAt(g.name, x.key) - keyAt(g.name, y.key));
+    return groups.sort((x, y) => groupAt(x.name) - groupAt(y.name));
   },
 
   // ── Desktop: the top bar, the open-section tabs, the search (#6456) ────
@@ -1165,13 +1198,27 @@ const AdminConsole = {
   _topBarHtml() {
     const active = AdminConsole._section;
     const visible = AdminConsole._visibleSections();
-    const primary = [
-      ['overview', 'Dashboard'], ['users', 'Users'], ['apps', 'Content'],
-      ['reports', 'Moderation'], ['analytics', 'Analytics'], ['settings', 'Settings'],
-    ].filter(([key]) => visible.some((s) => s.key === key));
+    // The rail's head: the dashboard, then the six tools an admin opens most,
+    // under two small labels (26 Nov 2026). They were Users, Content,
+    // Moderation, Analytics and Settings, which are rows of their groups now.
+    const head = [
+      ['overview', 'Dashboard'],
+      ['', 'Getting people in'],
+      ['waitlist', 'Waitlist'], ['codes', 'Invite links'], ['users', 'Users'],
+      ['', 'Their first steps'],
+      ['journey', 'Journey'], ['onboarding-flows', 'Onboarding flows'], ['analytics', 'Analytics'],
+    ];
+    const primary = head.filter(([key]) => key && visible.some((s) => s.key === key));
     const row = (key, label) => `<button type="button" data-admin-section="${key}"${active === key ? ' aria-current="page"' : ''}
       title="${label}" class="admin-sidebar-row${active === key ? ' is-active' : ''}">${AdminConsole.NAV_ICONS[key] || ''}<span>${label}</span>${key === 'reports' ? '<span class="admin-sidebar-count" data-admin-moderation-count hidden></span>' : ''}</button>`;
-    const primaryRows = primary.map(([key, label]) => row(key, label)).join('');
+    // A label is drawn only when a row under it is: a view-only admin who
+    // sees none of a part's tools gets no heading over nothing.
+    const primaryRows = head.map(([key, label], i) => {
+      if (key) return primary.some(([k]) => k === key) ? row(key, label) : '';
+      const next = head.slice(i + 1).findIndex(([k]) => !k);
+      const under = head.slice(i + 1, next === -1 ? undefined : i + 1 + next);
+      return under.some(([k]) => primary.some(([p]) => p === k)) ? `<div class="admin-sidebar-all-label">${label}</div>` : '';
+    }).join('');
     const groups = AdminConsole._groupedSections().map((g) => {
       const items = g.items.filter((s) => s.key !== 'overview' && !primary.some(([key]) => key === s.key));
       if (!items.length) return '';
@@ -1693,7 +1740,6 @@ const AdminConsole = {
     sms: 'AdminSms',
     'sign-in': 'AdminSignIn',
     push: 'AdminPush',
-    e2e: 'AdminE2E',
     // The ten promoted programme screens (#1179) all render through
     // admin-topochain.js — the section key names the screen, and the
     // module reads it back in its render(). The programme's Users screen

@@ -31,6 +31,7 @@
 
 import { useRef, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
@@ -40,7 +41,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { topicBack } from '../dev-board/topic/topic-page';
 import { useTopicBackName } from '../dev-board/topic/topic-back';
 import { openPlace } from '../dev-board/workshop/place-store';
-import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
+import { litPlace, placeName, placeTitleHandle, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
@@ -99,14 +100,13 @@ function translate(x: number, y = 0): string {
 
 /** A place's words in the header: a channel by its #handle. */
 export function pageLabel(place: string): string {
-  const handle = placeHandle(place);
+  const handle = placeTitleHandle(place);
   return handle ? `#${handle}` : placeName(place as PlaceKey);
 }
 
-// The bar's back disc (platform-header.tsx BACK_BTN_CLASS), as complete literals.
-const BACK_CLASS = 'nav-drawer-back inline-flex items-center justify-center w-7 h-7 rounded-full'
-  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
-  + ' text-[color:var(--brand-ink)] un-touch-target';
+// The bar's back disc (platform-header.tsx BACK_BTN_CLASS): the Button
+// primitive's `brandTint` with the header's ink, at the disc's 28px.
+const BACK_CLASS = 'nav-drawer-back inline-flex items-center justify-center w-7 h-7 un-touch-target';
 
 /**
  * Up from a community's place: a page under a place (All items, the bot's
@@ -172,9 +172,12 @@ function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: 
     el.setAttribute('aria-hidden', frame.back.live ? 'false' : 'true');
   });
   return (
-    <button
+    <Button
       ref={ref}
       type="button"
+      variant="brandTint"
+      size="none"
+      ink="brand"
       className={BACK_CLASS}
       data-nav-drawer-back=""
       aria-label={label}
@@ -182,7 +185,7 @@ function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: 
       onClick={() => onBack()}
     >
       <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
-    </button>
+    </Button>
   );
 }
 

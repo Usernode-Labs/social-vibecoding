@@ -10,6 +10,10 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { ProgrammeUsers } from './topochain/programme-users.tsx';
 import { fetchAllEvents, fetchJson, send } from './topochain/api.ts';
 import { openAccountDetail } from './topochain/onchain-accounts.tsx';
+import {
+  BackButton, Badge, Figures, ScreenHeader, Segmented, TABLE, TabPanel, Tabs, Toolbar,
+} from './topochain/ui.tsx';
+import type { Figure } from './topochain/ui.tsx';
 
 // Users (#admin/users) — one scannable row per account (spend, tier, apps,
 // pending app slot request), and a per-user details view behind "More"
@@ -435,9 +439,7 @@ function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
         <div className="mt-1 flex flex-wrap gap-1.5">
           {role !== 'user' ? <span className={AdminUI.badge.secondary}>{ROLE_LABEL[role]}</span> : null}
           {status ? (
-            <span className={status === 'active' ? AdminUI.badge.success : AdminUI.badge.warn}>
-              {KEY_BADGE[status] || status}
-            </span>
+            <Badge tone={status === 'active' ? 'mint' : 'amber'} label={KEY_BADGE[status] || status} />
           ) : null}
         </div>
         {user.app_quota_requested_at ? <AppSlotRequest user={user} canWrite={canWrite} onReload={onReload} /> : null}
@@ -886,9 +888,7 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
 
   return (
     <div id="admin-user-details">
-      <button type="button" id="admin-user-details-back" className={`${AdminUI.btn.ghost} text-sm mb-3`} onClick={onBack}>
-        ← Back to users
-      </button>
+      <BackButton id="admin-user-details-back" onClick={onBack}>Back to users</BackButton>
       {notice ? (
         <p id="admin-user-merge-success" role="status" className="mb-3 text-sm font-medium text-emerald-700 dark:text-emerald-400">{notice}</p>
       ) : null}
@@ -1071,9 +1071,11 @@ function writeDetailHash(id: number | null) {
   if (location.hash !== target) history.replaceState(null, '', target);
 }
 
-const CHIP = 'rounded-full px-3 py-1 text-xs font-medium transition-colors';
-const CHIP_ON = `${CHIP} bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900`;
-const CHIP_OFF = `${CHIP} bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700`;
+// The section's jobs, one tab each (26 Nov 2026): the accounts, and the
+// programme's own list of the same people. They were two long cards down one
+// page, the second out of sight under fifty rows of the first.
+type UsersTab = 'accounts' | 'programme';
+const USERS_TABS_ID = 'admin-users-tabs';
 
 function UsersSection() {
   const canWrite = !!console_()?.canWrite();
@@ -1083,6 +1085,7 @@ function UsersSection() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [filter, setFilter] = useState('');
   const [requestsOnly, setRequestsOnly] = useState(false);
+  const [tab, setTab] = useState<UsersTab>('accounts');
   const [visible, setVisible] = useState(PAGE);
   const [detailId, setDetailId] = useState<number | null>(() => hashDetailId());
   // The success line after a merge, shown on the kept account's details view.
@@ -1209,77 +1212,107 @@ function UsersSection() {
     && (!requestsOnly || !!u.app_quota_requested_at));
   const page = shown.slice(0, visible);
 
+  // Counted from the list the section already holds: no second read.
+  const count = (pick: (u: User) => boolean) => (users ? users.filter(pick).length.toLocaleString('en-US') : null);
+  const figures: Figure[] = [
+    { key: 'accounts', label: 'Accounts', value: users ? users.length.toLocaleString('en-US') : null, tone: 'sky', onClick: () => { setTab('accounts'); setRequestsOnly(false); }, title: 'Show every account' },
+    { key: 'requests', label: 'App slot requests', value: users ? requestCount.toLocaleString('en-US') : null, tone: 'yellow', onClick: () => { setTab('accounts'); setRequestsOnly(true); }, title: 'Show who asked for more app slots' },
+    { key: 'admins', label: 'Admins', value: count((u) => !!u.is_admin), tone: 'green' },
+    { key: 'off-podium', label: 'Out of the podium', value: count((u) => !!u.exclude_podium), tone: 'sky' },
+  ];
+
   return (
     <>
-      <div className={AdminUI.card}>
-        <div className="flex flex-wrap items-center gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <div className="flex items-baseline gap-2 me-auto">
-            <h2 className={AdminUI.cardTitle}>Users</h2>
-            {users ? <span className={AdminUI.muted}>{`${users.length} accounts`}</span> : null}
+      <ScreenHeader
+        title="Users"
+        subtitle="Every account: what it spends, its tier, its apps and its place on the podium. More opens everything that can be set for one."
+      />
+      <Figures id="admin-users-figures" items={figures} />
+      <Tabs<UsersTab>
+        id={USERS_TABS_ID}
+        label="Users"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'accounts', label: 'Accounts' },
+          { key: 'programme', label: 'Programme users' },
+        ]}
+      />
+      <TabPanel tabsId={USERS_TABS_ID} tab="accounts" active={tab === 'accounts'}>
+        <Toolbar>
+          {/* Named for what it searches. The Programme users tab carries its
+              own search box, filtering a different list. */}
+          <div className="min-w-[14rem] flex-1">
+            <input
+              id="admin-users-filter"
+              type="search"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Search by username"
+              aria-label="Filter users by username"
+              className={AdminUI.input}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
           </div>
-          <div className="flex items-center gap-1.5" role="group" aria-label="Show">
-            <button type="button" className={requestsOnly ? CHIP_OFF : CHIP_ON} aria-pressed={!requestsOnly}
-              onClick={() => setRequestsOnly(false)}>All</button>
-            <button type="button" id="admin-users-requests-chip" className={requestsOnly ? CHIP_ON : CHIP_OFF}
-              aria-pressed={requestsOnly} onClick={() => setRequestsOnly(true)}>
-              {`App slot requests (${requestCount})`}
-            </button>
-          </div>
-          {/* Named for what it searches. The Programme users card below this
-              one carries its own search box, so two unlabelled fields would
-              sit on the same screen filtering different lists. */}
-          <input
-            id="admin-users-filter"
-            type="search"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Search by username"
-            aria-label="Filter users by username"
-            className={`${AdminUI.input} w-full sm:w-72`}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+          <Segmented<'all' | 'requests'>
+            id="admin-users-requests-chip"
+            label="Show"
+            value={requestsOnly ? 'requests' : 'all'}
+            onChange={(v) => setRequestsOnly(v === 'requests')}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'requests', label: `App slot requests (${requestCount})` },
+            ]}
           />
-        </div>
-        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span>Podium</span><span className="w-24" />
-        </div>
-        <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
-          {!denied && users == null ? <p className={`${AdminUI.loading} p-4`}>Loading…</p> : null}
-          {!denied && users != null && !shown.length && (query || requestsOnly) ? (
-            <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
-              {requestsOnly ? 'No pending app slot requests match this filter.' : `No user matches “${filter.trim()}”.`}
-            </p>
+        </Toolbar>
+        {/* Not the shared list: a row's menu opens over the rows under it,
+            and the shared table's scrolling box would cut it off. The head
+            wears the shared table's band so it reads as the same table. */}
+        <div className={AdminUI.card}>
+          <div className={`${TABLE.thead} hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 rounded-t-2xl px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 font-medium`}>
+            <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span>Podium</span><span className="w-24" />
+          </div>
+          <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
+            {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
+            {!denied && users == null ? <p className={`${AdminUI.loading} p-4`}>Loading…</p> : null}
+            {!denied && users != null && !shown.length && (query || requestsOnly) ? (
+              <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
+                {requestsOnly ? 'No pending app slot requests match this filter.' : `No user matches “${filter.trim()}”.`}
+              </p>
+            ) : null}
+            {page.map((u) => (
+              <UserListRow key={u.id} user={u} canWrite={canWrite}
+                menuOpen={openMenu === u.id} onMenu={(v) => setOpenMenu(v ? u.id : null)}
+                onReload={load} onMore={() => openDetails(u.id)} />
+            ))}
+          </div>
+          {shown.length > visible ? (
+            <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
+              <button type="button" id="admin-users-more" className={AdminUI.btn.outlineSm}
+                onClick={() => setVisible((n) => n + PAGE)}>Show 50 more</button>
+              <span className={AdminUI.muted}>{`Showing ${page.length} of ${shown.length}`}</span>
+            </div>
           ) : null}
-          {page.map((u) => (
-            <UserListRow key={u.id} user={u} canWrite={canWrite}
-              menuOpen={openMenu === u.id} onMenu={(v) => setOpenMenu(v ? u.id : null)}
-              onReload={load} onMore={() => openDetails(u.id)} />
-          ))}
+          {canWrite ? (
+            <div id="admin-bulk-quota-control" className="flex flex-wrap items-center gap-2 p-4 border-t border-zinc-200 dark:border-zinc-800"
+              title="Set every user's app quota to this number.">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Set every user's app quota to</span>
+              <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputMode="numeric"
+                aria-label="App quota for every user"
+                className={`w-16 ${SMALL_INPUT}`} placeholder="0"
+                value={bulk} onChange={(e) => setBulk(e.target.value)} />
+              <button id="admin-bulk-quota-btn" type="button" className={AdminUI.btn.outlineSm}
+                disabled={bulkBusy} onClick={bulkQuota}>Set all</button>
+            </div>
+          ) : null}
         </div>
-        {shown.length > visible ? (
-          <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
-            <button type="button" id="admin-users-more" className={AdminUI.btn.outlineSm}
-              onClick={() => setVisible((n) => n + PAGE)}>Show 50 more</button>
-            <span className={AdminUI.muted}>{`Showing ${page.length} of ${shown.length}`}</span>
-          </div>
-        ) : null}
-        {canWrite ? (
-          <div id="admin-bulk-quota-control" className="flex flex-wrap items-center gap-2 p-4 border-t border-zinc-200 dark:border-zinc-800"
-            title="Set every user's app quota to this number.">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">Set every user's app quota to</span>
-            <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputMode="numeric"
-              aria-label="App quota for every user"
-              className={`w-16 ${SMALL_INPUT}`} placeholder="0"
-              value={bulk} onChange={(e) => setBulk(e.target.value)} />
-            <button id="admin-bulk-quota-btn" type="button" className={AdminUI.btn.outlineSm}
-              disabled={bulkBusy} onClick={bulkQuota}>Set all</button>
-          </div>
-        ) : null}
-      </div>
-      <div id="admin-users-programme" className="mt-6">
-        <ProgrammeUsers onOpenDetails={openDetails} />
-      </div>
+      </TabPanel>
+      <TabPanel tabsId={USERS_TABS_ID} tab="programme" active={tab === 'programme'}>
+        <div id="admin-users-programme">
+          <ProgrammeUsers onOpenDetails={openDetails} />
+        </div>
+      </TabPanel>
       {canWrite ? <AccountDeletions /> : null}
     </>
   );

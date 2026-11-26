@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The shared admin kit (26 Nov 2026): header, figures, bar, list and badges
+// are the same parts every other admin page is drawn with.
+import { BackButton, Badge, Figures, List, ScreenHeader, Toolbar } from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Workflows: what the workflow machines (src/workflow/) are doing and what
 // needs a person. Problems come first: which processes run the workflow,
@@ -48,13 +52,15 @@ type Overview = {
 };
 type Ref = { machine: string; key: string };
 
-const RESULT_BADGE = new Map([
-  ['accepted', AdminUI.badge.success],
-  ['rejected', AdminUI.badge.outline],
-  ['replayed', AdminUI.badge.default],
-  ['faulted', AdminUI.badge.destructive],
+// Badge tones. A result or a flag is repeated down a list, so it is one of
+// the kit's soft tones, and red or amber only for trouble.
+const RESULT_TONE = new Map([
+  ['accepted', 'mint'],
+  ['rejected', 'zinc'],
+  ['replayed', 'zinc'],
+  ['faulted', 'red'],
 ]);
-const FLAG_BADGE = new Map([['faulted', AdminUI.badge.destructive], ['stalled', AdminUI.badge.warn]]);
+const FLAG_TONE = new Map([['faulted', 'red'], ['stalled', 'amber']]);
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '');
 
@@ -95,13 +101,13 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
       <ul className="space-y-2">
         {slow ? (
           <li data-wf-problem="pending" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.destructive}>not decided</span>
+            <Badge tone="red" label="not decided" />
             <span className={AdminUI.muted}>{`An event has waited ${Math.round(p.pendingOldestSeconds || 0)} s to be decided`}</span>
           </li>
         ) : null}
         {unclaimed.map((w) => (
           <li key={`u:${w.id}`} data-wf-problem="unclaimed" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.destructive}>nobody takes it</span>
+            <Badge tone="red" label="nobody takes it" />
             <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
             <InstanceLink r={w} onOpen={onOpen} />
             <span className={AdminUI.muted}>{`waited ${Math.round(w.waitedSeconds / 60)} min`}</span>
@@ -109,7 +115,7 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
         ))}
         {p.flagged.map((i) => (
           <li key={`f:${i.machine}:${i.key}`} data-wf-problem="flagged" className="flex flex-wrap items-center gap-2">
-            <span className={FLAG_BADGE.get(i.flag || '') || AdminUI.badge.default}>{i.flag}</span>
+            <Badge tone={FLAG_TONE.get(i.flag || '') || 'zinc'} label={i.flag} />
             <InstanceLink r={i} onOpen={onOpen} />
             <span className={AdminUI.muted}>
               {i.flagDetail?.message || (i.flagDetail?.attempts ? `${i.flagDetail.attempts} timeouts in a row` : '')}
@@ -119,16 +125,17 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
         ))}
         {p.overdueDeadlines.map((i) => (
           <li key={`d:${i.machine}:${i.key}`} data-wf-problem="overdue" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.warn}>deadline passed</span>
+            <Badge tone="amber" label="deadline passed" />
             <InstanceLink r={i} onOpen={onOpen} />
             <span className={AdminUI.muted}>{`due ${when(i.deadlineAt)}`}</span>
           </li>
         ))}
         {p.work.map((w) => (
           <li key={`w:${w.id}`} data-wf-problem="work" className="flex flex-wrap items-center gap-2">
-            <span className={w.status === 'running' ? AdminUI.badge.warn : AdminUI.badge.destructive}>
-              {w.status === 'running' ? 'running long' : 'out of retries'}
-            </span>
+            <Badge
+              tone={w.status === 'running' ? 'amber' : 'red'}
+              label={w.status === 'running' ? 'running long' : 'out of retries'}
+            />
             <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
             <InstanceLink r={w} onOpen={onOpen} />
             <span className={AdminUI.muted}>{w.lastError?.message || ''}</span>
@@ -136,7 +143,7 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
         ))}
         {waiting.map((i) => (
           <li key={`a:${i.machine}:${i.key}`} data-wf-problem="waiting" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.warn}>{i.state}</span>
+            <Badge tone="amber" label={i.state} />
             <InstanceLink r={i} onOpen={onOpen} />
             <span className={AdminUI.muted}>{i.says || ''}</span>
           </li>
@@ -144,6 +151,22 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
       </ul>
     </div>
   );
+}
+
+function instanceColumns(onOpen: (r: Ref) => void): Column<Instance>[] {
+  return [
+    { label: 'Instance', primary: true, cell: (i) => <InstanceLink r={i} onOpen={onOpen} /> },
+    {
+      label: 'State',
+      cell: (i) => (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <Badge tone="zinc" label={i.state} />
+          {i.flag ? <Badge tone={FLAG_TONE.get(i.flag) || 'zinc'} label={i.flag} /> : null}
+        </span>
+      ),
+    },
+    { label: 'Updated', cell: (i) => <span className={AdminUI.muted}>{when(i.updatedAt)}</span> },
+  ];
 }
 
 function Instances({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
@@ -158,12 +181,11 @@ function Instances({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) 
     return () => { live = false; };
   }, [filter]);
   return (
-    <div id="admin-wf-instances" className={`${AdminUI.card} p-4`}>
-      <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Instances</h2>
-        {filter ? <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => setFilter(null)}>All</button> : null}
-      </div>
-      <div className="flex flex-wrap gap-2 mb-3">
+    <div id="admin-wf-instances">
+      <h2 className={`${AdminUI.sectionTitle} mb-3`}>Instances</h2>
+      {/* The filter is one button for each machine and state the server
+          counted: a list that long and that changeable stays buttons. */}
+      <Toolbar>
         {overview.counts.map((c) => (
           <button
             key={`${c.machine}:${c.state}`}
@@ -175,29 +197,16 @@ function Instances({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) 
             {`${c.machine} · ${c.state} · ${c.count}`}
           </button>
         ))}
-      </div>
+        {filter ? <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => setFilter(null)}>All</button> : null}
+      </Toolbar>
       {rows === null ? <p className={AdminUI.loading}>Loading…</p> : null}
       {rows && !rows.length ? <p className={AdminUI.muted}>No instances.</p> : null}
       {rows && rows.length ? (
-        <div className={AdminUI.tableWrap}>
-          <table className={AdminUI.table}>
-            <thead className={AdminUI.thead}>
-              <tr><th className={AdminUI.th}>Instance</th><th className={AdminUI.th}>State</th><th className={AdminUI.th}>Updated</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((i) => (
-                <tr key={`${i.machine}:${i.key}`} className={AdminUI.trHover}>
-                  <td className={AdminUI.td}><InstanceLink r={i} onOpen={onOpen} /></td>
-                  <td className={AdminUI.td}>
-                    <span className={AdminUI.badge.default}>{i.state}</span>
-                    {i.flag ? <span className={`${FLAG_BADGE.get(i.flag) || AdminUI.badge.default} ms-1`}>{i.flag}</span> : null}
-                  </td>
-                  <td className={`${AdminUI.td} ${AdminUI.muted}`}>{when(i.updatedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <List<Instance>
+          items={rows}
+          columns={instanceColumns(onOpen)}
+          rowKey={(i) => `${i.machine}:${i.key}`}
+        />
       ) : null}
     </div>
   );
@@ -222,7 +231,7 @@ function Timeline({ events, onOpen }: { events: WfEvent[]; onOpen: (r: Ref) => v
         <li key={e.id} data-wf-event={e.id} data-wf-result={e.result || e.status} className={`${AdminUI.separator} pt-3`}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-sm">{e.type}</span>
-            <span className={RESULT_BADGE.get(e.result || '') || AdminUI.badge.warn}>{e.result || e.status}</span>
+            <Badge tone={RESULT_TONE.get(e.result || '') || 'amber'} label={e.result || e.status} />
             {e.reason ? <code className="text-xs">{e.reason}</code> : null}
             {e.stateBefore ? <span className={AdminUI.muted}>{e.stateBefore === e.stateAfter ? e.stateAfter : `${e.stateBefore} → ${e.stateAfter}`}</span> : null}
             <span className={`${AdminUI.muted} ms-auto`}>{`#${e.id} · ${when(e.processedAt || e.createdAt)}`}</span>
@@ -279,7 +288,7 @@ function InstanceView({ at, actions, onOpen, onBack }: {
   const event = (type: string, payload = {}) => ['/api/admin/workflow/event', { type, payload }] as const;
   return (
     <div id="admin-wf-instance">
-      <button type="button" className={`${AdminUI.btn.ghost} text-sm mb-3`} onClick={onBack}>← Workflows</button>
+      <BackButton onClick={onBack}>Workflows</BackButton>
       <div className={`${AdminUI.card} p-4 mb-4`}>
         <div className={AdminUI.cardHeader}>
           <h2 className={`${AdminUI.cardTitle} font-mono`}>{`${at.machine} / ${at.key}`}</h2>
@@ -289,7 +298,7 @@ function InstanceView({ at, actions, onOpen, onBack }: {
         {inst ? (
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <span className={AdminUI.badge.secondary}>{inst.state}</span>
-            {inst.flag ? <span className={FLAG_BADGE.get(inst.flag) || AdminUI.badge.default}>{inst.flag}</span> : null}
+            {inst.flag ? <Badge tone={FLAG_TONE.get(inst.flag) || 'zinc'} label={inst.flag} /> : null}
             <span className={AdminUI.muted}>{`version ${inst.version}${inst.appId ? ` · app ${inst.appId}` : ''}`}</span>
             {inst.deadlineAt ? <span className={AdminUI.muted}>{`· next check ${when(inst.deadlineAt)}`}</span> : null}
           </div>
@@ -375,8 +384,7 @@ function InstanceView({ at, actions, onOpen, onBack }: {
               return (
                 <li key={w.id} data-wf-work={w.workKey} className="flex flex-wrap items-center gap-2">
                   <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
-                  <span className={outcome === 'succeeded' ? AdminUI.badge.success
-                    : (outcome ? AdminUI.badge.destructive : AdminUI.badge.default)}>{outcome || w.status}</span>
+                  <Badge tone={outcome === 'succeeded' ? 'mint' : (outcome ? 'red' : 'zinc')} label={outcome || w.status} />
                   <span className={AdminUI.muted}>{`${w.attemptCount} attempt${w.attemptCount === 1 ? '' : 's'}`}</span>
                   {w.lastError?.message ? <span className="text-xs text-red-700 dark:text-red-400">{w.lastError.message}</span> : null}
                   {retryable ? (
@@ -414,9 +422,31 @@ function WorkflowsSection() {
   if (at) {
     return <InstanceView at={at} actions={overview?.actions?.[at.machine] || []} onOpen={setAt} onBack={() => setAt(null)} />;
   }
-  if (!overview) return <p className={AdminUI.loading}>Loading…</p>;
+  const header = (
+    <ScreenHeader
+      title="Workflows"
+      subtitle="What the workflow machines are doing, and what needs a person."
+    />
+  );
+  if (!overview) return <>{header}<p className={AdminUI.loading}>Loading…</p></>;
+  // Three counts the overview already carries: nothing more is read for them.
+  const p = overview.problems;
+  const stuck = p.flagged.length + p.overdueDeadlines.length + p.work.length
+    + (p.waiting || []).length + (p.unclaimed || []).length + ((p.pendingOldestSeconds || 0) > 120 ? 1 : 0);
+  const figures: Figure[] = [
+    { key: 'stuck', label: 'Need a person', value: stuck.toLocaleString(), tone: stuck ? 'yellow' : 'green' },
+    {
+      key: 'instances',
+      label: 'Instances',
+      value: overview.counts.reduce((sum, c) => sum + (Number(c.count) || 0), 0).toLocaleString(),
+      tone: 'sky',
+    },
+    { key: 'runners', label: 'Processes running it', value: (overview.runners || []).length.toLocaleString(), tone: 'sky' },
+  ];
   return (
     <div>
+      {header}
+      <Figures id="admin-wf-figures" items={figures} />
       {!overview.running ? (
         <p id="admin-wf-off" className={`${AdminUI.muted} mb-4`}>
           The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.

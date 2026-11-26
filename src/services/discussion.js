@@ -131,7 +131,57 @@ async function earlierForConversation(pool, conversationId, since, viewerId) {
  * `{ since, fold_at, earlier: null }`, so the card draws every message as a
  * post rather than the hub failing.
  */
-async function discussionSummary(pool, { appId = null, conversationId = null, viewerId = null } = {}) {
+// ── The Earlier post's own reactions (its anchor) ─────────────────────
+//
+// discussion_earlier_reactions (migrations/discussion-earlier-reactions.sql):
+// one set per project, the project whose Discussion it is. Read as the
+// chat reads a message's (first-reacted order, the people's names), with
+// whether the viewer is one of them; a visitor gets the counts alone.
+
+async function earlierReactions(pool, appId, viewerId = null, { names = true } = {}) {
+  if (!appId) return [];
+  const { rows } = await pool.query(
+    `SELECT r.emoji, COUNT(*)::int AS count,
+            COALESCE(array_agg(u.username ORDER BY r.created_at), '{}') AS users,
+            BOOL_OR(r.user_id = $2) AS reacted
+       FROM discussion_earlier_reactions r JOIN users u ON u.id = r.user_id
+      WHERE r.app_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = r.user_id
+        )
+      GROUP BY r.emoji
+      ORDER BY MIN(r.created_at)`,
+    [appId, viewerId || null]
+  );
+  return rows.map((r) => (names
+    ? { emoji: r.emoji, count: Number(r.count) || 0, users: r.users || [], reacted: !!r.reacted }
+    : { emoji: r.emoji, count: Number(r.count) || 0 }));
+}
+
+/** Put the viewer's `emoji` on the Earlier post, or take it off (`on`; omitted, it toggles). The list after. */
+async function toggleEarlierReaction(pool, appId, userId, emoji, on = null) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM discussion_earlier_reactions WHERE app_id = $1 AND user_id = $2 AND emoji = $3',
+    [appId, userId, emoji]
+  );
+  const want = on == null ? !rows.length : !!on;
+  if (want && !rows.length) {
+    await pool.query(
+      `INSERT INTO discussion_earlier_reactions (app_id, user_id, emoji) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [appId, userId, emoji]
+    );
+  } else if (!want && rows.length) {
+    await pool.query(
+      'DELETE FROM discussion_earlier_reactions WHERE app_id = $1 AND user_id = $2 AND emoji = $3',
+      [appId, userId, emoji]
+    );
+  }
+  return earlierReactions(pool, appId, userId);
+}
+
+async function discussionSummary(pool, { appId = null, conversationId = null, viewerId = null, anchorAppId = null, visitor = false } = {}) {
   let since = null;
   try {
     since = await discussionSince(pool);
@@ -146,11 +196,133 @@ async function discussionSummary(pool, { appId = null, conversationId = null, vi
   } catch {
     earlier = null;
   }
+  // The Earlier post's own reactions, on the project's anchor.
+  if (earlier) {
+    try {
+      earlier.reactions = await earlierReactions(pool, anchorAppId || appId, visitor ? null : viewerId, { names: !visitor });
+    } catch {
+      earlier.reactions = [];
+    }
+  }
   return { since, fold_at: EARLIER_FOLD_AT, earlier };
+}
+
+// ── Most replies, across the whole room (part 2) ──────────────────────
+//
+// The card's "Sort by: Most replies" ranks every post since the fold, not
+// only the ones a page of the stream happened to read: this answers which
+// posts those are, busiest first, a page at a time, and the card reads each
+// one's thread through the room's own routes (so what it draws keeps their
+// shaping and their permissions). A post's count is its live replies,
+// blocked people's left out as the thread leaves them out. Ties go to the
+// latest activity, then the newer post.
+
+/** The most posts one read of the ranking answers with. */
+const RANKED_MAX = 20;
+
+function shapeRanked(rows, limit) {
+  return {
+    posts: rows.slice(0, limit).map((r) => ({
+      id: Number(r.id),
+      reply_count: Number(r.reply_count) || 0,
+      active_at: iso(r.active_at),
+    })),
+    more: rows.length > limit,
+  };
+}
+
+function rankedArgs({ afterId = 0, limit = 8, offset = 0 } = {}) {
+  const after = Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Math.min(Number(afterId), 2147483647) : 0;
+  const size = Math.min(RANKED_MAX, Math.max(1, Number(limit) || 8));
+  const skip = Math.min(10000, Math.max(0, Number(offset) || 0));
+  return { after, size, skip };
+}
+
+/** A project's #general (its app chat's main stream), busiest posts first. */
+async function rankedInApp(pool, appId, opts = {}) {
+  const { after, size, skip } = rankedArgs(opts);
+  const { rows } = await pool.query(
+    `SELECT m.id, COUNT(r.id)::int AS reply_count,
+            GREATEST(m.created_at, COALESCE(MAX(r.created_at), m.created_at)) AS active_at
+       FROM chat_messages m
+       LEFT JOIN chat_messages r
+         ON r.app_id = m.app_id
+        AND r.thread_type = 'message' AND r.thread_ref = m.id
+        AND r.deleted_at IS NULL AND r.moderation_hidden_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = r.user_id
+        )
+      WHERE m.app_id = $1
+        AND m.thread_type IS NULL
+        AND m.msg_type IN ('message', 'spec_share')
+        AND m.deleted_at IS NULL
+        AND m.moderation_hidden_at IS NULL
+        AND m.id > $2
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.user_id
+        )
+      GROUP BY m.id
+      ORDER BY reply_count DESC, active_at DESC, m.id DESC
+      LIMIT $4 OFFSET $5`,
+    [appId, after, opts.viewerId || null, size + 1, skip]
+  );
+  return shapeRanked(rows, size);
+}
+
+/** Homeroom's #general (a Messages conversation), busiest posts first. */
+async function rankedInConversation(pool, conversationId, opts = {}) {
+  const { after, size, skip } = rankedArgs(opts);
+  const { rows } = await pool.query(
+    `SELECT m.id, COUNT(r.id)::int AS reply_count,
+            GREATEST(m.created_at, COALESCE(MAX(r.created_at), m.created_at)) AS active_at
+       FROM conversation_messages m
+       LEFT JOIN conversation_messages r
+         ON r.conversation_id = m.conversation_id
+        AND r.thread_root_id = m.id
+        AND r.msg_type = 'message'
+        AND r.deleted_at IS NULL AND r.moderation_hidden_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = r.sender_id
+        )
+      WHERE m.conversation_id = $1
+        AND m.thread_root_id IS NULL
+        AND m.msg_type = 'message'
+        AND m.deleted_at IS NULL
+        AND m.moderation_hidden_at IS NULL
+        AND m.id > $2
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.sender_id
+        )
+      GROUP BY m.id
+      ORDER BY reply_count DESC, active_at DESC, m.id DESC
+      LIMIT $4 OFFSET $5`,
+    [conversationId, after, opts.viewerId || null, size + 1, skip]
+  );
+  return shapeRanked(rows, size);
+}
+
+/** The platform's one #general conversation, Homeroom's own project's channel. */
+async function generalConversationId(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM conversations
+      WHERE kind = 'channel' AND channel_key = 'general' AND status = 'active'
+      LIMIT 1`
+  );
+  return rows[0] ? Number(rows[0].id) : null;
 }
 
 module.exports = {
   EARLIER_FOLD_AT,
+  earlierReactions,
+  toggleEarlierReaction,
+  RANKED_MAX,
+  generalConversationId,
+  rankedInApp,
+  rankedInConversation,
   discussionSince,
   discussionSummary,
   earlierForApp,

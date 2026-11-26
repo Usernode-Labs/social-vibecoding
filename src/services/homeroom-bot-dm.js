@@ -5186,7 +5186,9 @@ async function postOnProposal(pool, {
   log.info('homeroom-bot-dm', 'Posted a DM change on the bot\'s proposal', {
     app: app.slug, sessionId, issueNumber, userId: user.id, queued,
   });
-  return { ok: true, queued };
+  // #7216: the reply's id, so the vote row can point at the words it handed
+  // over and a request's page can draw them as that vote's reason.
+  return { ok: true, queued, messageId: Number(posted.message?.id) || null };
 }
 
 // ── A No vote's line, on one of its own changes (#3977) ──────────────────

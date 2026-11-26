@@ -90,10 +90,13 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
   const { placeRows } = loadTsx('frontend/src/features/dev-board/workshop/project-places.tsx');
-  // A project with no topics: the three pages, then #general.
+  // A project with no topics: the three pages, then its Discussion, #general
+  // as posts (26 Nov 2026), whose chat view lights it.
   const rows = placeRows(null, 0);
   assert.deepEqual(rows.pages.map((p) => [p.key, p.label]), [['status', 'Hub'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
-  assert.deepEqual([rows.general.key, rows.general.label], ['discussion', 'general']);
+  assert.deepEqual([rows.general.key, rows.general.label], ['discussion', 'Discussion']);
+  assert.equal(places.litPlace('posts'), 'discussion', 'its first address lights it');
+  assert.equal(places.placeName('discussion'), 'Discussion');
   assert.deepEqual(rows.topics, []);
   assert.equal(places.litPlace('all'), 'workshop', 'the Workshop stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
@@ -101,7 +104,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // Discussion), and a topic's channel by its own. A page's title is what
   // the English catalog holds for it.
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding', 'status'].map(pageTitle),
-    ['Needs you', 'Workshop', 'All items', '#general', '#onboarding', 'Hub']);
+    ['Needs you', 'Workshop', 'All items', 'Discussion', '#onboarding', 'Hub']);
   assert.equal(message('project:page.title.hub'), 'Hub');
   // The place bar on every page; All items adds its way back under it, the
   // first thing in its pinned head's one row (#4486), with no eyebrow, and
@@ -120,7 +123,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // column at every width, and no metrics card or chart anywhere on it.
   // Start a new change ended it until #852's review moved it into the
   // hero's ⋯ (tests/improve-action-deduplication.test.js).
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{(tab === 'discussion' || tab === 'posts') && slug ? ("));
   const order = ['<CommunityCard', '<FirstVersionCard', '<StartHereBanner', '<ForYouCard', '<RecentlyLive']
     .map((x) => hub.indexOf(x));
   assert.ok(order.every((n) => n >= 0), `all five on the hub: ${JSON.stringify(order)}`);
@@ -157,7 +160,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(hub, /<div className="dev-ws-hub-cols" data-ws-hub-cols=\{talkHere \? 'two' : 'one'\}>\s*<div className="dev-ws-hub-side">/);
   assert.match(read('public/css/app.css'), /@media \(min-width: 1024px\) \{\n  html:root #dev-workshop \.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody \.dev-ws-hub-cols\[data-ws-hub-cols="two"\] \{\n    display: grid;\n    grid-template-columns: minmax\(0, 340px\) minmax\(0, 1fr\);/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
-  assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
+  assert.match(LANDER, /\{isChannelPlace\(tab\) && tab !== 'discussion' \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
   // The Workshop tab is the front page (./front-page.tsx;
   // tests/workshop-front-page.test.js). The brand look's tab (Overview, Your
   // work, What happened) went with that look, 26 Nov 2026.
@@ -175,11 +178,12 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'posts', 'bot'\],/);
   // #4417: and so is a topic's channel, `c:<handle>`, a place like the others.
   assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
-  // 26 Nov 2026: the Discussion page under the Hub (`posts`) is not reopened on either: the hub draws it.
-  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' && key !== 'posts' \? key : 'status';/);
-  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan' && stored !== 'posts'\) return stored;/);
+  // 26 Nov 2026: the plan is not reopened on; the Discussion (`posts`) is a
+  // place of its own, so it is, and it lights its own row.
+  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
+  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan'\) return stored;/);
   const { litPlace } = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
-  assert.equal(litPlace('posts'), 'status', 'Hub stays lit over the Discussion page');
+  assert.equal(litPlace('posts'), 'discussion', 'the Discussion\'s first address lights its row');
   assert.equal(litPlace('plan'), 'status', 'Hub stays lit over the plan');
   assert.equal(litPlace('all'), 'workshop');
   assert.equal(litPlace('bot'), 'workshop', 'and over the bot\'s slots');
@@ -363,23 +367,20 @@ test('#general needs the Homeroom community to post in; Homeroom\'s old channel 
   assert.doesNotMatch(route2, /archive_href/, 'the hub names no archive (#3406)');
 });
 
-test('#852 review: a project\'s own Discussion is a fitted pane, and Homeroom\'s is #general in place (#3494)', () => {
-  // #general is a conversation of Messages rather than an app chat. #3491
-  // made the tab a door to it on the Messages screen, which swapped the
-  // page's header and tabs; #3494 mounts it in the page instead, like any
-  // project's own channel (tests/homeroom-discussion-in-place.test.js).
+test('#852 review: a topic\'s channel is a fitted pane; the Discussion, #general\'s posts, grows like the Hub (26 Nov 2026)', () => {
+  // #general was a chat pane mounted in the page (#3494, Homeroom's an
+  // EmbeddedConversation). It is the project's Discussion now, its posts
+  // with replies (hub-discussion.tsx), a page that grows with the page's
+  // scroller; only a topic's channel is still a pane fitted to the screen.
   const PD = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
   assert.doesNotMatch(LANDER, /discussionElsewhere|openDiscussionElsewhere/, 'the tab turns the page for Homeroom too');
-  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} at=\{roomAt\} \/>/);
+  assert.doesNotMatch(PD, /<EmbeddedConversation conversationId=\{room\}/, 'no chat view of #general');
   assert.doesNotMatch(PD, /location\.replace/);
-  // A project's own channel fills the reading area like Needs you: no guessed
-  // height, the chain may shrink it, and the composer's tab-bar reserve is not
-  // taken twice.
   const CSS = read('public/css/app.css');
   assert.doesNotMatch(CSS, /\.dev-ws-discussion \{[^}]*calc\(100dvh - 210px\)/);
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
-  // #4417: a topic's channel (`c:<handle>`) is fitted the same way as #general.
-  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\],\s*html\[data-browser-scroller\] \.dev-ws\[data-ws-tab\^="c:"\] \{\s*height: var\(--ws-fit\);/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
+  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab\^="c:"\] \{\s*height: var\(--ws-fit\);/);
+  assert.doesNotMatch(CSS, /\.dev-ws\[data-ws-tab="discussion"\]/, 'the Discussion is not fitted');
   assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
 });
 
@@ -475,7 +476,8 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   const at = CSS.indexOf('@media (max-width: 699.98px) and (pointer: coarse) {\n  html:not([data-browser-scroller]) #dev-forum-scroll:has(');
   assert.ok(at > -1, 'a phone block for the scroller holding a growing tab');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
-  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\):not\\(\\[data-ws-tab\\^="c:"\\]\\)\\)';
+  // The Discussion (#general's posts) grows like the Hub since 26 Nov 2026.
+  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab\\^="c:"\\]\\)\\)';
   // Only where the scroller is the element, not the document (a phone
   // browser pages the document, and the pixel would lengthen the page), and
   // not the two fitted tabs, which scroll inside themselves.

@@ -10,7 +10,13 @@
  *   Workshop
  *   ─────────────
  *   CHANNELS
- *   # general
+ *   Discussion
+ *
+ * #general IS THE DISCUSSION (26 Nov 2026): the row that was "# general"
+ * is the project's Discussion, its messages as posts with replies
+ * (./hub-discussion.tsx, place `discussion`); there is no chat view of it.
+ * Its count is #general's unread, and like a channel's it is not drawn
+ * while you read it.
  *
  * A topic's channel is not one of these places (#6709): the Hub's Topics
  * card and the channel's own address reach it, and a retired topic stays
@@ -42,7 +48,7 @@
 
 import { useId, type MouseEvent, type ReactNode } from 'react';
 
-import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, BoardIcon, ChatIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -71,7 +77,7 @@ export function placeRows(places: PlacesPayload | null | undefined, owed: number
   const general = channels.find((c) => c.kind === 'general');
   return {
     pages: PAGE_PLACES.map((p) => ({ key: p.key, label: translate(p.label), count: p.key === 'needs' ? Math.max(0, Number(owed) || 0) : 0 })),
-    general: { key: 'discussion', label: 'general', count: Math.max(0, Number(general?.unread) || 0) },
+    general: { key: 'discussion', label: translate('project:places.list.discussion'), count: Math.max(0, Number(general?.unread) || 0) },
     topics: liveTopics(places).map((t) => ({
       key: channelPlace(t.handle),
       label: t.handle,
@@ -87,6 +93,7 @@ function PageGlyph({ k }: { k: PlaceKey }) {
   if (k === 'status') return <Squares2X2Icon className={cls} aria-hidden="true" />;
   if (k === 'needs') return <BallotIcon className={cls} aria-hidden="true" />;
   if (k === 'workshop') return <BoardIcon className={cls} aria-hidden="true" />;
+  if (k === 'discussion') return <ChatIcon className={cls} aria-hidden="true" />;
   return <HashIcon className={`${cls} dev-ws-place-hash`} aria-hidden="true" />;
 }
 

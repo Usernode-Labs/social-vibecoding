@@ -104,7 +104,7 @@ import { NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { isBotMention, issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
-import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
+import { generalHubBack, openChannelHub, platformHubServed, platformSlug, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
@@ -1286,6 +1286,48 @@ function AppDiscussionThread({ slug }: { slug: string }) {
  * Exactly one copy draws the thread at a time — the store's route says
  * which — so the ids its rows carry are never on the page twice.
  */
+/**
+ * #general IS A DISCUSSION (26 Nov 2026): the platform's #general is
+ * Homeroom's Discussion, posts with replies on its project page
+ * (dev-board/workshop/hub-discussion.tsx), and never a chat here. Its
+ * address is taken there (channelToHub, App.openDiscussionInHub); until the
+ * store knows where, or for a viewer the platform's page is not served to,
+ * this pane says where it is rather than drawing the room.
+ */
+function ScreenConversation() {
+  const snap = useMessagesSnapshot();
+  const conversationId = snap.route.conversationId;
+  if (conversationId && snap.active?.id === conversationId && snap.active.kind === 'channel') {
+    return <ChannelIsDiscussion conversationId={conversationId} />;
+  }
+  return <ConversationThread />;
+}
+
+function ChannelIsDiscussion({ conversationId }: { conversationId: number }): ReactNode {
+  const t = useMessages('messages');
+  const snap = useMessagesSnapshot();
+  const slug = platformSlug();
+  const served = platformHubServed();
+  const open = () => {
+    const door = (window as { App?: { openDiscussionInHub?: (slug: string, target: unknown) => void } }).App?.openDiscussionInHub;
+    if (slug && door) door(slug, { conversationId, threadRootId: snap.route.threadRootId, focusMessageId: snap.route.focusMessageId });
+  };
+  return (
+    <section className="messages-thread" data-channel-discussion="">
+      <div className="messages-thread-scroll">
+        <div className="messages-state">
+          <p>{served ? t('messages:thread.channelIsDiscussion') : t('messages:thread.channelIsDiscussionClosed')}</p>
+          {served && slug ? (
+            <button type="button" className="messages-state-action" data-channel-discussion-open="" onClick={open}>
+              {t('messages:thread.channelIsDiscussionOpen')}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // #6479: the separators' days are read in the zone picked; useMessages re-renders on a change.
   const t = useMessages('messages');
@@ -2692,11 +2734,11 @@ export function MessagesScreen() {
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
         <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
           <ConversationList drawer={drawer.on} />
-          <ConversationThread />
+          <ScreenConversation />
           {designOpen && snap.route.conversationId && designRootId ? (
             <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
           ) : null}
-          {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
+          {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded && snap.active?.kind !== 'channel' ? <ReplyThreadPanel /> : null}
           {blankThread && snap.route.conversationId ? <NewThreadPanel conversationId={snap.route.conversationId} /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>

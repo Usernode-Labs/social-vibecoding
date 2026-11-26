@@ -13809,7 +13809,7 @@ const AppView = {
       const stored = key ? window.localStorage.getItem(key) : null;
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView._isWorkshopPlace(stored) && stored !== 'plan' && stored !== 'posts') return stored;
+      if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in: migrating the retired mode without carrying what it
       // MEANT would hand them a digest where they had chosen a worklist.
@@ -14147,9 +14147,8 @@ const AppView = {
   },
 
   _setWorkshopTab(key, slug) {
-    // The plan is gone once it is built, so the page reopens on the hub; the
-    // Discussion page is the hub's own card, whole, so it reopens there too.
-    const next = AppView._isWorkshopPlace(key) && key !== 'plan' && key !== 'posts' ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub.
+    const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
@@ -14513,6 +14512,12 @@ const AppView = {
   },
   // A door to the Discussion tab with a place in it: the target first, so
   // the page the tab door turns (or mounts) finds it waiting.
+  //
+  // #general IS THE DISCUSSION (26 Nov 2026): the tab is the project's
+  // Discussion, #general's messages as posts with replies
+  // (dev-board/workshop/hub-discussion.tsx), which takes the target: it
+  // opens the post a message or a reply thread is in and marks it. There is
+  // no chat view of #general left to hand anything on to.
   _landOnDiscussion(slug, target) {
     if (!slug) return;
     AppView._stashDiscussionTarget(slug, target);

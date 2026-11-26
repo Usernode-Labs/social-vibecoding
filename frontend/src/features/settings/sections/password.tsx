@@ -4,7 +4,7 @@ import { GroupedList } from '@/components/ui/grouped-list';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useMessages } from '../../../lib/i18n/react';
 import {
-  EDITOR_ACTIONS, EDITOR_NOTE, EDITOR_TITLE, ROW_ACTION, ROW_EDITOR, SignInRow,
+  EDITOR_ACTIONS, EDITOR_NOTE, EDITOR_TITLE, RowAction, ROW_EDITOR, SignInRow,
 } from './sign-in-row';
 
 import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
@@ -52,10 +52,10 @@ export function PasswordSection() {
               </>
             )}
             action={(
-              <button id="cp-edit" type="button" className={ROW_ACTION} aria-expanded="false" aria-controls="cp-form">
+              <RowAction id="cp-edit" type="button" aria-expanded="false" aria-controls="cp-form">
                 <span id="cp-edit-change">{t('settings:account.change')}</span>
                 <span id="cp-edit-add" className="hidden">{t('settings:account.add')}</span>
-              </button>
+              </RowAction>
             )}
           />
           <div id="cp-form" className={`${ROW_EDITOR} hidden`}>

@@ -430,9 +430,9 @@ test('any admin reads the delivery log; non-admins do not', async () => {
 
 test('the console lists SMS delivery in Platform, right after Email delivery', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  const mailAt = consoleJs.indexOf("{ key: 'mail', label: 'Email delivery', group: 'Platform' }");
-  const smsAt = consoleJs.indexOf("{ key: 'sms', label: 'SMS delivery', group: 'Platform' }");
-  const signInAt = consoleJs.indexOf("{ key: 'sign-in', label: 'Sign-in providers', group: 'Platform' }");
+  const mailAt = consoleJs.indexOf("{ key: 'mail', label: 'Email delivery', group: 'Delivery & sign-in' }");
+  const smsAt = consoleJs.indexOf("{ key: 'sms', label: 'SMS delivery', group: 'Delivery & sign-in' }");
+  const signInAt = consoleJs.indexOf("{ key: 'sign-in', label: 'Sign-in providers', group: 'Delivery & sign-in' }");
   assert.ok(mailAt > 0 && smsAt > mailAt && signInAt > smsAt);
   assert.match(consoleJs, /sms: 'AdminSms'/);
   assert.match(consoleJs, /'sms': '<svg/);
@@ -455,10 +455,15 @@ test('the section renders the failure log table with loading, empty and error st
   assert.match(src, /'\/api\/admin\/sms\/failures'/);
   assert.match(src, /Recent failures/);
   assert.match(src, /admin-sms-failures-table/, 'the table carries its own id');
-  assert.match(src, /AdminUI\.tableWrap/, 'the table is drawn from the registry, not hand-written');
-  assert.match(src, /Could not load the failure log\./);
-  assert.match(src, /No failures recorded\./);
-  assert.match(src, /Loading…/);
+  // The table is the shared kit's List, and its three states the kit's own,
+  // where it was the registry's table recipe and three sentences (request 7224).
+  assert.match(src, /<div id="admin-sms-failures-table">\s*<List<PhoneFailure> items=\{failures\} columns=\{FAILURE_COLUMNS\} rowKey=\{\(f\) => f\.id\} \/>/,
+    'the table is drawn from the shared kit, not hand-written');
+  assert.doesNotMatch(src, /<table\b/, 'and no table is written by hand');
+  assert.match(src, /if \(failed\) return <ErrorState title="Could not load the failure log\." \/>;/);
+  assert.match(src, /if \(failures\.length === 0\) \{\s*return \(\s*<EmptyState\s+title="No failures recorded\."/);
+  assert.match(src, /if \(failures === null\) return <Skeleton rows=\{6\} \/>;/, 'loading is the kit\'s skeleton');
+  assert.match(read('frontend/src/features/admin/topochain/ui.tsx'), /<p className="sr-only" role="status">Loading…<\/p>/, 'which says Loading to a screen reader');
   assert.match(src, /KIND_LABELS\[f\.kind\] \|\| f\.kind/, 'an unknown kind still renders');
   assert.match(src, /Provider: /, 'the provider\'s own code is shown beside this API\'s');
 });

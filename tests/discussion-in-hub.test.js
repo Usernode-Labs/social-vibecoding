@@ -76,8 +76,10 @@ function withAppView(fn) {
 
 test('a door names its place in the room for the tab, which takes it once, for its project only', () => {
   withAppView((AppView, events, stored) => {
+    // #general IS THE DISCUSSION (26 Nov 2026): its posts take the target
+    // and open the post a message or a thread is in.
     AppView._landOnDiscussion('garden-ab12', { threadRootId: '70', focusMessageId: 88 });
-    assert.equal(stored.get(`${AppView.WORKSHOP_TAB_KEY}:garden-ab12`), 'discussion', 'the page opens on its Discussion tab');
+    assert.equal(stored.get(`${AppView.WORKSHOP_TAB_KEY}:garden-ab12`), 'discussion', 'the page opens on its Discussion');
     assert.deepEqual(events.map((e) => e[0]), ['usernode:workshop-discussion', 'usernode:workshop-tab'],
       'the target is in place before the page is told to turn');
     assert.deepEqual(events[1][1], { slug: 'garden-ab12', tab: 'discussion' });
@@ -97,6 +99,15 @@ test('a door names its place in the room for the tab, which takes it once, for i
     AppView._stashDiscussionTarget('garden-ab12', { threadRootId: 5 });
     AppView._discussionTarget.at -= AppView.DISCUSSION_TARGET_TTL_MS + 1;
     assert.equal(AppView._takeDiscussionTarget('garden-ab12'), null);
+
+    // There is no chat view of #general to choose: every door is the Discussion's.
+    for (const target of [null, { focusMessageId: 9 }, { threadRootId: 70 }]) {
+      events.length = 0;
+      AppView._landOnDiscussion('garden-ab12', target);
+      assert.deepEqual(events[1][1], { slug: 'garden-ab12', tab: 'discussion' }, JSON.stringify(target));
+      AppView._takeDiscussionTarget('garden-ab12');
+    }
+    assert.equal(AppView._discussionPlaceFor, undefined, 'no posts-or-chat choice is left');
   });
 });
 
@@ -494,19 +505,20 @@ test('the tab takes the target and opens a project\'s own reply thread in place'
   } finally {
     if (had) globalThis.window = was; else delete globalThis.window;
   }
-  // Taken once the page knows which room it is, and again for a door
-  // followed while the tab is up.
+  // #general IS THE DISCUSSION (26 Nov 2026): its posts take #general's
+  // target (hub-discussion.tsx), and a topic's channel takes its own, here.
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-discussion.tsx'), /const target = takeDiscussionTarget\(slug, null\);/);
+  assert.doesNotMatch(PD, /function GeneralChannel|<EmbeddedConversation/, 'no chat view of #general');
   assert.match(PD, /window\.addEventListener\('usernode:workshop-discussion', onTarget\);/);
-  assert.match(PD, /GroupChat\?\.revealMessage\?\.\(slug, target\.focusMessageId\)/);
+  assert.match(PD, /GroupChat\?\.revealMessage\?\.\(slug, target\.focusMessageId, ref\)/);
   assert.match(PD, /setThread\(\(cur\) => \(\{ rootId, key: \(cur\?\.key \|\| 0\) \+ 1 \}\)\)/);
-  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} at=\{roomAt\} \/>/);
-  // The pane is Messages' own, closed in place rather than by an address.
+  // A topic's pane is Messages' own, closed in place rather than by an address.
   assert.match(PD, /<AppReplyThreadPane[\s\S]*?onClick=\{\(\) => setThread\(null\)\}/);
   assert.match(SCREEN, /export function AppReplyThreadPane\(/);
   assert.match(SCREEN, /function AppReplyThreadPanel[\s\S]*?<AppReplyThreadPane/, 'Messages draws the same pane');
   // The host's class string never changes; only the section says a thread is up.
-  assert.match(PD, /<div ref=\{host\} className="dev-ws-discussion-host" \/>/);
-  assert.match(PD, /className=\{`dev-ws-discussion dev-ws-general-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
+  assert.match(PD, /<div ref=\{host\} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel=\{topic\.id\} \/>/);
+  assert.match(PD, /className=\{`dev-ws-discussion dev-ws-topic-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
   assert.match(CSS, /\.dev-ws-discussion-threaded > \.messages-reply-pane \{ margin: 0; \}/);
   assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion,[\s\S]*?\.side-panel-head,\s*#ai-screen \.ai-askbar \{/, 'the pane\'s surface tokens reach the tab (the AI tab\'s Ask bar, and the column\'s heading, #6431)');
 });

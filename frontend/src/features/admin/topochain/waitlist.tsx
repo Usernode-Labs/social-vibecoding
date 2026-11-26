@@ -7,9 +7,10 @@ import { fetchJson, send } from './api.ts';
 import { countryLabel } from './countries.ts';
 import { BTN } from './tokens.ts';
 import {
-  Badge, CheckField, EmptyState, ErrorState, Field, FormError, Input, List, Pager, Panel, ScreenHeader,
-  Select, Skeleton, Textarea, fmt,
+  Badge, CheckField, EmptyState, ErrorState, Field, Figures, FormError, Input, List, LoadMore, Pager, Panel, ScreenHeader,
+  Segmented, Select, SettingRow, SettingsGroup, Skeleton, TabPanel, Tabs, Textarea, fmt,
 } from './ui.tsx';
+import type { Figure } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 import { useWaitlistOptions } from '../../auth/waitlist-shared.tsx';
 import type { WaitlistOptions } from '../../auth/waitlist-shared.tsx';
@@ -82,6 +83,13 @@ const ONLY_LABELS: Record<Only, string> = {
   any: 'Everyone',
   confirmed: 'Confirmed address only',
   invited: 'Brought someone in',
+};
+// The same three on a toggle, where the words must be short; the full label
+// is each option's tooltip.
+const ONLY_SHORT: Record<Only, string> = {
+  any: 'Everyone',
+  confirmed: 'Confirmed',
+  invited: 'Brought someone',
 };
 
 // The queue's order, as a lens the admin picks rather than a ranking the
@@ -205,18 +213,15 @@ function StatusSelect(
     onChange: (s: Status) => void;
   },
 ) {
+  // Three choices, all in view (26 Nov 2026): it was a select.
   return (
-    <Select
+    <Segmented<Status>
       id={id}
-      aria-label={label}
-      className="sm:w-40"
+      label={label}
       value={value}
-      onChange={(e) => onChange(e.target.value as Status)}
-    >
-      {STATUSES.map((v) => (
-        <option key={v} value={v}>{labels[v]}</option>
-      ))}
-    </Select>
+      options={STATUSES.map((v) => ({ value: v, label: labels[v] }))}
+      onChange={onChange}
+    />
   );
 }
 
@@ -414,7 +419,7 @@ function RemindNow({ row, onSent }: { row: WaitlistRow; onSent: () => void }) {
 // It is a component rather than a fragment the column builder returns
 // because it reads the shared options fetch, and a hook needs a component to
 // live in.
-function WaitlistDetails({ row, reload }: { row: WaitlistRow; reload?: () => void }) {
+function WaitlistDetails({ row, reload, bare }: { row: WaitlistRow; reload?: () => void; bare?: boolean }) {
   const options = useWaitlistOptions();
   const mail = inviteMailLine(row);
   const reminders = row.reminders || {};
@@ -425,12 +430,8 @@ function WaitlistDetails({ row, reload }: { row: WaitlistRow; reload?: () => voi
       {value}
     </div>
   ) : null);
-  return (
-    <details className="text-xs">
-      <summary className="cursor-pointer select-none text-zinc-500 dark:text-zinc-400 min-h-[36px] flex items-center">
-        Details
-      </summary>
-      <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
+  const facts = (
+    <>
         {detail('Signed up', fmt(row.submitted_at))}
         {row.phone_only
           ? detail('Joined with', `A verified phone${row.phone_last4 ? ` ending ${row.phone_last4}` : ''}, no email`)
@@ -453,7 +454,17 @@ function WaitlistDetails({ row, reload }: { row: WaitlistRow; reload?: () => voi
         {detail('Came from', row.invited_by_email
           || (row.invited_by ? `signup #${row.invited_by}` : null))}
         <SurveyAnswers answers={row.answers || {}} options={options} />
-      </div>
+    </>
+  );
+  // In the list, the row's own arrow opens this (ui.tsx `List`, `details`), so
+  // it is the facts alone; anywhere else it folds itself.
+  if (bare) return <div className="text-xs space-y-1 text-zinc-600 dark:text-zinc-300">{facts}</div>;
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer select-none text-zinc-500 dark:text-zinc-400 min-h-[36px] flex items-center">
+        Details
+      </summary>
+      <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">{facts}</div>
     </details>
   );
 }
@@ -463,7 +474,7 @@ function WaitlistDetails({ row, reload }: { row: WaitlistRow; reload?: () => voi
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, statusLabels, endpoint, columns,
   rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId, exportCsv,
-  deleteAction, analytics, panel, search, toolbar, refreshKey,
+  deleteAction, analytics, panel, search, toolbar, refreshKey, inline, show, details, endless,
 }: {
   hostId: string;
   title: string;
@@ -485,6 +496,14 @@ function Queue<T>({
   errorTitle: string;
   actions?: (item: T, reload: () => void) => ReactNode;
   extra?: (item: T, reload: () => void) => ReactNode;
+  /**
+   * No pages: the rest of the list comes as its foot scrolls into view, under
+   * the rows already shown (ui.tsx `LoadMore`). The word is what a row is
+   * ("people"), for "Showing 50 of 383 people".
+   */
+  endless?: string;
+  /** More about a row, behind the row's arrow (ui.tsx `List`). */
+  details?: (item: T, reload: () => void) => ReactNode;
   /** Set to render the second `?only=` narrowing. Omitted: no second select. */
   onlyFilterId?: string;
   /** Set to render the order select. Omitted: the server's FIFO order only. */
@@ -526,6 +545,13 @@ function Queue<T>({
   toolbar?: ReactNode;
   /** Bump to reload the page on screen, e.g. after something else admitted rows. */
   refreshKey?: number;
+  /**
+   * Under a screen's own header and tabs: no header of the queue's, and the
+   * search, the filters and the actions in one bar over the table they act on.
+   */
+  inline?: boolean;
+  /** Set the status filter from outside (a figure pressed); `n` changes per press. */
+  show?: { status: Status; n: number };
 }) {
   const [status, setStatus] = useState<Status>('pending');
   const [only, setOnly] = useState<Only>('any');
@@ -552,24 +578,66 @@ function Queue<T>({
     return params;
   }, [only, onlyFilterId, q, search, status]);
 
-  const load = useCallback(async () => {
+  const fetchPage = useCallback((p: number) => {
     const params = filterParams();
-    params.set('page', String(page));
+    params.set('page', String(p));
     params.set('per_page', '50');
     // `waiting` is the absence of a sort param, not a value the server knows.
     if (sortId && sort === 'answered') params.set('sort', 'answered');
-    const res = await fetchJson(`${endpoint}?${params}`);
-    if (!alive.current) return;
-    if (res.ok && res.data?.success) {
-      setItems(res.data.data);
-      setMeta(res.data.meta || null);
-      setError(null);
-      return;
+    return fetchJson(`${endpoint}?${params}`);
+  }, [endpoint, filterParams, sort, sortId]);
+
+  // An endless list keeps how far it has read here, not in `page`: reading on
+  // must not be a reason to read everything again. A changed filter starts
+  // over; this effect is declared before the one that loads, so it runs first.
+  const reach = useRef(1);
+  const reading = useRef(false);
+  useEffect(() => { reach.current = 1; }, [status, only, sort, q]);
+
+  // Everything on screen, read again: one page of a paged list, or every page
+  // an endless one has reached, so a row admitted or deleted far down goes
+  // without the reader being sent back to the top.
+  const load = useCallback(async () => {
+    const from = endless ? 1 : page;
+    const upto = endless ? reach.current : page;
+    let rows: T[] = [];
+    let last: PageMeta | null = null;
+    for (let p = from; p <= upto; p += 1) {
+      const res = await fetchPage(p);
+      if (!alive.current) return;
+      if (!(res.ok && res.data?.success)) {
+        setItems([]);
+        setMeta(null);
+        setError({ status: res.status, message: (res.data && res.data.error) || null });
+        return;
+      }
+      rows = rows.concat(res.data.data);
+      last = res.data.meta || null;
+      // The list got shorter than what was reached: stop at its end.
+      if (last && p >= last.total_pages) { reach.current = Math.max(1, Math.min(reach.current, last.total_pages)); break; }
     }
-    setItems([]);
-    setMeta(null);
-    setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [endpoint, filterParams, page, sort, sortId]);
+    setItems(rows);
+    setMeta(last);
+    setError(null);
+  }, [endless, fetchPage, page]);
+
+  const hasMore = !!endless && !!meta && meta.page < meta.total_pages;
+  const more = useCallback(async () => {
+    if (!hasMore || reading.current) return;
+    reading.current = true;
+    const next = reach.current + 1;
+    const res = await fetchPage(next);
+    reading.current = false;
+    if (!alive.current || !(res.ok && res.data?.success)) return;
+    // A filter changed while it was on its way: these rows are not the list's.
+    if (reach.current + 1 !== next) return;
+    reach.current = next;
+    setItems((prev) => {
+      const have = new Set((prev || []).map(rowKey));
+      return (prev || []).concat((res.data.data as T[]).filter((it) => !have.has(rowKey(it))));
+    });
+    setMeta(res.data.meta || null);
+  }, [fetchPage, hasMore, rowKey]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
@@ -604,12 +672,13 @@ function Queue<T>({
 
   const blank = empty({ status, only, q });
 
-  return (
-    <>
-      <ScreenHeader
-        title={title}
-        subtitle={subtitle}
-        actions={(
+  useEffect(() => {
+    if (!show) return;
+    setStatus(show.status);
+    setPage(1);
+  }, [show]);
+
+  const controls = (
           <>
             {deleteAction && selected.size > 0 ? (
               <button
@@ -629,30 +698,22 @@ function Queue<T>({
               onChange={(next) => { setStatus(next); setPage(1); }}
             />
             {onlyFilterId ? (
-              <Select
+              <Segmented<Only>
                 id={onlyFilterId}
-                aria-label="Filter by what the signup did"
-                className="sm:w-52"
+                label="Filter by what the signup did"
                 value={only}
-                onChange={(e) => { setOnly(e.target.value as Only); setPage(1); }}
-              >
-                {ONLY.map((v) => (
-                  <option key={v} value={v}>{ONLY_LABELS[v]}</option>
-                ))}
-              </Select>
+                options={ONLY.map((v) => ({ value: v, label: ONLY_SHORT[v], title: ONLY_LABELS[v] }))}
+                onChange={(next) => { setOnly(next); setPage(1); }}
+              />
             ) : null}
             {sortId ? (
-              <Select
+              <Segmented<Sort>
                 id={sortId}
-                aria-label="Order the queue"
-                className="sm:w-44"
+                label="Order the queue"
                 value={sort}
-                onChange={(e) => { setSort(e.target.value as Sort); setPage(1); }}
-              >
-                {SORTS.map((v) => (
-                  <option key={v} value={v}>{SORT_LABELS[v]}</option>
-                ))}
-              </Select>
+                options={SORTS.map((v) => ({ value: v, label: SORT_LABELS[v] }))}
+                onChange={(next) => { setSort(next); setPage(1); }}
+              />
             ) : null}
             {toolbar}
             {analytics ? (
@@ -685,11 +746,8 @@ function Queue<T>({
               </button>
             ) : null}
           </>
-        )}
-      />
-      {panel}
-      {search ? (
-        <div className="mb-3">
+  );
+  const searchBox = search ? (
           <Input
             id={search.id}
             type="search"
@@ -707,8 +765,25 @@ function Queue<T>({
             }}
             onChange={(e) => { if (!e.currentTarget.value) commitSearch(''); }}
           />
-        </div>
-      ) : null}
+  ) : null;
+
+  return (
+    <>
+      {inline ? (
+        <>
+          {panel}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {searchBox ? <div className="min-w-[14rem] flex-1">{searchBox}</div> : null}
+            {controls}
+          </div>
+        </>
+      ) : (
+        <>
+          <ScreenHeader title={title} subtitle={subtitle} actions={controls} />
+          {panel}
+          {searchBox ? <div className="mb-3">{searchBox}</div> : null}
+        </>
+      )}
       <div id={hostId}>
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (
@@ -730,6 +805,7 @@ function Queue<T>({
               columns={columns}
               actions={actions ? (it) => actions(it, load) : undefined}
               extra={extra ? (it) => extra(it, load) : undefined}
+              details={details ? (it) => details(it, load) : undefined}
               selection={deleteAction ? {
                 isSelected: (it) => selected.has(rowKey(it)),
                 onToggle: (it, checked) => {
@@ -746,7 +822,9 @@ function Queue<T>({
                 itemLabel: (it) => `Select ${deleteAction.itemLabel(it)}`,
               } : undefined}
             />
-            <Pager meta={meta} onPage={setPage} />
+            {endless && meta ? (
+              <LoadMore shown={items.length} total={meta.total} hasMore={hasMore} onMore={more} noun={endless} />
+            ) : <Pager meta={meta} onPage={setPage} />}
           </>
         ) : null}
       </div>
@@ -881,7 +959,7 @@ function WaitlistStatusBreakdown({ waiting, admitted }: { waiting: number; admit
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
         <span className="inline-flex items-center gap-1.5">
-          <Badge tone="amber" label="Waiting" />
+          <Badge tone="sky" label="Waiting" />
           {`${waiting.toLocaleString()} (${waitingPct}%)`}
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -893,7 +971,7 @@ function WaitlistStatusBreakdown({ waiting, admitted }: { waiting: number; admit
   );
 }
 
-function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
+function WaitlistAnalyticsPanel({ onClose }: { onClose?: () => void }) {
   const [data, setData] = useState<WaitlistAnalytics | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const alive = useRef(true);
@@ -1031,22 +1109,19 @@ function WaitlistSwitchPanel({ onChanged }: { onChanged?: () => void }) {
     : 'Nobody is emailed, because the release email is off.';
   const left = setting?.admitting ? setting.admitting.remaining : 0;
   return (
-    <div id="admin-topo-wl-switch">
-      <Panel title="Waitlist">
-        {error ? (
-          <ErrorState title="Couldn't load the waitlist setting" status={error.status} message={error.message} onRetry={load} />
-        ) : null}
-        {!error && !setting ? <Skeleton rows={1} /> : null}
-        {!error && setting ? (
-          canWrite() ? (
-            <CheckField id="admin-topo-wl-switch-enabled" label="New accounts wait to be admitted" help={help} checked={setting.enabled && !asking} onChange={toggle} />
-          ) : (
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium">{setting.enabled ? 'New accounts wait to be admitted.' : 'The waitlist is off: new accounts are let in at once.'}</span>
-              {` ${help}`}
-            </p>
-          )
-        ) : null}
+    <SettingRow
+      wrapId="admin-topo-wl-switch"
+      id="admin-topo-wl-switch-enabled"
+      title="New accounts wait to be admitted"
+      help={help}
+      checked={setting ? setting.enabled && !asking : null}
+      onChange={toggle}
+      canEdit={canWrite()}
+      meta={setting?.updated_at ? `Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.` : null}
+      error={error ? (
+        <ErrorState title="Couldn't load the waitlist setting" status={error.status} message={error.message} onRetry={load} />
+      ) : null}
+    >
         {!error && setting && asking ? (
           <div id="admin-topo-wl-switch-ask" className="mt-2 rounded-lg border border-amber-300 dark:border-amber-700 p-3">
             <p className="text-sm font-medium">Turn the waitlist off?</p>
@@ -1091,13 +1166,7 @@ function WaitlistSwitchPanel({ onChanged }: { onChanged?: () => void }) {
             ) : null}
           </div>
         ) : null}
-        {setting?.updated_at ? (
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
-          </p>
-        ) : null}
-      </Panel>
-    </div>
+    </SettingRow>
   );
 }
 
@@ -1136,29 +1205,19 @@ function StoryLandingPanel() {
     + 'them what to make. Off, they are sent to the waitlist instead. Anyone new still '
     + 'waits here until admitted unless they already have access.';
   return (
-    <div id="admin-topo-wl-story">
-      <Panel title="Landing">
-        {error ? (
-          <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
-        ) : null}
-        {!error && !story ? <Skeleton rows={1} /> : null}
-        {!error && story ? (
-          canWrite() ? (
-            <CheckField id="admin-topo-wl-story-enabled" label="Signed-out landing asks people to get started" help={help} checked={story.enabled} onChange={toggle} />
-          ) : (
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium">{story.enabled ? 'The landing asks people to get started.' : 'The landing points at the waitlist.'}</span>
-              {` ${help}`}
-            </p>
-          )
-        ) : null}
-        {story?.updated_at ? (
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {`Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.`}
-          </p>
-        ) : null}
-      </Panel>
-    </div>
+    <SettingRow
+      wrapId="admin-topo-wl-story"
+      id="admin-topo-wl-story-enabled"
+      title="Signed-out landing asks people to get started"
+      help={help}
+      checked={story ? story.enabled : null}
+      onChange={toggle}
+      canEdit={canWrite()}
+      meta={story?.updated_at ? `Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.` : null}
+      error={error ? (
+        <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
+      ) : null}
+    />
   );
 }
 
@@ -1203,29 +1262,19 @@ function ReleaseEmailPanel() {
   const help = 'Admitting someone emails them a link to sign in or create their account. '
     + 'Off, they are still let in, but no email is sent.';
   return (
-    <div id="admin-topo-wl-release-email">
-      <Panel title="Release email">
-        {error ? (
-          <ErrorState title="Couldn't load the release email setting" status={error.status} message={error.message} onRetry={load} />
-        ) : null}
-        {!error && !setting ? <Skeleton rows={1} /> : null}
-        {!error && setting ? (
-          canWrite() ? (
-            <CheckField id="admin-topo-wl-release-email-enabled" label="Email people when they are admitted" help={help} checked={setting.enabled} onChange={toggle} />
-          ) : (
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium">{setting.enabled ? 'Admitted people are emailed.' : 'Admitted people are not emailed.'}</span>
-              {` ${help}`}
-            </p>
-          )
-        ) : null}
-        {setting?.updated_at ? (
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
-          </p>
-        ) : null}
-      </Panel>
-    </div>
+    <SettingRow
+      wrapId="admin-topo-wl-release-email"
+      id="admin-topo-wl-release-email-enabled"
+      title="Email people when they are admitted"
+      help={help}
+      checked={setting ? setting.enabled : null}
+      onChange={toggle}
+      canEdit={canWrite()}
+      meta={setting?.updated_at ? `Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.` : null}
+      error={error ? (
+        <ErrorState title="Couldn't load the release email setting" status={error.status} message={error.message} onRetry={load} />
+      ) : null}
+    />
   );
 }
 
@@ -1340,13 +1389,18 @@ function ReminderEmailPanel() {
             {total ? (
               <>
                 <p className="mt-0.5">{`First reminder: ${due.first}. Last reminder: ${due.last}.`}</p>
-                <ul className="mt-2 space-y-0.5">
-                  {due.rows.map((r) => (
-                    <li key={`${r.id}:${r.reminder}`} data-reminder-due={r.id}>
-                      {`${r.email || `signup #${r.id}`}: ${r.reminder === 2 ? 'last reminder' : 'first reminder'}, let in ${fmt(r.released_at)}`}
-                    </li>
-                  ))}
-                </ul>
+                {/* Folded: fifty-odd lines of addresses stood between the
+                    setting and everything under it. */}
+                <details className="mt-2">
+                  <summary className="cursor-pointer font-medium">{`Show the ${due.rows.length} ${due.rows.length === 1 ? 'person' : 'people'}`}</summary>
+                  <ul className="mt-2 space-y-0.5">
+                    {due.rows.map((r) => (
+                      <li key={`${r.id}:${r.reminder}`} data-reminder-due={r.id}>
+                        {`${r.email || `signup #${r.id}`}: ${r.reminder === 2 ? 'last reminder' : 'first reminder'}, let in ${fmt(r.released_at)}`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
                 {total > due.rows.length ? (
                   <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{`The ${due.rows.length} let in longest ago are shown.`}</p>
                 ) : null}
@@ -1670,39 +1724,41 @@ function signupLabel(w: WaitlistRow): string {
 
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
+    // Who it is, in two lines (26 Nov 2026): the address with whether it was
+    // confirmed, then the account it belongs to. The account was a column of
+    // its own at the far end of the row, repeating the address.
     label: 'Signup',
     primary: true,
-    tdClass: 'font-mono',
-    cell: (w) => (w.phone_only ? (
-      <>
-        {signupLabel(w)}
-        <span
-          className="text-zinc-500 dark:text-zinc-400 text-xs"
-          title="Joined from Home with the account's verified phone number, without an email"
-        >
-          {` Phone${w.phone_last4 ? ` ···${w.phone_last4}` : ''}`}
-        </span>
-      </>
-    ) : (
-      <>
-        {w.email}
-        {w.confirmed_at ? (
-          <span
-            className="text-emerald-700 dark:text-emerald-400 text-xs"
-            title={`Followed the confirm link in the join email on ${fmt(w.confirmed_at)}`}
-          >
-            {' ✓ confirmed'}
-          </span>
-        ) : (
-          <span
-            className="text-zinc-500 dark:text-zinc-400 text-xs"
-            title="Never followed the confirm link in the join email, so this address is unproven"
-          >
-            {' unconfirmed'}
-          </span>
-        )}
-      </>
-    )),
+    cell: (w) => (
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-medium break-all">
+          {w.phone_only ? signupLabel(w) : w.email}
+          {w.phone_only ? (
+            <span title="Joined from Home with the account's verified phone number, without an email">
+              <Badge label={`Phone${w.phone_last4 ? ` ···${w.phone_last4}` : ''}`} />
+            </span>
+          ) : w.confirmed_at ? (
+            <span title={`Followed the confirm link in the join email on ${fmt(w.confirmed_at)}`}>
+              <Badge tone="green" label="Confirmed" />
+            </span>
+          ) : (
+            <span title="Never followed the confirm link in the join email, so this address is unproven">
+              <Badge label="Unconfirmed" />
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+          {w.linked_username ? (
+            <>
+              {`Account ${w.linked_username}`}
+              {w.has_platform_access ? (
+                <span className="text-emerald-700 dark:text-emerald-400">{' · has access'}</span>
+              ) : null}
+            </>
+          ) : 'No account yet'}
+        </div>
+      </div>
+    ),
   },
   {
     // Where the row is in the one process this screen runs, said in the two
@@ -1710,8 +1766,8 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     // pair, and neither named what an admin was looking at.
     label: 'Status',
     cell: (w) => (w.released_at
-      ? <span title={`Admitted ${fmt(w.released_at)}`}><Badge tone="green" label="Admitted" /></span>
-      : <Badge tone="amber" label="Waiting" />),
+      ? <span title={`Admitted ${fmt(w.released_at)}`}><Badge tone="mint" label="Admitted" /></span>
+      : <Badge tone="sky" label="Waiting" />),
   },
   {
     // The queue question is "how long has this person been waiting", which an
@@ -1720,7 +1776,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     label: 'Waiting',
     tdClass: 'text-xs text-zinc-500 dark:text-zinc-400',
     cell: (w) => (
-      <span title={fmt(w.submitted_at)}>{ago(w.submitted_at) || fmt(w.submitted_at)}</span>
+      <span title={fmt(w.submitted_at)}>{(ago(w.submitted_at) || fmt(w.submitted_at)).replace(/ ago$/, '')}</span>
     ),
   },
   {
@@ -1735,12 +1791,18 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     hideOnCard: true,
     cell: (w) => {
       const s = w.signals;
-      const bits: string[] = [];
-      if (s && s.sections_total) bits.push(`${s.sections.length} of ${s.sections_total} answered`);
-      if (s && s.verified.length) bits.push(`verified ${s.verified.join(', ')}`);
-      return bits.length
-        ? <span className="text-xs text-zinc-600 dark:text-zinc-300">{bits.join(' · ')}</span>
-        : <span className="text-xs text-zinc-500 dark:text-zinc-400">Nothing answered yet</span>;
+      const done = s ? s.sections.length : 0;
+      const total = s ? s.sections_total : 0;
+      if (!total) return <span className="text-xs text-zinc-500 dark:text-zinc-400">Nothing answered yet</span>;
+      return (
+        <div className="text-xs text-zinc-600 dark:text-zinc-300">
+          <div className="flex items-center gap-2">
+            <span className="adm-meter" aria-hidden="true"><i style={{ width: `${Math.round((done / total) * 100)}%` }} /></span>
+            <span className="tabular-nums">{`${done} of ${total} answered`}</span>
+          </div>
+          {s && s.verified.length ? <div className="mt-0.5">{`verified ${s.verified.join(', ')}`}</div> : null}
+        </div>
+      );
     },
   },
   {
@@ -1759,17 +1821,6 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
         : <span className="text-xs text-zinc-500 dark:text-zinc-400">None</span>;
     },
   },
-  {
-    label: 'Account',
-    cell: (w) => (w.linked_username ? (
-      <>
-        {w.linked_username}
-        {w.has_platform_access ? (
-          <span className="text-emerald-700 dark:text-emerald-400 text-xs">{' (has access)'}</span>
-        ) : null}
-      </>
-    ) : <span className="text-zinc-500 dark:text-zinc-400">no account yet</span>),
-  },
 ];
 
 const bpIdent = (u: BpRow) => u.display_name || u.username || u.email || `user #${u.id}`;
@@ -1782,7 +1833,7 @@ const BP_COLUMNS: Column<BpRow>[] = [
     label: 'Status',
     cell: (u) => (u.bp_released_at
       ? <Badge tone="green" label={`Enabled ${fmt(u.bp_released_at)}`} />
-      : <Badge tone="amber" label="Waiting" />),
+      : <Badge tone="sky" label="Waiting" />),
   },
 ];
 
@@ -1863,10 +1914,75 @@ const WAITLIST_SEARCH = {
   placeholder: 'Search by email or username',
 };
 
+// ── The screen's shape (26 Nov 2026) ────────────────────────────────────
+//
+// The page was the four settings cards, then the list: its first row was
+// 1,800px down, under a reminders card that printed every address it would
+// write to. It is a header, four figures, and tabs now: People (the list,
+// with its search, filters and actions in one bar), Trends, Reminders,
+// Settings and Block producers. Every panel but Trends stays mounted.
+
+type WaitlistTab = 'people' | 'trends' | 'reminders' | 'settings' | 'producers';
+const WL_TABS_ID = 'admin-topo-wl-tabs';
+
+/** "127 days", for the figure: how long the first in line has waited. */
+function waitedFor(iso?: string | null): string | null {
+  const said = ago(iso);
+  if (!said) return null;
+  return said === 'just now' ? 'Under a minute' : said.replace(/ ago$/, '');
+}
+
+/**
+ * Waiting, admitted, who is due a reminder (admitted, not signed in yet) and
+ * how long the first in line has waited. Three reads the screen already
+ * makes elsewhere; a figure whose read failed or has not come is a dash.
+ */
+function WaitlistFigures({ refreshKey, onShow }: { refreshKey: number; onShow: (status: Status) => void }) {
+  const [counts, setCounts] = useState<{ waiting: number; admitted: number } | null>(null);
+  const [due, setDue] = useState<number | null>(null);
+  const [longest, setLongest] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const [analytics, reminder, first] = await Promise.all([
+        fetchJson('/api/v4/admin/waitlist/analytics'),
+        fetchJson('/api/v4/admin/reminder-email'),
+        fetchJson('/api/v4/admin/waitlist?status=pending&page=1&per_page=1'),
+      ]);
+      if (!alive.current) return;
+      if (analytics.ok && analytics.data?.success) {
+        setCounts({ waiting: analytics.data.data.waiting, admitted: analytics.data.data.admitted });
+      }
+      const d = reminder.ok && reminder.data?.success ? reminder.data.data?.due : null;
+      if (d) setDue((Number(d.first) || 0) + (Number(d.last) || 0));
+      if (first.ok && first.data?.success) {
+        const row = (first.data.data || [])[0];
+        setLongest(row ? waitedFor(row.submitted_at) : 'Nobody waiting');
+      }
+    })();
+  }, [refreshKey]);
+
+  const figures: Figure[] = [
+    { key: 'waiting', label: 'Waiting', value: counts ? counts.waiting.toLocaleString() : null, tone: 'sky', onClick: () => onShow('pending'), title: 'Show who is waiting' },
+    { key: 'admitted', label: 'Admitted', value: counts ? counts.admitted.toLocaleString() : null, tone: 'green', onClick: () => onShow('released'), title: 'Show who was admitted' },
+    { key: 'due', label: 'Admitted, due a reminder', value: due === null ? null : due.toLocaleString(), tone: 'yellow' },
+    { key: 'longest', label: 'Longest wait', value: longest, tone: 'sky' },
+  ];
+  return <Figures id="admin-topo-wl-figures" items={figures} />;
+}
+
 function WaitlistScreen() {
   const write = canWrite();
-  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [tab, setTab] = useState<WaitlistTab>('people');
   const [showBatch, setShowBatch] = useState(false);
+  // A figure pressed: the People tab, on the rows it counts.
+  const [show, setShow] = useState<{ status: Status; n: number } | undefined>(undefined);
+  const showStatus = useCallback((status: Status) => {
+    setTab('people');
+    setShow((prev) => ({ status, n: (prev ? prev.n : 0) + 1 }));
+  }, []);
   // Bumped when the batch-admit panel admits rows, so the queue under it
   // re-reads the page it is on instead of listing them as still waiting.
   const [refreshKey, setRefreshKey] = useState(0);
@@ -1928,89 +2044,117 @@ function WaitlistScreen() {
 
   return (
     <>
-      <Queue<WaitlistRow>
-        hostId="admin-topo-wl-table"
-        title="Platform waitlist"
+      <ScreenHeader
+        title="Waitlist"
         subtitle="Signups from the public join form. Admitting one grants platform access now if they have an account, or at signup if they do not, and emails them a link to get in."
-        filterId="admin-topo-wl-status"
-        filterLabel="Filter the waitlist by status"
-        statusLabels={WL_STATUS_LABELS}
-        onlyFilterId="admin-topo-wl-only"
-        sortId="admin-topo-wl-sort"
-        endpoint="/api/v4/admin/waitlist"
-        search={WAITLIST_SEARCH}
-        refreshKey={refreshKey}
-        toolbar={write ? (
-          <button
-            id="admin-topo-wl-batch"
-            type="button"
-            className={BTN.secondarySm}
-            title="Paste a list of email addresses, check who is on the waitlist, and admit them together"
-            onClick={() => setShowBatch((s) => !s)}
-          >
-            Batch admit
-          </button>
-        ) : null}
-        analytics={{ id: 'admin-topo-wl-analytics', onClick: () => setShowAnalytics((s) => !s) }}
-        panel={(
-          <>
-            {showBatch ? (
-              <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
-            ) : null}
-            {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
-            <WaitlistSwitchPanel onChanged={onBatchAdmitted} />
-            <StoryLandingPanel />
-            <ReleaseEmailPanel />
-            <ReminderEmailPanel />
-          </>
-        )}
-        exportCsv={write
-          ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
-          : undefined}
-        columns={WAITLIST_COLUMNS}
-        rowKey={(w) => w.id}
-        empty={waitlistEmpty}
-        errorTitle="Couldn't load the waitlist"
-        actions={write ? (w, reload) => (
-          <>
-            {!w.released_at ? (
+      />
+      <WaitlistFigures refreshKey={refreshKey} onShow={showStatus} />
+      <Tabs<WaitlistTab>
+        id={WL_TABS_ID}
+        label="Waitlist"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'people', label: 'People' },
+          { key: 'trends', label: 'Trends', id: 'admin-topo-wl-analytics' },
+          { key: 'reminders', label: 'Reminders' },
+          { key: 'settings', label: 'Settings' },
+          { key: 'producers', label: 'Block producers' },
+        ]}
+      />
+      <TabPanel tabsId={WL_TABS_ID} tab="people" active={tab === 'people'}>
+        <Queue<WaitlistRow>
+          inline
+          endless="people"
+          show={show}
+          hostId="admin-topo-wl-table"
+          title="Platform waitlist"
+          subtitle=""
+          filterId="admin-topo-wl-status"
+          filterLabel="Filter the waitlist by status"
+          statusLabels={WL_STATUS_LABELS}
+          onlyFilterId="admin-topo-wl-only"
+          sortId="admin-topo-wl-sort"
+          endpoint="/api/v4/admin/waitlist"
+          search={WAITLIST_SEARCH}
+          refreshKey={refreshKey}
+          toolbar={write ? (
+            <button
+              id="admin-topo-wl-batch"
+              type="button"
+              className={BTN.secondarySm}
+              title="Paste a list of email addresses, check who is on the waitlist, and admit them together"
+              onClick={() => setShowBatch((s) => !s)}
+            >
+              Batch admit
+            </button>
+          ) : null}
+          panel={showBatch ? (
+            <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
+          ) : null}
+          exportCsv={write
+            ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
+            : undefined}
+          columns={WAITLIST_COLUMNS}
+          rowKey={(w) => w.id}
+          empty={waitlistEmpty}
+          errorTitle="Couldn't load the waitlist"
+          actions={write ? (w, reload) => (
+            <>
+              {!w.released_at ? (
+                <button
+                  data-release-wl={w.id}
+                  data-email={w.email || undefined}
+                  type="button"
+                  className={BTN.rowMain}
+                  disabled={!!w.needs_sms}
+                  onClick={() => admitWaitlist(w, reload)}
+                >
+                  Admit
+                </button>
+              ) : null}
+              {!w.released_at && w.needs_sms ? (
+                <span data-needs-sms-wl={w.id} className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Needs SMS (#4096)
+                </span>
+              ) : null}
               <button
-                data-release-wl={w.id}
+                data-delete-wl={w.id}
                 data-email={w.email || undefined}
                 type="button"
-                className={BTN.rowPrimary}
-                disabled={!!w.needs_sms}
-                onClick={() => admitWaitlist(w, reload)}
+                className={BTN.rowDanger}
+                onClick={() => deleteWaitlistEntry(w, reload)}
               >
-                Admit
+                Delete
               </button>
-            ) : null}
-            {!w.released_at && w.needs_sms ? (
-              <span data-needs-sms-wl={w.id} className="text-xs text-zinc-500 dark:text-zinc-400">
-                Needs SMS (#4096)
-              </span>
-            ) : null}
-            <button
-              data-delete-wl={w.id}
-              data-email={w.email || undefined}
-              type="button"
-              className={BTN.rowDanger}
-              onClick={() => deleteWaitlistEntry(w, reload)}
-            >
-              Delete
-            </button>
-          </>
-        ) : undefined}
-        extra={(w, reload) => <WaitlistDetails row={w} reload={reload} />}
-        deleteAction={write ? {
-          bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => signupLabel(w),
-          confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
-          confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
-            + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
-        } : undefined}
-      />
-      <div className="mt-10">
+            </>
+          ) : undefined}
+          details={(w, reload) => <WaitlistDetails row={w} reload={reload} bare />}
+          deleteAction={write ? {
+            bulkPath: '/api/v4/admin/waitlist/bulk-delete',
+            itemLabel: (w) => signupLabel(w),
+            confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
+            confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
+              + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
+          } : undefined}
+        />
+      </TabPanel>
+      {/* Its figures and chart are read when the tab is first opened, as they
+          were when Analytics was a button that opened a panel. */}
+      <TabPanel tabsId={WL_TABS_ID} tab="trends" active={tab === 'trends'} lazy>
+        <WaitlistAnalyticsPanel />
+      </TabPanel>
+      <TabPanel tabsId={WL_TABS_ID} tab="reminders" active={tab === 'reminders'}>
+        <ReminderEmailPanel />
+      </TabPanel>
+      <TabPanel tabsId={WL_TABS_ID} tab="settings" active={tab === 'settings'}>
+        <SettingsGroup title="Waitlist settings" subtitle="How people get in, and what they are told. Each switch takes effect as soon as it is pressed.">
+          <WaitlistSwitchPanel onChanged={onBatchAdmitted} />
+          <StoryLandingPanel />
+          <ReleaseEmailPanel />
+        </SettingsGroup>
+      </TabPanel>
+      <TabPanel tabsId={WL_TABS_ID} tab="producers" active={tab === 'producers'}>
         <Queue<BpRow>
           hostId="admin-topo-bpq-table"
           title="Block-producer queue"
@@ -2035,7 +2179,7 @@ function WaitlistScreen() {
             </button>
           ) : null) : undefined}
         />
-      </div>
+      </TabPanel>
     </>
   );
 }

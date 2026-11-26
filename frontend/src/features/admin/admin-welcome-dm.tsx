@@ -5,6 +5,10 @@ import { useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { UserFieldRow, userHandle } from './admin-user-field';
+import {
+  Badge, EmptyState, Field, Figures, List, ScreenHeader, TabPanel, Tabs,
+} from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Welcome messages (#admin/welcome-dm): somebody let in gets a group
 // conversation with the people chosen here, opened by a message from the
@@ -39,15 +43,18 @@ interface Payload {
   pending: number; sent: number; recent: RecentRow[];
 }
 
-const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
-const HELP = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+// The kit's own label and help (topochain/ui.tsx `Field`), for the two parts
+// of the form that are not one control under one label.
+const LABEL = 'text-xs font-medium text-zinc-600 dark:text-zinc-400';
+const HELP = 'block mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400';
 const PREVIEW_NAME = 'newcomer';
 
-const STATUS_BADGE: Record<RecentRow['status'], string> = {
-  sent: AdminUI.badge.success,
-  pending: AdminUI.badge.warn,
-  skipped: AdminUI.badge.default,
-  failed: AdminUI.badge.destructive,
+// A status repeated down the list, so the soft tones (26 Nov 2026).
+const STATUS_TONE: Record<RecentRow['status'], string> = {
+  sent: 'mint',
+  pending: 'sky',
+  skipped: 'zinc',
+  failed: 'red',
 };
 const STATUS_LABEL: Record<RecentRow['status'], string> = {
   sent: 'Sent', pending: 'Waiting', skipped: 'Not sent', failed: 'Failed',
@@ -236,27 +243,25 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
           the group.
         </p>
       </div>
-      <label className="block" htmlFor="admin-welcome-dm-title">
-        <span className={LABEL}>Group name</span>
+      <Field label="Group name" htmlFor="admin-welcome-dm-title">
         <input
           id="admin-welcome-dm-title" type="text" maxLength={data.limits.title}
-          className={`${AdminUI.input} mt-1 disabled:opacity-60`}
+          className={`${AdminUI.input} disabled:opacity-60`}
           placeholder={data.defaults.title} disabled={dis}
           value={title} onChange={(e) => setTitle(e.target.value)}
         />
-      </label>
-      <label className="block" htmlFor="admin-welcome-dm-message">
-        <span className={LABEL}>First message</span>
+      </Field>
+      <Field
+        label="First message" htmlFor="admin-welcome-dm-message"
+        help={<>{'{username}'} in the name or the message becomes the new person’s username.</>}
+      >
         <textarea
           id="admin-welcome-dm-message" rows={4} maxLength={data.limits.message}
-          className={`${AdminUI.textarea} mt-1 disabled:opacity-60`}
+          className={`${AdminUI.textarea} disabled:opacity-60`}
           placeholder={data.defaults.message} disabled={dis}
           value={message} onChange={(e) => setMessage(e.target.value)}
         />
-        <p className={HELP}>
-          {'{username}'} in the name or the message becomes the new person’s username.
-        </p>
-      </label>
+      </Field>
       <div id="admin-welcome-dm-preview" className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3">
         <p className={LABEL}>Preview</p>
         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mt-1">
@@ -282,54 +287,46 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
   );
 }
 
+// data-welcome-user sat on the table's row. The shared list draws its own
+// rows (and a card for a phone), so the person's name carries it.
+const RECENT_COLUMNS: Column<RecentRow>[] = [
+  { label: 'Person', primary: true, cell: (row) => <span data-welcome-user={row.userId}>@{row.username}</span> },
+  { label: 'Status', cell: (row) => <Badge tone={STATUS_TONE[row.status]} label={STATUS_LABEL[row.status]} /> },
+  { label: 'Joined', cell: (row) => when(row.enqueuedAt), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'Note', cell: (row) => detailFor(row), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+];
+
 function RecentlyWelcomed({ data }: { data: Payload }) {
   return (
-    <div id="admin-welcome-dm-recent" className={`${AdminUI.card} p-4`}>
-      <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Recently welcomed</h2>
-        <span id="admin-welcome-dm-counts" className="text-xs text-zinc-500 dark:text-zinc-400">
-          {data.sent} sent · {data.pending} waiting
-        </span>
-      </div>
+    <div id="admin-welcome-dm-recent">
+      <p id="admin-welcome-dm-counts" className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+        {data.sent} sent · {data.pending} waiting
+      </p>
       {data.recent.length ? (
-        <div className={AdminUI.tableWrap}>
-          <table className={AdminUI.table} id="admin-welcome-dm-table">
-            <thead className={AdminUI.thead}>
-              <tr>
-                <th className={AdminUI.th}>Person</th>
-                <th className={AdminUI.th}>Status</th>
-                <th className={AdminUI.th}>Joined</th>
-                <th className={AdminUI.th}>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.recent.map((row) => (
-                <tr key={row.userId} className={AdminUI.trHover} data-welcome-user={row.userId}>
-                  <td className={AdminUI.td}>@{row.username}</td>
-                  <td className={AdminUI.td}>
-                    <span className={STATUS_BADGE[row.status]}>{STATUS_LABEL[row.status]}</span>
-                  </td>
-                  <td className={`${AdminUI.td} text-xs text-zinc-500 dark:text-zinc-400`}>{when(row.enqueuedAt)}</td>
-                  <td className={`${AdminUI.td} text-xs text-zinc-500 dark:text-zinc-400`}>{detailFor(row)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div id="admin-welcome-dm-table">
+          <List items={data.recent} rowKey={(row) => row.userId} columns={RECENT_COLUMNS} />
         </div>
       ) : (
-        <p id="admin-welcome-dm-empty" className={AdminUI.muted}>
-          Nobody has been welcomed yet. People let in while this is on appear here.
-        </p>
+        <div id="admin-welcome-dm-empty">
+          <EmptyState
+            title="Nobody has been welcomed yet."
+            body="People let in while this is on appear here."
+          />
+        </div>
       )}
     </div>
   );
 }
+
+type WelcomeTab = 'settings' | 'recent';
+const WELCOME_TABS_ID = 'admin-welcome-dm-tabs';
 
 function WelcomeDmSection({ initial = null }: { initial?: Payload | null }) {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
   const [data, setData] = useState<Payload | null>(initial);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [tab, setTab] = useState<WelcomeTab>('settings');
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -342,31 +339,59 @@ function WelcomeDmSection({ initial = null }: { initial?: Payload | null }) {
     })();
   }, []);
 
+  // Two jobs, so two tabs (26 Nov 2026): what is sent, and who was sent it.
+  // Both panels stay mounted, so the ids a declared check looks up are in the
+  // page whichever tab is up. The figures are the read the page already made.
+  const showRecent = () => setTab('recent');
   return (
-    <div id="admin-welcome-dm" className="space-y-4">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Welcome messages</h2>
-          {data ? (
-            <span id="admin-welcome-dm-state" className={data.enabled ? AdminUI.badge.success : AdminUI.badge.default}>
-              {data.enabled ? 'On' : 'Off'}
-            </span>
-          ) : null}
-        </div>
-        <p id="admin-welcome-dm-intro" className={`${AdminUI.muted} mb-4`}>
-          When someone is let in to the platform, they get a group conversation with the people
-          below, opened by a message from the first of them. Everyone is in the group straight
-          away, with nothing to accept, and the new person can leave it like any group. Only
-          people let in while this is on are welcomed: switching it on messages nobody who
-          joined before.
-        </p>
-        {data ? (
-          <WelcomeDmForm data={data} canWrite={canWrite} onSaved={setData} />
-        ) : (
-          <p className={AdminUI.loading}>{loadFailed ? 'Could not load the settings.' : 'Loading…'}</p>
+    <div id="admin-welcome-dm">
+      <ScreenHeader
+        title="Welcome messages"
+        subtitle={(
+          <span id="admin-welcome-dm-intro">
+            When someone is let in to the platform, they get a group conversation with the people
+            below, opened by a message from the first of them. Everyone is in the group straight
+            away, with nothing to accept, and the new person can leave it like any group. Only
+            people let in while this is on are welcomed: switching it on messages nobody who
+            joined before.
+          </span>
         )}
-      </div>
-      {data ? <RecentlyWelcomed data={data} /> : null}
+      />
+      <Figures
+        id="admin-welcome-dm-figures"
+        items={[
+          {
+            key: 'state',
+            label: 'Welcome messages',
+            value: data ? <span id="admin-welcome-dm-state">{data.enabled ? 'On' : 'Off'}</span> : null,
+            tone: data && data.enabled ? 'green' : 'sky',
+          },
+          { key: 'sent', label: 'Sent', value: data ? data.sent.toLocaleString() : null, tone: 'green', onClick: showRecent, title: 'Show who was welcomed' },
+          { key: 'waiting', label: 'Waiting', value: data ? data.pending.toLocaleString() : null, tone: 'yellow', onClick: showRecent, title: 'Show who was welcomed' },
+        ]}
+      />
+      <Tabs<WelcomeTab>
+        id={WELCOME_TABS_ID}
+        label="Welcome messages"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'settings', label: 'Settings' },
+          { key: 'recent', label: 'Recently welcomed' },
+        ]}
+      />
+      <TabPanel tabsId={WELCOME_TABS_ID} tab="settings" active={tab === 'settings'}>
+        <div className={`${AdminUI.card} p-4`}>
+          {data ? (
+            <WelcomeDmForm data={data} canWrite={canWrite} onSaved={setData} />
+          ) : (
+            <p className={AdminUI.loading}>{loadFailed ? 'Could not load the settings.' : 'Loading…'}</p>
+          )}
+        </div>
+      </TabPanel>
+      <TabPanel tabsId={WELCOME_TABS_ID} tab="recent" active={tab === 'recent'}>
+        {data ? <RecentlyWelcomed data={data} /> : null}
+      </TabPanel>
     </div>
   );
 }

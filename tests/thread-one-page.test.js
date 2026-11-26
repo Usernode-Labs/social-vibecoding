@@ -62,11 +62,13 @@ test('D3: a change\'s rows the request\'s page keeps: people, and only the event
 test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apart from one on the request', () => {
   const src = read('frontend/src/features/group-chat/transcript.tsx');
   const rows = src.slice(src.indexOf('export function RequestRows('), src.indexOf('#4455: something that happened to a change'));
-  assert.match(rows, /foldRepeats\(view\.messages\)\.filter\(\(m\) => !m\.changeOf \|\| keptOnRequest\(m\)\)/);
+  // #7216: a vote's reason is the voter's own post, noted with the vote line.
+  assert.match(rows, /requestStream\(requestVotePosts\(foldRepeats\(view\.messages\)\)\.filter\(\(m\) => !m\.changeOf \|\| keptOnRequest\(m\)\)\)/);
   assert.match(rows, /<ChangeEvent key=\{key\} msg=\{msg\} changeId=\{msg\.changeOf\.sessionId\} tag=\{tagOf\(msg\)\} \/>/);
   // #6236: a post about one of the request's changes also gets the See the
-  // vote line (seeVote) instead of the vote card.
-  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
+  // vote line (seeVote) instead of the vote card. #7221: the reason post right
+  // under its vote's note takes no tag, because the note names the change.
+  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{afterVoteNote \? null : tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
   assert.match(rows, /\(previous\.changeOf\?\.sessionId \?\? null\) === \(msg\.changeOf\?\.sessionId \?\? null\)/);
   assert.equal(message('project:topic.request.stream.onChange', { number: 6063 }), 'on Change #6063');
   assert.equal(message('project:topic.request.stream.onChangeUnnumbered'), 'on a change');

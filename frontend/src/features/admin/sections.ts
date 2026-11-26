@@ -59,5 +59,4 @@ import './admin-mail.tsx';
 import './admin-email-templates.tsx';
 import './admin-sms.tsx';
 import './admin-sign-in.tsx';
-import './admin-e2e.tsx';
 import './admin-topochain.js';

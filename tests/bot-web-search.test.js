@@ -171,7 +171,11 @@ test('Admin › Limits switches it: read by any admin, written by a full one, dr
   assert.match(routes, /router\.put\('\/api\/admin\/bot-web-search', requireAdminWrite, async/);
   const card = read('frontend/src/features/admin/admin-limits.tsx');
   assert.match(card, /<VersionsCard canWrite=\{canWrite\} \/>\n\n\s+<WebSearchCard canWrite=\{canWrite\} \/>\n\n\s+<LiveDraftsCard/);
-  assert.match(card, /<div id="admin-bot-web-search" className=\{`\$\{AdminUI\.card\} p-4`\}>/);
+  // The card is a row of the Features group now, drawn with the console's
+  // shared SettingRow, its control a switch (request 7224).
+  assert.match(card, /<SettingRow\s+wrapId="admin-bot-web-search"\s+id="admin-bot-web-search-btn"\s+title="Web search in Homeroom bot's chat"/);
+  assert.match(card, /checked=\{data \? !!data\.enabled : null\}\s+onChange=\{\(\) => \{ void flip\(\); \}\}\s+canEdit=\{canWrite\}/, 'only a full admin gets the switch');
+  assert.match(card, /<SettingsGroup title="Features"[^>]*>[\s\S]*?<WebSearchCard canWrite=\{canWrite\} \/>[\s\S]*?<\/SettingsGroup>/);
   assert.match(card, /fetch\('\/api\/admin\/bot-web-search', \{\n\s+method: 'PUT'/);
 });
 

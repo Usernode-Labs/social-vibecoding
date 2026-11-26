@@ -7,7 +7,7 @@ import { IllustrationGallery } from './illustration-gallery.tsx';
 import { BTN } from './tokens.ts';
 import {
   EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input, List,
-  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea,
+  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea, Toolbar,
   isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
@@ -362,32 +362,6 @@ function ChallengeTemplatesScreen() {
         subtitle="The reusable library that event challenges are stamped out of."
         actions={(
           <>
-            {/* Commits on blur or Enter, not per keystroke — a paged server
-                query, same rule as the other search boxes in this console. */}
-            <Input
-              id="admin-topo-tpl-search"
-              type="text"
-              placeholder="Search…"
-              aria-label="Search challenge templates"
-              className="sm:w-48"
-              defaultValue={search}
-              onBlur={(e) => commitSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
-              }}
-            />
-            <div className="w-full sm:w-48">
-              <Select
-                id="admin-topo-tpl-category"
-                value={category}
-                onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-              >
-                <Options
-                  options={categories.map((c) => ({ value: c, label: c }))}
-                  blank="All categories"
-                />
-              </Select>
-            </div>
             <ProgrammeCsvLink id="admin-topo-tpl-export" />
             {write ? (
               <button
@@ -412,6 +386,38 @@ function ChallengeTemplatesScreen() {
           />
         ) : null}
       </div>
+      {/* The search and the category filter are the list's, so they sit in
+          the bar over it; the header keeps the export and New template
+          (26 Nov 2026). */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          {/* Commits on blur or Enter, not per keystroke: a paged server
+              query, same rule as the other search boxes in this console. */}
+          <Input
+            id="admin-topo-tpl-search"
+            type="text"
+            placeholder="Search…"
+            aria-label="Search challenge templates"
+            defaultValue={search}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+            }}
+          />
+        </div>
+        <div className="w-full sm:w-48">
+          <Select
+            id="admin-topo-tpl-category"
+            value={category}
+            onChange={(e) => { setCategory(e.target.value); setPage(1); }}
+          >
+            <Options
+              options={categories.map((c) => ({ value: c, label: c }))}
+              blank="All categories"
+            />
+          </Select>
+        </div>
+      </Toolbar>
       <div id="admin-topo-tpl-table">
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (

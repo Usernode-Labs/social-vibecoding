@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { Segmented, TABLE, Toolbar } from './topochain/ui.tsx';
 
 // Homeroom bot → Calls (#admin/homeroom-bot/calls).
 //
@@ -114,37 +115,39 @@ export function HelperCallsView({ payload, days, onDays, error = null }: {
             : 'Loading…'}
         </span>
       </div>
-      <div className="flex gap-2 mb-3" id="admin-homeroom-bot-calls-days">
-        {DAYS.map((d) => (
-          <button
-            key={d} type="button" data-calls-days={d} aria-pressed={days === d}
-            className={days === d ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm}
-            onClick={() => onDays(d)}
-          >{d === 1 ? 'Last day' : `Last ${d} days`}</button>
-        ))}
-      </div>
+      {/* The shared toggle (26 Nov 2026), in place of three buttons drawn
+          here. Each option carries its days in data-value. */}
+      <Toolbar>
+        <Segmented<string>
+          id="admin-homeroom-bot-calls-days"
+          label="The days the report covers"
+          value={String(days)}
+          options={DAYS.map((d) => ({ value: String(d), label: d === 1 ? 'Last day' : `Last ${d} days` }))}
+          onChange={(d) => onDays(Number(d))}
+        />
+      </Toolbar>
       <p className={`${AdminUI.muted} mb-3`} id="admin-homeroom-bot-calls-about">
         {`The short calls behind titles, the plan at Make it, reads of a chat message to the bot, quick replies, the content review and the rest, each counted once however many tries it took. They ask the helper model first${payload?.helperModel ? ` (${shortModel(payload.helperModel)} now)` : ''}, and Haiku 5.5 answers when it is late or its answer cannot be used. A change of the helper model shows as a second row for the same helper.`}
       </p>
       {error ? <p className="text-sm text-red-700 dark:text-red-300 mb-2" role="alert">{error}</p> : null}
-      <div className={AdminUI.tableWrap}>
-        <table className={`${AdminUI.table} min-w-[60rem]`} id="admin-homeroom-bot-calls-table">
-          <thead className={AdminUI.thead}>
+      <div className={TABLE.wrap}>
+        <table className={`${TABLE.table} min-w-[60rem]`} id="admin-homeroom-bot-calls-table">
+          <thead className={TABLE.thead}>
             <tr>
-              <th className={AdminUI.th}>Helper</th>
-              <th className={AdminUI.th}>Asked first</th>
-              <th className={AdminUI.th}>Calls</th>
-              <th className={AdminUI.th}>Answered first time</th>
-              <th className={AdminUI.th}>Late</th>
-              <th className={AdminUI.th}>Haiku answered</th>
-              <th className={AdminUI.th}>Time, median / 90th</th>
-              <th className={AdminUI.th}>Cost per call</th>
+              <th className={TABLE.th}>Helper</th>
+              <th className={TABLE.th}>Asked first</th>
+              <th className={TABLE.th}>Calls</th>
+              <th className={TABLE.th}>Answered first time</th>
+              <th className={TABLE.th}>Late</th>
+              <th className={TABLE.th}>Haiku answered</th>
+              <th className={TABLE.th}>Time, median / 90th</th>
+              <th className={TABLE.th}>Cost per call</th>
             </tr>
           </thead>
           <tbody>
             {helpers.flatMap((h) => h.models.map((m, i) => (
-              <tr className={AdminUI.trHover} key={`${h.component}|${m.model || ''}`} data-calls-helper={h.component} data-calls-model={m.model || ''}>
-                <td className={AdminUI.td}>
+              <tr className={TABLE.tr} key={`${h.component}|${m.model || ''}`} data-calls-helper={h.component} data-calls-model={m.model || ''}>
+                <td className={TABLE.td}>
                   {i === 0 ? (
                     <>
                       <div className="font-medium text-zinc-900 dark:text-zinc-100">{helperLabel(h.component)}</div>
@@ -152,23 +155,23 @@ export function HelperCallsView({ payload, days, onDays, error = null }: {
                     </>
                   ) : null}
                 </td>
-                <td className={`${AdminUI.td} font-mono text-xs`}>{shortModel(m.model)}</td>
-                <td className={`${AdminUI.td} tabular-nums`}>{m.calls}</td>
-                <td className={`${AdminUI.td} tabular-nums`}>{percent(m.firstOkRate)}</td>
-                <td className={`${AdminUI.td} tabular-nums`}>{percent(m.lateRate)}</td>
-                <td className={`${AdminUI.td} tabular-nums`}>
+                <td className={`${TABLE.td} font-mono text-xs`}>{shortModel(m.model)}</td>
+                <td className={`${TABLE.td} tabular-nums`}>{m.calls}</td>
+                <td className={`${TABLE.td} tabular-nums`}>{percent(m.firstOkRate)}</td>
+                <td className={`${TABLE.td} tabular-nums`}>{percent(m.lateRate)}</td>
+                <td className={`${TABLE.td} tabular-nums`}>
                   {percent(m.fallbackRate)}
                   {m.unanswered ? <div className={`${AdminUI.muted} text-xs`}>{`${m.unanswered} not answered`}</div> : null}
                 </td>
-                <td className={`${AdminUI.td} tabular-nums whitespace-nowrap`}>
+                <td className={`${TABLE.td} tabular-nums whitespace-nowrap`}>
                   {m.totalMs.p50 == null ? '' : `${seconds(m.totalMs.p50)} / ${seconds(m.totalMs.p90)}`}
                 </td>
-                <td className={`${AdminUI.td} tabular-nums`}>{callCost(m.avgCostUsd)}</td>
+                <td className={`${TABLE.td} tabular-nums`}>{callCost(m.avgCostUsd)}</td>
               </tr>
             )))}
             {payload && helpers.length === 0 ? (
               <tr>
-                <td className={AdminUI.td} colSpan={8} id="admin-homeroom-bot-calls-empty">No helper calls in this window.</td>
+                <td className={TABLE.td} colSpan={8} id="admin-homeroom-bot-calls-empty">No helper calls in this window.</td>
               </tr>
             ) : null}
           </tbody>

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useMessages } from '../../../lib/i18n/react';
 import {
-  EDITOR_ACTIONS, EDITOR_NOTE, ROW_ACTION, ROW_EDITOR, SignInRow,
+  EDITOR_ACTIONS, EDITOR_NOTE, RowAction, ROW_EDITOR, SignInRow,
 } from './sign-in-row';
 
 /**
@@ -47,9 +47,9 @@ export function UsernameSection() {
             // session user.
             value={<span id="cu-current">—</span>}
             action={(
-              <button id="cu-edit" type="button" className={ROW_ACTION} aria-expanded="false" aria-controls="cu-form">
+              <RowAction id="cu-edit" type="button" aria-expanded="false" aria-controls="cu-form">
                 {t('settings:account.change')}
-              </button>
+              </RowAction>
             )}
           />
           <div id="cu-form" className={`${ROW_EDITOR} hidden`}>

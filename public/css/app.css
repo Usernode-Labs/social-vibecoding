@@ -3890,34 +3890,51 @@ html[data-browser-scroller^="auth-"] :is(
   .admin-tab-strip > [data-admin-tab][aria-current="page"] { flex-shrink: 0; }
 }
 
-/* The Admin console follows the Homeroom reference artwork: its sky carries
-   through the shared header and the title area, then dissolves into the same
-   warm paper ground as the dashboard cards. Keep this scoped to the Admin
-   route so the shell's shared navigation looks unchanged everywhere else. */
-html:not(.dark):not([data-app-tone="dark"]) body:has(#admin-screen:not(.hidden)) #platform-header#platform-header {
-  background-color: #79bce7 !important;
-  background-image: url('/brand/sky.webp') !important;
-  background-position: center 42% !important;
-  background-size: cover !important;
+/* THE CONSOLE'S GROUND (26 Nov 2026). The console's sky was the brand's
+   picture stretched across the window, which showed its grain on a wide
+   screen and stopped at a line under the four figures, where it met a ground
+   of another colour. It is drawn now, not loaded: one soft sky, light at one
+   side, with a little of the sun in it, carried through the shared header and
+   let down into the page's own ground, in light and in dark. The tokens are
+   on the body because the header is outside the console's screen. Scoped to
+   the Admin route, so the shell's navigation looks unchanged everywhere else. */
+body:has(#admin-screen:not(.hidden)) {
+  --adm-air-1: #8fcdf4;
+  --adm-air-2: #b4dff8;
+  --adm-air-3: #d3ecfb;
+  --adm-air-glow: rgb(255 238 111 / 0.42);
+}
+html.dark body:has(#admin-screen:not(.hidden)),
+html[data-app-tone="dark"] body:has(#admin-screen:not(.hidden)) {
+  --adm-air-1: #1c3d6b;
+  --adm-air-2: #24497a;
+  --adm-air-3: #2a4770;
+  --adm-air-glow: rgb(255 238 111 / 0.09);
+}
+html body:has(#admin-screen:not(.hidden)) #platform-header#platform-header {
+  background-color: var(--adm-air-2) !important;
+  background-image: linear-gradient(90deg, var(--adm-air-1), var(--adm-air-2) 48%, var(--adm-air-3)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  /* One sky from the bar into the page: no rounded corner on the bar, which
+     showed the body's colour behind it, and no rule under it. */
+  border-radius: 0 !important;
 }
-html:not(.dark):not([data-app-tone="dark"]) #admin-screen {
-  isolation: isolate;
-  background: #faf8f0;
-}
-html:not(.dark):not([data-app-tone="dark"]) #admin-screen::before {
+html body:has(#admin-screen:not(.hidden)) #platform-header#platform-header::after { display: none !important; }
+html #admin-screen { isolation: isolate; }
+html #admin-screen::before {
   content: "";
   position: absolute;
   z-index: 0;
   inset: 0 0 auto;
-  height: clamp(190px, 22vw, 270px);
+  height: clamp(280px, 32vw, 420px);
   pointer-events: none;
   background:
-    linear-gradient(to bottom, rgba(250,248,240,0) 38%, rgba(250,248,240,.44) 72%, #faf8f0 100%),
-    url('/brand/sky.webp') center 34% / cover no-repeat;
+    linear-gradient(to bottom, transparent 0%, color-mix(in srgb, var(--stk-surface) 60%, transparent) 58%, var(--stk-surface) 100%),
+    radial-gradient(38% 62% at 70% 40%, var(--adm-air-glow), transparent 62%),
+    linear-gradient(90deg, var(--adm-air-1), var(--adm-air-2) 48%, var(--adm-air-3));
 }
-html:not(.dark):not([data-app-tone="dark"]) #admin-root {
+html #admin-root {
   position: relative;
   z-index: 1;
   background: transparent;
@@ -3964,9 +3981,9 @@ html[data-app-tone="dark"] #admin-screen {
   --adm-rule: rgb(255 254 234 / 0.1);
   --adm-well: rgb(255 254 234 / 0.06);
   --adm-link: #8db4f2;
-  --adm-sky: #1c3340;
-  --adm-leaf: #25341f;
-  --adm-butter: #3a341c;
+  --adm-sky: #25485b;
+  --adm-leaf: #30472a;
+  --adm-butter: #4b4324;
   --adm-ok-bg: rgb(127 214 93 / 0.18);
   --adm-ok-ink: #c4ecae;
   --adm-bad-bg: rgb(240 110 96 / 0.2);
@@ -4264,9 +4281,9 @@ html.dark body, html[data-app-tone="dark"] body {
 }
 html.dark #admin-screen,
 html[data-app-tone="dark"] #admin-screen {
-  --stk-surface: #0b0b0c;
-  --stk-card: #171715;
-  --stk-card-2: #2a2812;
+  --stk-surface: #171b22;
+  --stk-card: #222730;
+  --stk-card-2: #34351f;
   --stk-ink: #fffeea;
   --stk-soft: rgb(255 254 234 / 0.78);
   --stk-mute: rgb(255 254 234 / 0.6);
@@ -4274,7 +4291,7 @@ html[data-app-tone="dark"] #admin-screen {
   --stk-hair: rgb(255 254 234 / 0.2);
   --stk-edge: 2px 2px 0 0 rgb(255 254 234 / 0.45);
   --stk-edge-sm: 1.5px 1.5px 0 0 rgb(255 254 234 / 0.45);
-  --stk-b2: #171715;
+  --stk-b2: #222730;
   --stk-danger: #ff9c8a;
   --stk-danger-edge: 2px 2px 0 0 #ff9c8a;
   --stk-badge-line: transparent;
@@ -4283,7 +4300,7 @@ html[data-app-tone="dark"] #admin-screen {
   --stk-field-line: rgb(255 254 234 / 0.32);
   --stk-chip-line: rgb(255 254 234 / 0.28);
   /* The dashboard and the menu follow the same sheet. */
-  --adm-paper: #171715;
+  --adm-paper: #222730;
   --adm-line: rgb(255 254 234 / 0.16);
 }
 #admin-screen {
@@ -4380,6 +4397,8 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
    green is done, red is failing, white is everything else. */
 #admin-screen .adm-badge { border: 1px solid var(--stk-badge-line); border-radius: 999px; background: var(--stk-card); box-shadow: none; --tw-ring-shadow: 0 0 transparent; color: var(--stk-ink); font-weight: 500; }
 #admin-screen .adm-badge.is-vote { background: var(--stk-vote); color: var(--stk-on-vote); }
+#admin-screen .adm-badge.is-wait { border-color: var(--stk-card-line); background: color-mix(in srgb, var(--adm-sky) 55%, var(--stk-card)); color: var(--stk-soft); }
+#admin-screen .adm-badge.is-done { border-color: var(--stk-card-line); background: color-mix(in srgb, var(--stk-live) 30%, var(--stk-card)); color: var(--stk-soft); }
 #admin-screen .adm-badge.is-build { background: var(--stk-sun); color: var(--stk-on-status); }
 #admin-screen .adm-badge.is-live { background: var(--stk-live); color: var(--stk-on-status); }
 #admin-screen .adm-badge.is-fail { background: var(--stk-fail); color: var(--stk-on-status); }
@@ -4407,8 +4426,6 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 #admin-open-tabs .admin-tab-strip > [data-admin-tab] { background: var(--stk-card); box-shadow: inset 0 0 0 1px var(--stk-chip-line); color: var(--stk-ink); }
 #admin-open-tabs .admin-tab-strip > [data-admin-tab]:hover { background: var(--stk-card-2); box-shadow: inset 0 0 0 1px var(--stk-chip-line); }
 #admin-open-tabs .admin-tab-strip > [data-admin-tab][aria-current="page"] { background: var(--stk-sun); box-shadow: inset 0 0 0 1px var(--stk-line); color: var(--stk-on-sun); }
-#admin-screen .admin-dashboard-refresh { min-height: 36px; border: 1px solid var(--stk-line); border-radius: 999px; background: var(--stk-b2); box-shadow: var(--stk-edge); font-family: var(--adm-serif); font-size: 0.9375rem; font-weight: 400; }
-#admin-screen .admin-dashboard-refresh:hover:not(:disabled) { background: var(--stk-card-2); color: var(--stk-ink); }
 #admin-screen .admin-dashboard-refresh:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 #admin-screen .admin-dashboard-section-head button { color: var(--stk-ink); text-decoration: underline; text-decoration-color: var(--stk-focus); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 #admin-screen .admin-queue-action { border: 1px solid var(--stk-line); border-radius: 999px; box-shadow: var(--stk-edge-sm); font-family: var(--adm-serif); font-weight: 400; }
@@ -4421,7 +4438,108 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
   #admin-screen .adm-btn.adm-sm { min-height: 36px; }
   #admin-section-content :is(.admin-dashboard-section-head, .admin-quick-actions) h2 { font-size: 1.375rem; }
 }
+/* A screen's tabs (topochain/ui.tsx `Tabs`): folder tabs standing on one
+   rule. The open one is a piece of the card, outlined, with the sun across
+   its top, and it breaks the rule under it; the others are quieter tabs of
+   the well behind it. Not buttons: a tab changes what is shown, it does
+   nothing. They scroll sideways on a narrow screen. */
+#admin-screen .adm-tabs { display: flex; align-items: flex-end; gap: 6px; margin: 4px 0 16px; padding: 0 6px; border-bottom: 1px solid var(--stk-chip-line); overflow-x: auto; scrollbar-width: none; }
+#admin-screen .adm-tabs::-webkit-scrollbar { display: none; }
+#admin-screen .adm-tab { position: relative; flex: none; min-height: 42px; margin-bottom: -1px; padding: 0 18px; border: 1px solid var(--stk-card-line); border-bottom-color: var(--stk-chip-line); border-radius: 12px 12px 0 0; background: var(--stk-well); box-shadow: none; color: var(--stk-soft); font-size: 0.9375rem; font-weight: 600; white-space: nowrap; }
+#admin-screen .adm-tab:hover { background: var(--stk-card); color: var(--stk-ink); }
+#admin-screen .adm-tab[aria-selected="true"] { min-height: 46px; border-color: var(--stk-chip-line); border-bottom-color: var(--stk-card); background: var(--stk-card); box-shadow: inset 0 3px 0 0 var(--stk-sun); color: var(--stk-ink); }
+#admin-screen .adm-tab:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: -2px; }
+@media (max-width: 767.98px) { #admin-screen .adm-tab { min-height: 44px; padding: 0 14px; } #admin-screen .adm-tab[aria-selected="true"] { min-height: 48px; } }
+/* A choice among a few, all in view (topochain/ui.tsx `Segmented`): one
+   outlined pill holding its options, the chosen one a soft grey: the sun is
+   kept for what is pressed to do something. */
+#admin-screen .adm-seg { display: inline-flex; flex: none; max-width: 100%; padding: 3px; gap: 2px; border: 1px solid var(--stk-field-line); border-radius: 999px; background: var(--stk-card); overflow-x: auto; scrollbar-width: none; }
+#admin-screen .adm-seg-opt { flex: none; min-height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: none; box-shadow: none; color: var(--stk-soft); font-size: 0.8125rem; font-weight: 500; white-space: nowrap; }
+#admin-screen .adm-seg-opt:hover { background: var(--stk-well); color: var(--stk-ink); }
+#admin-screen .adm-seg-opt[aria-checked="true"] { background: color-mix(in srgb, var(--stk-ink) 10%, var(--stk-card)); box-shadow: inset 0 0 0 1px var(--stk-card-line); color: var(--stk-ink); font-weight: 600; }
+#admin-screen .adm-seg-opt:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 1px; }
+@media (max-width: 767.98px) { #admin-screen .adm-seg-opt { min-height: 38px; } }
+/* A list's rows (topochain/ui.tsx `List`): the head is a light grey band, a
+   row answers the pointer, the
+   arrow at its start opens what more there is about it, and that opens as a
+   quieter band under the row. A small meter says how much of something is
+   done ("3 of 7 answered"). */
+#admin-screen #admin-section-content .adm-table thead { background: color-mix(in srgb, var(--stk-ink) 6%, var(--stk-card)); }
+#admin-screen #admin-section-content .adm-table thead th { border-bottom: 1px solid var(--stk-card-line); }
+#admin-screen .adm-table tbody tr.adm-row { transition: background-color 0.12s ease; }
+#admin-screen .adm-table tbody tr.adm-row:hover,
+#admin-screen .adm-table tbody tr.adm-row.is-open { background: var(--stk-well); }
+#admin-screen .adm-table tbody tr.adm-row > td { vertical-align: middle; padding-block: 10px; }
+#admin-screen .adm-row-toggle { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--stk-mute); }
+#admin-screen .adm-row-toggle:hover { background: var(--stk-card); color: var(--stk-ink); }
+#admin-screen .adm-row-toggle svg { width: 16px; height: 16px; transition: transform 0.15s ease; }
+#admin-screen .adm-row-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+#admin-screen .adm-row-toggle:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 1px; }
+#admin-screen .adm-table tbody tr.adm-row-detail > td { border-top: 1px dashed var(--stk-hair); background: var(--stk-well); padding-inline-start: 52px; }
+#admin-screen .adm-meter { display: inline-block; flex: none; width: 56px; height: 6px; border-radius: 999px; background: var(--stk-hair); overflow: hidden; }
+#admin-screen .adm-meter > i { display: block; height: 100%; border-radius: inherit; background: var(--stk-live); }
+@media (prefers-reduced-motion: reduce) { #admin-screen .adm-row-toggle svg, #admin-screen .adm-table tbody tr.adm-row { transition: none; } }
+:where(html[data-motion="reduce"]) #admin-screen .adm-row-toggle svg, :where(html[data-motion="reduce"]) #admin-screen .adm-table tbody tr.adm-row { transition: none; }
+/* A screen's settings (topochain/ui.tsx `SettingsGroup`, `SettingRow`): one
+   card, a row for each: its switch with Yes or No beside it, then its name
+   and what it does, a rule between two. The switch is the green when on. */
+#admin-screen .adm-settings { padding: 0; overflow: hidden; }
+#admin-screen .adm-settings-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--stk-card-line); }
+#admin-screen .adm-setting { padding: 16px 20px; }
+#admin-screen .adm-setting + .adm-setting { border-top: 1px solid var(--stk-hair); }
+#admin-screen .adm-setting-main { display: flex; align-items: flex-start; gap: 18px; }
+#admin-screen .adm-setting-state { display: flex; flex: none; align-items: center; gap: 8px; width: 88px; min-height: 28px; }
+#admin-screen .adm-setting-word { color: var(--stk-ink); font-size: 0.8125rem; font-weight: 600; }
+#admin-screen .adm-setting-title { color: var(--stk-ink); font-size: 0.9375rem; font-weight: 600; }
+#admin-screen .adm-setting-help { max-width: 64ch; margin: 3px 0 0; color: var(--stk-soft); font-size: 0.8125rem; line-height: 1.45; }
+#admin-screen .adm-setting-meta { margin: 6px 0 0; color: var(--stk-mute); font-size: 0.75rem; }
+#admin-screen .adm-setting-wait { flex: none; width: 44px; height: 26px; border-radius: 999px; background: var(--stk-well); }
+#admin-screen .adm-switch { position: relative; flex: none; width: 44px; height: 26px; margin-top: 1px; padding: 0; border: 1px solid var(--stk-field-line); border-radius: 999px; background: var(--stk-well); box-shadow: none; transition: background-color 0.15s ease, border-color 0.15s ease; }
+#admin-screen .adm-switch > span { position: absolute; top: 2px; inset-inline-start: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--stk-card); box-shadow: 0 0 0 1px var(--stk-field-line), 0 1px 2px var(--adm-shade-far); transition: transform 0.15s ease; }
+#admin-screen .adm-switch[aria-checked="true"] { border-color: var(--stk-line); background: var(--stk-live); }
+#admin-screen .adm-switch[aria-checked="true"] > span { transform: translateX(18px); }
+[dir="rtl"] #admin-screen .adm-switch[aria-checked="true"] > span { transform: translateX(-18px); }
+#admin-screen .adm-switch:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { #admin-screen .adm-switch, #admin-screen .adm-switch > span { transition: none; } }
+:where(html[data-motion="reduce"]) #admin-screen .adm-switch, :where(html[data-motion="reduce"]) #admin-screen .adm-switch > span { transition: none; }
+@media (max-width: 767.98px) { #admin-screen .adm-setting { padding: 14px 16px; } #admin-screen .adm-setting-main { gap: 12px; } #admin-screen .adm-setting-state { width: 82px; } }
 /* END OF THE CONSOLE IN OPTION A. */
+/* THE DASHBOARD'S GRADIENTS (26 Nov 2026). A few, where a flat wash looked
+   dated: each of the four figures and the four quick actions runs from the
+   paper into its own tint, with its icon on a small tile of the paper; a
+   card lifts a little off the ground on a soft shade in place of a second
+   line, on every page, since it is the shared card that carries it; the chart's area fades out under its line (its gradient is in
+   admin-overview.tsx). Every colour is a token already declared above. */
+#admin-screen {
+  --adm-shade-near: rgb(18 26 14 / 0.05);
+  --adm-shade-far: rgb(18 26 14 / 0.16);
+}
+:is(html.dark, html[data-app-tone="dark"]) #admin-screen {
+  --adm-shade-near: rgb(0 0 0 / 0.2);
+  --adm-shade-far: rgb(0 0 0 / 0.4);
+}
+#admin-screen .admin-metric-card,
+#admin-screen .admin-quick-actions button { --adm-tint: var(--adm-well); background: linear-gradient(135deg, color-mix(in srgb, var(--adm-tint) 38%, var(--adm-paper)) 0%, var(--adm-tint) 100%); }
+#admin-screen .admin-metric-card.sky, #admin-screen .admin-quick-actions button:nth-child(4) { --adm-tint: var(--adm-sky); }
+#admin-screen .admin-metric-card.green, #admin-screen .admin-quick-actions button:nth-child(2) { --adm-tint: var(--adm-leaf); }
+#admin-screen .admin-metric-card.yellow, #admin-screen .admin-quick-actions button:nth-child(1) { --adm-tint: var(--adm-butter); }
+#admin-screen .admin-metric-card { box-shadow: 0 1px 2px var(--adm-shade-near), 0 14px 28px -22px var(--adm-shade-far); }
+#admin-screen .admin-metric-icon { width: 48px; height: 48px; border-radius: 14px; background: color-mix(in srgb, var(--adm-paper) 72%, transparent); box-shadow: inset 0 0 0 1px var(--adm-rule); }
+#admin-screen .admin-metric-icon svg { width: 24px; height: 24px; }
+#admin-screen .admin-metric-card .admin-metric-detail { margin-top: 3px; color: var(--adm-muted); font-size: 0.75rem; }
+#admin-screen .adm-card:not(.adm-dialog),
+#admin-screen .admin-dashboard-panel,
+#admin-screen .admin-sidebar { box-shadow: 0 1px 2px var(--adm-shade-near), 0 18px 36px -28px var(--adm-shade-far); }
+#admin-screen .adm-card .adm-card { box-shadow: none; }
+#admin-screen .admin-dashboard-empty { background: linear-gradient(180deg, var(--adm-well), transparent); }
+#admin-screen .admin-analytics-chart polygon { fill: url(#admin-chart-fade); }
+#admin-screen .admin-analytics-chart .admin-chart-fade-top { stop-color: var(--adm-chart-line); stop-opacity: 0.34; }
+#admin-screen .admin-analytics-chart .admin-chart-fade-end { stop-color: var(--adm-chart-line); stop-opacity: 0.02; }
+@media (max-width: 767.98px) {
+  #admin-screen .admin-metric-icon { width: 38px; height: 38px; border-radius: 11px; }
+  #admin-screen .admin-metric-icon svg { width: 20px; height: 20px; }
+}
+/* END OF THE DASHBOARD'S GRADIENTS. */
 /* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
    is a fixed overlay with its own bar) but was still read out: an empty
    level-1 heading beside the page's own on a desktop (polish N10). In a
@@ -21822,6 +21940,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-event-glyph { flex: 0 0 36px; text-align: center; font-size: 15px; }
 .dev-request-event-text { min-width: 0; overflow-wrap: anywhere; text-wrap: wrap; }
 .dev-request-event-text b { color: var(--text-primary); font-weight: 600; }
+/* #7216: a vote's line above the post that carries its reason: the note sits
+   with its post, with no gap under it, so the two read as one entry. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .dev-request-event.dev-request-vote-note,
+.dev-request-event.dev-request-vote-note { padding-bottom: 0; }
+/* #7221: the change named on a vote's line ("evan voted no · on Change #N")
+   wraps as one piece, so a narrow line never starts with a lone "·". */
+.dev-request-vote-note-on { white-space: nowrap; }
 /* (#116) The time, and the change it was on, under the sentence. */
 .dev-request-event-time { display: block; font-size: 0.8125rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-request-event-link {
@@ -22486,12 +22611,12 @@ p.dev-change-issue-pointer {
    composer 910px below the fold, in the NATIVE layout — the one whose
    definite scroller was supposed to bound it — and at a 34px inset as well
    as at none.
-   ONLY THAT TAB. The other two are meant to grow: #dev-forum-scroll is the
+   ONLY THAT TAB, and a topic's channel. The Discussion (#general's posts,
+   26 Nov 2026) is a page that grows like the Hub. The other two are meant to grow: #dev-forum-scroll is the
    scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
 #dev-workshop > .dev-ws[data-ws-tab="needs"],
-#dev-workshop > .dev-ws[data-ws-tab="discussion"],
 #dev-workshop > .dev-ws[data-ws-tab^="c:"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
@@ -22504,8 +22629,8 @@ p.dev-change-issue-pointer {
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
    "Unable to over scroll down on hub page (but can on workshop)", in the
@@ -22555,10 +22680,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
    you or Discussion either: those are fitted on purpose and scroll inside. */
 @media (max-width: 699.98px) and (pointer: coarse) {
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) {
     position: relative;
   }
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"]))::after {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"]))::after {
     content: '';
     position: absolute; inset-inline-start: 0; bottom: -1px;
     width: 1px; height: 1px;
@@ -26213,7 +26338,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    bottom as it does in Messages, so on a phone it spans the band's width:
    the screen's, by cancelling the same 4px of `#dev-body` the band does
    (#3499), not 12. */
-html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"],
 html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
@@ -26497,26 +26621,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     grid-template-rows: auto minmax(0, 1fr);
   }
   .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-head { grid-column: 1 / -1; }
-}
-/* #5303: #general's LINE (channel-head.tsx). The topic's line, for #general:
-   what the channel is for and how many members it reaches, with Mute at its
-   end. Over a reply thread it does what a topic's line does: over both on a
-   desktop, gone with the room on a phone. */
-.dev-ws-channel-head {
-  display: flex; align-items: center; gap: 12px;
-  margin: 0 0 8px; padding: 0 4px;
-}
-.dev-ws-channel-head > .dev-ws-channel-head-line { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; }
-@media (max-width: 767.98px) {
-  .dev-ws-general-channel.dev-ws-discussion-threaded > .dev-ws-channel-head { display: none; }
-}
-@media (min-width: 768px) {
-  .dev-ws-general-channel.dev-ws-discussion-threaded {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) min(420px, 42%);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .dev-ws-general-channel.dev-ws-discussion-threaded > .dev-ws-channel-head { grid-column: 1 / -1; }
 }
 /* A TOPIC'S FIGURES (topic-figures.tsx; services/topic-figures.js): between
    the topic's line and its room, the numbers its dapp.json entry names. The
@@ -34625,7 +34729,6 @@ html:root {
   --one-row-sub: 400 0.875rem/1.1875rem var(--wip-font, inherit);
   /* A part's size on a phone; the desktop's density below. */
   --one-btn-h: 44px; --one-btn-pad: 20px; --one-btn-size: 16px;
-  --one-btn-sm-h: 30px; --one-btn-sm-pad: 12px; --one-btn-sm-size: 14px;
   --one-chip-h: 34px; --one-chip-size: 14px;
   --one-fab: 40px;
 }
@@ -34634,7 +34737,6 @@ html:root {
     --one-row-title: 600 0.9375rem/1.25rem var(--wip-font, inherit); /* 15 over 13 from 768px */
     --one-row-sub: 400 0.8125rem/1.125rem var(--wip-font, inherit);
     --one-btn-h: 36px; --one-btn-pad: 16px; --one-btn-size: 15px;
-    --one-btn-sm-h: 28px; --one-btn-sm-pad: 11px; --one-btn-sm-size: 13px;
     --one-chip-h: 30px; --one-chip-size: 13px;
     --one-fab: 36px;
   }
@@ -34699,38 +34801,19 @@ html:root .one-chip:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--on
 /* The page's main action as an icon (New chat's +, New message's +): the sun disc with the sticker edge. */
 html:root .one-fab { display: inline-grid; place-items: center; flex: none; width: var(--one-fab); height: var(--one-fab); padding: 0; border: 0; border-radius: 9999px; background: var(--one-sun); box-shadow: var(--one-edge-sun); color: #121a0e; }
 html:root .one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
-/* With its words beside the icon (one-fab-label: "+ New project"), a pill of the same height; one-fab-sm is the 36px
-   disc at every width (the fab is 36px from 768px on its own). */
-html:root .one-fab.one-fab-label { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; padding: 0 16px 0 12px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; white-space: nowrap; }
-html:root .one-fab.one-fab-sm { width: 36px; height: 36px; }
-html:root .one-fab.one-fab-label.one-fab-sm { width: auto; font-size: var(--one-btn-sm-size); }
 @media (hover: hover) { html:root .one-fab:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); } }
-/* Every other icon button on a page: a flat disc with one hairline. */
-html:root .one-disc { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); color: var(--one-ink); }
-html:root .one-disc:active:not(:disabled) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
-/* The three button levels, for markup that is new in this look (the class-matching layer in BUTTONS covers the rest):
-   the main action (one-btn-1) the sun with the sticker edge, pressed onto it; a secondary (one-btn-2) and a destructive
-   one (one-btn-d) flat, a press shrinking them a little. 44px on a phone, 36px from 768px (the small one 30 and 28). */
+/* The main action's recipe (one-btn-1): the sun with the sticker edge, pressed onto it, 44px on a phone and 36px from
+   768px. The Button primitive's `sun` variant writes it (frontend/@/components/ui/button.tsx); the class-matching layer
+   in BUTTONS draws every other button, the flat secondary and destructive ones included. */
 html:root .one-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: var(--one-btn-h); padding: 0 var(--one-btn-pad); border: 0; border-radius: 9999px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; letter-spacing: 0; white-space: nowrap; text-decoration: none; transition: transform .12s ease, filter .12s ease; }
 html:root .one-btn > svg { width: 18px; height: 18px; flex: none; }
-html:root .one-btn.one-btn-sm { height: var(--one-btn-sm-h); padding: 0 var(--one-btn-sm-pad); font-size: var(--one-btn-sm-size); }
 html:root .one-btn.one-btn-1 { background: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge-sun); }
-html:root .one-btn.one-btn-1.one-btn-sm { box-shadow: var(--one-edge-sun-sm); }
 html:root .one-btn.one-btn-1:active:not(:disabled, [aria-disabled="true"]) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
-html:root .one-btn.one-btn-2 { background: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none; }
-html:root .one-btn.one-btn-d { background: var(--one-red-tint); color: var(--one-red); box-shadow: none; }
-html:root .one-btn:is(.one-btn-2, .one-btn-d):active:not(:disabled, [aria-disabled="true"]) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
 @media (hover: hover) {
   html:root .one-btn.one-btn-1:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); }
-  html:root .one-btn.one-btn-2:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sky-tint-hover); }
-  html:root .one-btn.one-btn-d:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-red-tint-hover); }
 }
-html:root :is(.one-btn, .one-chip, .one-fab, .one-disc, .one-link):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
-html:root :is(.one-btn, .one-chip, .one-fab, .one-disc):is(:disabled, [aria-disabled="true"]) { opacity: .45; box-shadow: none; transform: none; filter: none; cursor: not-allowed; }
-/* A text action ("Change", "See all", "Edit"): the ink, underlined in blue, so it does not rest on colour alone. */
-html:root .one-link { display: inline; padding: 0; border: 0; background: none; box-shadow: none; color: var(--one-ink); font: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: pointer; }
-@media (hover: hover) { html:root .one-link:hover:not(:disabled, [aria-disabled="true"]) { text-decoration-color: currentColor; } }
-html:root .one-link:is(:disabled, [aria-disabled="true"]) { color: var(--one-ink-3); text-decoration: none; cursor: default; }
+html:root :is(.one-btn, .one-chip, .one-fab):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
+html:root :is(.one-btn, .one-chip, .one-fab):is(:disabled, [aria-disabled="true"]) { opacity: .45; box-shadow: none; transform: none; filter: none; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   html:root .one-seg[style*="--one-seg-i"]::before,
   html:root .one-seg > :is(button, a, [role="tab"], [role="radio"]),
@@ -34862,8 +34945,8 @@ html:root #platform-header #notifications-btn > svg { stroke-width: 1.8; }
 /* A SECTION'S OWN ACTION (design review, 25 Nov 2026). The words after a section's label (Edit and Done, See all,
    Show all, All in Workshop, View all activity) are the label row's own ink at 14/600, with no underline and no
    chevron: the label beside them already says what they act on, so they need no more than their weight. An action
-   inside a card's words (Translate, Read the request, Change, Cancel) keeps the blue underline (.one-link and the
-   BUTTONS block's level 4). */
+   inside a card's words (Translate, Read the request, Change, Cancel) keeps the blue underline (the BUTTONS block's
+   level 4). */
 html:root :is(.home-edit-start, #communities-edit, .wip-fold-pill, #profile-recent-activity .profile-recent-heading > a):is(button, a, span) {
   color: var(--one-ink);
   font-size: 14px;
@@ -36358,7 +36441,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws
    "Sort by: Newest · Most replies", then the posts. Each post is its own outlined box (a 1px outline at 18% ink, 8px
    corners, white); its replies hang in a second box joined under it, the same outline on a faint off-white, stepped
    in 14px from the left, so the two read as one wide box with a narrower one hanging off it. */
-html:root #dev-workshop .dev-ws-hub-discussion {
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion {
   --dh-outline: rgb(18 26 14 / 0.18);
   --dh-reply-ground: #fafaf7;
   display: flex;
@@ -36370,9 +36453,9 @@ html:root #dev-workshop .dev-ws-hub-discussion {
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--one-hair);
 }
-html:root.dark #dev-workshop .dev-ws-hub-discussion { --dh-outline: rgb(255 254 234 / 0.22); --dh-reply-ground: rgb(255 254 234 / 0.04); }
-html:root #dev-workshop .dev-ws-hub-discussion-head { padding: 12px 16px 4px; }
-html:root #dev-workshop .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .dev-ws-hub-discussion-title {
+html:root.dark :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion { --dh-outline: rgb(255 254 234 / 0.22); --dh-reply-ground: rgb(255 254 234 / 0.04); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head { padding: 12px 16px 4px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .dev-ws-hub-discussion-title {
   margin: 0;
   font-family: inherit;
   font-size: 17px;
@@ -36383,9 +36466,18 @@ html:root #dev-workshop .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .de
   text-decoration: none;
   color: var(--one-ink);
 }
-html:root #dev-workshop .dev-ws-hub-discussion-about { margin: 0; font-size: 12px; line-height: 16px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-about { margin: 0; font-size: 12px; line-height: 16px; color: var(--one-ink-2); }
+/* #5303: Mute at the end of the Discussion page's head (channel-head.tsx),
+   beside the title and the line under it. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head:has(> .dev-ws-channel-mute) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head > .dev-ws-channel-mute { grid-column: 2; grid-row: 1 / span 2; }
 /* The box: a white field on a hairline, the face at its start and the round send at its end. */
-html:root #dev-workshop .dh-composer {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer {
   position: relative;
   display: flex;
   flex-wrap: wrap;
@@ -36400,11 +36492,11 @@ html:root #dev-workshop .dh-composer {
   color: var(--one-ink);
   text-align: start;
 }
-html:root #dev-workshop .dh-composer-post,
-html:root #dev-workshop .dh-composer-door { margin: 12px 12px 6px; padding-inline-start: 6px; }
-html:root #dev-workshop .dh-composer > :is(img, span[aria-hidden="true"]:not(.dh-send)) { flex: none; width: 32px; height: 32px; }
-html:root #dev-workshop .dh-face-blank { display: block; width: 32px; height: 32px; border-radius: 9999px; background: var(--one-quiet); }
-html:root #dev-workshop .dh-box {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-post,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door { margin: 12px 12px 6px; padding-inline-start: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer > :is(img, span[aria-hidden="true"]:not(.dh-send)) { flex: none; width: 32px; height: 32px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-face-blank { display: block; width: 32px; height: 32px; border-radius: 9999px; background: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-box {
   flex: 1 1 0;
   min-width: 0;
   min-height: 32px;
@@ -36419,10 +36511,10 @@ html:root #dev-workshop .dh-box {
   font-size: 15px;
   line-height: 20px;
 }
-html:root #dev-workshop .dh-box::placeholder { color: var(--one-ink-3); }
-html:root #dev-workshop .dh-composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--one-link-line); }
-html:root #dev-workshop .dh-composer-hint { flex: 1 1 auto; align-self: center; font-size: 15px; color: var(--one-ink-3); }
-html:root #dev-workshop .dh-send {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-box::placeholder { color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--one-link-line); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-hint { flex: 1 1 auto; align-self: center; font-size: 15px; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send {
   flex: none;
   display: grid;
   place-items: center;
@@ -36433,51 +36525,142 @@ html:root #dev-workshop .dh-send {
   background-color: var(--one-sky-ink);
   color: #ffffff;
 }
-html:root #dev-workshop .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
-html:root #dev-workshop .dh-send svg { width: 16px; height: 16px; }
-html:root #dev-workshop .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
-html:root #dev-workshop .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
-html:root #dev-workshop .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
-html:root #dev-workshop .dh-composer-reply .dh-send { width: 30px; height: 30px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send svg { width: 16px; height: 16px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
+/* A post's box wears the chat's formatting row along its top, so it is a
+   rounded card rather than a pill; files are attached with the paperclip
+   beside the send, and wait in the chat's strip under the words. */
+html:root :is(#dev-workshop, [data-discussion-host]) form.dh-composer-post { border-radius: 16px; padding-block-start: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-format-bar.messages-format-bar {
+  display: flex;
+  flex-basis: 100%;
+  gap: 2px;
+  margin-inline: -6px 0;
+  padding: 4px 0;
+  border-block-end: 1px solid var(--one-hair);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9999px;
+  background: none;
+  color: var(--one-ink-2);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:hover:not(:disabled) { background-color: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:disabled { opacity: 0.45; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach svg { width: 18px; height: 18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-staged { flex-basis: 100%; padding-block-end: 4px; }
+/* #2884, as the chat drew it: a run of card-only posts is its first card,
+   then "… N more" under it until opened. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run { display: flex; flex-direction: column; gap: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run-more {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--one-quiet);
+  color: var(--one-ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+/* A visitor's "Start a post…": the box as a member sees it, "Sign in to
+   post" at its far end; the whole of it asks them to sign in. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in-door { width: auto; align-items: center; cursor: pointer; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background-color: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* Editing your own post or reply in place: the same field, Save and Cancel under it. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit > .dh-box {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts { display: flex; gap: 8px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: var(--one-quiet);
+  color: var(--one-ink);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > .dh-edit-save { background-color: var(--accent); color: #fff; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > .dh-edit-save:disabled { opacity: 0.5; }
+/* What rides on a message: its files, the cards it shares, a plan it shares. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-files,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-cards { margin-top: 8px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--dh-outline);
+  color: var(--one-ink);
+  text-decoration: none;
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec-label { font-size: 12px; font-weight: 600; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec-title { font-size: 15px; font-weight: 600; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply .dh-send { width: 30px; height: 30px; }
 /* Sort by: Newest · Most replies. */
-html:root #dev-workshop .dh-sort { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; font-size: 13px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-sort > button { padding: 2px 0; border: 0; background: none; color: var(--one-ink-2); font: inherit; font-weight: 500; }
-html:root #dev-workshop .dh-sort > button[aria-pressed="true"] { font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-sort > button + button::before { content: "\00B7"; content: "\00B7" / ""; margin-inline-end: 12px; font-weight: 400; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; font-size: 13px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button { padding: 2px 0; border: 0; background: none; color: var(--one-ink-2); font: inherit; font-weight: 500; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button[aria-pressed="true"] { font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button + button::before { content: "\00B7"; content: "\00B7" / ""; margin-inline-end: 12px; font-weight: 400; color: var(--one-ink-3); }
 /* The posts. */
-html:root #dev-workshop .dh-list { display: flex; flex-direction: column; gap: 16px; padding: 0 12px; min-width: 0; }
-html:root #dev-workshop .dh-thread { display: flex; flex-direction: column; min-width: 0; }
-html:root #dev-workshop .dh-post {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-list { display: flex; flex-direction: column; gap: 16px; padding: 0 12px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-thread { display: flex; flex-direction: column; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post {
   position: relative;
   padding: 12px 14px 14px;
   border-radius: 8px;
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--dh-outline);
 }
-html:root #dev-workshop .dh-thread > .dh-post:not(:last-child) { border-end-end-radius: 0; }
-html:root #dev-workshop .dh-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-html:root #dev-workshop .dh-head > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 40px; height: 40px; font-size: 15px; }
-html:root #dev-workshop .dh-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-time { flex: none; font-size: 13px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-new { flex: none; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-tail { flex: none; margin-inline-start: auto; padding: 0; border: 0; background: none; font: inherit; }
-html:root #dev-workshop .dh-count { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); white-space: nowrap; }
-html:root #dev-workshop .dh-count > svg { width: 16px; height: 16px; stroke-width: 1.6; }
-html:root #dev-workshop .dh-count-none { color: var(--one-ink-3); }
-html:root #dev-workshop button.dh-tail:hover .dh-count-none { color: var(--one-ink-2); }
-html:root #dev-workshop .dh-words { display: block; margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--one-ink); overflow-wrap: anywhere; }
-html:root #dev-workshop .dh-words .messages-markdown > :first-child { margin-top: 0; }
-html:root #dev-workshop .dh-words .messages-markdown > :last-child { margin-bottom: 0; }
-html:root #dev-workshop :is(.dh-deleted, .dh-quiet) { font-style: italic; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
-html:root #dev-workshop .dh-pills .dh-pill { height: 26px; padding: 0 10px; gap: 6px; font-size: 14px; }
-html:root #dev-workshop .dh-pills-small { margin-top: 4px; gap: 4px; }
-html:root #dev-workshop .dh-pills-small .dh-pill { height: 22px; padding: 0 8px; gap: 4px; font-size: 12px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-thread > .dh-post:not(:last-child) { border-end-end-radius: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-head > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 40px; height: 40px; font-size: 15px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-time { flex: none; font-size: 13px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-new { flex: none; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-tail { flex: none; margin-inline-start: auto; padding: 0; border: 0; background: none; font: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); white-space: nowrap; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count > svg { width: 16px; height: 16px; stroke-width: 1.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count-none { color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) button.dh-tail:hover .dh-count-none { color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words { display: block; margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words .messages-markdown > :first-child { margin-top: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) :is(.dh-deleted, .dh-quiet) { font-style: italic; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills .dh-pill { height: 26px; padding: 0 10px; gap: 6px; font-size: 14px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills-small { margin-top: 4px; gap: 4px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills-small .dh-pill { height: 22px; padding: 0 8px; gap: 4px; font-size: 12px; }
 /* "Earlier in #general": the channel's mark where a face would be. */
-html:root #dev-workshop .dh-earlier-mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9999px; background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
-html:root #dev-workshop .dh-earlier-mark > svg { width: 20px; height: 20px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier-mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9999px; background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier-mark > svg { width: 20px; height: 20px; }
 /* The replies' box, joined under the post's and stepped in from its start. */
-html:root #dev-workshop .dh-replies {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-replies {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -36488,62 +36671,89 @@ html:root #dev-workshop .dh-replies {
   background-color: var(--dh-reply-ground);
   box-shadow: inset 0 0 0 1px var(--dh-outline);
 }
-html:root #dev-workshop .dh-earlier { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-earlier:disabled { opacity: 0.6; }
-html:root #dev-workshop .dh-reply { position: relative; display: flex; gap: 10px; min-width: 0; }
-html:root #dev-workshop .dh-reply > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 28px; height: 28px; font-size: 11px; }
-html:root #dev-workshop .dh-reply-body { flex: 1 1 auto; min-width: 0; }
-html:root #dev-workshop .dh-reply-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-html:root #dev-workshop .dh-reply-who > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-reply-who > span { flex: none; font-size: 12px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-reply-words { font-size: 15px; line-height: 1.4; color: var(--one-ink); overflow-wrap: anywhere; }
-html:root #dev-workshop .dh-reply-words .messages-markdown > :first-child { margin-top: 0; }
-html:root #dev-workshop .dh-reply-words .messages-markdown > :last-child { margin-bottom: 0; }
-html:root #dev-workshop .dh-old-thread { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; width: max-content; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-old-thread > svg { width: 14px; height: 14px; stroke-width: 1.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier:disabled { opacity: 0.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply { position: relative; display: flex; gap: 10px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 28px; height: 28px; font-size: 11px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-body { flex: 1 1 auto; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who > span { flex: none; font-size: 12px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words { font-size: 15px; line-height: 1.4; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words .messages-markdown > :first-child { margin-top: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-thread { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; width: max-content; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-thread > svg { width: 14px; height: 14px; stroke-width: 1.6; }
 /* The hover bar on a post or a reply: the platform's own pill, at the box's top edge, on a pointer only. */
-html:root #dev-workshop .dh-msg { position: relative; }
-html:root #dev-workshop .dh-actions { position: absolute; z-index: 6; top: calc(-1 * var(--msgx-bar-lift, 16px)); inset-inline-end: 10px; display: none; }
-html:root #dev-workshop .dh-actions::after { content: ""; position: absolute; inset-inline: 0; top: 100%; height: 6px; }
-html:root #dev-workshop .dh-actions.msgx-bar-below { top: calc(100% + 4px); }
-html:root #dev-workshop .dh-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
-html:root #dev-workshop .dh-msg:hover > .dh-actions,
-html:root #dev-workshop .dh-msg:focus-within > .dh-actions,
-html:root #dev-workshop .dh-actions.msgx-bar-open { display: flex; }
-html:root #dev-workshop .dh-reply > .dh-actions { inset-inline-end: 0; top: -18px; }
-html:root #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.3); }
-html:root.dark #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(255 254 234 / 0.34); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg { position: relative; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions { position: absolute; z-index: 6; top: calc(-1 * var(--msgx-bar-lift, 16px)); inset-inline-end: 10px; display: none; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions::after { content: ""; position: absolute; inset-inline: 0; top: 100%; height: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-below { top: calc(100% + 4px); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg:hover > .dh-actions,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg:focus-within > .dh-actions,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-open { display: flex; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply > .dh-actions { inset-inline-end: 0; top: -18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.3); }
+html:root.dark :is(#dev-workshop, [data-discussion-host]) .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(255 254 234 / 0.34); }
 html:root #dev-workshop [data-press-armed] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 /* Show more, the empty card, a read that failed, and the rows while it reads. */
-html:root #dev-workshop .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
-html:root #dev-workshop .dh-more-posts:disabled { opacity: 0.6; }
-html:root #dev-workshop :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
-html:root #dev-workshop .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
-html:root #dev-workshop .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }
-html:root #dev-workshop .dh-bone-head { width: 40%; height: 18px; }
-html:root #dev-workshop .dh-bone-line { width: 85%; height: 14px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-more-posts:disabled { opacity: 0.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone-head { width: 40%; height: 18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone-line { width: 85%; height: 14px; }
 /* THE PHONE'S CARD: its head is a door to the page, then the newest posts a line each with their reply counts, and
    the box to start a post, which opens the page ready to write. */
-html:root #dev-workshop .dh-preview-head { display: flex; align-items: center; gap: 8px; width: 100%; padding-block: 0; padding-inline: 0 12px; border: 0; background: none; text-align: start; color: inherit; }
-html:root #dev-workshop .dh-preview-head > .dev-ws-hub-discussion-head { flex: 1 1 auto; min-width: 0; }
-html:root #dev-workshop .dh-preview-go { flex: none; width: 17px; height: 17px; color: var(--one-ink-3); }
-html:root #dev-workshop .dh-preview-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0 12px; list-style: none; }
-html:root #dev-workshop .dh-preview-list > li + li { border-top: 1px solid var(--one-line); }
-html:root #dev-workshop .dh-preview-row { display: block; width: 100%; padding: 10px 2px; border: 0; background: none; text-align: start; color: inherit; }
-html:root #dev-workshop .dh-preview-row .dh-head > :is(img, span[aria-hidden="true"]:first-child) { width: 30px; height: 30px; font-size: 12px; }
-html:root #dev-workshop .dh-preview-row .dh-name { font-size: 15px; }
-html:root #dev-workshop .dh-preview-row .dh-words { margin-top: 4px; font-size: 15px; line-height: 1.4; }
-html:root #dev-workshop .dh-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-html:root #dev-workshop .dh-composer-door { margin-top: 8px; border: 0; }
-html:root #dev-workshop .dh-composer-door > .dh-send { background-color: var(--one-quiet); color: var(--one-ink-3); }
-/* THE PAGE: the way back to the Hub, then the card, the whole width. */
-html:root #dev-workshop .dev-ws-discussion-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-head { display: flex; align-items: center; gap: 8px; width: 100%; padding-block: 0; padding-inline: 0 12px; border: 0; background: none; text-align: start; color: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-head > .dev-ws-hub-discussion-head { flex: 1 1 auto; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-go { flex: none; width: 17px; height: 17px; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0 12px; list-style: none; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-list > li + li { border-top: 1px solid var(--one-line); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row { display: block; width: 100%; padding: 10px 2px; border: 0; background: none; text-align: start; color: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-head > :is(img, span[aria-hidden="true"]:first-child) { width: 30px; height: 30px; font-size: 12px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-name { font-size: 15px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-words { margin-top: 4px; font-size: 15px; line-height: 1.4; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door { margin-top: 8px; border: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door > .dh-send { background-color: var(--one-quiet); color: var(--one-ink-3); }
+/* THE PAGE: the Discussion place, the card the whole width. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-discussion-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* An older message's own replies, shown under it inside the Earlier post:
+   stepped in once more, on a hairline down their start edge. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block: 8px 2px;
+  margin-inline-start: 38px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--dh-outline);
+}
+/* A message a link pointed at is marked once, as Messages marks one (#2387):
+   a ring and a wash that fade back to the post's own ground. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] {
+  border-radius: 8px;
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: dh-marked 2.4s ease-out;
+}
+@keyframes dh-marked {
+  0%, 40% { background-color: var(--accent-wash); outline-color: var(--accent); }
+  100% { outline-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
+}
+html:root:where([data-motion="reduce"]) :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
 @media (max-width: 767.98px) {
-  html:root #dev-workshop .dh-list { padding: 0 10px; gap: 14px; }
-  html:root #dev-workshop .dh-post { padding: 12px; }
-  html:root #dev-workshop .dh-replies { padding: 12px; margin-inline-start: 10px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-list { padding: 0 10px; gap: 14px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-post { padding: 12px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-replies { padding: 12px; margin-inline-start: 10px; }
 }
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 

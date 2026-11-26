@@ -243,7 +243,7 @@ test('admin route is read-only, admin-gated by the existing mount, and value-saf
 });
 
 test('Push delivery is a lifecycle-managed admin section', () => {
-  assert.match(consoleSource, /key: 'push', label: 'Push delivery', group: 'Operations'/);
+  assert.match(consoleSource, /key: 'push', label: 'Push delivery', group: 'Delivery & sign-in'/);
   assert.match(consoleSource, /push: 'AdminPush'/);
   assert.ok(islandSource.includes(`import './admin-push.${MODULE_EXT}';`));
   assert.match(moduleSource, /render\(\w+(?:: [\w.<>[\] |]+)?\) \{/);

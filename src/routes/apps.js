@@ -28,7 +28,7 @@ const versionLinks = require('../services/version-links');
 const places = require('../services/places');
 const discussion = require('../services/discussion');
 const { drainGuard } = require('../services/lifecycle');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter, groupChatWriteLimiter } = require('../middleware/rate-limits');
 const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
@@ -4280,6 +4280,67 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // It is the headline number, not the whole gate — opposition raises it
   // and the lazy-consensus window can merge below it — and the card says
   // "to merge", not "exactly".
+  // THE DISCUSSION'S "MOST REPLIES" (part 2, 26 Nov 2026): the posts of a
+  // project's #general since the fold (`after`, the Earlier post's last
+  // message), busiest first, a page at a time; the hub's Discussion card
+  // reads each one's thread through the room's own routes
+  // (dev-board/workshop/discussion-feed.ts `ranked`). Who may ask is who
+  // gets the channel on the community read below: on Homeroom's own project
+  // its #general, any signed-in person; on any other, a collaborator.
+  // THE "EARLIER DISCUSSION" POST'S REACTIONS (26 Nov 2026): that post is
+  // not a message, so its reactions hang on its project's own anchor
+  // (services/discussion.js toggleEarlierReaction). Taking part: a member,
+  // and on any project but Homeroom's own a collaborator too, as a reaction
+  // on one of its posts is.
+  //   POST /api/apps/:slug/discussion/earlier/reactions  { emoji, on? }
+  //   → 200 { reactions: [{ emoji, count, users, reacted }] }
+  router.post('/api/apps/:slug/discussion/earlier/reactions', groupChatWriteLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      try {
+        const emoji = req.body && typeof req.body.emoji === 'string' ? req.body.emoji.trim() : '';
+        if (!emoji || emoji.length > 16 || /\s/.test(emoji)) return res.status(400).json({ error: 'Invalid emoji' });
+        const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+        const app = rows[0];
+        if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) return res.status(404).json({ error: 'App not found' });
+        if (app.slug !== config.selfAppSlug && !(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+          return res.status(404).json({ error: 'App not found' });
+        }
+        const on = typeof req.body.on === 'boolean' ? req.body.on : null;
+        return res.json({ reactions: await discussion.toggleEarlierReaction(pool, app.id, req.user.id, emoji, on) });
+      } catch (err) {
+        log.error('apps', 'Earlier discussion reaction failed', { slug: req.params.slug, err: err.message });
+        return res.status(500).json({ error: 'Failed to react' });
+      }
+    });
+
+  router.get('/api/apps/:slug/discussion/most-replied', async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: 'Sign in to read the discussion' });
+      const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
+      const { rows } = await pool.query(
+        'SELECT * FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)',
+        [req.params.slug, showSelfHosted]
+      );
+      const app = rows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const opts = { viewerId: req.user.id, afterId: req.query.after, limit: req.query.limit, offset: req.query.offset };
+      if (app.slug === config.selfAppSlug) {
+        const conversationId = await discussion.generalConversationId(pool);
+        if (!conversationId) return res.status(404).json({ error: 'No discussion' });
+        return res.json(await discussion.rankedInConversation(pool, conversationId, opts));
+      }
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      return res.json(await discussion.rankedInApp(pool, app.id, opts));
+    } catch (err) {
+      log.error('apps', 'Discussion ranking failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Failed to read the discussion' });
+    }
+  });
+
   router.get('/api/apps/:slug/community', async (req, res) => {
     try {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
@@ -4330,7 +4391,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // The hub's Discussion card (services/discussion.js): which room
             // it reads, and what was said there before Discussion.
             conversation_id: conversationId,
-            discussion: await discussion.discussionSummary(pool, { conversationId, viewerId: req.user?.id }),
+            discussion: await discussion.discussionSummary(pool, { conversationId, viewerId: req.user?.id, anchorAppId: app.id }),
           };
         }
       } else if (canChat) {

@@ -7,6 +7,11 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { agoStamp } from '../../lib/timestamp';
+import { BTN } from './topochain/tokens.ts';
+import {
+  CheckField, EmptyState, Field as FormField, List, ScreenHeader, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Test accounts (#admin/test-accounts): make a genuinely new account for
 // first-time-user testing, get a one-time phone sign-in for a test number,
@@ -95,11 +100,9 @@ export const BLANK: Fields = Object.freeze({
   username: '', note: '', platformAccess: true, welcomeDm: false,
 }) as Fields;
 
-const HINT = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
 const ERROR = 'text-xs text-red-700 dark:text-red-400 mt-1';
 const DONE = 'text-xs text-emerald-700 dark:text-emerald-400 mb-3';
 const FAILED = 'text-xs text-red-700 dark:text-red-400 mb-3';
-const CHECK = 'mt-0.5 h-4 w-4 shrink-0 accent-violet-600';
 const SECRET = 'flex-1 min-w-0 break-all rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-900 dark:text-zinc-100';
 const CELL_FINE = 'text-xs text-zinc-500 dark:text-zinc-400';
 
@@ -398,21 +401,6 @@ export function OneTimeResult({ account, onDone }: { account: NewAccount; onDone
 
 // ── The form ────────────────────────────────────────────────────────────
 
-function Toggle({ id, checked, disabled, onChange, title, hint }: {
-  id: string; checked: boolean; disabled: boolean; onChange: (next: boolean) => void; title: string; hint: string;
-}) {
-  return (
-    <label htmlFor={id} className="flex items-start gap-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3">
-      <input id={id} type="checkbox" className={CHECK} checked={checked} disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)} />
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{title}</span>
-        <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{hint}</span>
-      </span>
-    </label>
-  );
-}
-
 export function CreateCard({ full, max, onCreated }: { full: boolean; max: number; onCreated: () => void }) {
   const [fields, setFields] = useState<Fields>(BLANK);
   const [state, dispatch] = useReducer(createReducer, CREATE_IDLE);
@@ -457,48 +445,55 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
         onKeyDown={returnKeyHandler()}>
         <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className={AdminUI.label} htmlFor="admin-test-accounts-username">
-              Username <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
-            </label>
+          {/* The kit's field (topochain/ui.tsx). Its help line carries the id
+              the input's aria-describedby names. */}
+          <FormField
+            htmlFor="admin-test-accounts-username"
+            label={<>Username <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span></>}
+            help={(
+              <span id="admin-test-accounts-username-hint">
+                Leave it empty for a placeholder name. The tester then picks a username at first sign-in, in the same step a newcomer sees.
+              </span>
+            )}
+          >
             <input id="admin-test-accounts-username" type="text" autoComplete="off" autoCapitalize="none"
               spellCheck={false} enterKeyHint="next" disabled={busy}
-              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+              className={`${AdminUI.input} font-mono disabled:opacity-60`}
               placeholder="maya_test" value={fields.username}
               aria-invalid={state.field === 'username' ? true : undefined}
               aria-describedby="admin-test-accounts-username-hint"
               onChange={(e) => set({ username: e.target.value })} />
-            <p id="admin-test-accounts-username-hint" className={HINT}>
-              Leave it empty for a placeholder name. The tester then picks a username at first sign-in, in the same step a newcomer sees.
-            </p>
             {fieldError('username') ? (
               <p id="admin-test-accounts-username-error" role="alert" className={ERROR}>{fieldError('username')}</p>
             ) : null}
-          </div>
-          <div>
-            <label className={AdminUI.label} htmlFor="admin-test-accounts-note">Note</label>
+          </FormField>
+          <FormField
+            htmlFor="admin-test-accounts-note"
+            label="Note"
+            help={<span id="admin-test-accounts-note-hint">{`Shown in the list below. Up to ${NOTE_MAX} characters.`}</span>}
+          >
             <input id="admin-test-accounts-note" type="text" autoComplete="off" enterKeyHint="go"
               maxLength={NOTE_MAX} disabled={busy}
-              className={`${AdminUI.input} mt-1 disabled:opacity-60`}
+              className={`${AdminUI.input} disabled:opacity-60`}
               placeholder="What it's for, e.g. first-session run with Maya" value={fields.note}
               aria-invalid={state.field === 'note' ? true : undefined}
               aria-describedby="admin-test-accounts-note-hint"
               onChange={(e) => set({ note: e.target.value })} />
-            <p id="admin-test-accounts-note-hint" className={HINT}>
-              {`Shown in the list below. Up to ${NOTE_MAX} characters.`}
-            </p>
             {fieldError('note') ? (
               <p id="admin-test-accounts-note-error" role="alert" className={ERROR}>{fieldError('note')}</p>
             ) : null}
-          </div>
+          </FormField>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <Toggle id="admin-test-accounts-platform-access" checked={fields.platformAccess} disabled={busy}
-            onChange={(v) => set({ platformAccess: v })} title="Let in now"
-            hint="It signs in to Homeroom itself, and Homeroom bot works for it as for anybody let in. Off, it waits in the waiting room, to test that screen." />
-          <Toggle id="admin-test-accounts-welcome-dm" checked={fields.welcomeDm} disabled={busy}
-            onChange={(v) => set({ welcomeDm: v })} title="Welcome DM"
-            hint="Lets the welcome message reach it: a group with the people set in Welcome messages." />
+        {/* Fields of the form, sent by Create, so they stay checkboxes: the
+            kit's CheckField. It has no disabled state, so a tick changed
+            while a request is out waits for the next Create. */}
+        <div className="mt-4 grid gap-x-4 md:grid-cols-2">
+          <CheckField id="admin-test-accounts-platform-access" checked={fields.platformAccess}
+            onChange={(v) => set({ platformAccess: v })} label="Let in now"
+            help="It signs in to Homeroom itself, and Homeroom bot works for it as for anybody let in. Off, it waits in the waiting room, to test that screen." />
+          <CheckField id="admin-test-accounts-welcome-dm" checked={fields.welcomeDm}
+            onChange={(v) => set({ welcomeDm: v })} label="Welcome DM"
+            help="Lets the welcome message reach it: a group with the people set in Welcome messages." />
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button id="admin-test-accounts-submit" type="submit" className={AdminUI.btn.primary} disabled={busy || full}>
@@ -635,58 +630,60 @@ export function PhoneSignInCard({ full }: { full: boolean }) {
 
 // ── The live accounts ───────────────────────────────────────────────────
 
-function appsText(apps: LiveApp[]): string {
-  return apps.map((a) => (a.status ? `${a.slug} (${a.status})` : a.slug)).join(', ');
-}
-
-function AccountRow({ account, now, busy, disabled, onRetire }: {
-  account: LiveAccount; now: Date; busy: boolean; disabled: boolean; onRetire: () => void;
-}) {
-  const made = agoStamp(account.createdAt, { now });
-  const seen = agoStamp(account.lastActiveAt, { now });
-  const by = account.createdBy ? `by @${account.createdBy}` : '';
-  const seenText = seen.text || 'not yet';
-  return (
-    <tr className={AdminUI.trHover} data-test-account={account.userId}>
-      <td className={AdminUI.td}>
-        {/* break-all: a placeholder handle is one 27-character word, and the
-            console never scrolls sideways, so it wraps rather than pushing
-            Retire out of the card at phone width. */}
-        <span className="break-all font-medium text-zinc-900 dark:text-zinc-100">{`@${account.username}`}</span>
-        {account.note ? <span className="block mt-0.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{account.note}</span> : null}
-        {/* Below md the three middle columns fold into one line here. */}
-        <span className="block md:hidden mt-1 break-words text-xs text-zinc-500 dark:text-zinc-400">
-          {[`Made ${made.text}${by ? ` ${by}` : ''}`, `last active ${seenText}`,
-            account.apps.length ? appsText(account.apps) : 'no apps'].join(' · ')}
-        </span>
-      </td>
-      <td className={`${AdminUI.td} hidden md:table-cell ${CELL_FINE}`}>
-        <span className="block" title={made.title}>{made.text}</span>
-        {by ? <span className="block">{by}</span> : null}
-      </td>
-      <td className={`${AdminUI.td} hidden md:table-cell ${CELL_FINE}`} title={seen.title || undefined}>
-        {seen.text || 'Not yet'}
-      </td>
-      <td className={`${AdminUI.td} hidden md:table-cell ${CELL_FINE}`}>
-        {account.apps.length ? (
-          <ul className="space-y-0.5">
-            {account.apps.map((app) => (
-              <li key={app.slug}>
-                <span className="font-mono text-zinc-700 dark:text-zinc-300">{app.slug}</span>
-                {app.status ? ` · ${app.status}` : ''}
-              </li>
-            ))}
-          </ul>
-        ) : 'None'}
-      </td>
-      <td className={`${AdminUI.td} text-end`}>
-        <button type="button" className={AdminUI.btn.destructiveSm} data-retire-test-account={account.userId}
-          disabled={busy || disabled} onClick={onRetire}>
-          {busy ? 'Retiring…' : 'Retire'}
-        </button>
-      </td>
-    </tr>
-  );
+// One row per account in the shared list (26 Nov 2026), which also draws the
+// phone's card: the line that folded Made, Last active and Apps under the
+// name below md went with the table that needed it. data-test-account sat on
+// the table's row; the list draws its own, so the username carries it.
+function accountColumns(now: Date): Column<LiveAccount>[] {
+  return [
+    {
+      label: 'Account',
+      primary: true,
+      cell: (account) => (
+        <>
+          {/* break-all: a placeholder handle is one 27-character word, and the
+              console never scrolls sideways, so it wraps. */}
+          <span data-test-account={account.userId} className="break-all font-medium text-zinc-900 dark:text-zinc-100">{`@${account.username}`}</span>
+          {account.note ? <span className="block mt-0.5 break-words text-xs font-normal text-zinc-500 dark:text-zinc-400">{account.note}</span> : null}
+        </>
+      ),
+    },
+    {
+      label: 'Made',
+      tdClass: CELL_FINE,
+      cell: (account) => {
+        const made = agoStamp(account.createdAt, { now });
+        return (
+          <>
+            <span className="block" title={made.title}>{made.text}</span>
+            {account.createdBy ? <span className="block">{`by @${account.createdBy}`}</span> : null}
+          </>
+        );
+      },
+    },
+    {
+      label: 'Last active',
+      tdClass: CELL_FINE,
+      cell: (account) => {
+        const seen = agoStamp(account.lastActiveAt, { now });
+        return <span title={seen.title || undefined}>{seen.text || 'Not yet'}</span>;
+      },
+    },
+    {
+      label: 'Apps',
+      tdClass: CELL_FINE,
+      cell: (account) => (account.apps.length ? (
+        <ul className="space-y-0.5">
+          {account.apps.map((app) => (
+            <li key={app.slug}>
+              <span className="font-mono text-zinc-700 dark:text-zinc-300">{app.slug}</span>
+              {app.status ? ` · ${app.status}` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : 'None'),
+    },
+  ];
 }
 
 export function LiveAccounts({ state, retiring, status, onRefresh, onRetire, now = new Date(Date.now()) }: {
@@ -699,20 +696,21 @@ export function LiveAccounts({ state, retiring, status, onRefresh, onRetire, now
 }) {
   const ready = state.kind === 'ready' ? state : null;
   return (
-    <div id="admin-test-accounts-list" className={`${AdminUI.card} p-4`}>
-      <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Live test accounts</h2>
-        <div className="flex items-center gap-3">
-          {ready ? (
-            <span id="admin-test-accounts-count" className="text-xs text-zinc-500 dark:text-zinc-400">
-              {`${ready.accounts.length} of ${ready.max} live`}
-            </span>
-          ) : null}
-          <button id="admin-test-accounts-refresh" type="button" className={`${AdminUI.btn.link} text-xs`} onClick={onRefresh}>
-            Refresh
-          </button>
+    <div id="admin-test-accounts-list">
+      {/* The list's own bar: what it is, how full it is, and Refresh. */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          <h2 className={AdminUI.cardTitle}>Live test accounts</h2>
         </div>
-      </div>
+        {ready ? (
+          <span id="admin-test-accounts-count" className="text-xs text-zinc-500 dark:text-zinc-400">
+            {`${ready.accounts.length} of ${ready.max} live`}
+          </span>
+        ) : null}
+        <button id="admin-test-accounts-refresh" type="button" className={BTN.secondarySm} onClick={onRefresh}>
+          Refresh
+        </button>
+      </Toolbar>
       {status ? (
         <p id="admin-test-accounts-status" role={status.tone === 'err' ? 'alert' : 'status'}
           className={status.tone === 'err' ? FAILED : DONE}>{status.text}</p>
@@ -720,30 +718,26 @@ export function LiveAccounts({ state, retiring, status, onRefresh, onRetire, now
       {state.kind === 'loading' ? <p className={AdminUI.loading}>Loading…</p> : null}
       {state.kind === 'error' ? <p role="alert" className={ERROR}>{state.error}</p> : null}
       {ready && !ready.accounts.length ? (
-        <p id="admin-test-accounts-empty" className={AdminUI.muted}>
-          No live test accounts. One you make appears here until it is retired.
-        </p>
+        <div id="admin-test-accounts-empty">
+          <EmptyState
+            title="No live test accounts."
+            body="One you make appears here until it is retired."
+          />
+        </div>
       ) : null}
       {ready && ready.accounts.length ? (
-        <div className={AdminUI.tableWrap}>
-          <table id="admin-test-accounts-table" className={AdminUI.table}>
-            <thead className={AdminUI.thead}>
-              <tr>
-                <th className={AdminUI.th}>Account</th>
-                <th className={`${AdminUI.th} hidden md:table-cell`}>Made</th>
-                <th className={`${AdminUI.th} hidden md:table-cell`}>Last active</th>
-                <th className={`${AdminUI.th} hidden md:table-cell`}>Apps</th>
-                <th className={AdminUI.th}><span className="sr-only">Retire</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ready.accounts.map((account) => (
-                <AccountRow key={account.userId} account={account} now={now}
-                  busy={retiring === account.userId} disabled={retiring != null}
-                  onRetire={() => onRetire(account)} />
-              ))}
-            </tbody>
-          </table>
+        <div id="admin-test-accounts-table">
+          <List
+            items={ready.accounts}
+            rowKey={(account) => account.userId}
+            columns={accountColumns(now)}
+            actions={(account) => (
+              <button type="button" className={BTN.rowDanger} data-retire-test-account={account.userId}
+                disabled={retiring != null} onClick={() => onRetire(account)}>
+                {retiring === account.userId ? 'Retiring…' : 'Retire'}
+              </button>
+            )}
+          />
         </div>
       ) : null}
     </div>
@@ -798,6 +792,10 @@ function ManageTestAccounts() {
   const full = !!ready && ready.accounts.length >= ready.max;
   return (
     <div id="admin-test-accounts" className="space-y-4">
+      <ScreenHeader
+        title="Test accounts"
+        subtitle="Make an account or a one-time phone sign-in for first-time-user testing, and retire it when testing is done."
+      />
       <CreateCard full={full} max={max} onCreated={() => { void load(); }} />
       <PhoneSignInCard full={full} />
       <LiveAccounts state={list} retiring={retiring} status={status}

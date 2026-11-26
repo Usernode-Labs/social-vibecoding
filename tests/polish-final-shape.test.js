@@ -180,7 +180,10 @@ test('#19: a channel loads in one state, the room\'s own', () => {
   assert.match(html, /<div class="messages-thread-scroll" data-channel-loading=""><div class="messages-state"><span class="messages-spinner"><\/span>/);
   assert.ok(html.includes(message('messages:thread.loading')));
   const discussion = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
-  assert.equal((discussion.match(/if \(!data\) return <ChannelLoading \/>;/g) || []).length, 2, 'the channel and a topic\'s');
+  assert.equal((discussion.match(/if \(!data\) return <ChannelLoading \/>;/g) || []).length, 1, 'a topic\'s');
+  // #general is the Discussion (26 Nov 2026): its page waits as the feed's own rows.
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-discussion.tsx'),
+    /<FeedLoading status="loading" onRetry=\{\(\) => \{\}\} rows=\{3\} \/>/);
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
   assert.match(frame, /: opensOnOwnShape\(\) \? DEV_BODY_PLACE_INITIAL : DEV_BODY_WORKSHOP_INITIAL;/,
     'no card list in front of a place that draws its own loading shape');

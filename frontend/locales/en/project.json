@@ -1780,8 +1780,8 @@
     "description": "Accessible name of the list of the plan's lines, on the read-only plan page and in the plan sheet a member opens from the App tab while the first version is built. {{project}} is the project's name."
   },
   "plan.talk": {
-    "text": "Talk about it in #general",
-    "description": "Button at the foot of the read-only plan page: opens the project's #general channel so a member can say something about the plan. \"#general\" is the name of that channel; keep it as written."
+    "text": "Talk about it in the Discussion",
+    "description": "Button at the foot of the read-only plan page: opens the project's Discussion (its posts and replies) so a member can say something about the plan."
   },
   "discussion.label": {
     "text": "{{project}} discussion",
@@ -2063,6 +2063,10 @@
     "text": "Post",
     "description": "Accessible name and tooltip of the round send button beside the Discussion card's Start a post box: publishes what was typed as a new post. A verb."
   },
+  "hub.discussion.signInToPost": {
+    "text": "Sign in to post",
+    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, as a signed-out visitor sees it: the box asks them to sign in before they can post."
+  },
   "hub.discussion.reply.placeholder": {
     "text": "Reply in thread…",
     "description": "Placeholder in the box under a post's replies on a project's Discussion card, where a member writes a reply to that post. Ends with an ellipsis."
@@ -2072,8 +2076,8 @@
     "description": "Accessible name of the reply box under a post on a project's Discussion card. {{username}} is the name of the person who wrote the post."
   },
   "hub.discussion.reply.labelEarlier": {
-    "text": "Reply to the earlier #general messages",
-    "description": "Accessible name of the reply box under the \"Earlier in #general\" post on a project's Discussion card, which holds everything said in the channel before Discussion. #general is the channel's name and stays as written."
+    "text": "Reply to the earlier discussion",
+    "description": "Accessible name of the reply box under the \"Earlier discussion\" post on a project's Discussion (the messages people wrote before the Discussion had posts, gathered as one post)."
   },
   "hub.discussion.reply.send": {
     "text": "Send reply",
@@ -2112,8 +2116,8 @@
     "description": "Link at the top of a post's replies on a project's Discussion card, when older replies are not shown: shows them. {{count}} is how many are hidden."
   },
   "hub.discussion.wholeThread": {
-    "text": "Open the whole thread in #general",
-    "description": "Link at the top of a very long post's replies on a project's Discussion card, once the newest fifty are shown: opens the post's whole reply thread in the project's #general channel. #general is the channel's name and stays as written."
+    "text": "Show all replies",
+    "description": "Button at the top of a post's replies on a project's Discussion, once its newest replies are open but a very long thread has more: shows every reply."
   },
   "hub.discussion.new": {
     "text": "New",
@@ -2143,6 +2147,22 @@
     "text": "That could not be sent. Try again.",
     "description": "Shown under the box on a project's Discussion card when a post or a reply could not be sent and the server gave no reason. What was typed stays in the box."
   },
+  "hub.discussion.editFailed": {
+    "text": "That could not be saved. Try again.",
+    "description": "Under the box where a person edits their own post or reply on a project's Discussion, when the edit could not be saved. What they typed stays in the box."
+  },
+  "hub.discussion.shared": {
+    "text": "Shared a card",
+    "description": "One-line preview of a post on a project's Discussion (the phone's Discussion card) that holds no words, only a shared card such as a request or a change."
+  },
+  "hub.discussion.sharedPlan": {
+    "text": "Shared a plan",
+    "description": "Small label on a card inside a post on a project's Discussion: the post shares a plan for a change (its title follows)."
+  },
+  "hub.discussion.sharedPlanUntitled": {
+    "text": "Untitled plan",
+    "description": "Stands in for a shared plan's title on a post in a project's Discussion when the plan has none."
+  },
   "hub.discussion.deleted": {
     "text": "This message was deleted.",
     "description": "Shown in place of a post's or a reply's words on a project's Discussion card when its author deleted it."
@@ -2156,24 +2176,28 @@
     "description": "Shown in place of the words of a post or a reply on a project's Discussion card that is only files, with no text. {{count}} is how many files."
   },
   "hub.discussion.earlier.title": {
-    "text": "Earlier in #general",
-    "description": "Title of the one post on a project's Discussion card that holds everything said in its #general chat before Discussion arrived; its replies are those messages. #general is the channel's name and stays as written."
+    "text": "Earlier discussion",
+    "description": "Title of the one post on a project's Discussion that gathers what people wrote before the Discussion had posts (shown when there were more than eight such messages). A short noun phrase."
   },
   "hub.discussion.earlier.range": {
     "text": "{{from}} to {{to}}",
     "description": "Beside the \"Earlier in #general\" post's title on a project's Discussion card: the dates of the first and the last message it holds, for example \"2 Oct to 24 Nov\". {{from}} and {{to}} are short dates."
   },
   "hub.discussion.earlier.body": {
-    "text": "Everything said in the #general chat before Discussion. New replies here carry on from it.",
-    "description": "The words of the \"Earlier in #general\" post on a project's Discussion card, which holds everything said in the channel before Discussion as its replies. #general is the channel's name and stays as written."
+    "text": "Everything said here before the Discussion had posts. New replies carry on from it.",
+    "description": "Text of the \"Earlier discussion\" post on a project's Discussion: says that its replies are the older messages, gathered in one place, and that people can still reply under it."
   },
   "hub.discussion.oldThread_one": {
-    "text": "{{count}} reply in #general",
-    "description": "Link under one of the old messages inside the \"Earlier in #general\" post on a project's Discussion card, when that message had a reply thread: opens it in the project's #general channel. #general stays as written."
+    "text": "Show {{count}} reply",
+    "description": "Small link under an older message inside the \"Earlier discussion\" post when that message has its own replies: shows them under it. {{count}} is how many (here 1)."
   },
   "hub.discussion.oldThread_other": {
-    "text": "{{count}} replies in #general",
-    "description": "Link under one of the old messages inside the \"Earlier in #general\" post on a project's Discussion card, when that message had a reply thread: opens it in #general. {{count}} is how many replies it has. #general stays as written."
+    "text": "Show {{count}} replies",
+    "description": "Small link under an older message inside the \"Earlier discussion\" post when that message has its own replies: shows them under it. {{count}} is how many."
+  },
+  "hub.discussion.oldThreadHide": {
+    "text": "Hide replies",
+    "description": "The same small link once an older message's own replies are shown inside the \"Earlier discussion\" post: hides them again."
   },
   "hub.recent.title": {
     "text": "Recently live",
@@ -5032,8 +5056,8 @@
     "description": "Shown inside the priority, category or assignee picker of a request or proposal when its list of options could not be fetched."
   },
   "board.discussion.open": {
-    "text": "Open the app's general chat",
-    "description": "Tooltip of the 'General discussion' card above a project's board: the card opens the project's shared chat channel. 'Open' is a verb."
+    "text": "Open the project's Discussion",
+    "description": "Tooltip of the Discussion card above a project's board: the card opens the project's Discussion, its posts and replies. 'Open' is a verb."
   },
   "board.discussion.title": {
     "text": "General discussion",
@@ -5471,6 +5495,14 @@
     "text": "Back to Needs you",
     "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Needs you place, the list of decisions waiting on this person."
   },
+  "topic.back.discussion": {
+    "text": "Discussion",
+    "description": "The back chip at the top of a request's or a change's page when the page was opened from the project's Discussion (its posts and replies): pressing it goes back there. Shown after a ‹ arrow."
+  },
+  "topic.back.toDiscussion": {
+    "text": "Back to Discussion",
+    "description": "Accessible name of the back chip at the top of a request's or a change's page that goes back to the project's Discussion (its posts and replies)."
+  },
   "topic.back.channel": {
     "text": "#{{handle}}",
     "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on one of its chat channels, which the chip returns to. {{handle}} is the channel's name without its #, such as general. Shown after a left-pointing chevron."
@@ -5833,7 +5865,11 @@
   },
   "places.list.channels": {
     "text": "Channels",
-    "description": "Small upper-case heading in a project's list of places, over the project's own chat channel (#general)."
+    "description": "Small upper-case heading in a project's list of places, over the project's Discussion (its own channel, #general, drawn as posts with replies)."
+  },
+  "places.list.discussion": {
+    "text": "Discussion",
+    "description": "Entry under Channels in a project's list of places: opens the project's Discussion, its #general channel shown as posts, each with its replies under it. A count of unread posts may follow it. A noun, the name of the place."
   },
   "places.list.switchCommunity": {
     "text": "Switch community",
@@ -5890,6 +5926,10 @@
   "places.bar.hub": {
     "text": "Hub",
     "description": "Title of the bar at the top of a project's page while its Hub (or the plan under it) is on show: names the place you are on. A noun, the name of the place."
+  },
+  "places.bar.discussion": {
+    "text": "Discussion",
+    "description": "Title of the bar at the top of a project's page while its Discussion (its #general channel shown as posts with replies) is on show, and the place the bar's back button names from #general's chat view. A noun, the name of the place."
   },
   "places.bar.needsYou": {
     "text": "Needs you",
@@ -5962,22 +6002,6 @@
   "places.topicHead.aboutThenRequests": {
     "text": "{{about}} · <0>{{requests}}</0>",
     "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
-  },
-  "places.generalHead.about": {
-    "text": "Where everyone in {{project}} talks",
-    "description": "Line at the top of a project's #general chat channel, saying what the channel is for. {{project}} is the project's name."
-  },
-  "places.generalHead.aboutThenMembers": {
-    "text": "{{about}} · {{members}}",
-    "description": "Line at the top of a project's #general chat channel: what the channel is for, then how many members it reaches. {{about}} is the first part, already worded (\"Where everyone in Homeroom talks\"); {{members}} the second, already worded (\"263 members\")."
-  },
-  "places.generalHead.members_one": {
-    "text": "{{count}} member",
-    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
-  },
-  "places.generalHead.members_other": {
-    "text": "{{count}} members",
-    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
   },
   "places.generalHead.mute": {
     "text": "Mute",

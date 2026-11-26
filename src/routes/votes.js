@@ -3806,8 +3806,8 @@ function voteRoutes(config) {
       const botLine = botDm.voteLineFor({ vote, reason: recordedReason, unchanged });
       const botTarget = botLine ? await botDm.voteLineTarget(pool, { sessionId: session.id }) : null;
       const handToBot = async () => (botTarget
-        ? !!(await botDm.handVoteLine(pool, { user: req.user, target: botTarget, line: botLine }))?.ok
-        : false);
+        ? await botDm.handVoteLine(pool, { user: req.user, target: botTarget, line: botLine })
+        : null);
       if (reasonOnly) {
         // #1688: the same vote with new words. The roster and the proposer's
         // notification read the row live, so a tally push is all the
@@ -3857,7 +3857,8 @@ function voteRoutes(config) {
       // the voter's own reply just above this row, so the row leaves it out
       // and the discussion shows it once. Handed first, so it is there
       // whichever way the hand-off goes.
-      const shownReason = (await handToBot()) ? null : recordedReason;
+      const handed = await handToBot();
+      const shownReason = handed?.ok ? null : recordedReason;
       const voteLine = shownReason
         ? `${req.user.username} voted ${vote}: “${shownReason}”`
         : `${req.user.username} voted ${vote} on ${voteLabel}`;
@@ -3866,7 +3867,17 @@ function voteRoutes(config) {
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: shownReason } },
+        // #7216: when the line went to the bot as the voter's reply, this
+        // names it, so a request's page can join the reply and the vote into
+        // one line with the reason.
+        {
+          vote: {
+            sessionId: session.id,
+            prNumber: session.pr_number || null,
+            reason: shownReason,
+            ...(handed?.ok && handed.messageId ? { reasonMessageId: handed.messageId } : {}),
+          },
+        },
         // #194: per-vote activity lands in the proposal's own thread, not
         // general chat — the promote/merge announcements remain the
         // general-chat entry points.

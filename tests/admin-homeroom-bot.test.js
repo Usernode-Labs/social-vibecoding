@@ -405,7 +405,7 @@ test('export.csv walks every page: a full chunk is followed by the next cursor',
 test('the section is registered everywhere the console reads, inside the registry rules', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
   const sectionBlock = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['), consoleJs.indexOf('isOpen()'));
-  assert.match(sectionBlock, /\{ key: 'homeroom-bot', label: 'Homeroom bot', group: 'Platform' \}/);
+  assert.match(sectionBlock, /\{ key: 'homeroom-bot', label: 'Homeroom bot', group: 'Delivery & sign-in' \}/);
   assert.match(consoleJs, /'homeroom-bot': 'AdminHomeroomBot'/);
   const sections = read('frontend/src/features/admin/sections.ts');
   assert.ok(sections.includes("import './admin-homeroom-bot.tsx';"), 'the barrel imports the module');
@@ -619,9 +619,13 @@ test('how much the bot works on at once is set here, and what runs now is listed
     { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', kind: 'read', person: null },
     { appSlug: 'todo', appName: 'Todo', issueNumber: 9, since: '2026-10-02T09:40:00Z', lane: 'live', kind: 'build', person: 'ada' },
   ] }));
-  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">reading<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
-  assert.match(html, /data-working="notes#3"[^>]*><span class="badge-default">background<\/span><span>Notes #3<\/span><span class="muted">since /);
-  assert.match(html, /data-working="todo#9"[^>]*><span class="badge-success">building<\/span><span>Todo #9<\/span><span class="muted">for @ada<\/span>/);
+  // The lane's pill is the kit's Badge now: the soft green (is-done) for a
+  // live row, the plain one, with no tone of its own, for a background row
+  // (request 7224).
+  assert.match(html, /data-working="todo#12"[^>]*><span class="adm-badge [^"]*\bis-done\b[^"]*">reading<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(html, /data-working="notes#3"[^>]*><span class="adm-badge (?![^"]*\bis-)[^"]*bg-zinc-100[^"]*">background<\/span><span>Notes #3<\/span><span class="muted">since /);
+  assert.match(html, /data-working="todo#9"[^>]*><span class="adm-badge [^"]*\bis-done\b[^"]*">building<\/span><span>Todo #9<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(tsx, /<Badge\n\s+tone=\{w\.lane === 'live' \? 'mint' : 'zinc'\}/);
 
   // Running now and Waiting in the queue count builds too, and say which is
   // which: builds run from their runs, not the queue, and were counted in
@@ -815,8 +819,13 @@ test('the tabs have addresses of their own, and Settings and the Overview stay r
   assert.match(tsx, /settings: '#admin\/homeroom-bot\/settings',/);
   assert.match(tsx, /benchmark: '#admin\/homeroom-bot\/benchmark',/);
   assert.match(tsx, /history\.replaceState\(null, '', TAB_HASH\[next\]\)/, 'replaced, never pushed');
-  assert.match(tsx, /id="admin-homeroom-bot-panel-overview" role="tabpanel"[^>]*hidden=\{tab !== 'overview'\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-panel-settings" role="tabpanel"[^>]*hidden=\{tab !== 'settings'\}/);
+  // The kit's TabPanel hides a panel that is not the tab on screen and, not
+  // being lazy, keeps its children rendered; each panel's old id is on the
+  // wrapper inside it (request 7224).
+  assert.match(tsx, /<TabPanel tabsId=\{TABS_ID\} tab="overview" active=\{tab === 'overview'\}>\s*<div id="admin-homeroom-bot-panel-overview"/);
+  assert.match(tsx, /<TabPanel tabsId=\{TABS_ID\} tab="settings" active=\{tab === 'settings'\}>\s*<div id="admin-homeroom-bot-panel-settings"/);
+  const kit = read('frontend/src/features/admin/topochain/ui.tsx');
+  assert.match(kit, /<div id=\{`\$\{tabsId\}-panel-\$\{tab\}`\} role="tabpanel" hidden=\{!active\}>\s*\{lazy && !active \? null : children\}/);
   const audit = read('scripts/audit-react-ownership.mjs');
   assert.match(audit, /'#admin\/homeroom-bot\/settings'/, 'the ownership audit walks the new address');
   for (const place of ['benchmark/runs', 'benchmark/runs/936551', 'benchmark/runs/936550', 'benchmark/suites', 'benchmark/suites/936542']) {

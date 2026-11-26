@@ -194,8 +194,9 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   assert.ok(gate > 0 && gate < thread.indexOf('if (snap.route.appSlug) return <AppDiscussionThread'), 'the gate comes first');
   assert.match(thread, /\{embedded \? null : <ThreadHeader \/>\}/, 'the page\'s own header names the room');
   assert.match(thread, /messages-thread-\$\{kind\}\$\{embedded \? ' messages-thread-embedded' : ''\}/);
-  // The hidden Messages screen draws no reply thread for the page's room either.
-  assert.match(SCREEN, /\{snap\.route\.conversationId && snap\.route\.threadRootId && !snap\.route\.embedded \? <ReplyThreadPanel \/> : null\}/);
+  // The hidden Messages screen draws no reply thread for the page's room
+  // either, nor for #general, which is a Discussion and never a chat here.
+  assert.match(SCREEN, /\{snap\.route\.conversationId && snap\.route\.threadRootId && !snap\.route\.embedded && snap\.active\?\.kind !== 'channel' \? <ReplyThreadPanel \/> : null\}/);
   // The page's copy holds the store only while it is on screen, and gives it back.
   const embedded = SCREEN.slice(SCREEN.indexOf('export function EmbeddedConversation('), SCREEN.indexOf('export function MessagesScreen('));
   // #3653: with the place a door named in the room, taken once (`take`).
@@ -210,15 +211,13 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   assert.match(embedded, /if \(threadsOnly\) \{\s*return \(\s*<div className=\{`messages-layout messages-layout-embedded messages-has-reply-thread\$\{blank \? ' messages-has-blank-thread' : ''\}`\} data-bot-threads="">\s*\{here \? <BotThreadsSync conversationId=\{conversationId\} \/> : null\}\s*\{here && snap\.route\.threadRootId \? <ReplyThreadPanel alone onBack=\{onBack\} \/> : null\}\s*\{blank \? <NewThreadPanel conversationId=\{conversationId\} \/> : null\}\s*<\/div>/);
 });
 
-test('#3494: the Discussion tab turns for Homeroom too, and mounts #general while the page is on screen', () => {
+test('#3494: the Discussion tab turns for Homeroom too; its #general is the Discussion\'s posts, not a chat (26 Nov 2026)', () => {
   // No door: the tab, the hub card's Open and a cold `?ws=discussion` all turn the page.
   assert.doesNotMatch(LANDER, /discussionElsewhere|openDiscussionElsewhere/);
   assert.match(LANDER, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next, v\.slug\);/);
   assert.doesNotMatch(PD, /location\.hash|location\.replace|_setWorkshopTab/, 'the tab never navigates away');
 
-  const seen = [];
-  const EmbeddedConversation = (props) => { seen.push(props); return createElement('div', { 'data-stub-room': String(props.conversationId) }); };
-  const { ProjectDiscussion, generalRoom } = loadTsx(PD_PATH, { stubs: { '../../messages': { EmbeddedConversation } } });
+  const { ProjectDiscussion, generalRoom } = loadTsx(PD_PATH, { stubs: { '../../messages': { EmbeddedConversation: () => null } } });
   const general = { channel: { handle: 'general', href: '#messages/1', post_url: '/api/conversations/1/messages', unread_count: 0 } };
   assert.equal(generalRoom(general), 1, '#general is conversation 1');
   assert.equal(generalRoom({ channel: { handle: 'garden', href: '#messages/app/garden' } }), null, 'an app\'s own channel is the group chat\'s');
@@ -227,21 +226,17 @@ test('#3494: the Discussion tab turns for Homeroom too, and mounts #general whil
   assert.equal(generalRoom({ channel: null }), null);
   assert.equal(generalRoom(null), null);
 
-  const html = renderToHtml(createElement(ProjectDiscussion, { slug: 'usernode-2d5619', name: 'Homeroom', data: general }));
-  // #5303: under #general's line (channel-head.tsx).
-  assert.match(html, /<section class="dev-ws-discussion dev-ws-general-channel" data-ws-discussion="" data-ws-discussion-room="general" aria-label="Homeroom discussion"><div class="dev-ws-channel-head" data-ws-channel-head="general">[\s\S]*?<\/div><div data-stub-room="1"><\/div><\/section>/);
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].conversationId, 1);
-  assert.equal(seen[0].active, false, 'not on screen until the router has revealed #app-view');
-  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} at=\{roomAt\} \/>/);
-  assert.match(PD, /const onShow = screen === 'app-view' && !!tab;/, 'on show: the project page, not the running app behind it');
-  assert.doesNotMatch(html, /data-ws-discussion-elsewhere|data-ws-discussion-open/, 'no door');
-
-  // A project's own channel is still the group chat's pane.
-  const own = renderToHtml(createElement(ProjectDiscussion, {
+  // #general IS THE DISCUSSION: ProjectDiscussion draws a topic's channel
+  // alone; #general, Homeroom's or a project's own, draws no chat.
+  assert.equal(renderToHtml(createElement(ProjectDiscussion, { slug: 'usernode-2d5619', name: 'Homeroom', data: general })), '');
+  assert.equal(renderToHtml(createElement(ProjectDiscussion, {
     slug: 'garden', name: 'Garden', data: { channel: { handle: null, href: '#messages/app/garden', post_url: '/api/apps/garden/messages' } },
-  }));
-  assert.match(own, /<section class="dev-ws-discussion dev-ws-general-channel" data-ws-discussion="" data-discussion-app="garden" aria-label="Garden discussion"><div class="dev-ws-channel-head" data-ws-channel-head="general">[\s\S]*?<\/div><div class="dev-ws-discussion-host"><\/div><\/section>/);
+  })), '');
+  assert.doesNotMatch(PD, /<EmbeddedConversation|function GeneralChannel/);
+  // Homeroom's Discussion reads its #general conversation, as posts.
+  const card = read('frontend/src/features/dev-board/workshop/hub-discussion.tsx');
+  assert.match(card, /return conversationId \? conversationSource\(conversationId, slug\) : appSource\(slug, viewer\);/);
+  assert.match(LANDER, /\{\(tab === 'discussion' \|\| tab === 'posts'\) && slug \? \(\s*<DiscussionCard/);
 });
 
 test('#3494: the room fills the tab edge to edge, as a project\'s own chat does', () => {

@@ -216,7 +216,7 @@ export function pageTitle(tab: TabKey): string {
   if (tab === 'all') return translate('project:page.title.allItems');
   if (tab === 'bot') return translate('project:page.title.bot');
   if (tab === 'plan') return translate('project:page.title.plan');
-  if (tab === 'posts') return translate('project:page.title.discussion');
+  if (tab === 'posts' || tab === 'discussion') return translate('project:page.title.discussion');
   const handle = placeHandle(tab);
   if (handle) return `#${handle}`;
   if (tab === 'status') return translate('project:page.title.hub');
@@ -3404,7 +3404,10 @@ export function DevWorkshop(): ReactNode {
   }, [v.slug]);
   // What waits elsewhere: the channel on screen is being read. Computed ahead
   // of the publish below so the merged header's button carries it too (#4703).
-  const here = isChannelPlace(tab) ? findChannel(community?.places, placeHandle(tab)) : null;
+  // The Discussion is #general, as posts.
+  const here = isChannelPlace(tab) || tab === 'posts'
+    ? findChannel(community?.places, tab === 'posts' ? 'general' : placeHandle(tab))
+    : null;
   const unreadElsewhere = Math.max(0, unreadTotal(community?.places)
     - (here && here.state === 'live' ? Math.max(0, Number(here.unread) || 0) : 0));
   useEffect(() => {
@@ -3819,7 +3822,7 @@ export function DevWorkshop(): ReactNode {
           {talkHere ? (
             <>
               <DiscussionCard slug={slug} name={projectName} data={community} mode="full" />
-              <DiscussionCard slug={slug} name={projectName} data={community} mode="preview" onOpenPage={() => openTab('posts')} />
+              <DiscussionCard slug={slug} name={projectName} data={community} mode="preview" onOpenPage={() => openTab('discussion')} />
             </>
           ) : null}
         </div>
@@ -3841,16 +3844,17 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {/* ── THE DISCUSSION, WHOLE, a page under the Hub (26 Nov 2026) ──
-          Where a phone's Discussion card opens: #general as posts with
-          replies, the whole width, with the way back up to the Hub; Hub
-          stays lit. See ./hub-discussion.tsx. */}
-      {tab === 'posts' && slug ? (
-        <DiscussionCard slug={slug} name={app.name || community?.name || slug} data={community} mode="page" onBack={() => upTab('status')} />
+      {/* ── THE DISCUSSION (26 Nov 2026) ──
+          The project's Discussion: #general's messages as posts with
+          replies, the whole width. The places list's Discussion row, where
+          a phone's Discussion card opens, and where a link to one of its
+          messages lands. There is no chat view of it. See ./hub-discussion.tsx. */}
+      {(tab === 'discussion' || tab === 'posts') && slug ? (
+        <DiscussionCard slug={slug} name={app.name || community?.name || slug} data={community} mode="page" />
       ) : null}
 
-      {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}
-      {isChannelPlace(tab) ? (
+      {/* ── A TOPIC'S CHANNEL, whole ── (./project-discussion.tsx) */}
+      {isChannelPlace(tab) && tab !== 'discussion' ? (
         <ProjectDiscussion
           slug={slug}
           name={app.name || community?.name || slug}

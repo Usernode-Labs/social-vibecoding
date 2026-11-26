@@ -51,6 +51,8 @@ export const BTN = {
   // you can see and hit, and it wraps predictably inside both the table
   // cell and the card footer _list() renders them into.
   row: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-800 dark:hover:text-violet-300`,
+  // A row's one main action (Admit), filled, where rowPrimary is outlined.
+  rowMain: `${BTN_BASE} ${BTN_ROW} adm-b1 bg-violet-600 hover:bg-violet-700 text-white`,
   rowPrimary: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
   rowDanger: `${BTN_BASE} ${BTN_ROW} adm-bd border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40`,
   rowWarn: `${BTN_BASE} ${BTN_ROW} adm-b2 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,

@@ -304,8 +304,8 @@
     "description": "Notice in place of the message box of a project's discussion, and of the replies on a change's page, for a person who may read and may not write. \"Dev space\" is the project's build area; \"post\" is a verb, to send a message."
   },
   "discussion.archivedNotice": {
-    "text": "This was Homeroom’s project discussion. It is read-only now: Homeroom’s channel is #general.",
-    "description": "Notice above the old discussion channel of the Homeroom project itself, which can still be read and no longer written in. \"Homeroom\" is the product's name and \"#general\" the name of a channel; keep both."
+    "text": "This was Homeroom’s project discussion. It is read-only now: Homeroom’s posts are in its Discussion.",
+    "description": "Notice above the old discussion channel of the Homeroom project itself, which can still be read and no longer written in. \"Homeroom\" is the product's name; \"Discussion\" is the name of the project's place for posts and replies."
   },
   "discussion.door.empty": {
     "text": "Talk with everyone building this app",
@@ -328,8 +328,8 @@
     "description": "Preview of the latest message on the General discussion card of a project's board. {{author}} is the username of the person who wrote it and {{message}} the start of what they wrote."
   },
   "discussion.card.tooltip": {
-    "text": "Open the app's general chat",
-    "description": "Tooltip on the General discussion card of a project's board. \"Open\" is a verb."
+    "text": "Open the project's Discussion",
+    "description": "Tooltip on the Discussion card of a project's board: opens the project's Discussion, its posts and replies. \"Open\" is a verb."
   },
   "discussion.card.titleFor": {
     "text": "General discussion for {{app}}",

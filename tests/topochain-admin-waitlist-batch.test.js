@@ -483,15 +483,27 @@ test('the waitlist switch reads on by default, and only a write admin turns it o
 
 test('the Waitlist panel leads the settings, and unticking it asks about the people waiting before anything is switched', () => {
   assert.match(screenSource, /<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
-  assert.match(screenSource, /id="admin-topo-wl-switch-enabled" label="New accounts wait to be admitted"/);
+  // The setting is a row of the Settings tab's group now, its control a
+  // switch in place of a tick box (request 7224).
+  assert.match(screenSource, /<SettingRow\s+wrapId="admin-topo-wl-switch"\s+id="admin-topo-wl-switch-enabled"\s+title="New accounts wait to be admitted"/);
+  assert.match(screenSource, /checked=\{setting \? setting\.enabled && !asking : null\}\s+onChange=\{toggle\}\s+canEdit=\{canWrite\(\)\}/);
   // Unticking only opens the question; its two buttons carry the choice.
   assert.match(screenSource, /if \(next\) \{\s+setAsking\(false\);\s+if \(!setting\?\.enabled\) save\(\{ enabled: true \}\);\s+return;\s+\}\s+load\(\);\s+setAsking\(true\);/);
   assert.match(screenSource, /id="admin-topo-wl-switch-keep"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'keep' \}\)\}/);
   assert.match(screenSource, /id="admin-topo-wl-switch-admit"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'admit' \}\)\}/);
   assert.match(screenSource, /Nobody is emailed, because the release email is off\./);
-  const html = renderComponent(SCREEN, 'WaitlistSwitchPanel', {});
-  assert.match(html, /id="admin-topo-wl-switch"/);
-  assert.doesNotMatch(html, /admin-topo-wl-switch-ask/, 'nothing is asked until the box is unticked');
+  // The row asks whether its viewer may write as it renders, so the render
+  // needs the console it asks (request 7224).
+  const window = globalThis.window;
+  globalThis.window = { ...(window || {}), AdminTopochain: { canWrite: () => true } };
+  try {
+    const html = renderComponent(SCREEN, 'WaitlistSwitchPanel', {});
+    assert.match(html, /id="admin-topo-wl-switch"/);
+    assert.doesNotMatch(html, /admin-topo-wl-switch-ask/, 'nothing is asked until the switch is turned off');
+    assert.doesNotMatch(html, /role="switch"/, 'and no switch is offered before the setting is read');
+  } finally {
+    globalThis.window = window;
+  }
 });
 
 test('the Release email panel sits beside Landing, and Admit says when nobody is emailed', () => {
@@ -565,7 +577,11 @@ test('Send a reminder now: a write admin only, and a refusal is the sentence the
 });
 
 test('the Reminders panel sits beside Release email, and a row\'s details show the admit email, both reminders and the stop', () => {
-  assert.match(screenSource, /<ReleaseEmailPanel \/>\s+<ReminderEmailPanel \/>/);
+  // The screen is tabs now: Reminders has a tab of its own, beside the
+  // Settings tab that holds Release email, and both are rendered whichever
+  // tab is on screen, neither one lazy (request 7224).
+  assert.match(screenSource, /<TabPanel tabsId=\{WL_TABS_ID\} tab="reminders" active=\{tab === 'reminders'\}>\s+<ReminderEmailPanel \/>\s+<\/TabPanel>\s+<TabPanel tabsId=\{WL_TABS_ID\} tab="settings" active=\{tab === 'settings'\}>/);
+  assert.match(screenSource, /<TabPanel tabsId=\{WL_TABS_ID\} tab="settings" active=\{tab === 'settings'\}>\s+<SettingsGroup[^>]*>\s+<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>\s+<ReleaseEmailPanel \/>\s+<\/SettingsGroup>/);
   assert.match(screenSource, /id="admin-topo-wl-reminder-email-mode"/);
   assert.match(screenSource, /id="admin-topo-wl-reminder-due"/);
   assert.match(screenSource, /Dry run: send nothing, list who would get one/);
