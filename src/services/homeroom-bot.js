@@ -2911,6 +2911,10 @@ function triagePromptFor({
   // from an older snapshot is unchanged.
   appState = null,
   sameReports = null,
+  // #7215: the project a Homeroom report is about, when the report recorded
+  // one the reporter can see (homeroom-bot-about-project.js). Null adds
+  // nothing, so a prompt rebuilt from an older snapshot is unchanged.
+  aboutProject = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
@@ -2919,6 +2923,7 @@ function triagePromptFor({
     live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
     appState ? appStateNote(appState) : null,
+    aboutProject ? require('./homeroom-bot-about-project').aboutProjectNote(aboutProject) : null,
     sameReports ? require('./homeroom-bot-same-report').sameReportNote(sameReports) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
@@ -4944,6 +4949,15 @@ async function runTriage(pool, config, {
   const appState = liveMode && !requester?.firstVersion
     ? await readAppState(pool, app)
     : null;
+  // #7215: a Homeroom report filed from another project's page says which
+  // project it was about, by app id. Read that project's own facts before the
+  // read decides anything, so it explains and plans from that project and
+  // never from Homeroom's own repository. Never throws.
+  const aboutProject = liveMode && !requester?.firstVersion && app.slug === PLATFORM_SELF_APP_SLUG
+    ? await require('./homeroom-bot-about-project').readAboutProject(pool, {
+      app, issueNumber, deps: { github },
+    })
+    : null;
   // #6869: the same report on public projects in the last seven days, so the
   // note can say another project reported it. Never throws.
   const sameReportRows = liveMode && !requester?.firstVersion
@@ -4968,6 +4982,8 @@ async function runTriage(pool, config, {
     ...(overlapCandidates.length ? { overlapCandidates } : {}),
     // #6869: the app's state and the same report elsewhere, when there are.
     ...(appState ? { appState } : {}),
+    // #7215: the project this Homeroom report is about, when it recorded one.
+    ...(aboutProject ? { aboutProject } : {}),
     ...(sameReportRows.length ? { sameReports: sameReportRows } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
@@ -5002,6 +5018,7 @@ async function runTriage(pool, config, {
   if (overlapCandidates.length) snapshot.extra.overlapCandidates = overlapCandidates;
   // #6869: and the app's state and the same report elsewhere, for the replay.
   if (appState) snapshot.extra.appState = appState;
+  if (aboutProject) snapshot.extra.aboutProject = aboutProject;
   if (sameReportRows.length) snapshot.extra.sameReports = sameReportRows;
 
   let session;

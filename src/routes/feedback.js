@@ -36,6 +36,9 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // and GitHub's camo proxy can fetch (GET /issue-images/:id).
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 const SCREENSHOT_ID_RE = /^[a-f0-9]{32}$/;
+// #7215: the slug of the project whose page the person was on. The client
+// sends it for platform feedback too; anything else is ignored silently.
+const ABOUT_APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
 
 // Pure (exported for tests): validate an uploaded screenshot body.
 // Returns { ok: true, contentType } or { ok: false, error }.
@@ -1066,7 +1069,35 @@ function feedbackRoutes(config) {
 
       // The platform's own board (services/feedback-reports.js
       // createPlatformIssue): a request row, like an app's.
-      const bodyPrefix = `**Source:** ${source}\n${queuedLine}\n`;
+      //
+      // #7215: a report sent from another project's page remembers which
+      // project it was about. The platform's board is public and the project
+      // may be private, so only its app id is written, and only when the
+      // reporter can still see it. Anything unviewable or unknown is
+      // ignored, exactly as if the page had sent nothing.
+      let aboutApp = null;
+      const aboutAppSlug = req.body.aboutAppSlug;
+      if (typeof aboutAppSlug === 'string' && ABOUT_APP_SLUG_RE.test(aboutAppSlug)) {
+        try {
+          const { rows } = await pool.query(
+            `SELECT ${appAccess.ACCESS_COLUMNS}, repo_url FROM apps WHERE slug = $1`,
+            [aboutAppSlug]
+          );
+          const row = rows[0];
+          // The platform's own repository is never "about" a project: filing
+          // from Homeroom's own pages records nothing.
+          if (row && !repoRef.isPlatformRepo(row.repo_url)
+              && await appAccess.checkAppAccess(pool, row, req.user, 'view')) {
+            aboutApp = { id: row.id, private: row.view_visibility !== 'public' };
+          }
+        } catch (err) {
+          log.warn('feedback', 'Could not read the project a report is about', { message: err.message });
+        }
+      }
+      const aboutLine = aboutApp
+        ? `**About:** ${aboutApp.private ? 'a private project' : 'a project'} (app id ${aboutApp.id})\n`
+        : '';
+      const bodyPrefix = `**Source:** ${source}\n${aboutLine}${queuedLine}\n`;
       const platformBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
       if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
       const created = await createPlatformIssue({
@@ -1106,7 +1137,7 @@ function feedbackRoutes(config) {
         })
         : null;
       const report = await recordFeedbackReport(pool, {
-        user: req.user, app: null, owner: issueOwner, repo: issueRepo,
+        user: req.user, app: null, aboutAppId: aboutApp?.id || null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
         bodyPrefix, bodySuffix: screenshotSuffix + videoSuffix,
       });

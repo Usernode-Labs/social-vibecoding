@@ -610,6 +610,11 @@
       "id": "conflict-resolution-main",
       "sha256": "2b622537fcdccef8661efb467fae2ff54a558b5803f68c071370c048f42883b4",
       "schemaSha256": "ce8da66b07bf7426f34ee0867422eeee0bffffd0613de7dc1ef2ddea3b9ff77b"
+    },
+    {
+      "id": "feedback-reports-about-app",
+      "sha256": "79216d2cb49a5a05a5c868fba5a54d15eb4814f7bedb92819afff2a27be8d2d3",
+      "schemaSha256": "fb68d288d2d8240f82f6cf35770098df65100c01212498ff0bbee2edffd2017d"
     }
   ]
 }
