@@ -3039,9 +3039,9 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"usernode-2d5619\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:not(:has(.messages-message-system, .gc-event)) > form[data-ws-discussion-compose=\"post\"]"
     },
     {
-      "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
+      "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286); #2905: a message's report and block sit behind one ⋯ disc",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group:has(.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"]) .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",

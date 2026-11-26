@@ -92,8 +92,10 @@ for (const kind of ['mention', 'reply', 'reaction']) {
     const { N, calls, location } = load();
     N.items = [row({ kind, chatMessageId: 5552 })];
     N._onItemClick(1);
-    assert.equal(location.hash, '#messages/app/garden-ab12/m/5552', 'the message\'s address: its post in the Discussion');
-    assert.deepEqual(nav(calls), [], 'no chat is asked to reveal anything, and never the old full-screen chat');
+    // Through Messages' openAddress, which runs the router again when that
+    // address is already up (assigning it would fire no hashchange).
+    assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/5552']], 'the message\'s address: its post in the Discussion; no chat is asked to reveal anything');
+    assert.equal(location.hash, '');
     assert.equal(calls[0][0], 'dismiss', 'and the sheet is out of the way first (#1329)');
   });
 }
@@ -218,8 +220,8 @@ test('a saved app message opens the discussion on it, and stays saved', () => {
   const { N, calls, location } = load();
   N.saved = [{ messageId: 5540, appSlug: 'garden-ab12' }];
   N._onSavedClick(5540);
-  assert.equal(location.hash, '#messages/app/garden-ab12/m/5540', 'its post in the Discussion');
-  assert.deepEqual(nav(calls), []);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/5540']], 'its post in the Discussion');
+  assert.equal(location.hash, '');
   assert.equal(N.saved.length, 1, 'opening a save does not consume it');
   // …and one saved in a topic thread opens the topic, as before.
   const topic = load();
@@ -247,10 +249,10 @@ test('before the Messages island publishes, the message\'s address still routes 
 });
 
 test('without GroupChat the discussion still opens, on the message', () => {
-  const { N, location } = load({ groupChat: false });
+  const { N, calls } = load({ groupChat: false });
   N.items = [row({ kind: 'mention', chatMessageId: 3 })];
   N._onItemClick(1);
-  assert.equal(location.hash, '#messages/app/garden-ab12/m/3');
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/3']]);
   // A row with no message (an accepted invite) opens the Discussion itself.
   const bare = load({ groupChat: false });
   bare.N._openAppDiscussion('garden-ab12', null);
