@@ -11,7 +11,7 @@
  *     ✓ #392  Watering reminders                    Live Oct 24
  *     ✕ #380  Sign in with a code                        Closed
  *     ☑       A new card picture              You: yes · passed
- *   [tile] Book swap · You left
+ *   [tile] Book swap
  *     ✓ #31   Swap requests                          Live Oct 3
  *   September …
  *                Earlier months ⌄

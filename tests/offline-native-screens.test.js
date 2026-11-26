@@ -122,18 +122,10 @@ test('a change link with no answer stays put and opens once Homeroom answers', (
 test('Messages draws no offline strip of its own, and says "not saved yet" in the ordinary colour', () => {
   const index = read('frontend/src/features/messages/index.tsx');
   assert.doesNotMatch(index, /messages-network-banner/);
-  assert.doesNotMatch(read('frontend/src/features/messages/frame-list.tsx'), /messages:inbox\.offline/);
   assert.match(index, /snap\.errorOffline \? 'messages-state' : 'messages-state messages-state-error'/);
   assert.match(index, /snap\.threadErrorOffline \? 'messages-state' : 'messages-state messages-state-error'/);
   assert.match(message('messages:store.error.unreachableList'), /^Not saved on this phone yet\./);
   assert.doesNotMatch(read('public/css/app.css'), /messages-network-banner/);
-});
-
-test('the Workshop\'s vote figure says when it is from while it was drawn from what the phone saved', () => {
-  const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(workshop, /status !== 'online' && status !== 'updating' && savedAt !== null && showsAge\(savedAt\)/);
-  assert.match(workshop, /c\.key === 'votes' && asOf \? <span className="dev-ws-dash-sub" data-ws-dash-sub="asof">/);
-  assert.equal(message('project:workshop.dash.asOf', { time: '12:41' }), 'as of 12:41');
 });
 
 test('the phone app reads its first screens ahead on a good connection, at most every half hour', () => {

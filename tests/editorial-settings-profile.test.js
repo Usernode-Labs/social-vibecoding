@@ -146,10 +146,14 @@ test('Profile opens on who you are, across the page', () => {
   assert.match(b, /#profile-root #profile-stats:not\(\.hidden\) \{\s*display: flex;/);
   assert.match(b, /#profile-stats > \[data-profile-stat\]:not\(\.hidden\) \{/);
   const view = read('frontend', 'src', 'features', 'profile', 'profile-view.tsx');
-  for (const hook of ['profile-id-avatar', 'profile-id-name', 'profile-id-sub', 'profile-id-bio']) {
-    assert.ok(view.includes(hook), `the card carries ${hook}`);
-    assert.ok(b.includes(`.${hook}`) || hook === 'profile-id-sub', `and the block reads ${hook}`);
+  // (Its grey sub-line under the name was the other looks', removed 26 Nov
+  // 2026; the bio is the inline editor's, identity-inline-edit.tsx.)
+  const inline = read('frontend', 'src', 'features', 'profile', 'identity-inline-edit.tsx');
+  for (const hook of ['profile-id-avatar', 'profile-id-name', 'profile-id-bio']) {
+    assert.ok(view.includes(hook) || inline.includes(hook), `the card carries ${hook}`);
+    assert.ok(b.includes(`.${hook}`), `and the block reads ${hook}`);
   }
+  assert.ok(!view.includes('profile-id-sub'), 'no sub-line under the name');
   // #7135: the picture is the uploaded photo or the account's generated one,
   // clipped to the editorial square by the same avatar class and its own
   // overflow, so it never spills past the radius.

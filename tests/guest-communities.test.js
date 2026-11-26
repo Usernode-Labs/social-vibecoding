@@ -255,10 +255,10 @@ test('its address: the landing draws it at /communities in Discover\'s place, an
   assert.match(landing, /useEffect\(\(\) => \{ setOnGroupsPath\(location\.pathname === COMMUNITIES_PATH\); \}, \[\]\);/);
   // A project's page or a members' link's sheet named by the hash still comes first.
   assert.match(landing, /const groupsPage = guestPages && onGroupsPath && !guestProject && !linkPending && !gate;/);
-  // In the guest Discover's place, under either drawing of it.
+  // In the guest Discover's place.
   assert.match(landing, /\{groupsPage \? \(\s+<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>\s+\) : \(\s+<>/);
   const at = landing.indexOf('<GuestCommunities');
-  assert.ok(at > 0 && at < landing.indexOf('<LandingFrame') && at < landing.indexOf('<GuestDiscover'));
+  assert.ok(at > 0 && at < landing.indexOf('<GuestDiscover'));
 
   // A visitor with no account is who it is for: the anonymous redirect and
   // the waiting-room gate both leave that one pathname alone.

@@ -72,7 +72,7 @@ test('09: the handle is a focusable separator with the bot tab\'s grip, after th
   assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>\n(\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<ListDivider \/>\n\s*<\/section>/);
   // The grip is `.split-handle`'s: 6 x 48, unseen at rest, half strength
   // under an armed pointer, the accent while held.
-  assert.match(CSS, /:is\(\.split-handle, html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.side-panel-divider\)::before \{[^}]*width: 6px;[^}]*height: 48px;/);
+  assert.match(CSS, /:is\(\.split-handle, html:root \.side-panel-divider\)::before \{[^}]*width: 6px;[^}]*height: 48px;/);
   const src = read(DIVIDER);
   assert.match(src, /armOnMove\(ref\.current\)/, 'armed by a real move, as the Workshop\'s handle');
   assert.match(src, /startSplitDrag\(e, drag\)/);

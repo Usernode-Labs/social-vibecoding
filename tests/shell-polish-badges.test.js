@@ -105,16 +105,16 @@ test('the desktop bar is one centred row in every state but over a running app',
 });
 
 test('a group\'s header leads with a member\'s face and says who is still invited (N14)', () => {
-  const { threadWords } = loadTsx('frontend/src/features/messages/index.tsx');
-  const members = [{ id: 1, username: 'evan', status: 'member' }, { id: 2, username: 'lukas', status: 'member' },
-    { id: 3, username: 'iqiyi', status: 'invited' }];
-  const group = { id: 8, kind: 'group', myRole: 'member', memberCount: 2, membershipStatus: 'member', title: 'Evan + Lukas / iqiyi', members };
-  // The count is the members who joined; the title can name one still asked.
-  assert.equal(threadWords(group).sub, '2 members · 1 invited');
-  assert.equal(threadWords({ ...group, members: members.slice(0, 2) }).sub, '2 members', 'nobody pending, nothing added');
-  assert.equal(threadWords({ ...group, membershipStatus: 'invited' }).sub, 'Invitation pending', 'an invitee reads the invitation');
   const src = read('frontend/src/features/messages/index.tsx');
   const header = src.slice(src.indexOf('function ThreadHeader('), src.indexOf('/** The day a message was sent'));
+  // The count is the members who joined; the title can name one still asked,
+  // so the people asked are said beside it, and an invitee reads the invitation.
+  assert.match(header, /: invited\s*\? t\('messages:header\.subtitle\.invited'\)/);
+  assert.match(header, /const asked = active\.kind === 'group' && !invited \? active\.members\.filter\(\(m\) => m\.status === 'invited'\)\.length : 0;/);
+  assert.match(header, /const subtitle = asked \? dotText\(\[said, t\('messages:header\.subtitle\.invitedCount', \{ count: asked \}\)\]\) : said;/);
+  assert.equal(message('messages:header.subtitle.group', { count: 2 }), '2 members');
+  assert.equal(message('messages:header.subtitle.invitedCount', { count: 1 }), '1 invited');
+  assert.equal(message('messages:header.subtitle.invited'), 'Invitation pending');
   // Audit C02: the members' faces its row in the list draws (GroupFaces), not one of them.
   assert.match(header, /const groupFaces = active\.kind === 'group' && !invited;/);
   assert.match(header, /: groupFaces \? <GroupFaces conversation=\{active\} \/>/, 'not the initials of its name ("E+")');

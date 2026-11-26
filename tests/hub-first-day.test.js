@@ -9,12 +9,14 @@
 // once a link was out though nobody had joined, no For you at all, and no
 // Recently live. Evan approved, and this pins:
 //
-//   - Share it and "What do you want to change?" each have a ✕ that closes
-//     the card on that project for good (hub-dismissed.ts);
-//   - Share it says what invite is out, "Invite link sent · nobody has
-//     joined yet · 7 days left" (community-card.tsx inviteSentLine), from
-//     the hub read's `invite_summary` (community-invites.js inviteSummary);
-//   - the payload's new fields (routes/apps.js GET /api/apps/:slug/community).
+//   - the hub's cards each have a ✕ that closes the card on that project
+//     for good (hub-dismissed.ts);
+//   - the payload's new fields (routes/apps.js GET /api/apps/:slug/community),
+//     the invite links out summed in `invite_summary` (community-invites.js
+//     inviteSummary).
+//
+// The Share it and Invite cards that read them were the brand look's hub,
+// removed 26 Nov 2026.
 //
 // The hub's order, For you and Recently live's own card are pinned beside
 // the tests they changed (tests/community-hub.test.js,
@@ -26,18 +28,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
-const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
-// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
-const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
-const LEGACY_HUB = { stubs: LEGACY_SKIN };
-const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const DISMISSED = 'frontend/src/features/dev-board/workshop/hub-dismissed.ts';
-const DAY = 24 * 60 * 60 * 1000;
 
 function fakeStorage({ broken = false } = {}) {
   const map = new Map();
@@ -102,111 +97,6 @@ test('a closed card stays closed for that person on that project, and nowhere el
   // Read in a layout effect, never during render (the island rule).
   const src = read(DISMISSED);
   assert.match(src, /useLayoutEffect\(\(\) => \{ hydrateHubDismissed\(\); \}, \[\]\);/);
-});
-
-test('Share it: a ✕ that closes it, and one line about the invite that is out', async () => {
-  const realFetch = globalThis.fetch;
-  const record = (over = {}) => ({
-    slug: 'garden-share', name: 'Garden', description: null, member_count: 1, is_member: true, is_creator: true,
-    audience: 'solo', audience_label: 'Just you', members: [{ id: 1, username: 'ada' }], channel: null,
-    activity: null, can_manage: true, audience_change: null, first_version: null, invite_link: false, invite_summary: null,
-    approval: { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 },
-    ...over,
-  });
-  const soon = new Date(Date.now() + 7 * DAY - 60000).toISOString();
-  const records = {
-    'garden-share': record(),
-    'garden-share-link': record({ slug: 'garden-share-link', invite_link: true, invite_summary: { links: 1, joined: 0, waiting: 0, expires_at: soon } }),
-    'garden-share-group': record({ slug: 'garden-share-group', audience: 'invited', audience_label: 'Private community', member_count: 2 }),
-  };
-  globalThis.fetch = async (url) => {
-    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
-    return { ok: true, json: async () => records[slug] };
-  };
-  try {
-    let closed = false;
-    const presses = [];
-    const card = loadTsx(CARD, {
-      cache: false,
-      stubs: { ...LEGACY_SKIN, './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => presses.push([slug, which])] } },
-    });
-    for (const slug of Object.keys(records)) await card.reloadCommunity(slug);
-    const draw = (slug) => renderToHtml(createElement(card.ShareItCard, { slug, name: 'Garden' }));
-    const plain = draw('garden-share');
-    assert.match(plain, /^<section class="dev-ws-strip dev-ws-share" data-ws-share=""><div class="dev-ws-head"><span class="dev-ws-head-title">Share it<\/span><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="share" aria-label="Close this card" title="Close this card"><svg[^>]*>[\s\S]*?<\/svg><\/button><\/div><p class="dev-ws-strip-text">/,
-      'its ✕ ends the head; no line while no link is out');
-    assert.doesNotMatch(plain, /data-ws-share-sent/);
-    const link = draw('garden-share-link');
-    assert.match(link, /<\/div><p class="dev-ws-share-sent" data-ws-share-sent="">Invite link sent · nobody has joined yet · 7 days left<\/p><p class="dev-ws-strip-text">/,
-      'the line over the card\'s text');
-    assert.match(link, /data-ws-share-invite=""[^>]*>Invite people<\/button>/, 'and its Invite, as before');
-    assert.equal(draw('garden-share-group'), '', 'a group has no Share it');
-    closed = true;
-    assert.equal(draw('garden-share'), '', 'closed: gone on this project');
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-  const src = read(CARD);
-  assert.match(src, /const \[closed, close\] = useHubDismissed\(slug, 'share'\);\s*if \(!data \|\| data\.audience !== 'solo' \|\| closed\) return null;/);
-  assert.match(src, /<HubCardClose card="share" onClose=\{close\} \/>/);
-  // What it offered stays on the page: Invite in the hero's row.
-  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
-  assert.match(read('public/css/app.css'), /\.dev-ws-card-close \{\s*margin-block: -6px -6px; margin-inline: auto -6px;/);
-});
-
-test('the Invite card: its ✕ closes it, and the hero row\'s small Invite is the way in again', async () => {
-  const record = {
-    slug: 'garden-invite', name: 'Garden', description: null, member_count: 3, is_member: true, is_creator: false,
-    audience: 'invited', audience_label: 'Private community', members: [{ id: 1, username: 'ada' }], channel: null,
-    activity: { active_week: 2, active_people: [{ id: 1, username: 'ada' }] },
-    can_manage: true, audience_change: null, first_version: null,
-    approval: { policy: 'anyone', approvals_required: null, electorate: 3, required: 2 },
-  };
-  let closed = false;
-  const card = loadTsx(CARD, {
-    cache: false,
-    stubs: { ...LEGACY_SKIN, './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] } },
-  });
-  const drawCard = () => renderToHtml(createElement(card.InviteHeroCard, { slug: 'garden-invite', data: record }));
-  assert.match(drawCard(), /^<section class="dev-ws-invite-hero" data-ws-invite-hero="" aria-label="[^"]*"><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="invite" aria-label="Close this card" title="Close this card"><svg[^>]*>/,
-    'its ✕ is the one Share it carries, in the card\'s top corner before the faces');
-  closed = true;
-  assert.equal(drawCard(), '', 'closed: gone on this project');
-
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, json: async () => record });
-  try {
-    await card.reloadCommunity('garden-invite');
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-  const hero = () => renderToHtml(createElement(card.CommunityCard, { slug: 'garden-invite', name: 'Garden', inviteCard: true }));
-  assert.match(hero(), /data-ws-community-invite=""/, 'closed: the row\'s small Invite is back beside Open app and the ⋯');
-  closed = false;
-  assert.doesNotMatch(hero(), /data-ws-community-invite=""/, 'open: one Invite on the page, the card\'s own');
-});
-
-test('the invite line says how many joined and how long the soonest link has left, in words', () => {
-  const { inviteSentLine, linkTimeLeft } = loadTsx(CARD, LEGACY_HUB);
-  const now = Date.parse('2026-10-15T12:00:00Z');
-  const at = (ms) => new Date(now + ms).toISOString();
-  const line = (over) => inviteSentLine({ links: 1, joined: 0, waiting: 0, expires_at: at(7 * DAY - 60000), ...over }, now);
-  assert.equal(line({}), 'Invite link sent · nobody has joined yet · 7 days left', 'a link made a minute ago for a week');
-  assert.equal(line({ joined: 1, expires_at: at(6 * DAY) }), 'Invite link sent · 1 joined · 6 days left');
-  assert.equal(line({ joined: 2, expires_at: at(6 * DAY) }), 'Invite link sent · 2 joined · 6 days left');
-  assert.equal(line({ links: 2 }), '2 invite links sent · nobody has joined yet · 7 days left');
-  assert.equal(line({ expires_at: at(DAY + 60000) }), 'Invite link sent · nobody has joined yet · 1 day left');
-  assert.equal(line({ expires_at: at(DAY - 60000) }), 'Invite link sent · nobody has joined yet · expires today', 'under a day');
-  assert.equal(line({ expires_at: null }), 'Invite link sent · nobody has joined yet', 'a link with no end says no time');
-  assert.equal(inviteSentLine({ links: 0, joined: 0, waiting: 0, expires_at: null }, now), '', 'no live link: nothing');
-  assert.equal(inviteSentLine(null, now), '');
-  assert.equal(linkTimeLeft(at(3 * DAY + 3 * 3600 * 1000), now), '3 days left', 'rounded');
-  assert.equal(linkTimeLeft(at(-60000), now), 'expires today', 'a clock behind the server\'s');
-  assert.equal(linkTimeLeft('not a date', now), '');
-  for (const id of ['communityCard.share.sent_one', 'communityCard.share.nobodyJoined', 'communityCard.share.joined_other',
-    'communityCard.share.daysLeft_other', 'communityCard.share.expiresToday', 'hub.card.close']) {
-    assert.ok(message(`project:${id}`), id);
-  }
 });
 
 test('the hub read carries the invite links out, summed as listInvites lists them, and since when the app is live', () => {

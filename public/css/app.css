@@ -27172,21 +27172,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   color: var(--accent); cursor: pointer; text-decoration: none;
 }
 .dev-ws-link:hover { text-decoration: underline; }
-/* Only the two figures that are a CALL wear one. A zero is not a warning
-   (the component leaves the class off), and "nobody on them" is a fact
-   about the backlog rather than an alarm — it had no tone before and gains
-   none here. */
-.dev-ws-dash-dot-good { background: var(--state-ok); }
-.dev-ws-dash-dot-warn { background: var(--state-attention); }
-/* AND THE FIGURE TAKES THE TONE BACK. The objection that moved it to the
-   label was to state carried by hue ALONE — unreadable to anyone who cannot
-   separate the two, and a status colour sitting on text. The dot answers
-   that: the mark is the non-colour channel, so the colour on the number is
-   now redundant rather than load-bearing, which is what makes it free. The
-   tone still appears only where the component put a dot, so a zero — not a
-   call — stays in text ink. */
-.dev-ws-dash-cell-good b { color: var(--state-ok); }
-.dev-ws-dash-cell-warn b { color: var(--state-attention); }
 
 /* ── The working pane ──────────────────────────────────────────────────
    The controls, the switch and the thing they act on, as one card — the same

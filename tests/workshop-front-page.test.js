@@ -1,10 +1,9 @@
 // THE WORKSHOP'S FRONT PAGE (24 Nov 2026; the desktop polish's item 14):
-// frontend/src/features/dev-board/workshop/front-page.tsx, under the
-// standard look. One column of three parts and a row for admins: the hero
-// (its one question, a box to Homeroom bot, four starts and Your work), the
-// path a change travels (four stops, each a door to the place listing what
-// it counts) and Lately with Live by week. The brand look keeps the tab it
-// had (tests/dev-workshop.test.js renders that one).
+// frontend/src/features/dev-board/workshop/front-page.tsx. One column of
+// three parts and a row for admins: the hero (its one question, a box to
+// Homeroom bot, four starts and Your work), the path a change travels (four
+// stops, each a door to the place listing what it counts) and Lately with
+// Live by week.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -191,15 +190,14 @@ test('a project with nothing yet: the four words, one line in Lately, and no Liv
   assert.match(waiting, /data-ws-front="weeks"[\s\S]*?class="dev-ws-front-bar" data-skeleton=""/);
 });
 
-test('the standard look draws it, and the brand look keeps the tab it had', () => {
-  assert.match(WORKSHOP, /\{tab === 'workshop' && !weekUp && !frontPage && wipLook \? \(\n\s+<WorkshopFront\n/);
-  assert.match(WORKSHOP, /\{tab === 'workshop' && !weekUp && !frontPage && !wipLook \? \(\n\s+<>/);
+test('the Workshop tab draws it, with its other pages', () => {
+  assert.match(WORKSHOP, /\{tab === 'workshop' && !weekUp && !frontPage \? \(\n\s+<WorkshopFront\n/);
   // Its other pages open in the tab as a week's does: Earlier weeks and Private requests.
   assert.match(WORKSHOP, /export const EARLIER_WEEKS = '@earlier';\nexport const PRIVATE_PAGE = '@private';/);
   assert.match(WORKSHOP, /\{tab === 'workshop' && frontPage === EARLIER_WEEKS \? \(\n\s+<EarlierWeeks/);
   assert.match(WORKSHOP, /\{tab === 'workshop' && frontPage === PRIVATE_PAGE && slug \? <PrivateRequestsPage slug=\{slug\} onBack=\{closeFrontPage\} \/> : null\}/);
   // Mark all seen is where the log is read now, on a returning visit.
-  assert.match(WORKSHOP, /const markSeen = wipLook && v\.since \? \{ any: sinceRows\.length > 0, onClear: clearSince \} : null;/);
+  assert.match(WORKSHOP, /const markSeen = v\.since \? \{ any: sinceRows\.length > 0, onClear: clearSince \} : null;/);
   const { EarlierWeeks } = loadTsx('frontend/src/features/dev-board/workshop/week-pages.tsx');
   const page = renderToHtml(createElement(EarlierWeeks, {
     weeks: [week({ key: 'lastWeek', title: '', live: false })], firstWeek: Date.UTC(2026, 10, 9), onWeek: () => {}, onBack: () => {},
