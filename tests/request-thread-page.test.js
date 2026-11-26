@@ -23,6 +23,7 @@ const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib
 const MODEL = 'frontend/src/features/dev-board/topic/request-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+const CHANGE_MODEL = 'frontend/src/features/dev-board/topic/change-model.ts';
 
 const row = (patch) => ({
   id: null, kind: 'message', username: 'maya', time: '09:05 AM',
@@ -1086,4 +1087,101 @@ test('T2.5: a person\'s session no longer hides the stored row\'s words', () => 
   // Nobody has started on it, by the row: their sentence too.
   const idle = av._requestStatusView(issue({ in_progress: session('active'), standing: standing('reading', { line: { code: 'waiting' } }) }));
   assert.match(idle.lead, /maya/);
+});
+
+// #7216: a No's reason on one of Homeroom bot's changes is handed to the bot
+// as the voter's own reply (routes/votes.js), and the vote row names it
+// (`event.reasonMessageId`). The request's page joins the two back into one
+// line, worded as the change's page words it, with its "on change" tag kept.
+const changeOf7213 = { sessionId: 7213 };
+const onChange = (patch) => row({ changeOf: changeOf7213, ...patch });
+const voteEvent = (patch) => ({
+  sessionId: '7213', prNumber: '7213', title: '', actor: '', sender: '', mine: false,
+  force: false, votes: '', icon: null, here: true, ...patch,
+});
+const noVote = (patch) => onChange({
+  id: 12, kind: 'vote', username: '', systemText: 'evan voted no on PR #7213',
+  at: '2026-10-08T10:12:30Z', bodyHtml: '', text: '',
+  event: voteEvent({ type: 'vote', actor: 'evan', vote: 'no', reason: '', ...patch }),
+});
+const reasonReply = (patch) => onChange({
+  id: 11, kind: 'message', username: 'evan', at: '2026-10-08T10:12:00Z',
+  text: 'I do not agree with the approach. Sorting should happen on the server.',
+  bodyHtml: '<p>I do not agree with the approach. Sorting should happen on the server.</p>',
+  ...patch,
+});
+
+test('#7216 joinVoteReasons: the reply a vote row names becomes that vote\'s reason and leaves the stream', () => {
+  const { joinVoteReasons } = loadTsx(CHANGE_MODEL);
+  const reply = reasonReply({});
+  const vote = noVote({ reasonMessageId: 11 });
+  const out = joinVoteReasons([reply, vote]);
+  assert.equal(out.length, 1, 'the reply is not drawn a second time');
+  assert.equal(out[0].id, 12);
+  assert.equal(out[0].event.reason, 'I do not agree with the approach. Sorting should happen on the server.');
+  assert.notEqual(out[0], vote, 'the vote row is replaced by its joined copy');
+});
+
+test('#7216 joinVoteReasons: an older No pairs with the voter\'s message directly before it, within two minutes', () => {
+  const { joinVoteReasons } = loadTsx(CHANGE_MODEL);
+  const joinable = joinVoteReasons([reasonReply({}), noVote({})]);
+  assert.equal(joinable.length, 1);
+  assert.equal(joinable[0].event.reason, 'I do not agree with the approach. Sorting should happen on the server.');
+
+  const keep = (rows) => {
+    const out = joinVoteReasons(rows);
+    assert.equal(out.length, rows.length, 'nothing is joined');
+    assert.ok(out.every((m, i) => m === rows[i]), 'every row keeps its object');
+    assert.ok(!out.some((m) => m.event && m.event.reason), 'no vote has a reason');
+  };
+  // Somebody else wrote it.
+  keep([reasonReply({ username: 'maya' }), noVote({})]);
+  // Too old to be the vote's reason.
+  keep([reasonReply({ at: '2026-10-08T10:09:00Z' }), noVote({})]);
+  // Written on another change.
+  keep([reasonReply({ changeOf: { sessionId: 9999 } }), noVote({})]);
+  // Another row sits between them.
+  keep([reasonReply({}), onChange({ id: 13, at: '2026-10-08T10:12:10Z' }), noVote({})]);
+  // A Yes with no id is never paired from position alone.
+  keep([reasonReply({}), noVote({ vote: 'yes' })]);
+  // A deleted message is never a reason.
+  keep([reasonReply({ deleted: true }), noVote({})]);
+});
+
+test('#7216 joinVoteReasons: a plain message with no vote is returned as the same object', () => {
+  const { joinVoteReasons } = loadTsx(CHANGE_MODEL);
+  const alone = reasonReply({});
+  const out = joinVoteReasons([alone]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0], alone);
+});
+
+test('#7216 RequestRows: a handed No reason reads as the vote, with the voter and the change tag', () => {
+  const model = loadTsx(MODEL);
+  model.publishRequestChanges(7213, [{ id: 7213, number: 7213, title: 'Tidy the request rows' }]);
+  const view = {
+    lead: { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } },
+    messages: [
+      onChange({ id: 10, kind: 'message', username: 'maya', text: 'Could the list keep its order after a refresh?',
+        bodyHtml: '<p>Could the list keep its order after a refresh?</p>', at: '2026-10-08T09:40:00Z' }),
+      reasonReply({}),
+      noVote({ reasonMessageId: 11 }),
+      onChange({ id: 14, kind: 'vote', username: '', systemText: 'ana voted yes: “Small and right.”',
+        at: '2026-10-08T10:30:00Z',
+        event: voteEvent({ type: 'vote', actor: 'ana', vote: 'yes', reason: 'Small and right.' }) }),
+      onChange({ id: 15, kind: 'message', username: 'maya', text: 'Looks fine on my phone.',
+        bodyHtml: '<p>Looks fine on my phone.</p>', at: '2026-10-08T10:35:00Z' }),
+    ],
+  };
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view }, { stubs: { '../dev-board/topic/request-model': model } });
+  // The no vote and its reason are one line, the page's own words.
+  assert.match(html, /data-change-event="vote"[\s\S]*?<b>evan<\/b> voted no<span class="dev-change-event-reason">: “I do not agree with the approach\. Sorting should happen on the server\.”<\/span>/);
+  assert.match(html, /data-change-event-tag=""> · on Change #7213</, 'the change stamp stays under the line');
+  // The separate message bubble for that reason is gone.
+  assert.doesNotMatch(html, /data-msg-id="11"/);
+  assert.doesNotMatch(html, /class="gc-msg [^"]*" data-msg-id="12"/, 'the vote is a line, not a bubble');
+  // A Yes that kept its reason on the row reads the same way.
+  assert.match(html, /<b>ana<\/b> voted yes<span class="dev-change-event-reason">: “Small and right\.”<\/span>/);
+  // A plain reply on the change is still a message, with its tag.
+  assert.match(html, /data-msg-id="15" data-username="maya"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213<[\s\S]*?Looks fine on my phone\./);
 });

@@ -544,3 +544,25 @@ test('#6237: a stored line\'s "PR #N" is shown as "PR N"; requests keep "#N"', (
   assert.equal(changesOnGithub('https://git.onhomeroom.com/apps/b'), false);
   assert.equal(changesOnGithub(null), false, 'no address counts as not GitHub');
 });
+
+// #7216: the change's own page is unchanged. A No's reason handed to the bot
+// stays the voter's reply there, and the vote row stays its own line with no
+// reason; only a request's page joins them (request-thread-page.test.js).
+test('#7216 the change page still draws the reply as a message and the vote as its own line', () => {
+  const view = {
+    lead: { earlier: false, placeholder: null, language: 'change', change: { loaded: true, closed: null } },
+    messages: [
+      row({ id: 11, username: 'evan', at: '2026-10-08T10:12:00Z',
+        text: 'I do not agree with the approach. Sorting should happen on the server.',
+        bodyHtml: '<p>I do not agree with the approach. Sorting should happen on the server.</p>' }),
+      row({ id: 12, kind: 'vote', time: '10:12 AM', at: '2026-10-08T10:12:30Z',
+        event: ev({ type: 'vote', actor: 'evan', vote: 'no', reason: '', reasonMessageId: 11 }) }),
+    ],
+  };
+  const html = renderComponent(TRANSCRIPT, 'ChangeRows', { view });
+  assert.match(html, /data-msg-id="11"[\s\S]*?I do not agree with the approach\./, 'the reply is still a message');
+  assert.match(html, /data-change-event="vote"><span class="dev-request-event-glyph" aria-hidden="true">✋<\/span><span class="dev-request-event-text"><b>evan<\/b> voted no<span class="dev-request-event-time"[^>]*>10:12 AM<\/span>/,
+    'and the vote is a quiet line with no reason of its own');
+  assert.doesNotMatch(html, /dev-change-event-reason/);
+  assert.match(html, /data-change-replies="1"/, 'the reply counts once');
+});

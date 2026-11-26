@@ -148,3 +148,58 @@ export function keptOnRequest(msg: TranscriptMessage): boolean {
   if (line.kind === 'vote') return !!(msg.event && msg.event.reason);
   return true;
 }
+
+/**
+ * #7216: a No's reason on one of Homeroom bot's changes is handed to the bot
+ * as the voter's own reply (routes/votes.js), and the vote row then carries
+ * no reason, so the request's page drew those words as an ordinary message.
+ * This joins the reply back onto the vote row, so the page words it with the
+ * change page's own line ("evan voted no: “…”"), its "on change PR N" tag
+ * kept. The reply then leaves the stream.
+ *
+ * Pure: returns a new array and never mutates its input, leaving every row it
+ * does not join as the same object, so memo()'d rows keep their props. A row
+ * is joined only when all of these hold:
+ *
+ *   - it is a vote row of a change, naming who voted, with no reason;
+ *   - its reason reply is found: the row `event.reasonMessageId` names (a
+ *     non-deleted message by that voter on the same change), or, for older
+ *     rows with no id, the non-deleted message by that voter directly before
+ *     a No, on the same change, written at most two minutes earlier;
+ *   - the reply has words, and no other vote row has claimed it.
+ */
+export function joinVoteReasons(rows: TranscriptMessage[]): TranscriptMessage[] {
+  const out = rows.slice();
+  const dropped = new Set<number>();
+  const claimed = new Set<number>();
+  rows.forEach((vote, i) => {
+    const ev = vote.event;
+    const sessionId = vote.changeOf?.sessionId;
+    if (!sessionId || !ev || ev.type !== 'vote' || !ev.actor || (ev.reason && ev.reason.trim())) return;
+    let found = -1;
+    const wanted = Number(ev.reasonMessageId) || 0;
+    if (wanted > 0) {
+      const at = rows.findIndex((m) => m.id === wanted);
+      const m = at >= 0 ? rows[at] : null;
+      if (m && m.kind === 'message' && !m.deleted && m.username === ev.actor
+        && (m.changeOf?.sessionId ?? null) === sessionId) found = at;
+    } else if (ev.vote === 'no') {
+      // Older rows: the voter's message directly before the vote.
+      const at = i - 1;
+      const m = at >= 0 ? rows[at] : null;
+      if (m && m.kind === 'message' && !m.deleted && m.username === ev.actor
+        && (m.changeOf?.sessionId ?? null) === sessionId && m.at && vote.at) {
+        const gap = Date.parse(vote.at) - Date.parse(m.at);
+        if (Number.isFinite(gap) && gap >= 0 && gap <= 120_000) found = at;
+      }
+    }
+    if (found < 0 || claimed.has(found)) return;
+    const message = rows[found];
+    const reason = String(message.text || '').trim();
+    if (!reason) return;
+    claimed.add(found);
+    dropped.add(found);
+    out[i] = { ...vote, event: { ...vote.event, reason } };
+  });
+  return dropped.size ? out.filter((_, i) => !dropped.has(i)) : out;
+}

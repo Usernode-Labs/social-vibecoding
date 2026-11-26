@@ -79,7 +79,7 @@ import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
-import { changeLine, changeReplyCount, changeStream, keptOnRequest } from '../dev-board/topic/change-model';
+import { changeLine, changeReplyCount, changeStream, joinVoteReasons, keptOnRequest } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { messageMenu, messageSheet } from '../message-actions/message-menu';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
@@ -1341,7 +1341,13 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   // changes' rows are in it (`changeOf`), each tagged with its change, and
   // of what happened to a change only what keptOnRequest keeps.
   const changes = useStoreState(requestChangesStore);
-  const stream = useMemo(() => requestStream(foldRepeats(view.messages).filter((m) => !m.changeOf || keptOnRequest(m))), [view.messages]);
+  // #7216: a No's reason handed to the bot is joined back onto its vote row
+  // before the stream is filtered, so the page words it as the vote it came
+  // with (change-model.ts joinVoteReasons) rather than as a plain message.
+  const stream = useMemo(
+    () => requestStream(foldRepeats(joinVoteReasons(view.messages)).filter((m) => !m.changeOf || keptOnRequest(m))),
+    [view.messages],
+  );
   // #6519: the newest comment, with its GitHub comments, under which the
   // bot's suggested replies are still shown.
   const newest = newestComment(stream.rows, true);

@@ -266,6 +266,14 @@ export interface ProposalEvent {
   vote?: 'yes' | 'no';
   reason?: string;
   /**
+   * #7216: `vote` rows only. A No's reason on one of Homeroom bot's changes is
+   * handed to the bot as the voter's own reply (routes/votes.js), so the vote
+   * row arrives with no reason and this is the id of the reply that carried
+   * it. `joinVoteReasons` (../dev-board/topic/change-model.ts) joins the two on
+   * a request's page. Absent on older rows and on every vote not handed over.
+   */
+  reasonMessageId?: number | null;
+  /**
    * `vote` rows (#3411): the voter's vote was cast on an earlier version of
    * the proposal and no longer counts in the tally.
    */

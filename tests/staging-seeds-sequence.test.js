@@ -95,6 +95,7 @@ const BOOT_ORDER = [
   'seedStagingPublicApiContributors', 'seedStagingVisuals', 'seedStagingShotsNoticed',
   'seedStagingShotsScreens', 'seedStagingCompetingChanges', 'seedStagingShotsFailed',
   'seedStagingLeaderboardProfile', 'seedStagingGeneralChannel', 'seedStagingMergedVoteRow',
+  'seedStagingVoteReasonOnRequest',
   'seedStagingLiveChangePrivateThread', 'seedStagingOlderFirstVersionThread', 'seedStagingFirstVersionBuildingThread',
   'seedStagingRecentThreads', 'seedStagingRenamedChange', 'seedStagingScrollTestThread',
   'seedStagingGroupInviteNote', 'seedStagingGroupFacesRows', 'seedStagingFollowUpBubbles',
