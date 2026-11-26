@@ -78,7 +78,7 @@ import {
 
 import { ReactionPill } from '@/components/ui/feed';
 import {
-  ArrowUpIcon, BoldIcon, ChevronRightIcon, HashIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, QuoteIcon,
+  ArrowUpIcon, BoldIcon, ChatsIcon, ChevronRightIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, QuoteIcon,
   ReplyArrowIcon, StrikethroughIcon, ThreadIcon, UnderlineIcon,
 } from '@/components/ui/icons';
 
@@ -110,7 +110,7 @@ import {
   POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
   sortItems, toggledReactions,
   type DiscussionItem, type DiscussionPerson, type DiscussionSort, type DiscussionSource, type DiscussionSummary,
-  type EarlierFold, type LiveEvent, type Said, type SharedSpec,
+  type DiscussionReaction, type EarlierFold, type LiveEvent, type Said, type SharedSpec,
 } from './discussion-feed';
 import { takeDiscussionTarget, type DiscussionTarget } from './project-discussion';
 
@@ -153,11 +153,13 @@ interface FeedState {
   ranked: readonly number[];
   /** The ranking has more posts after `ranked`. */
   rankedMore: boolean;
+  /** The Earlier post's reactions as the viewer last changed them; null: as the summary says. */
+  earlierReactions: DiscussionReaction[] | null;
 }
 
 const EMPTY: FeedState = {
   status: 'idle', messages: new Map(), oldest: null, more: false, readId: null, opened: new Set(), busy: false,
-  ranked: [], rankedMore: true,
+  ranked: [], rankedMore: true, earlierReactions: null,
 };
 
 export class DiscussionFeed {
@@ -208,7 +210,19 @@ export class DiscussionFeed {
   }
 
   fold(): EarlierFold | null {
-    return earlierFold(this.summary);
+    const fold = earlierFold(this.summary);
+    return fold && this.state.earlierReactions ? { ...fold, reactions: this.state.earlierReactions } : fold;
+  }
+
+  /** Toggle the viewer's reaction on the Earlier post (its own anchor): drawn at once, then as the server answers. */
+  async reactEarlier(emoji: string): Promise<void> {
+    const fold = this.fold();
+    if (!fold) return;
+    const was = fold.reactions;
+    const on = !was.some((r) => r.emoji === emoji && r.reacted);
+    this.set({ earlierReactions: toggledReactions(was, emoji, this.me) });
+    const answer = await this.source.reactEarlier(emoji, on).catch(() => null);
+    this.set({ earlierReactions: answer || was });
   }
 
   /** The posts, as read so far. */
@@ -921,7 +935,10 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
   const rootId = item.kind === 'post' ? item.root.id : item.fold.lastId;
   const open = opened.has(rootId);
   const { shown, hidden } = shownReplies(item, open);
-  const hasBox = item.replyCount > 0 || replying;
+  // A member always has the reply field under a post; a visitor reads the replies there are.
+  const room = useContext(RoomContext);
+  const canReply = !room.visitor && !!viewer;
+  const hasBox = item.replyCount > 0 || canReply || replying;
   const startReply = () => {
     setReplying(true);
     // The box is drawn on the next render; focus it once it is there.
@@ -939,15 +956,12 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
     <div className="dh-thread" data-ws-discussion-thread={item.key}>
       {item.kind === 'post' ? (
         <Message said={item.root} feed={feed} me={me} className="dh-post" marked={marked === item.root.id} onReply={startReply}>
-          <PostHeader item={item} readId={readId} me={me} onReply={startReply} />
+          <PostHeader item={item} readId={readId} me={me} />
           <PostWords item={item} />
           <Pills said={item.root} feed={feed} me={me} />
         </Message>
       ) : (
-        <article className="dh-post dh-post-earlier" data-ws-discussion-earlier="">
-          <PostHeader item={item} readId={readId} me={me} onReply={startReply} />
-          <PostWords item={item} />
-        </article>
+        <EarlierPost item={item} feed={feed} me={me} readId={readId} canReact={canReply} onReply={startReply} />
       )}
       {hasBox ? (
         <div className="dh-replies" data-ws-discussion-replies={String(item.replyCount)}>
@@ -990,18 +1004,20 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               ) : null}
             </Message>
           ))}
-          <Composer
-            kind="reply"
-            boxRef={replyBox}
-            viewer={viewer}
-            placeholder={t('project:hub.discussion.reply.placeholder')}
-            label={item.kind === 'post'
-              ? t('project:hub.discussion.reply.label', { username: nameOf(item.root.who) })
-              : t('project:hub.discussion.reply.labelEarlier')}
-            sendLabel={t('project:hub.discussion.reply.send')}
-            onSend={(words, ids) => feed.write(words, rootId, ids)}
-            upload={(file) => feed.source.upload(file)}
-          />
+          {canReply ? (
+            <Composer
+              kind="reply"
+              boxRef={replyBox}
+              viewer={viewer}
+              placeholder={t('project:hub.discussion.reply.placeholder')}
+              label={item.kind === 'post'
+                ? t('project:hub.discussion.reply.label', { username: nameOf(item.root.who) })
+                : t('project:hub.discussion.reply.labelEarlier')}
+              sendLabel={t('project:hub.discussion.reply.send')}
+              onSend={(words, ids) => feed.write(words, rootId, ids)}
+              upload={(file) => feed.source.upload(file)}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1009,9 +1025,99 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
 }
 
 /**
- * An old message's own reply thread, inside the Earlier post: how many
- * replies it has in #general. The last old message's thread also holds what
- * was written into the Earlier post since, which the post shows itself.
+ * The Earlier post: not a message, but reacted to and replied to as one.
+ * Its reactions hang on its project's own anchor (DiscussionFeed.reactEarlier),
+ * through the same hover bar and long-press sheet a post has; its replies
+ * box is the one under it.
+ */
+function EarlierPost({ item, feed, me, readId, canReact, onReply }: {
+  item: DiscussionItem;
+  feed: DiscussionFeed;
+  me: string | null;
+  readId: number | null;
+  canReact: boolean;
+  onReply: () => void;
+}): ReactNode {
+  const tm = useMessages('messages');
+  const t = useMessages('project');
+  const recents = useRecentReactions();
+  const [picking, setPicking] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const bar = useRef<HTMLDivElement | null>(null);
+  const pickerButton = useRef<HTMLButtonElement | null>(null);
+  useDismiss(picking, [bar], () => setPicking(false));
+  const press = useLongPress(() => setSheet(true), { disabled: !canReact });
+  if (item.kind !== 'earlier') return null;
+  const reactions = item.fold.reactions;
+  const reacted = (emoji: string) => reactions.some((r) => r.emoji === emoji && r.reacted);
+  const react = (emoji: string) => { rememberReaction(emoji); void feed.reactEarlier(emoji); };
+  return (
+    <article className="dh-post dh-post-earlier dh-msg" data-ws-discussion-earlier="" {...(canReact ? press : {})}>
+      <PostHeader item={item} readId={readId} me={me} />
+      <PostWords item={item} />
+      {reactions.length ? (
+        <div className="dh-pills" data-ws-discussion-earlier-reactions="">
+          {reactions.map((r) => (
+            <ReactionPill
+              key={r.emoji}
+              emoji={r.emoji}
+              count={r.count}
+              tone={r.reacted ? 'accent' : 'neutral'}
+              className="dh-pill"
+              title={r.users.join(', ')}
+              aria-pressed={r.reacted}
+              aria-label={r.reacted
+                ? tm('messages:actions.removeReaction', { emoji: emojiName(r.emoji) })
+                : tm('messages:actions.reactWith', { emoji: emojiName(r.emoji) })}
+              disabled={!canReact}
+              data-emoji={r.emoji}
+              onClick={() => react(r.emoji)}
+            />
+          ))}
+        </div>
+      ) : null}
+      {canReact ? (
+        <MessageActionBar
+          className="dh-actions"
+          barRef={bar}
+          recents={recents}
+          reacted={reacted}
+          onReact={react}
+          pickerOpen={picking}
+          onTogglePicker={() => setPicking((v) => !v)}
+          pickerButtonRef={pickerButton}
+          onReply={onReply}
+        >
+          {picking ? (
+            <EmojiPicker
+              placement="below"
+              autoFocus={!isTouchInput()}
+              onPick={(emoji) => { setPicking(false); react(emoji); }}
+              onClose={() => setPicking(false)}
+            />
+          ) : null}
+        </MessageActionBar>
+      ) : null}
+      {canReact ? (
+        <MessageActionSheet
+          open={sheet}
+          onClose={() => setSheet(false)}
+          recents={recents}
+          reacted={reacted}
+          onReact={(emoji) => { setSheet(false); react(emoji); }}
+          onPick={react}
+          items={messageSheet({ reply: () => { setSheet(false); onReply(); } }, [])}
+          preview={{ who: t('project:hub.discussion.earlier.title'), text: t('project:hub.discussion.earlier.body') }}
+        />
+      ) : null}
+    </article>
+  );
+}
+
+/**
+ * An older message's own replies, inside the Earlier post: how many it has.
+ * The last older message's thread also holds what was written into the
+ * Earlier post since, which the post shows itself.
  */
 function oldThreadCount(item: DiscussionItem, said: Said): number {
   if (item.kind !== 'earlier' || said.id !== item.fold.lastId) return said.replyCount;
@@ -1019,37 +1125,34 @@ function oldThreadCount(item: DiscussionItem, said: Said): number {
 }
 
 /** A post's one header line: face, name, time, the new dot, and the replies at its far end. */
-function PostHeader({ item, readId, me, onReply }: {
+function PostHeader({ item, readId, me }: {
   item: DiscussionItem;
   readId: number | null;
   me: string | null;
-  /** Absent in the phone's preview, where the whole row opens the page. */
-  onReply?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const fresh = isNewTo(item, readId, me);
   const count = item.replyCount;
+  // Its replies, counted, at the far end; a post with none says nothing
+  // there: a member's reply field is always under it.
   const tail = count > 0 ? (
-    <span className="dh-count">
-      <ThreadIcon aria-hidden="true" />
-      {t('project:hub.discussion.replies', { count })}
+    <span className="dh-tail">
+      <span className="dh-count">
+        <ThreadIcon aria-hidden="true" />
+        {t('project:hub.discussion.replies', { count })}
+      </span>
     </span>
-  ) : (
-    <span className="dh-count dh-count-none">
-      <ThreadIcon aria-hidden="true" />
-      {t('project:hub.discussion.reply')}
-    </span>
-  );
+  ) : null;
   if (item.kind === 'earlier') {
     const { from, to } = item.fold;
     const range = from && to ? t('project:hub.discussion.earlier.range', { from: shortDate(from), to: shortDate(to) }) : '';
     return (
       <div className="dh-head">
-        <span className="dh-earlier-mark" aria-hidden="true"><HashIcon /></span>
+        <span className="dh-earlier-mark" aria-hidden="true"><ChatsIcon /></span>
         <b className="dh-name">{t('project:hub.discussion.earlier.title')}</b>
         {range ? <span className="dh-time">{range}</span> : null}
         {fresh ? <NewDot /> : null}
-        {onReply && count === 0 ? <button type="button" className="dh-tail" onClick={onReply}>{tail}</button> : <span className="dh-tail">{tail}</span>}
+        {tail}
       </div>
     );
   }
@@ -1060,7 +1163,7 @@ function PostHeader({ item, readId, me, onReply }: {
       <b className="dh-name">{nameOf(item.root.who)}</b>
       <span className="dh-time" title={stamp.title}>{stamp.text}</span>
       {fresh ? <NewDot /> : null}
-      {onReply && count === 0 ? <button type="button" className="dh-tail" data-ws-discussion-reply="" onClick={onReply}>{tail}</button> : <span className="dh-tail">{tail}</span>}
+      {tail}
     </div>
   );
 }

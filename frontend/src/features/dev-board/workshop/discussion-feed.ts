@@ -124,7 +124,14 @@ export interface Said {
 export interface DiscussionSummary {
   since: string | null;
   fold_at?: number;
-  earlier: { count: number; from: string | null; to: string | null; last_id: number | null } | null;
+  earlier: {
+    count: number;
+    from: string | null;
+    to: string | null;
+    last_id: number | null;
+    /** The Earlier post's own reactions, on its project's anchor. */
+    reactions?: Array<{ emoji: string; count: number; users?: string[]; reacted?: boolean }>;
+  } | null;
 }
 
 /** The fold, when it applies: the history from before Discussion is one post. */
@@ -134,6 +141,8 @@ export interface EarlierFold {
   to: string | null;
   lastId: number;
   since: string;
+  /** Its own reactions (the post is not a message: they hang on its project's anchor). */
+  reactions: DiscussionReaction[];
 }
 
 export interface DiscussionPost {
@@ -178,7 +187,13 @@ export function earlierFold(summary: DiscussionSummary | null | undefined): Earl
   const at = Number.isFinite(Number(summary.fold_at)) && Number(summary.fold_at) > 0 ? Number(summary.fold_at) : EARLIER_FOLD_AT;
   const { count, from, to, last_id: lastId } = summary.earlier;
   if (!(Number(count) > at) || !lastId) return null;
-  return { count: Number(count), from: from || null, to: to || null, lastId: Number(lastId), since: summary.since };
+  const reactions = (summary.earlier.reactions || []).map((r) => ({
+    emoji: String(r.emoji || ''),
+    count: Number(r.count) || 0,
+    reacted: !!r.reacted,
+    users: Array.isArray(r.users) ? r.users.map(String) : [],
+  })).filter((r) => r.emoji && r.count > 0);
+  return { count: Number(count), from: from || null, to: to || null, lastId: Number(lastId), since: summary.since, reactions };
 }
 
 /** Pure: whether a message belongs to the folded history (or answers it). */
@@ -454,6 +469,8 @@ export interface DiscussionSource {
   post(content: string, rootId: number | null, attachmentIds?: string[]): Promise<Said | null>;
   /** Take a file in through the room's own upload route (its limits); the id a post carries it by. */
   upload(file: File): Promise<string>;
+  /** Put an emoji on the Earlier post or take it off: its reactions after, or null on a refusal. */
+  reactEarlier(emoji: string, on: boolean): Promise<DiscussionReaction[] | null>;
   react(messageId: number, emoji: string, on: boolean): Promise<DiscussionReaction[] | null>;
   /** Where the viewer's reading stands, when the page did not say. */
   readPosition(): Promise<number | null>;
@@ -537,6 +554,17 @@ export function liveFromConversationEvent(event: unknown, conversationId: number
 /** Wait before a dropped socket is opened again, doubling to the cap. */
 export const LIVE_RETRY_MS = 1000;
 export const LIVE_RETRY_MAX_MS = 30_000;
+
+/** The Earlier post's reactions, the same route for either room: the project's own anchor. */
+async function earlierReact(slug: string, emoji: string, on: boolean, me: string | null): Promise<DiscussionReaction[] | null> {
+  const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/discussion/earlier/reactions`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ emoji, on }),
+  });
+  if (!response.ok) return null;
+  const data = await readJson(response);
+  return appReactions(data.reactions, me);
+}
 
 /** The "Most replies" read both rooms share: the project's own address answers for either. */
 async function rankedRead(slug: string, afterId: number, offset: number, limit: number): Promise<{ ids: number[]; more: boolean }> {
@@ -721,6 +749,9 @@ export function appSource(slug: string, viewer: { current: string | null }): Dis
     ranked(afterId, offset, limit) {
       return rankedRead(slug, afterId, offset, limit);
     },
+    reactEarlier(emoji, on) {
+      return earlierReact(slug, emoji, on, viewer.current);
+    },
     live(heard) {
       return appSocket(slug, viewer, heard);
     },
@@ -810,6 +841,9 @@ export function conversationSource(conversationId: number, slug: string): Discus
     },
     ranked(afterId, offset, limit) {
       return rankedRead(slug, afterId, offset, limit);
+    },
+    reactEarlier(emoji, on) {
+      return earlierReact(slug, emoji, on, null);
     },
     // The page's events socket names what changed in the room (public/js/app.js
     // relays it as `usernode:conversation-changed`); the feed reads it again.
