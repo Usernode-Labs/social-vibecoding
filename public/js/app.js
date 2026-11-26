@@ -9372,7 +9372,13 @@ const App = {
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
     window.UsernodeReact?.headerTitle?.set?.(text, subtitle);
-    document.title = subtitle ? `${text} · ${subtitle}` : text;
+    // Request #7164: a project's page and a request's page name themselves
+    // in the tab (features/header/document-title.ts), since the header's
+    // text is not theirs: it stayed "Communities" or "Homeroom" there. On
+    // every other screen that answers nothing and the header's text is it.
+    let named = null;
+    try { named = window.UsernodeReact?.documentTitle?.named?.() || null; } catch (_) { named = null; }
+    document.title = named || (subtitle ? `${text} · ${subtitle}` : text);
     // The plain title assignment above wiped Notifications' "(N) " unread
     // prefix: let it re-apply.
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {

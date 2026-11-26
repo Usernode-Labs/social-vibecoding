@@ -6539,14 +6539,19 @@ const AppView = {
       // left can never take on the new route's pill or thread list.
       const slug = (AppView.appData && AppView.appData.slug) || null;
       const route = AppView._topicRoute();
+      // Request #7164: the page's own name, for the browser tab's title
+      // (features/header/document-title.ts), which says the request and
+      // the project where it used to keep the last screen's name.
+      const title = String(item.title || item.session_title || item.pr_title || '');
       react.publishTopicHead(t.kind === 'gov'
-        ? { card: null, body: { decision: item }, item: null, slug, route, loading: false }
+        ? { card: null, body: { decision: item }, item: null, slug, route, title, loading: false }
         : {
           card,
           body,
           item: t.kind === 'session' || t.kind === 'proposal' ? item : null,
           slug,
           route,
+          title,
           loading: false,
         });
       AppView._paintedTopic = { kind: t.kind, id: t.id, slug };
