@@ -1481,7 +1481,10 @@ test('the screen renders as the prerender does: hidden, the bot\'s name, New cha
   const html = renderComponent('frontend/src/features/ai/index.tsx', 'AiScreen', {});
   // (React hoists the bot's picture as an image preload ahead of it.)
   assert.match(html, /^(<link rel="preload" as="image" href="\/brand\/homeroom-mark\.png"\/>)?<main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce=""/);
-  assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
+  // A level-1 heading by role, not an <h1>: this render is in the served
+  // page while the screen is hidden (request #7166, point 4).
+  assert.match(html, /<div role="heading" aria-level="1" class="sr-only">Homeroom bot<\/div>/);
+  assert.doesNotMatch(html, /<h1[\s>]/);
   assert.match(html, /Needs you/);
   assert.match(html, /<a href="#homeroom-bot\/new" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
   assert.ok(!html.includes('data-ai-line'), 'no rows before the effects read them');

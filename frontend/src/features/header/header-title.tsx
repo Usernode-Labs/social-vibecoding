@@ -15,7 +15,7 @@
  * What survives from the chip, unchanged, is everything that was about the
  * NAME rather than about the button:
  *
- *   - the h1 and its className, byte for byte, because
+ *   - the heading's node and its className, byte for byte, because
  *     ./use-header-layout.ts toggles `.is-centered` on this node via
  *     classList and a re-rendered class attribute would drop it;
  *   - `pointer-events-none`, so the heading's overlap never eats a tap meant
@@ -72,6 +72,20 @@
  * (`#header-scope-switch`, #3271, #852), opening Your communities. One Home
  * (#6361) gave that list to Home and left the screen as Needs you, a page
  * whose bar says its name, so the switcher left the bar with it.
+ *
+ * ── A level-1 heading only when it has words (request #7166, point 4) ──
+ *
+ * This was an <h1>, and the served document carried it on every address
+ * holding nothing but the logotype's drawing, which is aria-hidden: a
+ * level-1 heading with no name, the first of three in the page. It is a
+ * <div> now, and `role="heading" aria-level="1"` is put on it only while it
+ * names something: a screen's title, a community, or the platform on one of
+ * its own signed-in places (the tab bar's screens), where an sr-only copy
+ * of the word sits under the drawing. One node whatever it says, so
+ * `.is-centered` survives; the prerender and the first client render have no
+ * screen yet, so both draw the bare logotype with no role. The signed-out
+ * landing publishes a screen that is not one of the tab bar's, so its
+ * headline stays the page's one level-1 heading.
  */
 
 import type { RefObject } from 'react';
@@ -83,7 +97,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
-import { navStore } from '../nav/nav-store.js';
+import { navStore, TAB_FOR_SCREEN } from '../nav/nav-store.js';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
@@ -97,7 +111,7 @@ import { useSidebarRows } from '../nav/sidebar-rows';
 // anything from anywhere.
 const PLATFORM_NAME = 'Homeroom';
 
-export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
+export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLDivElement | null> }) {
   const t = useMessages();
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
@@ -140,6 +154,12 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const appSwitch = communityPage && !sidebarRows;
   // Beside the sidebar, the community's name where the switcher would be.
   const communityName = communityPage && sidebarRows;
+  // The bare logotype: the drawing is aria-hidden, so nothing here is a
+  // name unless the screen is one of the platform's own signed-in places,
+  // where the word is added for a screen reader (see the header comment).
+  const bareMark = showsWordmark && !communityName && !appSwitch && !drawerOn;
+  const namesPlatform = bareMark && !!screen && Object.hasOwn(TAB_FOR_SCREEN, screen);
+  const isHeading = !bareMark || namesPlatform;
   const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
@@ -164,9 +184,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   ) : null;
 
   return (
-    <h1
+    <div
       ref={titleRef}
       id="header-title"
+      role={isHeading ? 'heading' : undefined}
+      aria-level={isHeading ? 1 : undefined}
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-start"}
       /* #6118: a community's name the bar ellipsises is readable on hover.
          On the heading rather than the name span so the switcher's own
@@ -225,11 +247,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
             <span id="header-title-name" className="min-w-0 truncate">
-              {/* `aria-hidden` on the mark: the h1 takes its accessible name
-                  from its contents, and the drawing IS the word "Homeroom" — a
-                  title element or an sr-only span here would have it read
-                  twice. The heading is still named, because `text` is what the
-                  screens beside it publish.
+              {/* `aria-hidden` on the mark: the drawing is decoration to a
+                  screen reader. Where the bar is the page's heading (one of
+                  the platform's own signed-in places) an sr-only copy of the
+                  word names it; anywhere else the bare drawing is not a
+                  heading at all (request #7166).
 
                   BESIDE THE SIDEBAR, ON A COMMUNITY'S PAGE, the community's
                   own name (the switcher's words, without the switch), and
@@ -240,7 +262,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   ? <><Wordmark className="h-5 w-[77.5px]" aria-hidden="true" /><span className="sr-only">{name || text}</span></>
                   : name || text)
                 : showsWordmark
-                  ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
+                  ? <><Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />{namesPlatform ? <span className="sr-only">{text}</span> : null}</>
                   : text}
             </span>
             {/* The place's name beside the sidebar too, for a look that names the page in this bar (app.css shows it; hidden everywhere else). */}
@@ -258,6 +280,6 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
         )}
       </span>
       )}
-    </h1>
+    </div>
   );
 }

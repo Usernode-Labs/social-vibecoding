@@ -239,7 +239,7 @@ export function PlatformHeader() {
   // previousElementSibling / nextElementSibling walk.
   const headerRef = useRef<HTMLElement>(null);
   const leftGroupRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
