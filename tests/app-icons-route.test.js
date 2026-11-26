@@ -184,11 +184,24 @@ test('an icon asked for with ?w= comes as a smaller WebP, made once; with no w i
     assert.ok(body.length * 4 < big.length, `${body.length} bytes against ${big.length}`);
     assert.equal(reads, 1);
 
-    // Kept: the same copy again, and a width that rounds up to it, read nothing.
+    // Kept: the same copy again, and a width that rounds up to it.
     const again = Buffer.from(await (await fetch(`${at}?w=192`)).arrayBuffer());
     const rounded = Buffer.from(await (await fetch(`${at}?w=130`)).arrayBuffer());
     assert.ok(again.equals(body) && rounded.equals(body));
-    assert.equal(reads, 1, 'a kept copy asks the database nothing');
+    assert.equal(reads, 3, 'the stored row is still read on every request');
+
+    // Deleted: a 404, though a copy of it was kept a moment ago.
+    const keep = poolQueryHandler;
+    poolQueryHandler = async () => ({ rows: [] });
+    assert.equal((await fetch(`${at}?w=192`)).status, 404, 'a deleted picture is not answered from memory');
+    assert.equal((await fetch(at)).status, 404);
+    // Replaced under the same id: the new bytes' copy, never the old one.
+    const other = picturePng(640, 320);
+    poolQueryHandler = async () => ({ rows: [{ content_type: 'image/png', data: other }] });
+    const fresh = Buffer.from(await (await fetch(`${at}?w=192`)).arrayBuffer());
+    assert.ok(isWebp(fresh) && !fresh.equals(body));
+    assert.equal((await require('sharp')(fresh).metadata()).height, 96);
+    poolQueryHandler = keep;
 
     // No width, or one that is not a number: the stored file, as before.
     for (const plain of ['', '?w=', '?w=big', '?w=192&w=96', '?size=192']) {
@@ -270,9 +283,8 @@ test('a community picture takes ?w= the same way', async () => {
     }
     assert.ok(sizes[512] < sizes[1024] && sizes[1024] < big.length);
     assert.equal(reads, 3);
-    await fetch(`${at}?w=512`);
-    assert.equal(reads, 3, 'kept');
     poolQueryHandler = async () => ({ rows: [] });
+    assert.equal((await fetch(`${at}?w=512`)).status, 404, 'deleted: not answered from the kept copy');
     assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/app-illustrations/${'2'.repeat(32)}?w=512`)).status, 404);
   } finally {
     server.close();
@@ -280,46 +292,52 @@ test('a community picture takes ?w= the same way', async () => {
 });
 
 test('copies are kept within a bound, one resize is shared, and a full queue sends the stored file', async () => {
-  const big = picturePng(600, 600);
-  const source = { contentType: 'image/png', data: big };
-  // One resize for two askers at once.
-  let loads = 0;
+  const source = (seed) => ({ contentType: 'image/png', data: picturePng(600, 600 + seed) });
+  const one = source(1);
   const sizer = pictureSizes.createSizer();
-  const load = async () => { loads += 1; return source; };
-  const [a, b] = await Promise.all([sizer.sized('k', 96, load), sizer.sized('k', 96, load)]);
-  assert.ok(a && a === b);
-  assert.equal(loads, 1);
+  const [a, b] = await Promise.all([sizer.sized('k', 96, one), sizer.sized('k', 96, one)]);
+  assert.ok(a && a === b, 'one resize for two askers at once');
+  assert.equal(sizer.stats().entries, 1);
+  assert.equal(await sizer.sized('k', 96, one), a, 'kept');
+  // Other bytes under the same key are another copy.
+  const changed = await sizer.sized('k', 96, source(2));
+  assert.ok(changed && changed !== a);
+  assert.equal(sizer.stats().entries, 2);
+  // Forgetting a picture drops its copies and no other's.
+  await sizer.sized('k2', 96, one);
+  sizer.forget('k');
+  assert.deepEqual(sizer.stats(), { entries: 1, bytes: a.data.length, running: 0, waiting: 0 });
+  assert.equal(await sizer.sized('k', 96, null), null, 'nothing stored, nothing sized');
 
   // A small bound drops the least recently used copy.
   const small = pictureSizes.createSizer({ cacheBytes: a.data.length * 2 + 10 });
-  await small.sized('one', 96, load);
-  await small.sized('two', 96, load);
-  await small.sized('one', 96, load);
-  await small.sized('three', 96, load);
+  const first = await small.sized('one', 96, one);
+  const second = await small.sized('two', 96, one);
+  assert.equal(await small.sized('one', 96, one), first);
+  await small.sized('three', 96, one);
   assert.equal(small.stats().entries, 2);
   assert.ok(small.stats().bytes <= a.data.length * 2 + 10);
-  loads = 0;
-  await small.sized('one', 96, load);
-  assert.equal(loads, 0, 'the one just used was kept');
-  await small.sized('two', 96, load);
-  assert.equal(loads, 1, 'the oldest was dropped');
+  assert.equal(await small.sized('one', 96, one), first, 'the one just used was kept');
+  assert.notEqual(await small.sized('two', 96, one), second, 'the oldest was dropped and made again');
 
   // One at a time and nobody waiting: the second asker gets the stored file.
   let release;
   const held = new Promise((resolve) => { release = resolve; });
-  const busy = pictureSizes.createSizer({ concurrent: 1, queue: 0 });
-  const first = busy.sized('slow', 96, async () => { await held; return source; });
+  const slow = (buffer) => ({ metadata: async () => { await held; return require('sharp')(buffer).metadata(); } });
+  const real = require('sharp');
+  let calls = 0;
+  const busy = pictureSizes.createSizer({
+    concurrent: 1,
+    queue: 0,
+    sharp: (buffer, options) => { calls += 1; return calls === 1 ? slow(buffer) : real(buffer, options); },
+  });
+  const waiting = busy.sized('slow', 96, one);
   await new Promise((resolve) => setImmediate(resolve));
-  let asked = false;
-  assert.equal(await busy.sized('other', 96, async () => { asked = true; return source; }), null);
-  assert.equal(asked, false);
+  assert.equal(await busy.sized('other', 96, one), null);
   release();
-  assert.ok(await first);
-  assert.ok(await busy.sized('other', 96, load), 'and is served once there is room');
+  assert.ok(await waiting);
+  assert.ok(await busy.sized('other', 96, one), 'and is served once there is room');
 
-  // No library: the stored file, without reading it here.
-  const none = pictureSizes.createSizer({ sharp: null });
-  assert.equal(await none.sized('k', 96, async () => { throw new Error('not read'); }), null);
-  // A read that fails is the route's to report.
-  assert.equal(await sizer.sized('gone', 96, async () => { throw new Error('database down'); }), null);
+  // No library: the stored file.
+  assert.equal(await pictureSizes.createSizer({ sharp: null }).sized('k', 96, one), null);
 });

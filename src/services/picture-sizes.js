@@ -14,8 +14,11 @@
 //     a softer picture; anything that is not a whole number is no request at
 //     all, and the route answers with the stored file as it always did.
 //   - A copy is made once and kept in memory (CACHE_BYTES at most, the least
-//     recently used dropped first). An id never changes its bytes, so a kept
-//     copy is never stale and a hit reads nothing from the database.
+//     recently used dropped first), under the picture's id AND the hash of
+//     its stored bytes. The route reads the stored row on every request, as
+//     it does with no `w`, before a kept copy is looked at: a picture that
+//     is gone answers 404 whatever is kept (and its copies are dropped), and
+//     bytes that changed under an id never match a copy of the old ones.
 //   - Two requests for the same copy share one resize, at most CONCURRENT
 //     resizes run at once and at most QUEUE wait; past that the stored file
 //     is sent instead.
@@ -32,6 +35,7 @@
 // `sharp` is the library the shots' sized copies already use
 // (services/shots-sized.js).
 
+const crypto = require('node:crypto');
 const log = require('./logger');
 
 const WIDTHS = Object.freeze([96, 192, 512, 1024]);
@@ -119,12 +123,14 @@ function createSizer({ sharp: given, cacheBytes = CACHE_BYTES, cacheEntries = CA
 
   /**
    * The copy of picture `key` at `width`, or null when the stored file is
-   * what to send. `load` reads the stored file, `{ contentType, data }` or
-   * null when there is none; it is not called when the copy is already kept.
-   * A null from a missing picture or a busy queue is not remembered.
+   * what to send. `source` is the stored file the route has just read,
+   * `{ contentType, data }`: a copy is only ever answered for bytes that are
+   * there now. A null from a busy queue is not remembered.
    */
-  async function sized(key, width, load) {
-    const name = `${key}:${width}`;
+  async function sized(key, width, source) {
+    if (!source || !Buffer.isBuffer(source.data) || !source.data.length) return null;
+    const version = crypto.createHash('sha256').update(source.data).digest('hex');
+    const name = `${key}:${version}:${width}`;
     if (kept.has(name)) {
       const copy = kept.get(name);
       kept.delete(name);
@@ -137,8 +143,6 @@ function createSizer({ sharp: given, cacheBytes = CACHE_BYTES, cacheEntries = CA
       if (!sharp) return null;
       if (!(await turn())) return null;
       try {
-        const source = await load();
-        if (!source || !Buffer.isBuffer(source.data) || !source.data.length) return null;
         let copy = null;
         if (SIZABLE.has(source.contentType)) {
           try {
@@ -156,18 +160,24 @@ function createSizer({ sharp: given, cacheBytes = CACHE_BYTES, cacheEntries = CA
     making.set(name, work);
     try {
       return await work;
-    } catch (err) {
-      log.warn('pictures', 'A sized picture could not be read', { key, width, err: err.message });
-      return null;
     } finally {
       making.delete(name);
     }
   }
 
-  return { sized, stats: () => ({ entries: kept.size, bytes, running, waiting: waiting.length }) };
+  /** Drops every kept copy of picture `key`: its row is gone. */
+  function forget(key) {
+    for (const [name, copy] of kept) {
+      if (!name.startsWith(`${key}:`)) continue;
+      kept.delete(name);
+      bytes -= copy?.data.length || 0;
+    }
+  }
+
+  return { sized, forget, stats: () => ({ entries: kept.size, bytes, running, waiting: waiting.length }) };
 }
 
 // The one the routes share: a pod keeps one set of copies.
 const shared = createSizer();
 
-module.exports = { WIDTHS, WEBP, widthFor, createSizer, sized: shared.sized };
+module.exports = { WIDTHS, WEBP, widthFor, createSizer, sized: shared.sized, forget: shared.forget };

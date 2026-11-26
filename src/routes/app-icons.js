@@ -36,30 +36,29 @@ function appIconRoutes(config) {
   const pool = getPool(config);
 
   // `?w=` asks for a smaller copy (services/picture-sizes.js): a WebP no
-  // wider than one of its few widths, made once and kept. With no `w`, or
+  // wider than one of its few widths, made once and kept. The id is a public,
+  // unguessable address with no viewer check, sized or not. With no `w`, or
   // when no smaller copy can be made, the stored file is sent as before.
   router.get('/app-icons/:id', async (req, res) => {
     const id = String(req.params.id || '');
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
     try {
-      let stored;
-      const read = async () => {
-        const { rows } = await pool.query(
-          'SELECT content_type, data FROM app_icons WHERE id = $1',
-          [id]
-        );
-        stored = rows.length && rows[0].data ? rows[0] : null;
-        return stored;
-      };
+      // Read on every request, sized or not: a kept copy is never answered
+      // for a picture that is no longer stored.
+      const { rows } = await pool.query(
+        'SELECT content_type, data FROM app_icons WHERE id = $1',
+        [id]
+      );
+      const stored = rows.length && rows[0].data ? rows[0] : null;
       const width = pictureSizes.widthFor(req.query.w);
+      if (!stored) {
+        if (width) pictureSizes.forget(`icon:${id}`);
+        return res.status(404).end();
+      }
       const copy = width
-        ? await pictureSizes.sized(`icon:${id}`, width, async () => {
-          const row = await read();
-          return row && { contentType: row.content_type, data: row.data };
-        })
+        ? await pictureSizes.sized(`icon:${id}`, width, { contentType: stored.content_type, data: stored.data })
+          .catch(() => null)
         : null;
-      if (!copy && stored === undefined) await read();
-      if (!copy && !stored) return res.status(404).end();
       // #2515: the type here is a STORED value, so a file whose recorded
       // content_type says image/* while its bytes are markup must not be
       // sniffed into HTML on the platform's own origin.

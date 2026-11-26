@@ -70,25 +70,23 @@ function illustrationImageRoutes(config) {
       // An id names either a published image or one a proposal is still
       // carrying (#2086): the card previews the proposed image from the same
       // URL it will keep once the vote applies it.
-      let stored;
-      const read = async () => {
-        const { rows } = await pool.query(`SELECT content_type, data FROM app_illustrations WHERE id = $1
+      // Read on every request, sized or not: a kept copy is never answered
+      // for a picture that is no longer stored.
+      const { rows } = await pool.query(`SELECT content_type, data FROM app_illustrations WHERE id = $1
         UNION ALL SELECT dark_content_type AS content_type, dark_data AS data FROM app_illustrations WHERE dark_id = $1
         UNION ALL SELECT content_type, data FROM app_illustration_proposals WHERE id = $1
         UNION ALL SELECT dark_content_type AS content_type, dark_data AS data FROM app_illustration_proposals WHERE dark_id = $1`,
-        [id]);
-        stored = rows.length ? rows[0] : null;
-        return stored;
-      };
+      [id]);
+      const stored = rows.length ? rows[0] : null;
       const width = pictureSizes.widthFor(req.query.w);
+      if (!stored) {
+        if (width) pictureSizes.forget(`illustration:${id}`);
+        return res.status(404).end();
+      }
       const copy = width
-        ? await pictureSizes.sized(`illustration:${id}`, width, async () => {
-          const row = await read();
-          return row && { contentType: row.content_type, data: row.data };
-        })
+        ? await pictureSizes.sized(`illustration:${id}`, width, { contentType: stored.content_type, data: stored.data })
+          .catch(() => null)
         : null;
-      if (!copy && stored === undefined) await read();
-      if (!copy && !stored) return res.status(404).end();
       res.set('Content-Type', copy ? copy.contentType : stored.content_type);
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
