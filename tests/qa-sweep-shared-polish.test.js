@@ -77,7 +77,9 @@ test('Q30e: on a phone the Edit button drops under the name, lined up with it', 
   const card = src.slice(at, src.indexOf('</Button>', at));
   assert.match(card, /<div className="flex flex-col gap-3 sm:flex-row sm:items-center">/,
     'stacked below sm, one row from sm up');
-  assert.match(card, /className="self-start ms-\[68px\] sm:self-auto sm:ms-0"/,
+  // The button's place is its group's now (request 7217): Edit profile, Admin
+  // and Sign out together.
+  assert.match(card, /<div id="profile-id-actions" className="flex flex-wrap items-center gap-2 self-start ms-\[68px\] sm:self-auto sm:ms-0">/,
     'under the text column: the 56px avatar plus the 12px gap, at the start edge');
   assert.match(card, /font-bold break-words line-clamp-2">\{identity\.name\}/,
     'a long name wraps to two lines rather than losing its end');
