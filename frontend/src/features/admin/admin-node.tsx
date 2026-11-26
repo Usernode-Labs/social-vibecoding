@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 // depended on <script> order (admin-console.js loaded first); inside the
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
+import { Figures, ScreenHeader } from './topochain/ui.tsx';
 import { messageStamp } from '../../lib/timestamp';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
@@ -40,6 +41,12 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // check (tests/admin-heavy-sections-island.test.js pins it), and the rest are
 // kept for the same reason the e2e conversion kept its four — so this diff
 // stays a renderer swap rather than a rewrite.
+//
+// The header and the row of figures come from the shared admin kit since
+// 26 Nov 2026, so this page opens like every other. Both read only the
+// snapshot the poll already fetches, which is public, so the signed-out
+// view draws them too. The three cards keep their label and value grids:
+// the kit has no part for a list of label and value pairs.
 
 const POLL_MS = 2000;
 
@@ -367,22 +374,51 @@ function NodeSection() {
   if (srv.nodeRpcUrl) bits.push(`sidecar ${srv.nodeRpcUrl}`);
   if (srv.explorerHost) bits.push(`explorer ${srv.explorerHost}`);
 
+  const node = snap ? snap.node : null;
+  const services = (snap && snap.services) || {};
+
   return (
     <div id="admin-node-root">
-      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h2 id="admin-node-server-name" className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            {snap ? (srv.name || 'usernode-social-vibecoding') : 'Loading…'}
-          </h2>
-          <div className="mb-6 text-[13px] text-zinc-500 dark:text-zinc-400" id="admin-node-server-meta">
-            {snap ? bits.join(' · ') : ''}
+      <ScreenHeader
+        title="Node & chain"
+        subtitle={(
+          <>
+            <span id="admin-node-server-name" className="font-medium text-zinc-900 dark:text-zinc-100">
+              {snap ? (srv.name || 'usernode-social-vibecoding') : 'Loading…'}
+            </span>
+            {snap ? ' · ' : ''}
+            <span id="admin-node-server-meta">{snap ? bits.join(' · ') : ''}</span>
+          </>
+        )}
+        actions={(
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400" id="admin-node-conn">
+            <span id="admin-node-led" className={LED[conn]} />
+            <span id="admin-node-conn-text">{CONN_TEXT[conn]}</span>
           </div>
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400" id="admin-node-conn">
-          <span id="admin-node-led" className={LED[conn]} />
-          <span id="admin-node-conn-text">{CONN_TEXT[conn]}</span>
-        </div>
-      </div>
+        )}
+      />
+
+      <Figures
+        id="admin-node-figures"
+        items={[
+          { key: 'peers', label: 'Peers', tone: 'sky', value: node && node.peers != null ? fmtNum(node.peers) : null },
+          { key: 'tip', label: 'Best tip', tone: 'sky', value: node && node.bestTipHeight != null ? fmtNum(node.bestTipHeight) : null },
+          {
+            key: 'links',
+            label: 'Wallet links applied',
+            tone: 'green',
+            value: services.chainPoller && services.chainPoller.walletLinkCount != null
+              ? fmtNum(services.chainPoller.walletLinkCount) : null,
+          },
+          {
+            key: 'genesis',
+            label: 'Genesis accounts',
+            tone: 'green',
+            value: services.genesisAccounts && services.genesisAccounts.count != null
+              ? fmtNum(services.genesisAccounts.count) : null,
+          },
+        ]}
+      />
 
       <div className={`${AdminUI.card} p-6 mb-4`}>
         <h3 className={`${AdminUI.cardTitle} mb-3`}>Node</h3>

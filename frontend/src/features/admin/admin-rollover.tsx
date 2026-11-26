@@ -5,6 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // The shared admin class-string registry — an explicit import inside the
 // bundle, rather than the bare global read <script> order used to supply.
 import { AdminUI } from './admin-console.js';
+import { BTN } from './topochain/tokens.ts';
+import { Badge, Figures, List, ScreenHeader } from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Container rollover — recreates every running app container so it picks up
@@ -69,50 +72,27 @@ type RolloverJob = {
   apps?: RolloverApp[];
 };
 
-// Per-app outcome → chip. Mirrors the outcome vocabulary in
+// Per-app outcome → badge. Mirrors the outcome vocabulary in
 // src/services/app-rollover.js; an unknown state falls back to the raw
 // string so a new outcome shows up rather than disappearing.
-const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300';
+//
+// `cls` is a tone of the shared `Badge` since 26 Nov 2026, not a class
+// string: the status is repeated down the list, so it wears the kit's soft
+// tones like every other list. The key keeps its name because
+// tests/admin-rollover-surface.test.js names this table's shape.
+const NEUTRAL_CHIP = 'zinc';
 
 const ROLLOVER_STATES: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Queued', cls: NEUTRAL_CHIP },
-  running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
-  rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+  pending: { label: 'Queued', cls: 'sky' },
+  running: { label: 'Rolling over…', cls: 'violet' },
+  rolled: { label: 'Done', cls: 'mint' },
   rebuild_requested: { label: 'Rebuild asked of app delivery', cls: NEUTRAL_CHIP },
   skipped_deploying: { label: 'Skipped: deploying', cls: NEUTRAL_CHIP },
   skipped_missing_secrets: { label: 'Skipped: missing secrets', cls: NEUTRAL_CHIP },
   skipped_no_db_password: { label: 'Skipped: no DB role', cls: NEUTRAL_CHIP },
   skipped_deleted: { label: 'Skipped: app gone', cls: NEUTRAL_CHIP },
-  failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
+  failed: { label: 'Failed', cls: 'red' },
 };
-
-// Local class recipes — complete literals, because Tailwind's extractor is a
-// regex over this file's source (see the AdminUI note in admin-console.js).
-const RolloverUI = Object.freeze({
-  tile: 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3',
-  tileLabel: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
-  tileValue: 'text-2xl font-bold mt-1',
-  lede: 'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-  fine: 'text-xs text-zinc-500 dark:text-zinc-400 mb-4',
-  viewOnly: 'text-xs text-zinc-500 dark:text-zinc-400',
-  startBtn: `${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600`,
-  summary: 'text-sm text-zinc-500 dark:text-zinc-400 mt-3',
-  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
-  rowMain: 'flex-1 min-w-0',
-  rowSlug: 'font-mono text-sm',
-  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
-  rowRight: 'flex items-center gap-2 shrink-0',
-  rowSecs: 'text-xs text-zinc-500 dark:text-zinc-400',
-});
-
-function Tile({ id, label, value }: { id: string; label: string; value: string }) {
-  return (
-    <div className={RolloverUI.tile}>
-      <div className={RolloverUI.tileLabel}>{label}</div>
-      <div id={id} className={RolloverUI.tileValue}>{value}</div>
-    </div>
-  );
-}
 
 // The summary line's four states, in the order the paint routine tested
 // them. Only the last carries the staging-demo prefix — the other three were
@@ -138,22 +118,33 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: RolloverJob | nu
   );
 }
 
+// The app's cell: its slug, and what went wrong under it. The row's slug and
+// state stay addressable here, as they were on the row itself, since the
+// shared `List` owns the row element.
 function AppRow({ app }: { app: RolloverApp }) {
-  const chip = ROLLOVER_STATES[app.state] || { label: app.state, cls: NEUTRAL_CHIP };
-  const secs = app.ms == null ? '' : `${(app.ms / 1000).toFixed(1)}s`;
   return (
-    <div className={RolloverUI.row} data-rollover-slug={app.slug} data-rollover-state={app.state}>
-      <span className={RolloverUI.rowMain}>
-        <code className={RolloverUI.rowSlug}>{app.slug}</code>
-        {app.error ? <span className={RolloverUI.rowError}>{app.error}</span> : null}
-      </span>
-      <span className={RolloverUI.rowRight}>
-        {secs ? <span className={RolloverUI.rowSecs}>{secs}</span> : null}
-        <span className={`text-xs px-2 py-0.5 rounded-full ${chip.cls}`}>{chip.label}</span>
-      </span>
-    </div>
+    <span data-rollover-slug={app.slug} data-rollover-state={app.state}>
+      <code className="font-mono text-sm">{app.slug}</code>
+      {app.error ? <span className="block text-xs text-red-700 mt-0.5 dark:text-red-400">{app.error}</span> : null}
+    </span>
   );
 }
+
+const ROLLOVER_COLUMNS: Column<RolloverApp>[] = [
+  { label: 'App', primary: true, cell: (app) => <AppRow app={app} /> },
+  {
+    label: 'Took',
+    tdClass: 'tabular-nums text-zinc-500 dark:text-zinc-400',
+    cell: (app) => (app.ms == null ? '' : `${(app.ms / 1000).toFixed(1)}s`),
+  },
+  {
+    label: 'Status',
+    cell: (app) => {
+      const chip = ROLLOVER_STATES[app.state] || { label: app.state, cls: NEUTRAL_CHIP };
+      return <Badge tone={chip.cls} label={chip.label} />;
+    },
+  },
+];
 
 function RolloverSection() {
   const canWrite = !!console_()?.canWrite();
@@ -239,67 +230,78 @@ function RolloverSection() {
   const rows = job && job.total ? (job.apps || []) : [];
 
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Container rollover</h2>
-        <button
-          id="admin-refresh-rollover"
-          type="button"
-          className={`${AdminUI.btn.link} text-xs`}
-          onClick={() => load()}
-        >
-          Refresh
-        </button>
-      </div>
-      <p className={RolloverUI.lede}>
-        Recreates every running app container so it picks up the environment
-        this platform build hands out. Needed after a platform change to what
-        gets injected into containers. A restart is not enough, because a
-        restarted container keeps the environment it was created with.
-      </p>
-      <p className={RolloverUI.fine}>
+    <div>
+      <ScreenHeader
+        title="Container rollover"
+        subtitle="Recreates every running app container so it picks up the environment this platform build hands out. Needed after a platform change to what gets injected into containers. A restart is not enough, because a restarted container keeps the environment it was created with."
+        actions={(
+          <>
+            <button
+              id="admin-refresh-rollover"
+              type="button"
+              className={BTN.secondarySm}
+              onClick={() => load()}
+            >
+              Refresh
+            </button>
+            {canWrite ? (
+              <button
+                id="admin-rollover-btn"
+                type="button"
+                className={BTN.primarySm}
+                disabled={running || demo || starting}
+                onClick={start}
+              >
+                {label}
+              </button>
+            ) : null}
+          </>
+        )}
+      />
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
         This re-runs each app&apos;s existing build: it changes the environment and
         nothing else, so no new code is shipped, unlike a per-app redeploy. Each
         app blinks offline for a few seconds as its turn comes up. The platform
         app itself is never touched.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <Tile
-          id="admin-rollover-eligible"
-          label="Eligible apps"
-          value={eligible == null ? '—' : String(eligible)}
-        />
-        <Tile
-          id="admin-rollover-concurrency"
-          label="At a time"
-          value={job ? String(job.concurrency) : (concurrency ? String(concurrency) : '—')}
-        />
-        <Tile
-          id="admin-rollover-failed"
-          label="Failed"
-          value={job ? String(job.failed) : '—'}
-        />
-      </div>
-      {canWrite ? (
-        <button
-          id="admin-rollover-btn"
-          type="button"
-          className={RolloverUI.startBtn}
-          disabled={running || demo || starting}
-          onClick={start}
-        >
-          {label}
-        </button>
-      ) : (
-        <p className={RolloverUI.viewOnly}>
+      {/* Each figure's value keeps the id it had as a tile. */}
+      <Figures
+        id="admin-rollover-figures"
+        items={[
+          {
+            key: 'eligible',
+            label: 'Eligible apps',
+            tone: 'sky',
+            value: <span id="admin-rollover-eligible">{eligible == null ? '—' : String(eligible)}</span>,
+          },
+          {
+            key: 'concurrency',
+            label: 'At a time',
+            tone: 'sky',
+            value: (
+              <span id="admin-rollover-concurrency">
+                {job ? String(job.concurrency) : (concurrency ? String(concurrency) : '—')}
+              </span>
+            ),
+          },
+          {
+            key: 'failed',
+            label: 'Failed',
+            tone: !job ? 'sky' : (job.failed ? 'yellow' : 'green'),
+            value: <span id="admin-rollover-failed">{job ? String(job.failed) : '—'}</span>,
+          },
+        ]}
+      />
+      {canWrite ? null : (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
           View-only admin: you can watch a rollover, but not start one.
         </p>
       )}
-      <p id="admin-rollover-summary" className={RolloverUI.summary}>
+      <p id="admin-rollover-summary" className={`${AdminUI.muted} mt-3`}>
         <Summary loaded={loaded} job={job} demo={demo} />
       </p>
-      <div id="admin-rollover-list" className="space-y-2 mt-3">
-        {rows.map((app) => <AppRow key={app.slug} app={app} />)}
+      <div id="admin-rollover-list" className="mt-3">
+        {rows.length ? <List items={rows} columns={ROLLOVER_COLUMNS} rowKey={(app) => app.slug} /> : null}
       </div>
     </div>
   );

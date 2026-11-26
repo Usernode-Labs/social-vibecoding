@@ -8,7 +8,7 @@ import {
 } from './challenge-fields.ts';
 import { BTN, PANEL_CLS } from './tokens.ts';
 import {
-  BackButton, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input,
+  Badge, BackButton, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input,
   List, Options, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt, isoToLocalInput,
 } from './ui.tsx';
 import type { Column } from './ui.tsx';
@@ -566,8 +566,8 @@ function EventDetail({ eventId, onBack }: { eventId: number; onBack: () => void 
     {
       label: 'Enabled',
       cell: (c) => (c.enabled
-        ? <span className="text-green-800 dark:text-green-400">enabled</span>
-        : <span className="text-zinc-500 dark:text-zinc-400">disabled</span>),
+        ? <Badge label="enabled" tone="mint" />
+        : <Badge label="disabled" tone="zinc" />),
     },
     { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500 dark:text-zinc-400' },
   ], []);

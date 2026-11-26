@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, Figures, List, ScreenHeader, Segmented, Select, TABLE, TabPanel, Tabs, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { INCIDENT_KIND, INCIDENT_OUTCOME } from './admin-homeroom-bot-health';
 
@@ -21,6 +26,11 @@ import { INCIDENT_KIND, INCIDENT_OUTCOME } from './admin-homeroom-bot-health';
 //
 // Ids are what dapp.json's declared check and
 // tests/admin-incidents-section.test.js select on.
+//
+// Drawn from the shared admin kit (26 Nov 2026), so this page's header,
+// figures, filters, tabs and table are the ones every other page has. The
+// events are the first tab, because they are what a person comes to read;
+// the counts per day are the second.
 
 const console_ = () => (window as any).AdminConsole;
 
@@ -47,23 +57,16 @@ export interface IncidentsPayload {
   alerts?: { hourlyThreshold: number; digestHourUtc: number };
 }
 
-const RANGES: { days: number; label: string }[] = [
-  { days: 1, label: 'Last 24 hours' },
-  { days: 7, label: 'Last 7 days' },
-  { days: 30, label: 'Last 30 days' },
+// `short` is the word on the toggle; `label` is the full wording, which its
+// tooltip and the summary line carry.
+const RANGES: { days: number; label: string; short: string }[] = [
+  { days: 1, label: 'Last 24 hours', short: '24 hours' },
+  { days: 7, label: 'Last 7 days', short: '7 days' },
+  { days: 30, label: 'Last 30 days', short: '30 days' },
 ];
 
-const IncidentUI = Object.freeze({
-  filters: 'grid gap-3 sm:grid-cols-3 mb-4',
-  filterLabel: `${AdminUI.label} block mb-1`,
-  links: 'flex flex-wrap items-center gap-x-4 gap-y-1 text-sm',
-  row: 'rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3',
-  rowHead: 'flex flex-wrap items-center justify-between gap-2',
-  rowWhen: 'text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
-  rowWhat: 'text-sm text-zinc-900 dark:text-zinc-100 mt-1 break-words',
-  rowWhere: 'flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-zinc-500 dark:text-zinc-400',
-  count: 'tabular-nums',
-});
+const TABS_ID = 'admin-incidents-tabs';
+type IncidentsTab = 'events' | 'days';
 
 /** What a kind is called on screen. Pure. */
 export function kindLabel(kind: string): string {
@@ -123,45 +126,75 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-function IncidentItem({ incident }: { incident: IncidentRow }) {
-  const link = incidentLink(incident);
-  const outcome = outcomeLabel(incident.outcome);
-  return (
-    <li className={IncidentUI.row} data-kind={incident.kind} data-outcome={incident.outcome || ''}>
-      <div className={IncidentUI.rowHead}>
-        <span className={AdminUI.badge.warn}>{kindLabel(incident.kind)}</span>
-        <span className={IncidentUI.rowWhen}>{when(incident.at)}</span>
-      </div>
-      <p className={IncidentUI.rowWhat}>{incident.why || 'No detail recorded.'}</p>
-      <div className={IncidentUI.rowWhere}>
-        {incident.app ? <span className="font-mono">{incident.app}</span> : <span>No app</span>}
-        {link ? <a className={AdminUI.btn.link} href={link.href}>{link.label}</a> : null}
-        {incident.runId != null ? <span>{`Bot run ${incident.runId}`}</span> : null}
-        {outcome ? <span>{`Outcome: ${outcome}`}</span> : null}
-      </div>
-    </li>
-  );
-}
+// One event, one row. The row's kind and outcome stay addressable on the
+// first cell, as they were on the list item.
+const INCIDENT_COLUMNS: Column<IncidentRow>[] = [
+  {
+    label: 'Kind',
+    primary: true,
+    cell: (i) => (
+      <span data-kind={i.kind} data-outcome={i.outcome || ''}>
+        <Badge tone="amber" label={kindLabel(i.kind)} />
+      </span>
+    ),
+  },
+  {
+    label: 'What happened',
+    tdClass: 'break-words',
+    cell: (i) => i.why || 'No detail recorded.',
+  },
+  {
+    label: 'App',
+    cell: (i) => (i.app ? <span className="font-mono text-xs">{i.app}</span> : 'No app'),
+  },
+  {
+    label: 'Where',
+    cell: (i) => {
+      const link = incidentLink(i);
+      if (!link && i.runId == null) return '';
+      return (
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {link ? <a className={AdminUI.btn.link} href={link.href}>{link.label}</a> : null}
+          {i.runId != null ? <span>{`Bot run ${i.runId}`}</span> : null}
+        </span>
+      );
+    },
+  },
+  {
+    label: 'Outcome',
+    cell: (i) => {
+      const outcome = outcomeLabel(i.outcome);
+      return outcome ? `Outcome: ${outcome}` : '';
+    },
+  },
+  {
+    label: 'When',
+    tdClass: 'whitespace-nowrap tabular-nums text-zinc-500 dark:text-zinc-400',
+    cell: (i) => when(i.at),
+  },
+];
 
+// A pivot (a column per kind), which `List` cannot draw, so it is written by
+// hand with the shared table classes.
 function DailyCounts({ daily }: { daily: IncidentsPayload['daily'] }) {
   const { kinds, rows } = dailyTable(daily);
   if (!rows.length) return null;
   return (
-    <div className={AdminUI.tableWrap}>
-      <table className={AdminUI.table} id="admin-incidents-daily">
-        <thead className={AdminUI.thead}>
+    <div className={TABLE.wrap}>
+      <table className={TABLE.table} id="admin-incidents-daily">
+        <thead className={TABLE.thead}>
           <tr>
-            <th className={AdminUI.th}>Day (UTC)</th>
-            {kinds.map((k) => <th key={k} className={AdminUI.th}>{kindLabel(k)}</th>)}
-            <th className={AdminUI.th}>Total</th>
+            <th className={TABLE.th}>Day (UTC)</th>
+            {kinds.map((k) => <th key={k} className={TABLE.th}>{kindLabel(k)}</th>)}
+            <th className={TABLE.th}>Total</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.day} className={AdminUI.trHover} data-day={r.day}>
-              <td className={AdminUI.td}>{dayLabel(r.day)}</td>
-              {kinds.map((k) => <td key={k} className={`${AdminUI.td} ${IncidentUI.count}`}>{r.counts[k] || 0}</td>)}
-              <td className={`${AdminUI.td} ${IncidentUI.count} font-semibold`}>{r.total}</td>
+            <tr key={r.day} className={TABLE.tr} data-day={r.day}>
+              <td className={TABLE.td}>{dayLabel(r.day)}</td>
+              {kinds.map((k) => <td key={k} className={`${TABLE.td} tabular-nums`}>{r.counts[k] || 0}</td>)}
+              <td className={`${TABLE.td} tabular-nums font-semibold`}>{r.total}</td>
             </tr>
           ))}
         </tbody>
@@ -176,6 +209,7 @@ function UnexpectedEventsSection() {
   const [app, setApp] = useState('');
   const [data, setData] = useState<IncidentsPayload | null>(null);
   const [failed, setFailed] = useState(false);
+  const [tab, setTab] = useState<IncidentsTab>('events');
   const seq = useRef(0);
 
   const load = useCallback(async () => {
@@ -205,71 +239,95 @@ function UnexpectedEventsSection() {
   const apps = data?.apps || [];
   const appChoices = app && !apps.includes(app) ? [...apps, app] : apps;
 
+  // Counts this read already carries: the total, then the kinds that
+  // happened most. A kind's figure is a door to its rows.
+  const figures: Figure[] = [
+    { key: 'total', label: `Unexpected events, ${range}`, value: data ? total.toLocaleString() : null, tone: 'yellow' },
+    ...[...kinds].sort((a, b) => b.n - a.n).slice(0, 3).map((k): Figure => ({
+      key: `kind-${k.kind}`,
+      label: kindLabel(k.kind),
+      value: k.n.toLocaleString(),
+      tone: 'sky',
+      title: `Show only ${kindLabel(k.kind)}`,
+      onClick: () => { setKind(k.kind); setTab('events'); },
+    })),
+  ];
+
   return (
-    <div className="space-y-4" id="admin-incidents">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Unexpected events</h2>
-          <button id="admin-incidents-refresh" type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => load()}>
+    <div id="admin-incidents">
+      <ScreenHeader
+        title="Unexpected events"
+        subtitle="Things the platform is designed never to do, such as a Homeroom bot build cut short by a deploy or a lost worker. Each one is logged here when it happens."
+        actions={(
+          <button id="admin-incidents-refresh" type="button" className={BTN.secondarySm} onClick={() => load()}>
             Refresh
           </button>
-        </div>
-        <p className={`${AdminUI.muted} mb-2`}>
-          Things the platform is designed never to do, such as a Homeroom bot build cut short by a
-          deploy or a lost worker. Each one is logged here when it happens.
-        </p>
-        <p className={`${AdminUI.muted} mb-3`} id="admin-incidents-alerts">
-          {alerts
-            ? `Full admins get a digest at ${String(alerts.digestHourUtc).padStart(2, '0')}:00 UTC of the day before, only when there was something, and an alert straight away when one kind happens ${alerts.hourlyThreshold} times within an hour (at most once an hour per kind).`
-            : ''}
-        </p>
-        <div className={IncidentUI.links} id="admin-incidents-links">
-          <span className={AdminUI.muted}>Other health signals:</span>
-          <a className={AdminUI.btn.link} href="#admin/status">Health &amp; status</a>
-          <a className={AdminUI.btn.link} href="#admin/homeroom-bot">Rollout health</a>
-        </div>
+        )}
+      />
+      <p className={`${AdminUI.muted} mb-2`} id="admin-incidents-alerts">
+        {alerts
+          ? `Full admins get a digest at ${String(alerts.digestHourUtc).padStart(2, '0')}:00 UTC of the day before, only when there was something, and an alert straight away when one kind happens ${alerts.hourlyThreshold} times within an hour (at most once an hour per kind).`
+          : ''}
+      </p>
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" id="admin-incidents-links">
+        <span className={AdminUI.muted}>Other health signals:</span>
+        <a className={AdminUI.btn.link} href="#admin/status">Health &amp; status</a>
+        <a className={AdminUI.btn.link} href="#admin/homeroom-bot">Rollout health</a>
       </div>
 
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={IncidentUI.filters}>
-          <div>
-            <label className={IncidentUI.filterLabel} htmlFor="admin-incidents-kind">Kind</label>
-            <select id="admin-incidents-kind" className={AdminUI.select} value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="">All kinds</option>
-              {kindChoices.map((k) => <option key={k.kind} value={k.kind}>{`${kindLabel(k.kind)} (${k.n})`}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={IncidentUI.filterLabel} htmlFor="admin-incidents-app">App</label>
-            <select id="admin-incidents-app" className={AdminUI.select} value={app} onChange={(e) => setApp(e.target.value)}>
-              <option value="">All apps</option>
-              {appChoices.map((slug) => <option key={slug} value={slug}>{slug}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={IncidentUI.filterLabel} htmlFor="admin-incidents-days">Time range</label>
-            <select id="admin-incidents-days" className={AdminUI.select} value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
-              {RANGES.map((r) => <option key={r.days} value={String(r.days)}>{r.label}</option>)}
-            </select>
-          </div>
+      <Figures id="admin-incidents-figures" items={figures} />
+
+      {/* The filters narrow both tabs, so their bar sits over the tabs. */}
+      <Toolbar>
+        <div className="min-w-[12rem] flex-1 sm:max-w-xs">
+          <Select id="admin-incidents-kind" aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="">All kinds</option>
+            {kindChoices.map((k) => <option key={k.kind} value={k.kind}>{`${kindLabel(k.kind)} (${k.n})`}</option>)}
+          </Select>
         </div>
+        <div className="min-w-[12rem] flex-1 sm:max-w-xs">
+          <Select id="admin-incidents-app" aria-label="App" value={app} onChange={(e) => setApp(e.target.value)}>
+            <option value="">All apps</option>
+            {appChoices.map((slug) => <option key={slug} value={slug}>{slug}</option>)}
+          </Select>
+        </div>
+        <Segmented
+          id="admin-incidents-days"
+          label="Time range"
+          value={String(days)}
+          options={RANGES.map((r) => ({ value: String(r.days), label: r.short, title: r.label }))}
+          onChange={(next) => setDays(Number(next))}
+        />
+      </Toolbar>
 
-        <p className={`${AdminUI.muted} mb-3`} id="admin-incidents-summary" data-count={total}
-          data-state={failed ? 'failed' : (data ? 'ready' : 'loading')}>
-          {failed ? 'Could not read unexpected events. Try Refresh.'
-            : !data ? <span className={AdminUI.loading}>Loading…</span>
-              : total ? `${plural(total, 'unexpected event')} in the ${range}${total > items.length ? `, the latest ${items.length} listed` : ''}.`
-                : `No unexpected events in the ${range}.`}
-        </p>
+      <p className={`${AdminUI.muted} mb-3`} id="admin-incidents-summary" data-count={total}
+        data-state={failed ? 'failed' : (data ? 'ready' : 'loading')}>
+        {failed ? 'Could not read unexpected events. Try Refresh.'
+          : !data ? <span className={AdminUI.loading}>Loading…</span>
+            : total ? `${plural(total, 'unexpected event')} in the ${range}${total > items.length ? `, the latest ${items.length} listed` : ''}.`
+              : `No unexpected events in the ${range}.`}
+      </p>
 
-        {data ? <DailyCounts daily={data.daily} /> : null}
-
+      <Tabs<IncidentsTab>
+        id={TABS_ID}
+        label="Unexpected events"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'events', label: 'Events' },
+          { key: 'days', label: 'By day' },
+        ]}
+      />
+      <TabPanel tabsId={TABS_ID} tab="events" active={tab === 'events'}>
         {items.length ? (
-          <ul className="space-y-2 mt-4" id="admin-incidents-list">
-            {items.map((i, n) => <IncidentItem key={`${i.at}-${n}`} incident={i} />)}
-          </ul>
+          <div id="admin-incidents-list">
+            <List items={items} columns={INCIDENT_COLUMNS} rowKey={(i, n) => `${i.at}-${n}`} />
+          </div>
         ) : null}
-      </div>
+      </TabPanel>
+      <TabPanel tabsId={TABS_ID} tab="days" active={tab === 'days'}>
+        {data ? <DailyCounts daily={data.daily} /> : null}
+      </TabPanel>
     </div>
   );
 }

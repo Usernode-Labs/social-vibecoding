@@ -10,6 +10,14 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { changeHref } from '../../lib/change-href';
 import { linkKind } from '../../lib/repo-link.js';
 import { ShotsPanel } from '../review-flow/shots-panel';
+// The console's shared page parts (26 Nov 2026): the header, figures, tabs,
+// bar, fields and badges are the ones every admin page draws with.
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, EmptyState, ErrorState, Field, Figures, FormGrid, Input, Panel, ScreenHeader, Select,
+  TabPanel, Tabs, Toolbar,
+} from './topochain/ui.tsx';
+import type { Figure } from './topochain/ui.tsx';
 
 // Screenshot gallery section of the admin console (#860) — the retired
 // standalone /gallery page, ported into #admin/gallery.
@@ -138,16 +146,15 @@ function fmtDate(iso?: string): string {
 // Capture-state chip. A NULL state means the proposal merged before capture
 // outcomes were persisted — render it as "unknown" rather than mislabelling
 // it as a success or a failure.
-const CHIP: Record<string, { label: string; cls: string }> = {
-  captured: { label: 'Captured', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
-  partial: { label: 'Partial', cls: 'bg-amber-500/15 text-amber-800 dark:text-amber-400' },
-  console_only: { label: 'No visual change expected', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400' },
-  failed: { label: 'Capture failed', cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
+// It is repeated down the list, so it wears the shared Badge's soft tones:
+// captured is done, and only a partial or failed capture is loud.
+const CHIP: Record<string, { label: string; tone: string }> = {
+  captured: { label: 'Captured', tone: 'mint' },
+  partial: { label: 'Partial', tone: 'amber' },
+  console_only: { label: 'No visual change expected', tone: 'zinc' },
+  failed: { label: 'Capture failed', tone: 'red' },
 };
-const CHIP_UNKNOWN = { label: 'Outcome unknown', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400' };
-
-const SELECT_CLASS = 'mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 '
-  + 'rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100';
+const CHIP_UNKNOWN = { label: 'Outcome unknown', tone: 'zinc' };
 
 const PROBLEMS: Array<[string, string]> = [
   ['', 'Any'],
@@ -179,11 +186,8 @@ const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
 
 function Chip({ state, reason }: { state?: string; reason?: string }) {
   const chip = (state && CHIP[state]) || CHIP_UNKNOWN;
-  return (
-    <span className={`text-[0.65rem] px-1.5 py-0.5 rounded ${chip.cls}`} title={reason || undefined}>
-      {chip.label}
-    </span>
-  );
+  // The reason is the badge's tooltip; the shared Badge takes no title.
+  return <span title={reason || undefined}><Badge label={chip.label} tone={chip.tone} /></span>;
 }
 
 const LINK = 'text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300';
@@ -258,32 +262,45 @@ function ProposalCard({ p }: { p: Proposal }) {
   );
 }
 
-function StatsStrip({ s }: { s: Stats }) {
+// The four headline counts for the current filter, as the page's figures.
+// They come from the stats read the page already makes; before it answers,
+// or when it fails, each is a dash.
+function statFigures(s: Stats | null): Figure[] {
+  const share = (n: number) => (s && s.total ? ` (${Math.round((n / s.total) * 100)}%)` : '');
+  const one = (key: string, label: string, n: number | undefined, tone: Figure['tone'], withShare: boolean): Figure => ({
+    key, tone, label: `${label}${withShare ? share(n || 0) : ''}`, value: s ? (n || 0) : null,
+  });
+  return [
+    one('total', 'matching proposals', s?.total, 'sky', false),
+    one('complete', 'complete', s?.complete, 'green', true),
+    one('shots_verified', 'preview captured', s?.shots_verified, 'green', true),
+    one('failed_or_skipped', 'failed / skipped', s?.failed_or_skipped, 'yellow', true),
+  ];
+}
+
+// The rest of the counts for the current filter: one for each kind of
+// problem the Problem filter can pick.
+function ProblemCounts({ s }: { s: Stats }) {
   const pct = (n: number) => (s.total ? Math.round((n / s.total) * 100) : 0);
-  const item = (label: string, n: number, withPct: boolean) => (
+  const item = (label: string, n: number) => (
     <span key={label}>
       <strong className="text-zinc-700 dark:text-zinc-200">{n}</strong>
-      {` ${label}`}{withPct && s.total ? ` (${pct(n)}%)` : ''}
+      {` ${label}`}{s.total ? ` (${pct(n)}%)` : ''}
     </span>
   );
   return (
     <section
-      id="admin-gallery-stats"
       className={`flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400 ${AdminUI.card} px-3 py-2`}
     >
-      {item('matching proposals', s.total, false)}
-      {item('complete', s.complete || 0, true)}
-      {item('missing recording', s.missing_recording || 0, true)}
-      {item('missing before', s.missing_before || 0, true)}
-      {item('before fell back', s.before_fell_back || 0, true)}
-      {item('front page only', s.root_only || 0, true)}
-      {item('failed / skipped', s.failed_or_skipped || 0, true)}
-      {item('preview captured', s.shots_verified || 0, true)}
-      {item('relevance failures', s.relevance_failure || 0, true)}
-      {item('replay failures', s.replay_failure || 0, true)}
-      {item('unsupported agents', s.unsupported_agent || 0, true)}
-      {item('overrides', s.override || 0, true)}
-      {s.unknown_state ? item('outcome not recorded', s.unknown_state, true) : null}
+      {item('missing recording', s.missing_recording || 0)}
+      {item('missing before', s.missing_before || 0)}
+      {item('before fell back', s.before_fell_back || 0)}
+      {item('front page only', s.root_only || 0)}
+      {item('relevance failures', s.relevance_failure || 0)}
+      {item('replay failures', s.replay_failure || 0)}
+      {item('unsupported agents', s.unsupported_agent || 0)}
+      {item('overrides', s.override || 0)}
+      {s.unknown_state ? item('outcome not recorded', s.unknown_state) : null}
     </section>
   );
 }
@@ -311,28 +328,12 @@ function ExportRuns({ app }: { app: string }) {
   const href = `/api/admin/shots/export.csv${qs ? `?${qs}` : ''}`;
 
   return (
-    <section id="admin-gallery-export-panel" className={`${AdminUI.card} p-3 space-y-2`}>
-      <div>
-        <div className="text-sm font-medium">Export screenshot runs</div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-          One row per before & after run on every proposal, merged or not, with its failure
-          details, timings and token use. Uses the App filter above. Runs that did not verify
-          are removed after 30 days unless they are still a proposal's latest run.
-        </p>
-      </div>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">State
-          <select id="admin-gallery-export-state" className={SELECT_CLASS}
-            value={state} onChange={(e) => setState(e.target.value)}>
-            {EXPORT_STATES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Since
-          <input id="admin-gallery-export-since" type="date" className={SELECT_CLASS}
-            value={since} onChange={(e) => setSince(e.target.value)} />
-        </label>
-        {canWrite ? (
-          <a id="admin-gallery-export" className={AdminUI.btn.outlineSm} href={href} download>
+    <div id="admin-gallery-export-panel">
+      <Panel
+        title="Export screenshot runs"
+        subtitle="One row per before & after run on every proposal, merged or not, with its failure details, timings and token use. Uses the App filter on the Proposals tab. Runs that did not verify are removed after 30 days unless they are still a proposal's latest run."
+        footer={canWrite ? (
+          <a id="admin-gallery-export" className={BTN.secondarySm} href={href} download>
             Download CSV
           </a>
         ) : (
@@ -340,10 +341,29 @@ function ExportRuns({ app }: { app: string }) {
             Downloading needs full admin access.
           </span>
         )}
-      </div>
-    </section>
+      >
+        <FormGrid>
+          <Field label="State" htmlFor="admin-gallery-export-state">
+            <Select id="admin-gallery-export-state"
+              value={state} onChange={(e) => setState(e.target.value)}>
+              {EXPORT_STATES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Since" htmlFor="admin-gallery-export-since">
+            <Input id="admin-gallery-export-since" type="date"
+              value={since} onChange={(e) => setSince(e.target.value)} />
+          </Field>
+        </FormGrid>
+      </Panel>
+    </div>
   );
 }
+
+// The page holds two jobs, so each has a tab (26 Nov 2026): the merged
+// proposals and their shots, and the export of every run. The export sat
+// between the filters and the list, pushing the list down the page.
+type GalleryTab = 'proposals' | 'export';
+const GALLERY_TABS_ID = 'admin-gallery-tabs';
 
 function GallerySection() {
   const [gate, setGate] = useState<string | null>(null);
@@ -359,6 +379,7 @@ function GallerySection() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<GalleryTab>('proposals');
 
   const alive = useRef(true);
   const cursor = useRef<Cursor | null>(null);
@@ -442,60 +463,82 @@ function GallerySection() {
 
   return (
     <div id="admin-gallery-root">
-      <h2 className="text-lg font-semibold mb-4">Before & after gallery</h2>
-      {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      <ScreenHeader
+        title="Before & after gallery"
+        subtitle="Before & after screenshots of each declared change on merged proposals, newest first. Historical proposals retain their legacy capture diagnostics."
+      />
+      {gate ? <div id="admin-gallery-gate"><EmptyState title={gate} /></div> : null}
 
       {ready ? (
-        <main id="admin-gallery-content" className="space-y-4">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Before & after screenshots of each declared change on merged proposals, newest first.
-            Historical proposals retain their legacy capture diagnostics.
-          </p>
+        <main id="admin-gallery-content">
+          {/* The headline counts for the current filter */}
+          <Figures id="admin-gallery-stats" items={statFigures(stats)} />
+          <Tabs<GalleryTab>
+            id={GALLERY_TABS_ID}
+            label="Before & after gallery"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { key: 'proposals', label: 'Proposals' },
+              { key: 'export', label: 'Export runs' },
+            ]}
+          />
+          <TabPanel tabsId={GALLERY_TABS_ID} tab="proposals" active={tab === 'proposals'}>
+            {/* The filters are the list's, so they sit in the bar over it. */}
+            <Toolbar>
+              <div className="w-full sm:w-64">
+                <Field label="App" htmlFor="admin-gallery-f-app">
+                  <Select id="admin-gallery-f-app"
+                    value={app} onChange={(e) => setApp(e.target.value)}>
+                    <option value="">All apps</option>
+                    {apps.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                  </Select>
+                </Field>
+              </div>
+              <div className="w-full sm:w-64">
+                <Field label="Problem" htmlFor="admin-gallery-f-problem">
+                  <Select id="admin-gallery-f-problem"
+                    value={problem} onChange={(e) => setProblem(e.target.value)}>
+                    {PROBLEMS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </Select>
+                </Field>
+              </div>
+              <div className="flex flex-wrap gap-2 self-end">
+                <button id="admin-gallery-apply" type="button" onClick={commit}
+                  className={BTN.primarySm}>Apply</button>
+                <button id="admin-gallery-refresh" type="button" onClick={commit}
+                  className={BTN.secondarySm}>Refresh</button>
+              </div>
+            </Toolbar>
 
-          {/* Filter bar */}
-          <section className={`${AdminUI.card} p-3 flex flex-wrap items-end gap-3`}>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
-              <select id="admin-gallery-f-app" className={SELECT_CLASS}
-                value={app} onChange={(e) => setApp(e.target.value)}>
-                <option value="">All apps</option>
-                {apps.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-              </select>
-            </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Problem
-              <select id="admin-gallery-f-problem" className={SELECT_CLASS}
-                value={problem} onChange={(e) => setProblem(e.target.value)}>
-                {PROBLEMS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select>
-            </label>
-            <button id="admin-gallery-apply" type="button" onClick={commit}
-              className="ms-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
-            <button id="admin-gallery-refresh" type="button" onClick={commit}
-              className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
-          </section>
+            <div className="space-y-4">
+              {stats ? <ProblemCounts s={stats} /> : null}
 
-          {/* Stats strip for the current filter */}
-          {stats ? <StatsStrip s={stats} /> : null}
+              <div id="admin-gallery-proposals" className="space-y-4">
+                {error
+                  ? <ErrorState title="Failed to load the gallery" message={error} />
+                  : items.map((p) => <ProposalCard key={p.id} p={p} />)}
+              </div>
 
-          <ExportRuns app={app} />
-
-          <div id="admin-gallery-proposals" className="space-y-4">
-            {error
-              ? <div className="text-sm text-rose-500 dark:text-rose-400">Failed to load the gallery: {error}</div>
-              : items.map((p) => <ProposalCard key={p.id} p={p} />)}
-          </div>
-
-          <div className="flex justify-center py-4">
-            {hasMore ? (
-              <button id="admin-gallery-load-older" type="button"
-                onClick={() => loadPage(true, applied)}
-                className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Load older</button>
-            ) : null}
-            {!error && !items.length ? (
-              <span id="admin-gallery-empty" className="text-zinc-500 dark:text-zinc-400 text-sm">
-                No merged proposals match these filters yet.
-              </span>
-            ) : null}
-          </div>
+              {/* Paged by a cursor with no total of its own, so it stays a
+                  button and is not the shared scroll-to-load foot. */}
+              <div className="flex justify-center">
+                {hasMore ? (
+                  <button id="admin-gallery-load-older" type="button"
+                    onClick={() => loadPage(true, applied)}
+                    className={BTN.secondary}>Load older</button>
+                ) : null}
+              </div>
+              {!error && !items.length ? (
+                <div id="admin-gallery-empty">
+                  <EmptyState title="No merged proposals match these filters yet." />
+                </div>
+              ) : null}
+            </div>
+          </TabPanel>
+          <TabPanel tabsId={GALLERY_TABS_ID} tab="export" active={tab === 'export'}>
+            <ExportRuns app={app} />
+          </TabPanel>
         </main>
       ) : null}
     </div>

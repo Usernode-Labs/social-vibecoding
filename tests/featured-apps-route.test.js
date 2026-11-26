@@ -566,7 +566,7 @@ test('the console carries a Featured apps section under Platform', () => {
   );
   const sections = src.slice(src.indexOf('SECTIONS: ['), src.indexOf('isOpen()'));
   assert.match(sections,
-    /\{ key: 'featured-apps', label: 'Featured apps', group: 'Platform' \}/);
+    /\{ key: 'featured-apps', label: 'Featured apps', group: 'Content & apps' \}/);
   // `features` is "Submitted features" — a different section entirely.
   assert.match(sections, /\{ key: 'features', label: 'Submitted features'/);
   // The section moved out of the chassis into its own module in #1120 slice

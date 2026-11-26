@@ -6,8 +6,8 @@ import { fetchAllSeasons, fetchJson, seasonOptions, send } from './api.ts';
 import { EventDetail, publishRoute } from './challenges.tsx';
 import { BTN } from './tokens.ts';
 import {
-  CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
-  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea, fmt,
+  Badge, CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
+  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea, Toolbar, fmt,
   isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
@@ -366,7 +366,7 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
     {
       label: 'Active',
       cell: (ev) => (ev.is_active
-        ? <span className="text-green-800 dark:text-green-400">yes</span>
+        ? <Badge label="yes" tone="mint" />
         : '—'),
     },
     { label: 'Starts', cell: (ev) => fmt(ev.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
@@ -387,38 +387,6 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
         subtitle="Every event, its schedule, and the challenges scheduled inside it."
         actions={(
           <>
-            <label className="sr-only" htmlFor="admin-topo-se-season-filter">Filter by season</label>
-            <Select
-              id="admin-topo-se-season-filter"
-              value={seasonFilter}
-              onChange={(e) => {
-                setSeasonFilter(e.target.value);
-                if (topo()?._se) topo()._se.seasonFilter = e.target.value;
-                setPage(1);
-              }}
-            >
-              <Options
-                options={[
-                  { value: 'none', label: '— No season —' },
-                  ...seasonOptions(seasons),
-                ]}
-                blank="All seasons"
-              />
-            </Select>
-            {/* Commits on blur or Enter, not per keystroke — a paged server
-                query, same rule as the other search boxes in this console. */}
-            <Input
-              id="admin-topo-se-search"
-              type="text"
-              placeholder="Search name…"
-              aria-label="Search season events"
-              className="sm:w-56"
-              defaultValue={search}
-              onBlur={(e) => commitSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
-              }}
-            />
             <ProgrammeCsvLink id="admin-topo-se-export" />
             {write ? (
               <button
@@ -444,6 +412,46 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
           />
         ) : null}
       </div>
+      {/* The search and the season filter are the list's, so they sit in
+          the bar over it; the header keeps the export and New event
+          (26 Nov 2026). */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          {/* Commits on blur or Enter, not per keystroke: a paged server
+              query, same rule as the other search boxes in this console. */}
+          <Input
+            id="admin-topo-se-search"
+            type="text"
+            placeholder="Search name…"
+            aria-label="Search season events"
+            defaultValue={search}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+            }}
+          />
+        </div>
+        <div className="w-full sm:w-56">
+          <label className="sr-only" htmlFor="admin-topo-se-season-filter">Filter by season</label>
+          <Select
+            id="admin-topo-se-season-filter"
+            value={seasonFilter}
+            onChange={(e) => {
+              setSeasonFilter(e.target.value);
+              if (topo()?._se) topo()._se.seasonFilter = e.target.value;
+              setPage(1);
+            }}
+          >
+            <Options
+              options={[
+                { value: 'none', label: '— No season —' },
+                ...seasonOptions(seasons),
+              ]}
+              blank="All seasons"
+            />
+          </Select>
+        </div>
+      </Toolbar>
       <div id="admin-topo-se-table">
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (

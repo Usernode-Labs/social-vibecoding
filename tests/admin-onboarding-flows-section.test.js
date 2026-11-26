@@ -18,7 +18,7 @@ const ENGINE = 'frontend/src/features/admin/onboarding-flows/engine.js';
 
 test('it sits under Insights beside Journey and is not public', () => {
   const src = read('frontend/src/features/admin/admin-console.js');
-  assert.match(src, /\{ key: 'onboarding-flows', label: 'Onboarding flows', group: 'Insights' \}/, 'admin-only: no `public: true`');
+  assert.match(src, /\{ key: 'onboarding-flows', label: 'Onboarding flows', group: 'Growth' \}/, 'admin-only: no `public: true`');
   const sections = src.slice(src.indexOf('SECTIONS: ['), src.indexOf('LEGACY_SECTION_KEYS'));
   const at = (key) => sections.indexOf(`{ key: '${key}'`);
   assert.ok(at('journey') < at('onboarding-flows') && at('onboarding-flows') < at('analytics'), 'right after Journey');

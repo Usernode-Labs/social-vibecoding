@@ -8,6 +8,8 @@ import { DetailCard, Row, fmtDate, fmtDateTime, orDash } from './admin-detail-pa
 import { fmtActivityAt } from './activity-at.ts';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { fetchJson, send } from './topochain/api.ts';
+import { BackButton, Badge, Figures, List, ScreenHeader, TABLE, Toolbar } from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Support (#admin/support, #admin/support/<id>): one screen for answering a
 // participant's question about their account. Find them by anything they
@@ -75,11 +77,9 @@ export const SOURCE_LABEL: Record<string, string> = {
   zkpassport: 'zkPassport',
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  running: AdminUI.badge.success,
-  upcoming: AdminUI.badge.outline,
-  ended: AdminUI.badge.secondary,
-};
+// An event's status is repeated down two lists, so it wears the kit's soft
+// tones (26 Nov 2026): running is the good one, upcoming is waiting.
+const STATUS_TONE: Record<string, string> = { running: 'mint', upcoming: 'sky', ended: 'zinc' };
 const STATUS_LABEL: Record<string, string> = { running: 'Running', upcoming: 'Upcoming', ended: 'Ended' };
 
 const TIMELINE_FILTERS: [string, string][] = [
@@ -207,40 +207,46 @@ function SupportSearch({ onOpen, initialQuery, onQuery }: {
 
   return (
     <div id="admin-support-search-view">
-      <div className={`${AdminUI.card} p-5 mb-4`}>
-        <h2 className={AdminUI.cardTitle}>Find a user</h2>
-        <p className={`${AdminUI.cardDescription} mb-3`}>
-          Search by username, a previous username, email, Telegram, Discord, display name, wallet or onchain address, or user id.
-        </p>
-        <label htmlFor="admin-support-search" className="sr-only">Search users</label>
-        <input id="admin-support-search" type="search" className={AdminUI.input} defaultValue={initialQuery}
-          placeholder="Username, email, address or id" autoComplete="off"
-          onBlur={(e) => run(e.currentTarget.value, false)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); last.current = '\u0000'; run(e.currentTarget.value, true); } }} />
-        <p className={`${SMALL_MUTED} mt-2`}>Press Enter to search. A single match opens straight away.</p>
-      </div>
+      <ScreenHeader
+        title="Find a user"
+        subtitle="Search by username, a previous username, email, Telegram, Discord, display name, wallet or onchain address, or user id."
+      />
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          <label htmlFor="admin-support-search" className="sr-only">Search users</label>
+          <input id="admin-support-search" type="search" className={AdminUI.input} defaultValue={initialQuery}
+            placeholder="Username, email, address or id" autoComplete="off"
+            onBlur={(e) => run(e.currentTarget.value, false)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); last.current = '\u0000'; run(e.currentTarget.value, true); } }} />
+        </div>
+      </Toolbar>
+      <p className={`${SMALL_MUTED} mb-4`}>Press Enter to search. A single match opens straight away.</p>
 
       <div id="admin-support-results">
         {busy ? <Loading /> : null}
         {!busy && error ? <p className={MUTED}>{error}</p> : null}
         {!busy && !error && results && results.length === 0 ? <Empty>No users match that search.</Empty> : null}
         {!busy && results && results.length > 0 ? (
-          <div className={AdminUI.card}>
-            <ul className={LIST}>
-              {results.map((r) => (
-                <li key={r.id}>
+          <List<SearchResult>
+            items={results}
+            rowKey={(r) => r.id}
+            columns={[
+              {
+                label: 'Username',
+                primary: true,
+                cell: (r) => (
                   <button type="button" data-support-result={r.id}
-                    className="w-full text-start px-5 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/50"
+                    className={`${AdminUI.btn.link} text-start break-words`}
                     onClick={() => onOpen(r.id)}>
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100 break-words">{r.username}</span>
-                    {r.display_name ? <span className={MUTED}>{r.display_name}</span> : null}
-                    <span className={SMALL_MUTED}>{`#${r.id}`}</span>
-                    <span className={AdminUI.badge.outline}>{`Matched: ${MATCHED_ON[r.matched_on] || r.matched_on}`}</span>
+                    {r.username}
                   </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+                ),
+              },
+              { label: 'Display name', cell: (r) => r.display_name || '' },
+              { label: 'Id', cell: (r) => `#${r.id}` },
+              { label: 'Match', cell: (r) => <Badge label={`Matched: ${MATCHED_ON[r.matched_on] || r.matched_on}`} /> },
+            ] as Column<SearchResult>[]}
+          />
         ) : null}
       </div>
     </div>
@@ -248,16 +254,6 @@ function SupportSearch({ onOpen, initialQuery, onQuery }: {
 }
 
 // ── Detail view ────────────────────────────────────────────────────────
-
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="min-w-0">
-      <div className={SMALL_MUTED}>{label}</div>
-      <div className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 break-words">{value}</div>
-      {sub ? <div className={SMALL_MUTED}>{sub}</div> : null}
-    </div>
-  );
-}
 
 function summaryText(s: any): string {
   const u = s.user;
@@ -288,9 +284,7 @@ function HeaderCard({ summary, onBack }: { summary: any; onBack: () => void }) {
   };
   return (
     <>
-      <button type="button" id="admin-support-back" className={`${AdminUI.btn.ghost} text-sm mb-3`} onClick={onBack}>
-        ← Back to search
-      </button>
+      <BackButton id="admin-support-back" onClick={onBack}>Back to search</BackButton>
       <div id="admin-support-header" className={`${AdminUI.card} p-5 mb-4`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -334,15 +328,15 @@ function GlanceCard({ summary }: { summary: any }) {
   const g = summary.glance;
   return (
     <DetailCard title="At a glance" id="admin-support-glance">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-        <Stat label="Total points" value={fmtPoints(g.total_points)}
-          sub={g.ledger_points !== g.total_points ? `${fmtPoints(g.ledger_points)} in the ledger` : undefined} />
-        <Stat label="Rank" value={g.all_time_rank ? `${g.all_time_rank}` : 'Unranked'}
-          sub={g.participants ? `of ${g.participants} participants` : undefined} />
-        <Stat label="Events joined" value={String(g.events_joined || 0)} />
-        <Stat label="Kudos received" value={String(g.kudos_received || 0)} />
-        <Stat label="Last active" value={g.last_active ? fmtDate(g.last_active) : 'Never'} />
-      </div>
+      {/* The kit's tiles have no second line, so what was under a figure
+          (the ledger's own total, how many take part) is said in its label. */}
+      <Figures items={[
+        { key: 'points', label: g.ledger_points !== g.total_points ? `Total points, ${fmtPoints(g.ledger_points)} in the ledger` : 'Total points', value: fmtPoints(g.total_points), tone: 'green' },
+        { key: 'rank', label: g.participants ? `Rank of ${g.participants} participants` : 'Rank', value: g.all_time_rank ? `${g.all_time_rank}` : 'Unranked' },
+        { key: 'events', label: 'Events joined', value: String(g.events_joined || 0) },
+        { key: 'kudos', label: 'Kudos received', value: String(g.kudos_received || 0), tone: 'yellow' },
+        { key: 'active', label: 'Last active', value: g.last_active ? fmtDate(g.last_active) : 'Never' },
+      ]} />
     </DetailCard>
   );
 }
@@ -352,34 +346,36 @@ function GlanceCard({ summary }: { summary: any }) {
 function PointsByEvent({ points }: { points: any[] }) {
   if (!points.length) return <Empty>No points in any event yet.</Empty>;
   return (
-    <div className={AdminUI.tableWrap}>
-      <table className={AdminUI.table}>
-        <thead className={AdminUI.thead}>
+    // Written by hand, in the shared table's classes: each row carries its
+    // event's id for what looks it up, which the shared list cannot write.
+    <div className={TABLE.wrap}>
+      <table className={TABLE.table}>
+        <thead className={TABLE.thead}>
           <tr>
-            <th className={AdminUI.th}>Event</th>
-            <th className={AdminUI.th}>Ledger</th>
-            <th className={AdminUI.th}>Leaderboard</th>
-            <th className={AdminUI.th}>Rank</th>
+            <th className={TABLE.th}>Event</th>
+            <th className={TABLE.th}>Ledger</th>
+            <th className={TABLE.th}>Leaderboard</th>
+            <th className={TABLE.th}>Rank</th>
           </tr>
         </thead>
         <tbody>
           {points.map((p) => {
             const behind = p.leaderboard_points != null && Math.abs(p.leaderboard_points - p.ledger_points) > 0.005;
             return (
-              <tr key={p.season_event_id} className={AdminUI.trHover} data-support-event={p.season_event_id}>
-                <td className={AdminUI.td}>
+              <tr key={p.season_event_id} className={TABLE.tr} data-support-event={p.season_event_id}>
+                <td className={TABLE.td}>
                   <div className="font-medium text-zinc-900 dark:text-zinc-100">{p.event_name}</div>
                   <div className="mt-1 flex flex-wrap gap-1.5">
-                    <span className={STATUS_BADGE[p.status] || AdminUI.badge.outline}>{STATUS_LABEL[p.status] || p.status}</span>
+                    <Badge tone={STATUS_TONE[p.status]} label={STATUS_LABEL[p.status] || p.status} />
                     {!p.enrolled ? <span className={AdminUI.badge.warn}>Not enrolled</span> : null}
                     {p.season_name ? <span className={SMALL_MUTED}>{p.season_name}</span> : null}
                   </div>
                 </td>
-                <td className={AdminUI.td}>
+                <td className={TABLE.td}>
                   <div>{fmtPoints(p.ledger_points)}</div>
                   <div className={SMALL_MUTED}>{`${p.activity_count} ${p.activity_count === 1 ? 'entry' : 'entries'}`}</div>
                 </td>
-                <td className={AdminUI.td}>
+                <td className={TABLE.td}>
                   {p.leaderboard_points == null ? <span className={MUTED}>Not on the leaderboard yet</span> : (
                     <>
                       <div>{fmtPoints(p.leaderboard_points)}</div>
@@ -388,7 +384,7 @@ function PointsByEvent({ points }: { points: any[] }) {
                     </>
                   )}
                 </td>
-                <td className={AdminUI.td}>{p.rank != null ? p.rank : <span className={MUTED}>None</span>}</td>
+                <td className={TABLE.td}>{p.rank != null ? p.rank : <span className={MUTED}>None</span>}</td>
               </tr>
             );
           })}
@@ -662,7 +658,7 @@ function EventsCard({ summary }: { summary: any }) {
                 </div>
                 <div className={SMALL_MUTED}>{e.registered_at ? `Enrolled ${fmtDate(e.registered_at)}` : 'Enrollment date unknown'}</div>
               </div>
-              <span className={STATUS_BADGE[e.status] || AdminUI.badge.outline}>{STATUS_LABEL[e.status] || e.status}</span>
+              <Badge tone={STATUS_TONE[e.status]} label={STATUS_LABEL[e.status] || e.status} />
             </li>
           ))}
         </ul>
@@ -713,12 +709,12 @@ function KudosCard({ summary }: { summary: any }) {
   const pr = (r: any) => (r.title || (r.pr_number ? `PR #${r.pr_number}` : 'a proposal'));
   return (
     <DetailCard title="Kudos" id="admin-support-kudos">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Kudos received" value={String(k.received)} />
-        <Stat label="Bounties received" value={String(k.bounties_received)} />
-        <Stat label="Kudos given" value={String(k.given)} />
-        <Stat label="Bounties pledged" value={String(k.bounties_given)} />
-      </div>
+      <Figures items={[
+        { key: 'received', label: 'Kudos received', value: String(k.received), tone: 'yellow' },
+        { key: 'bounties-received', label: 'Bounties received', value: String(k.bounties_received), tone: 'green' },
+        { key: 'given', label: 'Kudos given', value: String(k.given) },
+        { key: 'bounties-given', label: 'Bounties pledged', value: String(k.bounties_given) },
+      ]} />
       <p className={`${MUTED} mt-3`}>
         {`${k.week.kudos_used} of ${k.week.kudos_limit} kudos used this week. ${k.week.bounties_used} of ${k.week.bounties_limit} bounties used this week.`}
       </p>
@@ -869,9 +865,7 @@ function SupportDetail({ userId, onBack }: { userId: number; onBack: () => void 
   if (!summary.data) {
     return (
       <div id="admin-support-detail">
-        <button type="button" id="admin-support-back" className={`${AdminUI.btn.ghost} text-sm mb-3`} onClick={onBack}>
-          ← Back to search
-        </button>
+        <BackButton id="admin-support-back" onClick={onBack}>Back to search</BackButton>
         <div className={`${AdminUI.card} p-5`}>
           <LoadError what={`user #${userId}`} onRetry={summary.reload} />
         </div>

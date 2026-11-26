@@ -72,7 +72,9 @@ test('the dashboard has no dead control and hides nothing it has', () => {
   assert.doesNotMatch(overviewTsx, /<div hidden>\{ops\}<\/div>/, 'Platform health is not hidden');
   assert.match(overviewTsx, /<h2>Platform health<\/h2>/);
   assert.match(overviewTsx, /\{recentTables\}\s*\{ops\}/, 'and it is on the page');
-  assert.match(overviewTsx, /className="admin-dashboard-refresh" onClick=\{load\} disabled=\{busy\}/, 'Refresh reloads the page\'s data');
+  // Refresh keeps its own class and is drawn with the console's outline
+  // button recipe now (request 7224).
+  assert.match(overviewTsx, /className=\{`admin-dashboard-refresh \$\{AdminUI\.btn\.outline\}`\} onClick=\{load\} disabled=\{busy\}/, 'Refresh reloads the page\'s data');
   for (const url of ['/api/admin/overview', '/api/admin/analytics/overview', '/api/admin/moderation?status=new',
     '/api/admin/users', '/api/admin/apps-usage?days=30', '/api/admin/analytics/growth']) {
     assert.ok(overviewTsx.includes(`fetchJson('${url}')`), `${url} is read by load()`);
@@ -95,7 +97,13 @@ test('icons are the console\'s own, dates read one way, and the newest accounts 
   assert.doesNotMatch(overviewTsx, /toLocaleDateString\(\)/, 'no bare numeric date');
   assert.match(overviewTsx, /Date\.parse\(right\.created_at\) \|\| 0\) - \(Date\.parse\(left\.created_at\) \|\| 0\)/,
     'sorted by when they joined, not by the order the list arrived in');
-  assert.match(overviewTsx, /STATUS_TONE\[app\.status \|\| ''\] \|\| 'admin-pill'/, 'only a running project is green');
+  // A status is the console's own badge now, where the dashboard had pills
+  // of its own (request 7224): green for running alone, red for a failure,
+  // and the plain badge for anything else.
+  assert.match(overviewTsx, /const STATUS_TONE: Record<string, string> = \{ running: AdminUI\.badge\.success, failed: AdminUI\.badge\.destructive, error: AdminUI\.badge\.destructive \};/,
+    'only a running project is green');
+  assert.match(overviewTsx, /STATUS_TONE\[app\.status \|\| ''\] \|\| AdminUI\.badge\.default/, 'any other status is plain');
+  assert.doesNotMatch(overviewTsx, /admin-pill/, 'no pill of the dashboard\'s own is left');
 });
 
 test('a section opens at its top, and the menu keeps its place with the lit row in view', () => {

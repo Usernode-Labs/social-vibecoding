@@ -9,7 +9,7 @@ import {
 import { BTN } from './tokens.ts';
 import {
   Badge, CloseButton, EmptyState, ErrorState, Field, FormError, FormSection, Input, List,
-  Options, Pager, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt,
+  Options, Pager, Panel, ScreenHeader, Segmented, Select, Skeleton, Textarea, Toolbar, fmt,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 import { AdminUI } from '../admin-console.js';
@@ -473,13 +473,13 @@ function OnchainAccountsScreen() {
     {
       label: 'Status',
       cell: (a) => (a.is_used
-        ? <span className="text-amber-800 dark:text-amber-400">used</span>
-        : <span className="text-green-800 dark:text-green-400">free</span>),
+        ? <Badge label="used" tone="zinc" />
+        : <Badge label="free" tone="mint" />),
     },
     {
       label: 'Delegation',
       cell: (a) => (a.delegated
-        ? <Badge label="Delegated" tone="green" />
+        ? <Badge label="Delegated" tone="mint" />
         : <span className="text-zinc-500 dark:text-zinc-400">—</span>),
     },
     { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
@@ -492,76 +492,78 @@ function OnchainAccountsScreen() {
       <ScreenHeader
         title="Onchain accounts"
         subtitle="Accounts linked to users, with their identity and balances. Click a public key for the full detail."
-        actions={(
-          <>
-            <label className="sr-only" htmlFor="admin-topo-oa-season-filter">Filter by season</label>
-            <Select
-              id="admin-topo-oa-season-filter"
-              value={seasonFilter}
-              onChange={(e) => onSeason(e.target.value)}
-            >
-              <Options options={seasonOptions(seasons)} blank="All seasons" />
-            </Select>
-            <label className="sr-only" htmlFor="admin-topo-oa-event-filter">Filter by event</label>
-            <Select
-              id="admin-topo-oa-event-filter"
-              value={eventFilter}
-              onChange={(e) => { setEventFilter(e.target.value); setPage(1); }}
-            >
-              <Options options={eventOptions(eventChoices)} blank="All events" />
-            </Select>
-            <label className="sr-only" htmlFor="admin-topo-oa-delegated-filter">
-              Filter by delegation
-            </label>
-            <Select
-              id="admin-topo-oa-delegated-filter"
-              value={delegatedFilter}
-              onChange={(e) => { setDelegatedFilter(e.target.value); setPage(1); }}
-            >
-              <Options
-                options={[
-                  { value: 'true', label: 'Delegated' },
-                  { value: 'false', label: 'Not delegated' },
-                ]}
-                blank="Delegation: any"
-              />
-            </Select>
-            {/* Commits on blur or Enter, NOT on every keystroke. React's
-                `onChange` is the DOM `input` event, but the innerHTML version
-                listened for `change` — and this search is a paged server
-                query, so per-keystroke would be one request per character
-                against the admin API. The field stays uncontrolled so typing
-                is never interrupted by a re-render. */}
-            <Input
-              id="admin-topo-oa-search"
-              type="text"
-              placeholder="Search public key/identity/code…"
-              aria-label="Search onchain accounts"
-              className="sm:w-64"
-              defaultValue={search}
-              onBlur={(e) => commitSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
-              }}
-            />
-            {write ? (
-              <button
-                id="admin-topo-oa-import"
-                type="button"
-                className={BTN.primarySm}
-                onClick={() => setImporting(true)}
-              >
-                Import…
-              </button>
-            ) : null}
-          </>
-        )}
+        actions={write ? (
+          <button
+            id="admin-topo-oa-import"
+            type="button"
+            className={BTN.primarySm}
+            onClick={() => setImporting(true)}
+          >
+            Import…
+          </button>
+        ) : null}
       />
       <div id="admin-topo-oa-form">
         {importing && write ? (
           <ImportPanel onClose={() => setImporting(false)} onImported={load} />
         ) : null}
       </div>
+      {/* The search and the three filters are the list's, so they sit in
+          the bar over it and the header keeps only Import (26 Nov 2026). */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          {/* Commits on blur or Enter, NOT on every keystroke. React's
+              `onChange` is the DOM `input` event, but the innerHTML version
+              listened for `change`, and this search is a paged server
+              query, so per-keystroke would be one request per character
+              against the admin API. The field stays uncontrolled so typing
+              is never interrupted by a re-render. */}
+          <Input
+            id="admin-topo-oa-search"
+            type="text"
+            placeholder="Search public key/identity/code…"
+            aria-label="Search onchain accounts"
+            defaultValue={search}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+            }}
+          />
+        </div>
+        <div className="w-full sm:w-48">
+          <label className="sr-only" htmlFor="admin-topo-oa-season-filter">Filter by season</label>
+          <Select
+            id="admin-topo-oa-season-filter"
+            value={seasonFilter}
+            onChange={(e) => onSeason(e.target.value)}
+          >
+            <Options options={seasonOptions(seasons)} blank="All seasons" />
+          </Select>
+        </div>
+        <div className="w-full sm:w-48">
+          <label className="sr-only" htmlFor="admin-topo-oa-event-filter">Filter by event</label>
+          <Select
+            id="admin-topo-oa-event-filter"
+            value={eventFilter}
+            onChange={(e) => { setEventFilter(e.target.value); setPage(1); }}
+          >
+            <Options options={eventOptions(eventChoices)} blank="All events" />
+          </Select>
+        </div>
+        {/* Three short choices, all in view, where a select hid them. The
+            values are the select's own: '' (any), 'true', 'false'. */}
+        <Segmented
+          id="admin-topo-oa-delegated-filter"
+          label="Filter by delegation"
+          value={delegatedFilter}
+          options={[
+            { value: '', label: 'Any', title: 'Delegation: any' },
+            { value: 'true', label: 'Delegated' },
+            { value: 'false', label: 'Not delegated' },
+          ]}
+          onChange={(next) => { setDelegatedFilter(next); setPage(1); }}
+        />
+      </Toolbar>
       <div id="admin-topo-oa-table">
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (
