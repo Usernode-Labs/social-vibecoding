@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
 import { TONES, cardTintClass, toneLabel } from '../home/panels/ui';
@@ -31,8 +31,9 @@ const MAX_PREVIEW_BYTES = 1536 * 1024;
 
 export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose: () => void }) {
   const t = useMessages('discover');
-  const root = useRef<HTMLDivElement>(null);
-  const card = useRef<HTMLDivElement>(null);
+  // Lifted into the kit's modal while it is open (lib/sheet.ts), which owns
+  // the backdrop, Escape, Back and focus.
+  const { rootRef: root, panelRef: card } = useSheet({ kind: 'modal', onClose });
   const file = useRef<HTMLInputElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
@@ -92,12 +93,6 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     const url = art?.darkUrl;
     return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
   }, [art?.darkUrl]);
-  useIsomorphicLayoutEffect(() => {
-    if (!root.current || !card.current) return;
-    let adoption: KitAdoption | null = adoptKitSurface({ kind: 'modal', contentEl: card.current,
-      adoptedOn: root.current, home: 'placeholder', gate: 'kit', onDismiss: () => { adoption = null; close.current(); } });
-    return () => { if (adoption) adoption.release(); };
-  }, []);
   const interactive = !!art && !busy && !loading && !sent;
   // The art block, not the whole card: the name and blurb below it are not a
   // framing surface, and its box is what every gesture is measured against.

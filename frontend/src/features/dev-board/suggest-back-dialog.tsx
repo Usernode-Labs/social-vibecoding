@@ -7,9 +7,9 @@
  *
  * Opened from the project's ⋯ (./actions-row.tsx DevPlusMenu, its
  * "Suggest to" row), and drawn the way that menu's other pop-up,
- * the Featured illustration editor, is: portalled to <body> and handed to
- * the kit as a modal (lib/kit-surface.ts adoptKitSurface). It is not one of
- * the static dialogs (features/dialogs/): it exists only while it is open.
+ * the Featured illustration editor, is: portalled to <body> and presented by
+ * the Sheet as the kit's modal (lib/sheet.ts). It is not one of the static
+ * dialogs (features/dialogs/): it exists only while it is open.
  *
  * It reads GET /api/apps/:slug/suggest-back once it is open, never in a
  * render: the version's own changes (`changes: [{sha, title}]`, newest
@@ -32,8 +32,7 @@ import { Button } from '@/components/ui/button';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useSheet } from '../../lib/sheet';
 
 /** GET /api/apps/:slug/suggest-back (services/suggest-back.js preview). */
 export interface SuggestBackPreview {
@@ -118,10 +117,9 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
   onClose: () => void;
 }) {
   const t = useMessages('project');
-  const root = useRef<HTMLDivElement>(null);
-  const card = useRef<HTMLDivElement>(null);
-  const close = useRef(onClose);
-  useIsomorphicLayoutEffect(() => { close.current = onClose; }, [onClose]);
+  // Lifted into the kit's modal while it is open (lib/sheet.ts), which owns
+  // the backdrop, Escape, Back and focus.
+  const { rootRef: root, panelRef: card } = useSheet({ kind: 'modal', onClose });
 
   const [view, setView] = useState<SuggestBackPreview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,14 +149,6 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
     return () => controller.abort();
   }, [endpoint]);
 
-  useIsomorphicLayoutEffect(() => {
-    if (!root.current || !card.current) return undefined;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'modal', contentEl: card.current, adoptedOn: root.current, home: 'placeholder', gate: 'kit',
-      onDismiss: () => { adoption = null; close.current(); },
-    });
-    return () => { if (adoption) adoption.release(); };
-  }, []);
 
   async function send() {
     if (busy) return;

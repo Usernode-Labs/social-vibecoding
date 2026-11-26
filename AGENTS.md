@@ -648,7 +648,7 @@ between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
-  palette. Twenty-two modules today: `alert`, `anchored-panel`, `button`,
+  palette. Twenty-one modules today: `alert`, `button`,
   `chat`, `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`,
   `icons`, `input`, `label`, `page-header`, `password-input`, `progress-ring`,
   `select`, `skeleton`, `switch`, `tabs`, `textarea`, `wordmark`.

@@ -351,7 +351,7 @@ export function PlatformHeader() {
           way — a shade DARKER than the page ground, so the bar reads as its
           own surface, and the zinc-50 discs still lift off it. Dark mode is
           the same relationship every sheet already uses (zinc-900 on
-          zinc-950; cf. notifications-sheet.tsx, anchored-panel.tsx).
+          zinc-950; cf. notifications-sheet.tsx).
 
           `rounded-b-2xl` + `-mb-2` is the "eats into the app area" corner: a
           16px radius curves the bar's bottom corners away so the page ground

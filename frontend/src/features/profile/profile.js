@@ -66,7 +66,6 @@ import {
   displayNameOf,
   initialOf,
 } from './profile-store.js';
-import { pushDismissible } from '../../lib/back-stack';
 import { claimSurface } from '../../lib/open-surfaces';
 import { tabAddress, tabFromHash } from './you-tabs';
 import { t } from '../../lib/i18n/runtime';
@@ -114,17 +113,17 @@ const Profile = {
   // (./avatar-crop-dialog.tsx) over the editor, and only Use photo stages it.
   // `_cropFile` is the File while that step is up; the store carries what the
   // step renders (`cropSource`: its object URL and decoded size), for the
-  // same reason `_pendingAvatar` stays out of it. `_releaseCropBack` is the
-  // step's own claim on the Back button, pushed above the editor's, so Back
-  // cancels the step and leaves the editor open.
+  // same reason `_pendingAvatar` stays out of it. The step's claim on the
+  // Back button is its Sheet's (lib/sheet.ts), taken above the editor's
+  // because it opens over it, so Back cancels the step and leaves the editor
+  // open.
   _cropFile: null,
-  _releaseCropBack: null,
 
   // THE EDITOR'S CLAIM ON THE BACK BUTTON, and what Back leaves behind
   // (QA 2026-09-24 Q16). Back used to walk past the open editor to the entry
   // under Profile, so it closed the card AND left the screen, and a half-typed
-  // bio went with it. The editor claims the press the way the dialogs do
-  // (lib/back-stack.ts), and Back closes the card and nothing else.
+  // bio went with it. The editor's Sheet claims the press (lib/sheet.ts), and
+  // Back closes the card and nothing else.
   //
   // What was typed survives that close: `_draft` holds the name and bio until
   // the editor opens again, which seeds its fields from it. Only Back and the
@@ -132,7 +131,6 @@ const Profile = {
   // the screen are decisions, and discard it. A staged photo is not kept: it
   // shows on the identity card as soon as it is staged, which would read as
   // saved. `_draftSource` is the open editor's own read of its fields.
-  _releaseBack: null,
   _draft: null,
   _draftSource: null,
 
@@ -649,7 +647,7 @@ const Profile = {
   //
   // The viewer's own feedback and its status, as a card over Me: the same
   // presentation as the edit sheet below (./feedback-sheet.tsx, lifted into
-  // the kit's modal by lib/kit-surface.ts), and the same claim on the back
+  // the kit's modal by lib/sheet.ts), and the same claim on the back
   // button. Its rows come from the load above, so opening it is a store push.
   //
   // It has an address, `#profile?feedback`, because two places outside Me
@@ -662,7 +660,6 @@ const Profile = {
   // Back does not reopen a list the viewer closed, and opens the list as
   // soon as the viewer's own profile is on screen.
   _feedbackRequested: false,
-  _releaseFeedback: null,
   _releaseFeedbackSurface: null,
 
   showFeedback() {
@@ -672,12 +669,8 @@ const Profile = {
     Profile._releaseFeedbackSurface = claimSurface(
       'profile-feedback', 'profile-card', () => Profile._dismissFeedback(),
     );
+    // Back, Escape and the backdrop are its Sheet's (./feedback-sheet.tsx).
     profileStore.set({ feedbackOpen: true });
-    Profile._releaseFeedback = pushDismissible(() => {
-      Profile._releaseFeedback = null;
-      Profile._dismissFeedback();
-      return true;
-    });
   },
 
   _dismissFeedback() {
@@ -686,11 +679,6 @@ const Profile = {
     const surface = Profile._releaseFeedbackSurface;
     Profile._releaseFeedbackSurface = null;
     if (surface) surface();
-    // Navigating, as _dismissSheet is: a row of the list is a link to the
-    // request it became, and leaving the screen closes it too.
-    const release = Profile._releaseFeedback;
-    Profile._releaseFeedback = null;
-    if (release) release({ navigating: true });
     if (profileStore.get().feedbackOpen) profileStore.set({ feedbackOpen: false });
   },
 
@@ -750,28 +738,17 @@ const Profile = {
   //
   // Friends was a section under Me's rows (#2386); it is a row now, and this
   // opens the same section as a card (./friends-sheet.tsx), the way Your
-  // feedback opens above, with the same claim on the back button and its own
-  // address, `#profile?friends`. Its lists are the load's, so opening it is a
-  // store push.
+  // feedback opens above, with its Sheet's claim on the back button and its
+  // own address, `#profile?friends`. Its lists are the load's, so opening it
+  // is a store push.
   _friendsRequested: false,
-  _releaseFriends: null,
 
   showFriends() {
     if (profileStore.get().friendsOpen) return;
     profileStore.set({ friendsOpen: true });
-    Profile._releaseFriends = pushDismissible(() => {
-      Profile._releaseFriends = null;
-      Profile._dismissFriends();
-      return true;
-    });
   },
 
   _dismissFriends() {
-    // Navigating, as _dismissFeedback is: a friend's name is a link to their
-    // page, and leaving the screen closes the card too.
-    const release = Profile._releaseFriends;
-    Profile._releaseFriends = null;
-    if (release) release({ navigating: true });
     if (profileStore.get().friendsOpen) profileStore.set({ friendsOpen: false });
   },
 
@@ -795,26 +772,15 @@ const Profile = {
   // AppAllowance box the make screen shows, with its "Request more". The
   // card has its own address, `#profile?slots`, taken off the address the
   // way `?friends` is, so a modified click or a reload opens it over the
-  // profile. Its claim on Back is the Friends card's.
+  // profile. Its claim on Back is its Sheet's, as the Friends card's is.
   _appSlotsRequested: false,
-  _releaseAppSlots: null,
 
   showAppSlots() {
     if (profileStore.get().appSlotsOpen) return;
     profileStore.set({ appSlotsOpen: true });
-    Profile._releaseAppSlots = pushDismissible(() => {
-      Profile._releaseAppSlots = null;
-      Profile._dismissAppSlots();
-      return true;
-    });
   },
 
   _dismissAppSlots() {
-    // Navigating, as _dismissFriends is: leaving the screen closes the card
-    // too.
-    const release = Profile._releaseAppSlots;
-    Profile._releaseAppSlots = null;
-    if (release) release({ navigating: true });
     if (profileStore.get().appSlotsOpen) profileStore.set({ appSlotsOpen: false });
   },
 
@@ -824,22 +790,13 @@ const Profile = {
   // with a switch, and the device's share menu or a clipboard copy. Nothing
   // is recorded and no points are awarded; Back closes it, as it closes the
   // App slots card.
-  _releaseWeekShare: null,
 
   showWeekShare() {
     if (profileStore.get().weekShareOpen) return;
     profileStore.set({ weekShareOpen: true });
-    Profile._releaseWeekShare = pushDismissible(() => {
-      Profile._releaseWeekShare = null;
-      Profile._dismissWeekShare();
-      return true;
-    });
   },
 
   _dismissWeekShare() {
-    const release = Profile._releaseWeekShare;
-    Profile._releaseWeekShare = null;
-    if (release) release({ navigating: true });
     if (profileStore.get().weekShareOpen) profileStore.set({ weekShareOpen: false });
   },
 
@@ -880,9 +837,8 @@ const Profile = {
   // ── edit sheet ────────────────────────────────────────────────────────
   //
   // The panel is React's now (./profile-edit-sheet.tsx). It is rendered inside
-  // #profile-root and lifted into the native kit's bottom sheet by
-  // lib/kit-surface.ts — the same `PlatformUI.sheet` presentation it always
-  // had, with the same `|| null` degradation: no kit means the panel simply
+  // #profile-root and lifted into the native kit's modal by lib/sheet.ts,
+  // with the same `|| null` degradation: no kit means the panel simply
   // stays where React put it, at the top of the screen, so the editor is never
   // unreachable.
 
@@ -892,12 +848,9 @@ const Profile = {
     const draft = Profile._draft;
     Profile._dismissSheet();
     Profile._draft = draft;
+    // Back, like the kit's backdrop and Escape, closes it through its Sheet
+    // (./profile-edit-sheet.tsx) with `keepDraft`.
     profileStore.set({ sheetOpen: true });
-    Profile._releaseBack = pushDismissible(() => {
-      Profile._releaseBack = null;
-      Profile._dismissSheet({ keepDraft: true });
-      return true;
-    });
   },
 
   /**
@@ -910,16 +863,11 @@ const Profile = {
     Profile._draft = keepDraft && typeof source === 'function' && user.username
       ? { username: user.username, ...source() }
       : null;
-    // The positioning step goes first (#3525): its claim on Back is above
-    // the editor's, and only the top record may be spent. Navigating for the
-    // reason the editor's own release is, just below.
-    Profile._endAvatarCrop({ navigating: true });
-    // Navigating, because several closes here are the first half of a link
-    // (Email & recovery, Open public page, leaving the screen): the record is
-    // spent a task later, and only if nothing moved (lib/back-stack.ts).
-    const release = Profile._releaseBack;
-    Profile._releaseBack = null;
-    if (release) release({ navigating: true });
+    // The positioning step goes with it (#3525). Both claims on Back are
+    // their Sheets' (lib/sheet.ts), handed back as navigating ones, because
+    // several closes here are the first half of a link (Email & recovery,
+    // Open public page, leaving the screen).
+    Profile._endAvatarCrop();
     profileStore.set({ sheetOpen: false });
     Profile._clearPendingAvatar();
   },
@@ -982,12 +930,9 @@ const Profile = {
     if (!profileStore.get().sheetOpen) return;
     Profile._endAvatarCrop();
     Profile._cropFile = file;
+    // Back, Escape and the backdrop cancel it through its Sheet
+    // (./avatar-crop-dialog.tsx).
     profileStore.set({ cropSource: { url: URL.createObjectURL(file), width, height } });
-    Profile._releaseCropBack = pushDismissible(() => {
-      Profile._releaseCropBack = null;
-      Profile._endAvatarCrop();
-      return true;
-    });
   },
 
   /**
@@ -1018,10 +963,7 @@ const Profile = {
     Profile._endAvatarCrop();
   },
 
-  _endAvatarCrop({ navigating = false } = {}) {
-    const release = Profile._releaseCropBack;
-    Profile._releaseCropBack = null;
-    if (release) release(navigating ? { navigating: true } : undefined);
+  _endAvatarCrop() {
     Profile._cropFile = null;
     const source = profileStore.get().cropSource;
     if (!source) return;

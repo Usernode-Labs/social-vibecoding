@@ -5,7 +5,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import { walletSheetStore, WALLET_EMPTY, type WalletSheetState } from '../header/wallet-sheet-store';
 import { nodePillStore } from '../header/node-pill-store';
 import { ACCOUNT_ROW, ACCOUNT_ROW_MUTED, ACCOUNT_ROW_TITLE, NODE_DOWN } from '../header/account-row';
@@ -67,38 +67,18 @@ export function StakingRow() {
 
 function StakingSheet({ onClose, preview }: { onClose: () => void; preview: WalletSheetState | null }) {
   const t = useMessages('profile');
-  const panel = useRef<HTMLDivElement>(null);
-  const dismiss = useRef(onClose); dismiss.current = onClose;
-  const [adopted, setAdopted] = useState(false);
   const wallet = useStoreState(walletSheetStore);
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet', contentEl: panel.current, home: 'placeholder', gate: 'kit',
-      onDismiss: () => { adoption = null; dismiss.current(); },
-    });
-    setAdopted(!!adoption);
-    panel.current.querySelector<HTMLButtonElement>('button')?.focus();
-    return () => {
-      if (adoption) adoption.release();
-      previousFocus?.focus?.();
-    };
-  }, []);
+  // The kit's sheet when there is one, else the scrim below (lib/sheet.ts),
+  // which also owns Escape, Back, Tab staying inside and focus.
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose,
+    initialFocus: (el) => el.querySelector<HTMLButtonElement>('button'),
+  });
   return <div className={adopted ? 'contents' : 'fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3'}
-    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    {...scrimProps}>
     <div ref={panel} data-staking-sheet role="dialog" aria-modal="true" aria-label={t('profile:staking.title')}
-      className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-4 flex-col max-h-[85dvh] overflow-y-auto"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
-        if (event.key === 'Tab') {
-          const buttons = panel.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
-          if (!buttons?.length) return;
-          const first = buttons[0], last = buttons[buttons.length - 1];
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-          if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-        }
-      }}>
+      className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-4 flex-col max-h-[85dvh] overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold">{t('profile:staking.title')}</h2>
         <Button variant="neutral" size="sm" aria-label={t('profile:staking.close')} onClick={onClose}>×</Button>
