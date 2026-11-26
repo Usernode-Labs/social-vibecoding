@@ -41,8 +41,11 @@ test('on a wide window the list of sections comes first at 360px, the open secti
 
 test('a head stands above the two columns under a look, and the standard look never draws it', () => {
   const src = read('frontend/src/features/settings/index.tsx');
-  assert.match(src, /<header className="settings-frame-head">\s*<div className="settings-frame-head-tx">\s*<h1 className="settings-frame-title">\{t\('settings:screen\.title'\)\}<\/h1>\s*<p className="settings-frame-purpose">\{t\('settings:frame\.head\.purpose'\)\}<\/p>/);
+  assert.match(src, /<header className="settings-frame-head">\s*<div className="settings-frame-head-tx">\s*<div role="heading" aria-level=\{1\} className="settings-frame-title">\{t\('settings:screen\.title'\)\}<\/div>\s*<p className="settings-frame-purpose">\{t\('settings:frame\.head\.purpose'\)\}<\/p>/);
   assert.doesNotMatch(src, /isFrameSkin|useLiveSkin|useSkin/, 'the chassis is in the prerender: the same markup whatever the look');
+  // Request #7166, point 4: the screen is in the served page while hidden,
+  // so its title is a level-1 heading by role and never an <h1>.
+  assert.doesNotMatch(src, /<h1\s/, 'no <h1> from a hidden screen in the served page');
   assert.match(css, /\n\.settings-frame-head \{ display: none; \}/, 'the standard look has no head');
   assert.equal(roots.head, undefined, 'the head is no root: as one it would take `.head .acts .btn` away from the other pages\' buttons');
   assert.deepEqual(roots.purpose, { to: '.settings-frame-purpose' });

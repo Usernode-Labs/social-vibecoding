@@ -166,10 +166,15 @@ export function SettingsScreen() {
             the look dresses it through the wear map (frontend/looks/
             looks.json: head, title, purpose). A <header>, not a <div>: the
             standard sheet's rules lay out `#settings-root > div`.
+
+            THE TITLE IS A LEVEL-1 HEADING BY ROLE, NOT AN <h1> (request
+            #7166, point 4): this screen is in the served document while
+            hidden, and an <h1> here was one of three on every address. A
+            screen reader hears the same heading as before.
         */}
         <header className="settings-frame-head">
           <div className="settings-frame-head-tx">
-            <h1 className="settings-frame-title">{t('settings:screen.title')}</h1>
+            <div role="heading" aria-level={1} className="settings-frame-title">{t('settings:screen.title')}</div>
             <p className="settings-frame-purpose">{t('settings:frame.head.purpose')}</p>
           </div>
         </header>
