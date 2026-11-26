@@ -102,11 +102,12 @@ import { useDismiss } from '../../message-actions/use-dismiss';
 import { Attachments } from '../../group-chat/transcript';
 import type { Attachment } from '../../group-chat/transcript-store';
 import { attachmentBadge } from '../../messages/attachment-views';
-import { MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
+import { CardHomeContext, MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
 import { applyFormat, type FormatKind } from '../../messages/composer-format';
 import { setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
+import { ChannelMute } from './channel-head';
 import {
   POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, publicSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
   sortItems, toggledReactions,
@@ -415,13 +416,15 @@ export class DiscussionFeed {
     await Promise.all(reads);
   }
 
-  private async readThread(rootId: number, open: boolean, all = false): Promise<void> {
+  /** Reads a post's thread into the feed; answers the id of the root it read, or null. */
+  private async readThread(rootId: number, open: boolean, all = false): Promise<number | null> {
     try {
       const thread = await this.source.thread(rootId, all);
       const list = thread.root ? [thread.root, ...thread.replies] : thread.replies;
       const opened = open ? new Set([...this.state.opened, rootId]) : this.state.opened;
       this.merge(list, { opened });
-    } catch { /* drawn as it was */ }
+      return thread.root?.id ?? rootId;
+    } catch { return null; /* drawn as it was */ }
   }
 
   /** "View N earlier replies" on a post: its thread, opened; `all` ("Show all replies") reads a very long one whole. */
@@ -525,10 +528,15 @@ export class DiscussionFeed {
     await (this.loaded || this.load());
     if (this.state.status !== 'ready') return null;
     const rootId = target.threadRootId || null;
-    const wanted = target.focusMessageId || rootId;
+    let wanted = target.focusMessageId || rootId;
     if (!wanted) return null;
-    const have = () => this.state.messages.get(wanted) || null;
-    if (rootId && !have()) await this.readThread(rootId, false);
+    const have = () => this.state.messages.get(wanted as number) || null;
+    if (rootId && !have()) {
+      // The server may answer a demo address's thread by its stored root
+      // (staging's fixtures), whose id is then the one to find.
+      const read = await this.readThread(rootId, false);
+      if (read && wanted === rootId) wanted = read;
+    }
     for (let i = 0; !have() && i < PLACE_PAGES && this.state.more && this.state.oldest != null; i += 1) {
       try {
         const page = await this.source.page(this.state.oldest);
@@ -555,6 +563,9 @@ export class DiscussionFeed {
       if (item.kind === 'post' && item.replies.length < item.replyCount) await this.readThread(open, true);
       else this.set({ opened: new Set([...this.state.opened, open]) });
     }
+    // A link to an older message's own thread: its replies open under it,
+    // inside the Earlier post (they were read above).
+    if (item.kind === 'earlier' && rootId && said.rootId == null) this.set({ opened: new Set([...this.state.opened, said.id]) });
     return { key: item.key, messageId: said.id };
   }
 
@@ -744,6 +755,7 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, visitor = n
         slug={slug}
         name={name}
         channel={channel}
+        data={data}
         mode={mode}
         headId={headId}
         host={host}
@@ -759,11 +771,13 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, visitor = n
   return <div className="dev-ws-discussion-page" data-ws-discussion-page="">{card}</div>;
 }
 
-function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus, onFocused, onOpenPage }: {
+function FeedView({ feed, slug, name, channel, data, mode, headId, host, viewer, focus, onFocused, onOpenPage }: {
   feed: DiscussionFeed;
   slug: string;
   name: string;
   channel: Channel;
+  /** The project's record, which says whether its Discussion is muted (Mute, in the page's head). */
+  data: CommunityPayload | null;
   mode: DiscussionCardProps['mode'];
   headId: string;
   host: RefObject<HTMLElement | null>;
@@ -831,6 +845,8 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
     <div className="dev-ws-hub-discussion-head">
       <h2 id={headId} className="dev-ws-hub-discussion-title">{t('project:hub.discussion.title')}</h2>
       <p className="dev-ws-hub-discussion-about">{t('project:hub.discussion.about', { project: name })}</p>
+      {/* #5303: Mute, at the end of the page's head (./channel-head.tsx). */}
+      {mode === 'page' && !room.visitor ? <ChannelMute slug={slug} data={data} /> : null}
     </div>
   );
 
@@ -1307,7 +1323,10 @@ function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean
       {said.spec ? <SpecCard spec={said.spec} slug={room.slug} /> : null}
       {said.cards.length ? (
         <div className="messages-object-list dh-cards" data-ws-discussion-cards={String(said.cards.length)}>
-          {said.cards.map((card, at) => <ObjectCard key={`${card.type}:${at}`} object={card} compact />)}
+          {/* #5303: a card from another project says which one it is from. */}
+          <CardHomeContext.Provider value={room.slug || null}>
+            {said.cards.map((card, at) => <ObjectCard key={`${card.type}:${at}`} object={card} compact />)}
+          </CardHomeContext.Provider>
         </div>
       ) : null}
       {files.length ? <div className="dh-files" data-ws-discussion-files={String(files.length)}><Attachments items={files} /></div> : null}

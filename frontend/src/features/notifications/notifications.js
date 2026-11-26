@@ -1645,11 +1645,16 @@ const Notifications = {
   _openAppDiscussion(slug, messageId) {
     if (!slug) return;
     const id = Number(messageId);
+    const messages = window.UsernodeReact?.messages;
     if (Number.isSafeInteger(id) && id > 0) {
-      window.location.hash = `#messages/app/${encodeURIComponent(slug)}/m/${id}`;
+      // The router takes the message's address to the Discussion, on its post
+      // (and a reply's thread open), as any link to it does. Messages'
+      // openAddress runs the router again when that address is already up.
+      const href = `#messages/app/${encodeURIComponent(slug)}/m/${id}`;
+      if (messages?.openAddress) messages.openAddress(href);
+      else window.location.hash = href;
       return;
     }
-    const messages = window.UsernodeReact?.messages;
     if (messages?.openDiscussion) messages.openDiscussion(slug);
     else window.location.hash = `#messages/app/${encodeURIComponent(slug)}`;
   },

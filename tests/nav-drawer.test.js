@@ -286,7 +286,9 @@ test('the Messages screen: the panes are the levels, the list is alone, the arro
   assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, barWords\);/);
   // 3 Nov 2026: no peek. The list is alone on its level, the whole screen.
   assert.match(index, /const drawerClass = drawer\.on \? ` messages-drawer\$\{drawer\.level === 0 \? ' messages-drawer-alone' : ''\}` : '';/);
-  assert.match(index, /<ConversationList drawer=\{drawer\.on\} \/>\s*<ConversationThread \/>/);
+  // The screen's conversation (ScreenConversation): a channel there is its
+  // Discussion's door (26 Nov 2026), anything else the ConversationThread.
+  assert.match(index, /<ConversationList drawer=\{drawer\.on\} \/>\s*<ScreenConversation \/>/);
   assert.doesNotMatch(index, /ConversationPeek|messages-peek-body/);
   assert.match(index, /className=\{`messages-list-pane \$\{drawer \? 'flex' : /, 'the list stays drawn under a conversation');
   const store = read('frontend/src/features/messages/store.ts');

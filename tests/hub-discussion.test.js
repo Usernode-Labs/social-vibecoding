@@ -286,6 +286,15 @@ test('a link to a message finds its post: the thread opened, older pages read; o
   assert.ok(folded.get().opened.has(3) && folded.get().opened.has(2), 'the Earlier post and the older message\'s replies open');
   const old = await folded.place({ threadRootId: null, focusMessageId: 2 });
   assert.deepEqual(old, { key: 'earlier', messageId: 2 }, 'an old message is a reply of the Earlier post');
+  // A link to an older message's own thread opens that thread under it, inline.
+  const inline = new DiscussionFeed(source, { since: SINCE, fold_at: 8, earlier: { count: 12, from: SINCE, to: SINCE, last_id: 3 } }, { current: 'me' });
+  assert.deepEqual(await inline.place({ threadRootId: 2, focusMessageId: null }), { key: 'earlier', messageId: 2 });
+  assert.ok(inline.get().opened.has(3) && inline.get().opened.has(2), 'the Earlier post open, and the old message\'s thread in it');
+  // A thread the server answers by another root (staging's demo addresses):
+  // that root is the one placed.
+  const aliased = new DiscussionFeed({ ...source, async thread(rootId) { return source.thread(rootId === 9100 ? 10 : rootId); } },
+    { since: null, fold_at: 8, earlier: null }, { current: 'me' });
+  assert.deepEqual(await aliased.place({ threadRootId: 9100, focusMessageId: null }), { key: 'post:10', messageId: 10 });
 
   // The page takes a target, and one it cannot place leaves it at its top.
   const card = read(CARD);

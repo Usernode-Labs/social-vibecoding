@@ -2559,12 +2559,16 @@ async function seedStagingDiscussion(pool) {
       const said = (await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0];
       return said ? null : app.id;
     };
-    // `ago` is minutes before now; null is now, after the Discussion marker.
-    const say = async (appId, who, content, ago, rootId = null) => (await tx.query(
+    // `ago` is minutes before now; null is now. Where a message lands beside
+    // the Discussion marker decides whether it is a post or part of the
+    // Earlier post, and a staging copy takes that marker from production, so
+    // the times are held to their side of it (seedDiscussionClock).
+    const at = await seedDiscussionClock(tx);
+    const say = async (appId, who, content, ago, rootId = null, earlier = false) => (await tx.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
-       VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $6::int) END)
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
        RETURNING id`,
-      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, at(ago, earlier)])).rows[0].id;
     const react = async (messageId, emoji, who) => {
       for (const name of who) {
         await tx.query(
@@ -2575,7 +2579,7 @@ async function seedStagingDiscussion(pool) {
     // A post or reply with files (the follow-up's attachments): the files
     // are obviously fake, a placeholder picture and a short text file.
     const sayWith = (appId, who, content, ago, files, rootId = null) => seedDiscussionFiles(tx, {
-      appId, userId: people[who], content: content ? `Staging demo: ${content}` : '', ago, files, rootId,
+      appId, userId: people[who], content: content ? `Staging demo: ${content}` : '', at: at(ago), files, rootId,
     });
     const club = await project('staging-demo-discussion', 'Staging demo: Book Club', '📖');
     if (club) {
@@ -2607,14 +2611,14 @@ async function seedStagingDiscussion(pool) {
       // delete leaves it (no words), so the Discussion says so above its reply.
       const gone = (await tx.query(
         `INSERT INTO chat_messages (app_id, user_id, content, created_at, deleted_at)
-         VALUES ($1, $2, '', NOW() - make_interval(mins => 70), NOW()) RETURNING id`,
-        [club, people.dev])).rows[0].id;
+         VALUES ($1, $2, '', $3::timestamptz, NOW()) RETURNING id`,
+        [club, people.dev, at(70)])).rows[0].id;
       await say(club, 'ana', 'Thursday works for me.', 65, gone);
       for (let i = 0; i < 4; i += 1) {
         await tx.query(
           `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
-           VALUES ($1, $2, '', 'spec_share', $3::jsonb, NOW() - make_interval(mins => $4::int))`,
-          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), 30 * 60 - i]);
+           VALUES ($1, $2, '', 'spec_share', $3::jsonb, $4::timestamptz)`,
+          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), at(30 * 60 - i)]);
       }
     }
     const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
@@ -2629,11 +2633,11 @@ async function seedStagingDiscussion(pool) {
       let last = null;
       for (let i = 0; i < old.length; i += 1) {
         const ago = (old.length - i) * 24 * 60 + 300;
-        last = await say(busy, old[i][0], old[i][1], ago);
-        // One of them had a reply thread of its own, which stays in #general.
-        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last);
+        last = await say(busy, old[i][0], old[i][1], ago, null, true);
+        // One of them had a reply thread of its own, inside the Earlier post.
+        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last, true);
       }
-      // Written into "Earlier in #general" since: a reply under its last message.
+      // Written into "Earlier discussion" since: a reply under its last message.
       await say(busy, 'ana', 'Catching up on all of this. Count me in for the next long run.', null, last);
       const route = await say(busy, 'marcus', 'Proposing a new Sunday route along the river. Thoughts?', null);
       await react(route, '👍', ['jo', 'ana']);
@@ -2659,11 +2663,37 @@ const SEED_PICTURE = Object.freeze({ kind: 'image', filename: 'staging-demo-read
 const SEED_TEXT_FILE = Object.freeze({ kind: 'text', filename: 'staging-demo-schedule.txt', contentType: 'text/plain', text: 'Staging demo: obviously fake.\nMarch 14: Klara and the Sun\nApril 11: Piranesi\n' });
 
 /**
+ * The Discussion seeds' clock. A message before the Discussion marker
+ * (platform_settings.discussion_posts_since, services/discussion.js) is part
+ * of the Earlier post once there are enough of them; one after it is a post.
+ * A staging copy carries production's marker, so a time "N minutes ago"
+ * could land on either side of it. `at(ago)` is that time held after the
+ * marker (a post), each one a second later than the one before so their
+ * order holds; `at(ago, true)` is held before it (the Earlier post's).
+ */
+async function seedDiscussionClock(db) {
+  const row = (await db.query("SELECT value FROM platform_settings WHERE key = 'discussion_posts_since'")).rows[0];
+  const since = row ? Date.parse(String(row.value).replace(/^"|"$/g, '')) : NaN;
+  let after = 0;
+  let before = 0;
+  return (ago, earlier = false) => {
+    const t = Date.now() - (Number(ago) || 0) * 60000;
+    if (!Number.isFinite(since)) return new Date(t).toISOString();
+    if (earlier) {
+      before += 1;
+      return new Date(Math.min(t, since - (400 - before) * 3600000)).toISOString();
+    }
+    after += 1;
+    return new Date(Math.max(t, since + after * 1000)).toISOString();
+  };
+}
+
+/**
  * A post or a reply carrying files, as the chat's upload and send write them
  * (chat_message_attachments rows linked to the message, and the message's
  * metadata.attachments). Returns the message's id.
  */
-async function seedDiscussionFiles(db, { appId, userId, content, ago, files, rootId = null }) {
+async function seedDiscussionFiles(db, { appId, userId, content, at, files, rootId = null }) {
   const crypto = require('crypto');
   const rows = files.map((file) => {
     const data = file.base64 ? Buffer.from(file.base64, 'base64') : Buffer.from(file.text || '', 'utf8');
@@ -2672,9 +2702,9 @@ async function seedDiscussionFiles(db, { appId, userId, content, ago, files, roo
   const metadata = { attachments: rows.map((f) => ({ id: f.id, kind: f.kind, filename: f.filename, sizeBytes: f.data.length })) };
   const id = (await db.query(
     `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, CASE WHEN $7::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $7::int) END)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
      RETURNING id`,
-    [appId, userId, content, rootId ? 'message' : null, rootId, JSON.stringify(metadata), ago])).rows[0].id;
+    [appId, userId, content, rootId ? 'message' : null, rootId, JSON.stringify(metadata), at])).rows[0].id;
   for (const f of rows) {
     await db.query(
       `INSERT INTO chat_message_attachments (id, app_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
@@ -2704,10 +2734,11 @@ async function seedStagingGuestDiscussion(pool) {
       `SELECT c.user_id FROM app_collaborators c WHERE c.app_id = $1 ORDER BY c.user_id LIMIT 4`, [app.id])).rows.map((r) => r.user_id);
     const [a, b, c, d] = [app.created_by, ...people].filter(Boolean);
     if (!a || !b) { await tx.query('ROLLBACK'); return seedSkipped('staging-guest-page-busy has too few people'); }
+    const at = await seedDiscussionClock(tx);
     const say = async (who, content, ago, rootId = null) => (await tx.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW() - make_interval(mins => $6::int)) RETURNING id`,
-      [app.id, who, `[Mock] ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz) RETURNING id`,
+      [app.id, who, `[Mock] ${content}`, rootId ? 'message' : null, rootId, at(ago)])).rows[0].id;
     const react = (messageId, emoji, who) => Promise.all(who.filter(Boolean).map((u) => tx.query(
       'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [messageId, u, emoji])));
     const welcome = await say(a, 'Welcome, everyone. Post what you would like this project to do next.', 600);
@@ -2716,7 +2747,7 @@ async function seedStagingGuestDiscussion(pool) {
     await say(c || a, 'Yes please, I lose my place every time.', 230, idea);
     await say(a, 'Put it up as a change and we can vote on it.', 220, idea);
     await react(idea, '👍', [a, c, d]);
-    const picture = await seedDiscussionFiles(tx, { appId: app.id, userId: d || b, content: '[Mock] A sketch of the new layout.', ago: 60, files: [SEED_PICTURE] });
+    const picture = await seedDiscussionFiles(tx, { appId: app.id, userId: d || b, content: '[Mock] A sketch of the new layout.', at: at(60), files: [SEED_PICTURE] });
     await react(picture, '🎉', [a, b]);
     await tx.query('COMMIT');
   } catch (err) {
