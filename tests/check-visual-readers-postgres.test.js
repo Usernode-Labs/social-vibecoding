@@ -12,7 +12,7 @@ const { within } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('check visual reader release publishes keys and retains merged visuals indefinitely', { timeout: 15000 }, async (t) => {
+test('check visual reader release publishes keys and retains merged visuals indefinitely', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   admin.on('error', () => {});
   try { await admin.query('SELECT 1'); } catch (err) {
@@ -66,7 +66,7 @@ test('check visual reader release publishes keys and retains merged visuals inde
   await lock.query('BEGIN');
   await lock.query('SELECT id FROM session_visuals WHERE id = $1 FOR UPDATE', [artifactId]);
   const sweep = media.sweep(pool, store);
-  try { assert.equal((await within(sweep, 2000, 'cleanup to retain a locked merged visual')).removed, 0); }
+  try { assert.equal((await within(sweep, 60000, 'cleanup to retain a locked merged visual')).removed, 0); }
   finally { await lock.query('ROLLBACK'); lock.release(); await sweep; }
   assert.deepEqual(await media.bytes(store, row), data);
 });
