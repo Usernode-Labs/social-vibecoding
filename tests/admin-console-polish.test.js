@@ -126,3 +126,26 @@ test('the console runs the window\'s width, and its menu folds to icons', () => 
   assert.match(block, /\.admin-sidebar\.is-folded \[data-admin-group\]\.hidden \{ display: block !important; \}/,
     'folded, a collapsed group still shows its tools');
 });
+
+test('on a computer the header carries Homeroom\'s name and the console\'s note, not a title', () => {
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  const note = read('frontend/src/features/admin/admin-header-note.tsx');
+  assert.match(header, /<a href="#home" className="admin-header-home" aria-label=\{t\('core:header\.home'\)\} \/>/,
+    'the name is a real link home');
+  assert.match(css, /\.admin-header-home \{[^}]*mask: url\('\/brand\/homeroom-logotype-black\.png'\) center \/ contain no-repeat;/,
+    'drawn from the logotype\'s own file');
+  assert.match(header, /<HeaderTitle titleRef=\{titleRef\} \/>[\s\S]{0,260}<AdminHeaderNote \/>/, 'the note sits in the title\'s seat');
+  assert.match(note, /<div className="admin-header-note" role="note">/);
+  assert.match(note, /Platform-wide tools\. These are not your settings but the settings of the platform\. Be careful before changing anything\./);
+  assert.match(note, /<a href="#profile" onClick=\{onExit\} className="admin-header-exit">Exit<\/a>/);
+  assert.doesNotMatch(note, /components\/ui\//, 'an admin source imports no shell primitive');
+  // Always in the header, shown by the sheet alone: no part of hydration.
+  assert.match(css, /\.admin-header-home, \.admin-header-note \{ display: none; \}/);
+  const at = css.indexOf('/* THE PLATFORM HEADER, IN THE CONSOLE, ON A COMPUTER.');
+  const rulesText = css.slice(at, css.indexOf('/* END OF THE PLATFORM HEADER, IN THE CONSOLE. */'));
+  assert.match(rulesText, /@media \(min-width: 768px\) \{/, 'a phone keeps its title and the band');
+  assert.match(rulesText, /body:has\(#admin-screen:not\(\.hidden\)\) #platform-header #sidebar-toggle \{ display: none !important; \}/);
+  assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #platform-header #header-title \{ display: none !important; \}/,
+    'only for an admin: public mode keeps its title');
+  assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #admin-console-bar > div \{ display: none; \}/, 'the band is not said twice');
+});

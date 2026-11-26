@@ -4242,6 +4242,43 @@ html[data-app-tone="dark"] #admin-screen {
   .admin-quick-actions button { min-height: 54px; }
 }
 /* END OF THE ADMIN DASHBOARD AND ITS MENU. */
+/* THE PLATFORM HEADER, IN THE CONSOLE, ON A COMPUTER. Homeroom's name in
+   the corner is the way home, where the sidebar's fold button sits on
+   every other screen (the console has its own menu, with its own fold).
+   The page's title gives its seat to the console's note, so the band
+   that said the same under the header is not drawn. A phone keeps the
+   title and the band. Both parts are always in the header; these rules
+   are the only thing that shows them. */
+.admin-header-home, .admin-header-note { display: none; }
+@media (min-width: 768px) {
+  /* The header starts at the page's own gutter: there is no sidebar under
+     it here to line up with. */
+  body:has(#admin-screen:not(.hidden)) #platform-header#platform-header { padding-inline: 20px 12px !important; }
+  body:has(#admin-screen:not(.hidden)) #platform-header #sidebar-toggle { display: none !important; }
+  body:has(#admin-screen:not(.hidden)) #platform-header .platform-header-left { display: flex !important; }
+  body:has(#admin-screen:not(.hidden)) .admin-header-home { display: block; flex: none; width: 101px; height: 26px; margin-inline-end: 6px; background: var(--adm-header-ink, #121a0e); -webkit-mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat; mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat; }
+  .admin-header-home:focus-visible, .admin-header-exit:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) #platform-header #header-title { display: none !important; }
+  body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) #admin-console-bar > div { display: none; }
+  body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) #admin-console-bar { margin: 0; }
+  body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) .admin-header-note { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; min-height: 28px; margin-block: -4px; padding: 4px 6px 4px 10px; border-radius: 12px; background: var(--adm-note-bg, #fff7e0); box-shadow: inset 0 0 0 1px var(--adm-note-line, #f1d48a); color: var(--adm-note-ink, #7a3d0a); }
+  .admin-header-note-mark { flex: none; width: 5px; height: 20px; border-radius: 999px; background: var(--adm-note-mark, #f59e0b); }
+  .admin-header-note p { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 8px; margin: 0; font-size: 0.8125rem; line-height: 1.3; }
+  .admin-header-note strong { flex: none; font-weight: 650; }
+  .admin-header-note p span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-header-exit { flex: none; display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 8px; background: var(--adm-note-exit, rgb(122 61 10 / 0.1)); font-size: 0.8125rem; font-weight: 600; }
+  .admin-header-exit:hover { background: var(--adm-note-exit-on, rgb(122 61 10 / 0.18)); }
+}
+html.dark body, html[data-app-tone="dark"] body {
+  --adm-header-ink: #fffeea;
+  --adm-note-bg: #2a1a08;
+  --adm-note-line: #7a4a12;
+  --adm-note-ink: #fde9c0;
+  --adm-note-mark: #fbbf24;
+  --adm-note-exit: rgb(253 233 192 / 0.12);
+  --adm-note-exit-on: rgb(253 233 192 / 0.2);
+}
+/* END OF THE PLATFORM HEADER, IN THE CONSOLE. */
 /* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
    is a fixed overlay with its own bar) but was still read out: an empty
    level-1 heading beside the page's own on a desktop (polish N10). In a
