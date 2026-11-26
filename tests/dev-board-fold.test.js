@@ -1827,7 +1827,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check opens `#profile?tab=changes` and reads the history column in the
   // profile, the other opens `#profile?tab=activity` and reads the activity
   // column there. Two routes no existing check opens. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 710: +1 (one before & after viewer) a change's verified shots are
+  // the Needs you slider, read on the seeded change 900108 with its two
+  // screens and what was also noticed; no check opened that change's page,
+  // and the only shots check (#4269) reads route captures from before shots.
+  // 710 leaves 170 slots.
+  checkCap.assertPinned(DAPP.tests.length, 710);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

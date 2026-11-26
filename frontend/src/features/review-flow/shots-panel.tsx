@@ -109,7 +109,7 @@ export function ShotsRun({ source, details = false, canRetake = false }: {
       </div>
       <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{copy[1]}</p>
       {claims.length ? (
-        <ul className="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">
+        <ul className="mt-2 list-disc ps-4 text-xs text-zinc-700 dark:text-zinc-300">
           {claims.map((claim, i) => <li key={i}>{String((claim && claim.claim) || '')}</li>)}
         </ul>
       ) : null}
