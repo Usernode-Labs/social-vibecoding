@@ -19,7 +19,7 @@ const path = require('node:path');
 
 const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
 const css = read('public', 'css', 'app.css');
-const SCOPE = 'html:not([data-skin])';
+const SCOPE = 'html:root';
 
 function block() {
   const start = css.indexOf('── SETTINGS AND PROFILE, THE EDITORIAL PAGES');
@@ -101,12 +101,12 @@ test('the editorial serif uses the shipped variable weight', () => {
 test('only duplicate Settings profile summary decoration is hidden beside the real editor', () => {
   const hidden = rules().filter((rule) => /display:\s*none|visibility:\s*hidden/.test(rule.body)).map((rule) => rule.selector);
   assert.deepEqual(hidden, [`${SCOPE} #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head`, `${SCOPE} #settings-profile-card .ui-row-tx`, `${SCOPE} #settings-profile-card > svg`]);
-  assert.match(block(), /@media \(max-width: 1023\.98px\) \{\s*html:not\(\[data-skin\]\) #settings-root:has\(#settings-section-content:not\(\.hidden\)\) > \.settings-frame-head \{ display: none; \}/);
+  assert.match(block(), /@media \(max-width: 1023\.98px\) \{\s*html:root #settings-root:has\(#settings-section-content:not\(\.hidden\)\) > \.settings-frame-head \{ display: none; \}/);
 });
 
 test('Settings opens under its name on the sky, and its parts are cards', () => {
   const b = block();
-  assert.match(b, /html:not\(\[data-skin\]\) #settings-root > \.settings-frame-head \{\s*display: flex;/, 'the head is drawn');
+  assert.match(b, /html:root #settings-root > \.settings-frame-head \{\s*display: flex;/, 'the head is drawn');
   assert.match(b, /background: var\(--ed-sky-veil\), var\(--ed-sky\) center \/ cover no-repeat;/, 'under a veil, so its words read');
   assert.match(b, /#settings-screen #settings-root \{ max-width: none; \}/, 'the page runs the window\'s width');
   assert.match(b, /#settings-section-content > \[data-settings-section\]:not\(\.hidden\):has\(> :not\(\.hidden\)\) \{[^}]*border: 1px solid var\(--ed-line\);[^}]*background: var\(--ed-paper\);/, 'a part is a paper card');
@@ -123,14 +123,14 @@ test('the sky starts at the top bar\'s line on a computer and a tablet', () => {
   // so the cards stay put and only the sky's top edge moves up.
   assert.match(
     b,
-    /@media \(min-width: 768px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen:has\(#profile-identity-card\), #settings-screen\) \{ margin-top: -0\.5rem; \}\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ padding-top: 0\.5rem; \}/,
+    /@media \(min-width: 768px\) \{\s*html:root :is\(#profile-screen:has\(#profile-identity-card\), #settings-screen\) \{ margin-top: -0\.5rem; \}\s*html:root :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ padding-top: 0\.5rem; \}/,
     'the screen tucks up and the root pads the same 8px back',
   );
   // Under 1024px the sky is placed from the padding edge, so the same 8px
   // comes off its position; above it the border-box origin needs no move.
   assert.match(
     b,
-    /@media \(min-width: 768px\) and \(max-width: 1023\.98px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ background-position: center -0\.5rem; \}/,
+    /@media \(min-width: 768px\) and \(max-width: 1023\.98px\) \{\s*html:root :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ background-position: center -0\.5rem; \}/,
     'the tablet sky is moved up with the padding',
   );
 });

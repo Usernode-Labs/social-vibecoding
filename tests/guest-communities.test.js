@@ -325,7 +325,7 @@ test('drawn in the website\'s look: the hero frame, the green, a soft sky, and e
   // the soft sky, which are the same picture in both modes.
   assert.doesNotMatch(dark[0], /--site-sun:|--site-on-sun:|--site-on-band:/);
   assert.match(css, /--site-on-band: #000000;/);
-  assert.match(css, /html:not\(\[data-skin\]\) #auth-landing-screen:has\(:is\(\[data-guest-discover\], \[data-guest-groups\]\)\) \{\s+background: var\(--site-ground\);/);
+  assert.match(css, /html:root #auth-landing-screen:has\(:is\(\[data-guest-discover\], \[data-guest-groups\]\)\) \{\s+background: var\(--site-ground\);/);
   // THE WALK-THROUGH IS A PICTURE OF THE APP: one palette of its own, which
   // no dark rule moves.
   assert.match(css, /#auth-landing-screen \.hr-demo \{\s+--ink: #14161a;/);

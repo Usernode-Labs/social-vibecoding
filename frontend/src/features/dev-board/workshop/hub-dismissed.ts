@@ -1,14 +1,11 @@
 /**
  * THE HUB CARDS YOU CLOSED (15 Oct 2026).
  *
- * Three cards on a project's hub are there to get a project going: Share it
- * (./community-card.tsx ShareItCard, how a project that is just yours
- * grows), Invite (./community-card.tsx InviteHeroCard, asking people in) and
- * "What do you want to change?" (./workshop.tsx StartHereBanner, the first
- * change). Each has a small ✕. Closing one hides it for that person on that
- * project, and it stays closed: what they offer is still on the page without
- * them, Invite in the hero's row and Suggest an improvement in the hero's
- * ⋯.
+ * A card on a project's hub that is there to get a project going, "What do
+ * you want to change?" (./workshop.tsx StartHereBanner, the first change),
+ * has a small ✕. Closing it hides it for that person on that project, and
+ * it stays closed: what it offers is still on the page without it,
+ * Suggest an improvement in the hero's ⋯.
  *
  * A version's Update card (./hub-cards.tsx UpdateCard, docs/plans/versions.md)
  * closes the same way, from its Not now, under the name of the one update

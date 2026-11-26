@@ -332,10 +332,7 @@ is no replay plan to write and nothing to verify locally.
   (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`: a
   tile opens the hub), then **Joined** (the ones you are in and have not
   pinned; Edit lets each be pinned), New community, which starts a project,
-  and a Discover card whose button opens Home at Communities to join. Its
-  Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
-  Home has no Needs you card (the standard look and the brand look have the
-  card on Home). The two pins are separate acts
+  and Communities to join. The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
   pin. Signed out, the landing is the guest's Home, its pins kept on the
@@ -457,18 +454,17 @@ is no replay plan to write and nothing to verify locally.
   **How it got here** (15 Nov 2026) is the thread's big events down a line:
   asked, planned, built, tested, then where it stands, which is the standing
   the server worded (`features/dev-board/topic/rail-model.ts`, drawn by
-  `thread-rail.tsx` into the shell's `#gc-thread-rail`). In the standard look
-  and the brand look a wide page stands it beside the root post and the
-  replies, each a card; a narrow page, a side panel, or a page with the
-  reader open keeps one column, the rail between the post and the replies
-  with its earlier steps folded into a pile. A step's link opens what the
-  page already has (the reader, a change's details, its section). The
-  frame's looks draw none: they have their own context column.
+  `thread-rail.tsx` into the shell's `#gc-thread-rail`). A wide page stands
+  it beside the root post and the replies, each a card; a narrow page, a
+  side panel, or a page with the reader open keeps one column, the rail
+  between the post and the replies with its earlier steps folded into a
+  pile. A step's link opens what the page already has (the reader, a
+  change's details, its section).
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
   project GROWS by the same two levers: Invite makes Just you a Private
-  community, and "Make it public" (a just-you project's Share it card) or
+  community, and "Make it public" (the hero's, on a just-you project) or
   "Who can see & change it" (the hero's ⋯, the rule line's Rules;
   `features/dialogs/who-decides.tsx`) opens the PR
   (`POST /api/apps/:slug/visibility-pr`, or `/who-decides-pr`, which also
@@ -781,24 +777,23 @@ carry most of them.
   keeps the rules above. `tests/guest-discover.test.js` and
   `tests/guest-communities.test.js` hold it.
 
-- **Settings and Profile wear the brand's editorial voice in the standard
-  look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
+- **Settings and Profile wear the brand's editorial voice (#7072, 24 Nov
+  2026).** A sky band at the head of the page, headings
   in Source Serif 4 (the supplied brand pack’s variable face, at weight 460), paper cards
   with one thin outline, and a green row for the Settings page you are on.
   These pages also tune their surrounding navigation to quiet ivory, use
   the original sky and stars fading into the page, and share the labelled
   name/bio editor between Profile and Settings (with distinct form ids).
   It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
-  EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is
-  an `--ed-*` token declared once in light and dark. The two pages are the
-  exception to "a label over a card is small caps": a group's name on Profile
-  and a part's heading in Settings are serif headings there. The brand look
-  and the other screens keep the rules above.
+  EDITORIAL PAGES"), whose every value is an `--ed-*` token declared once in
+  light and dark. The two pages are the exception to "a label over a card is
+  small caps": a group's name on Profile and a part's heading in Settings are
+  serif headings there. The other screens keep the rules above.
   `tests/editorial-settings-profile.test.js` holds it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
-`tests/nav-tab-bar`, `tests/workshop-screen`, and `tests/settings-frame` for
-the row's own classes), so a change to one of these is a change to the rule.
+`tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
+a change to the rule.
 Make it here as well.
 
 ### The console is React — add a section the same way

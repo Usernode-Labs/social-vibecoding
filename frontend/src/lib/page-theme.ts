@@ -5,8 +5,7 @@
  * which fires after the new theme is on <html> — an explicit Light/Dark pick,
  * an OS flip while the theme is System, another tab's write — so anything
  * picked in one mode redraws in the other without a reload. One listener on
- * `window.Theme` serves every component mounted, as `subscribeTheme` in
- * features/frame/look-picker.tsx does.
+ * `window.Theme` serves every component mounted.
  */
 
 import { useSyncExternalStore } from 'react';

@@ -13,11 +13,10 @@ import { useEffect, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { ChatIcon, CheckIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { isKitHome, useLiveSkin } from '../../lib/skin';
 
-/** Whether this is a project's page under the look that draws these. */
+/** Whether this is a project's page, which draws these. */
 function useDrawn(slug?: string, project?: string): boolean {
-  return isKitHome(useLiveSkin()) && !!slug && !!project;
+  return !!slug && !!project;
 }
 
 /** From this width a project's Needs you shows what a change does beside it (app.css `[data-rf-beside]`). */

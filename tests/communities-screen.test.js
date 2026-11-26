@@ -196,10 +196,10 @@ test('Standard (WIP) draws the page as Home is: its ground, the community cards,
   const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'communities', 'index.tsx'), 'utf8');
   // Standard (WIP)'s own ground for the page went with that look (24 Nov 2026, #7071): the standard look keeps its wallpaper.
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /data-skin-wip/);
-  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.home-column \{ max-width: none; \}/);
+  assert.match(css, /html:root #communities-screen \.home-column \{ max-width: none; \}/);
   // The standard look's page too (20 Nov 2026), on its own wallpaper: the page's ground is Standard (WIP)'s alone.
   assert.match(page, /const wip = isKitHome\(skin\);/);
-  assert.doesNotMatch(css, /html:not\(\[data-skin\]\) #communities-screen \{[^}]*background-color/);
+  assert.doesNotMatch(css, /html:root #communities-screen \{[^}]*background-color/);
   const first = renderComponent(PAGE, 'CommunitiesScreen', {});
   assert.doesNotMatch(first, /communities-discover-section|communities-needs-tile|communities-new-community/, 'the first render is the kit page: no Discover card, no tiles');
   // A pin is the big card and a joined community the compact card at every width (./communities-card.test.js holds the card).
@@ -216,10 +216,10 @@ test('Standard (WIP) draws the page as Home is: its ground, the community cards,
   // Every community there is to join is listed under Joined, by Home's own section under ids of its own.
   assert.match(page, /ids=\{\{ section: 'communities-all-section', featured: 'communities-all-featured-label' \}\}/);
   assert.match(page, /\{wip \? null : \(\s*<section id="communities-discover-section"/, 'Discover leads to that list, so it is not drawn where the list is');
-  assert.match(css, /html:not\(\[data-skin\]\) #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
+  assert.match(css, /html:root #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
   assert.match(page, /<WipCta id="communities-discover-btn" glyph=\{false\} onClick=\{discover\}>/);
   // The look's own card for the community cards: its white, one soft hairline that firms under the pointer, its inks and the link's blue.
-  const tokens = css.match(/html:not\(\[data-skin\]\) \{\s*--cm-bg:[^}]*\}/);
+  const tokens = css.match(/html:root \{\s*--cm-bg:[^}]*\}/);
   assert.ok(tokens, 'the look sets the card\'s tokens');
   for (const [name, value] of [
     ['--cm-bg', 'var(--wip-card-bg)'], ['--cm-radius', 'var(--wip-card-radius)'],
@@ -241,7 +241,7 @@ test('Pinned: the community cards wrap onto rows from 768px, four where four fit
   assert.match(css, /@media \(min-width: 768px\) \{\s*\.cm-grid\[data-cm-grid="joined"\] \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}\s*\}/);
   assert.match(css, /@media \(min-width: 1280px\) \{\s*\.cm-grid\[data-cm-grid="joined"\] \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}\s*\}/);
   // Under 768px a pin is the small tile: as many as fit, three on a phone.
-  const P = 'html:not\\(\\[data-skin\\]\\) #communities-body #communities-pinned-section \\.communities-grid';
+  const P = 'html:root #communities-body #communities-pinned-section \\.communities-grid';
   assert.match(css, new RegExp(`${P} \\{\\s*display: grid;\\s*grid-template-columns: repeat\\(auto-fill, minmax\\(var\\(--wip-pin-tile\\), 1fr\\)\\);\\s*grid-auto-rows: 1fr;\\s*gap: var\\(--wip-card-gap\\);\\s*padding: 0;\\s*\\}`));
   assert.match(css, /--wip-pin-card: 16\.5rem;/);
   assert.match(css, /--wip-pin-tile: 6\.25rem;/);
@@ -252,19 +252,19 @@ test('Pinned: the community cards wrap onto rows from 768px, four where four fit
   for (const [, selector, body] of rules) {
     assert.doesNotMatch(body, /overflow-x|scroll-snap|overscroll-behavior|flex-basis|flex: 0 0/, `no sideways row: ${selector.trim()}`);
     const last = selector.trim().split('\n').pop().trim();
-    assert.match(last, /^html:not\(\[data-skin\]\)(\.dark)? /, `the standard look's own: ${last}`);
+    assert.match(last, /^html:root(\.dark)? /, `the standard look's own: ${last}`);
   }
   // The tile's band: the community's own picture over the wash of its icon's colour (or its brand tint), which shows where it has none or it fails (23 Nov 2026: no stock background).
   assert.match(css, new RegExp(`${P} > \\[data-home-community\\]::before \\{[^}]*background: var\\(--cm-pic, none\\) center \\/ cover no-repeat, var\\(--cm-band-wash\\) center \\/ cover no-repeat;`));
-  assert.match(css, /html:not\(\[data-skin\]\)\.dark #communities-body #communities-pinned-section \.communities-grid > \[data-home-community\]::before \{\s*background-image: var\(--cm-pic-dark, var\(--cm-pic, none\)\), var\(--cm-band-wash\);/, 'its dark twin in the dark');
+  assert.match(css, /html:root\.dark #communities-body #communities-pinned-section \.communities-grid > \[data-home-community\]::before \{\s*background-image: var\(--cm-pic-dark, var\(--cm-pic, none\)\), var\(--cm-band-wash\);/, 'its dark twin in the dark');
   assert.match(css, new RegExp(`${P} > \\[data-home-community\\] \\{[^}]*--cm-band-wash: radial-gradient\\(farthest-corner at 50% 45%, color-mix\\(in oklab, var\\(--cm-wash\\) var\\(--cm-band-near\\), var\\(--wip-card-bg\\)\\)`), 'the card with no picture\'s wash, on the tile\'s own ground');
   assert.match(css, new RegExp(`${P} > \\[data-home-community\\]\\[data-cm-tint="1"\\] \\{ --cm-wash: var\\(--cm-tint-1\\); \\}`), 'the brand tints');
   assert.doesNotMatch(css, /data-home-community-scene|--cm-scene/, 'no stock background on a tile');
   // An emoji or an initial wears Home's tile (#90), outranking the rule that takes a community face's shadow off.
-  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community\] > span:first-child > \.home-community-logo:not\(\[data-icon="image"\]\) \{\s*background-color: var\(--wip-icon-tile\);\s*box-shadow: inset 0 0 0 1px var\(--wip-icon-edge\), var\(--wip-icon-shadow\);/);
-  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community\] > span:first-child > span:first-child \{[^}]*box-shadow: none;/, 'the rule it has to outrank');
+  assert.match(css, /html:root #communities-screen \.communities-grid \[data-home-community\] > span:first-child > \.home-community-logo:not\(\[data-icon="image"\]\) \{\s*background-color: var\(--wip-icon-tile\);\s*box-shadow: inset 0 0 0 1px var\(--wip-icon-edge\), var\(--wip-icon-shadow\);/);
+  assert.match(css, /html:root #communities-screen \.communities-grid \[data-home-community\] > span:first-child > span:first-child \{[^}]*box-shadow: none;/, 'the rule it has to outrank');
   // The tile's face is the community's own icon on the thin light outline.
-  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community\] \.home-community-logo \{\s*border-color: transparent;\s*background-color: transparent;\s*box-shadow: 0 0 0 1\.5px var\(--cm-icon-outline\);/);
+  assert.match(css, /html:root #communities-screen \.communities-grid \[data-home-community\] \.home-community-logo \{\s*border-color: transparent;\s*background-color: transparent;\s*box-shadow: 0 0 0 1\.5px var\(--cm-icon-outline\);/);
 });
 
 // The cards, drawn: the page with a window wide enough for them.

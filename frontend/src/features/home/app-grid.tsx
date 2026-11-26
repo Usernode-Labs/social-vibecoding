@@ -64,7 +64,6 @@ import { CopyIcon, LockIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
-import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
@@ -479,8 +478,6 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
 export function AppGrid() {
   const t = useMessages('home');
   const state = useStoreState(gridStore);
-  // Standard (WIP), lib/skin.ts: the tile also says what the app is.
-  const rich = isKitHome(useLiveSkin());
   const live = useLiveAppSlugs();
   // When each app was last left on this device, for the tiles' "Opened" line.
   const { apps: recents } = useStoreState(recentAppsStore);
@@ -578,7 +575,7 @@ export function AppGrid() {
           yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
           editing={state.editing}
-          rich={rich}
+          rich
           openedAt={state.view === 'grid' && !item.app.demo ? openedTimes.get(item.app.slug) ?? null : null}
         />
       ))}

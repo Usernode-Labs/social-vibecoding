@@ -242,7 +242,7 @@ test('every place draws the same card from its own tokens: the standard look, th
     assert.ok(at >= 0, `${selector} sets the card's tokens`);
     return css.slice(at, css.indexOf('}', at));
   };
-  assert.match(tokenRule('html:not([data-skin])'), /--cm-bg: var\(--wip-card-bg\);[\s\S]*--cm-edge-lift: inset 0 0 0 1px var\(--wip-card-line\), /);
+  assert.match(tokenRule('html:root'), /--cm-bg: var\(--wip-card-bg\);[\s\S]*--cm-edge-lift: inset 0 0 0 1px var\(--wip-card-line\), /);
   const brand = tokenRule('html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))');
   assert.match(brand, /--cm-radius: 18px;[\s\S]*--cm-small: 13px;\s*--cm-small-line: 18px;/);
   assert.match(tokenRule('#auth-landing-screen [data-guest-discover]'), /--cm-bg: var\(--site-panel\);\s*--cm-radius: 14px;/);

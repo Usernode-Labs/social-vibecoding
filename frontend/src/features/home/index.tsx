@@ -10,7 +10,7 @@
  * visibility subscription below. What lives inside it has moved on, one host at
  * a time:
  *
- *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
+ *   * `<AppGrid/>` and `<WidgetStrip/>` are stateful islands
  *     rendering plain view models `home.js` pushes (./grid-store.ts and
  *     ./chrome-store.ts) — the grid's trailing "Create an app" tile
  *     (./create-tile.tsx) included;
@@ -86,14 +86,11 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { isFrameSkin, useSkin, isKitHome } from '../../lib/skin';
-import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
-import { AppsMore } from './apps-more';
 import { chromeStore } from './chrome-store';
 import { useHomeSearchPlaceholder } from './search-hint';
 import { CreateCompact } from './create-tile';
@@ -149,32 +146,11 @@ export function HomeScreen() {
   const { moreCount, canFold } = useStoreState(chromeStore);
   // The field's words, with this device's shortcut when it has one (./search-hint.ts).
   const searchPlaceholder = useHomeSearchPlaceholder();
-  // A look of the one frame draws this page in it (./frame/home-frame.tsx).
-  // Read after mount only: the first render must match the prerendered
-  // document, which knows no look (lib/skin.ts says why).
-  const skin = useSkin();
-  // And for a viewer the member APIs answer: the signed-out landing and the
-  // waiting room keep the standard body (lib/platform-viewer.ts says why a
-  // member-only read from either is a console error).
+  // For a viewer the member APIs answer: the signed-out landing and the
+  // waiting room do not mount the Recent threads card (lib/platform-viewer.ts
+  // says why a member-only read from either is a console error).
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
-  const frame = isFrameSkin(skin) && viewer;
-  // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
-  // The standard look's Home too since 20 Nov 2026 (lib/skin.ts isKitHome).
-  // `useSkin()` answers 'standard' on the first render, so this is also what
-  // the prerendered document draws.
-  const wip = isKitHome(skin);
-  const topRow = wip;
-  // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
-  // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
-  // look's HOME): New project as a button on the search row, and the Recent
-  // threads card in a row of its own under Pinned apps.
-  const brand = skin === 'brand';
-  // The grid's trailing tile depends on the look (Home.hasSideCard): a look
-  // picked while Home is up repaints it.
-  // Only once the grid has drawn: a render before the apps are in would
-  // publish an empty grid and take the loading placeholders away early.
-  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip, brand, topRow]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -188,31 +164,15 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
-  // Standard (WIP): the Recent threads card rides Challenges' row. (Its
-  // component and file keep the names they had as the Needs you card; the
-  // look's CSS knows the section by `#home-needs-card`, #6816.)
-  // Under Standard (WIP) it is mounted as soon as the look is known, not
+  // The Recent threads card rides Challenges' row. (Its component and file
+  // keep the names they had as the Needs you card; the CSS knows the
+  // section by `#home-needs-card`, #6816.) It is mounted for a viewer, not
   // when the grid is ready: the card holds its place from the first paint
-  // (./needs-you-card.tsx). The brand look mounts it with the grid, as it did.
-  const aside = wip ? viewer : brand && grid.ready && !!grid.create;
+  // (./needs-you-card.tsx).
+  const aside = viewer;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
-      {/* A look of the one frame draws this page with the kit
-          (./frame/home-frame.tsx), as the scroller's first child. The
-          standard Home below stays mounted, so what home.js writes still
-          lands; app.css hides it while data-frame-page is set. */}
-      {frame ? (
-        <HomeFrame
-          // The four standard pieces the kit page does not redraw. Each is
-          // drawn in one place at a time, here or in the standard body
-          // below, so its ids are in the document once.
-          grid={grid.editing ? <AppGrid /> : null}
-          widgets={<WidgetStrip />}
-          waitlist={<WaitlistCard />}
-          verify={<VerifyCard />}
-        />
-      ) : null}
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -257,10 +217,10 @@ export function HomeScreen() {
             already take. A phone keeps `pt-3`: its bar tucks under the
             header, and the reveal reads the bar's height, not a constant.
         */}
-        {/* Standard (WIP): the field is a short one at the row's start, and
-            New project, the page's one filled action, ends the row. */}
-        <div className={topRow ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
-          <div className={topRow ? 'relative wip-search' : 'relative w-full'}>
+        {/* The field is a short one at the row's start, and New project, the
+            page's one filled action, ends the row. */}
+        <div className="home-column wip-topbar">
+          <div className="relative wip-search">
             <SearchIcon
               className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
@@ -283,7 +243,7 @@ export function HomeScreen() {
               &times;
             </button>
           </div>
-          {(topRow || brand) && grid.ready && grid.create ? (
+          {grid.ready && grid.create ? (
             <WipCta id="home-new-project-top" onClick={() => { (window as any).App?.showCreateModal?.(); }}>
               {t('home:create.label')}
             </WipCta>
@@ -324,7 +284,7 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
-        {frame ? null : <WidgetStrip />}
+        <WidgetStrip />
         {/* One Home (#6361): no continue card. The change you last worked on
             is a row of the bell and of Homeroom bot's list. */}
         {/*
@@ -437,39 +397,30 @@ export function HomeScreen() {
               </span>
             ) : null}
           >
-            {/* Standard (WIP): the label and the chevron after it are one
-                thing to press, which unfolds the grid and folds it again.
+            {/* The label and the chevron after it are one thing to press, which unfolds the grid and folds it again.
                 Down while rows are held back; up once they are out and
                 folding would hide some; plain words when neither. */}
             {/* A search lists every project of yours that matches, pinned
                 or not (Home.isYours), so its heading says that (phone
                 review #13): "Pinned projects" over an unpinned one was
                 wrong, beside "Your communities" under it. */}
-            {grid.view === 'search' ? t('home:grid.headingSearch') : wip && moreCount > 0 ? (
+            {grid.view === 'search' ? t('home:grid.headingSearch') : moreCount > 0 ? (
               /* "Show all 17", no noun: the heading it ends names them, and
                  "apps" there was a third name for one thing (phone review,
                  23 Nov 2026). Its accessible name says what it shows. */
               <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAllProjects', { count: moreCount })} pill={t('home:grid.showAllCount', { count: moreCount })} onClick={() => { foldApps(false); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
-            ) : wip && canFold ? (
+            ) : canFold ? (
               <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} pill={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
-            ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
+            ) : t('home:grid.headingProjects')}
           </SectionHeading>
-          {/* In Standard (WIP) the grid and its "Show all" line are one card
-              (WipCard, ./wip-kit.tsx). */}
-          <WipCard on={wip}>
-          {frame && grid.editing ? null : <AppGrid />}
-          {/*
-              "Show all N apps" — revealed by Home.render() only when the
-              viewer has more than the visible rows hold. Ships hidden
-              and empty; it is React's now (chromeStore), which is what lets
-              its listener be attached once instead of on every paint.
-          */}
-          {/* Standard (WIP) has no "Show all" line: See all rides the heading. */}
-          {wip ? null : <AppsMore />}
+          {/* The grid is one card (WipCard, ./wip-kit.tsx). It has no
+              "Show all" line: See all rides the heading. */}
+          <WipCard>
+          <AppGrid />
           </WipCard>
         </section>
         {/*
@@ -478,20 +429,18 @@ export function HomeScreen() {
             Communities to join have none either, Make opens "What do you
             want to make?" with the words typed in. Null in the prerender.
         */}
-        {frame ? null : <HomeSearchMake />}
-        {/* Standard (WIP): Home is one column, and under Pinned projects the
-            Recent threads card is a row of its own, then Challenges
-            (app.css, "STANDARD (WIP)"), at every width. */}
-        {wip || brand ? (
-          <div id="home-row" className="home-row">
-            {aside ? (
-              <aside id="home-aside" className="home-aside">
-                <NeedsYouCard />
-              </aside>
-            ) : null}
-            <ChallengesSection />
-          </div>
-        ) : null}
+        <HomeSearchMake />
+        {/* Home is one column, and under Pinned projects the Recent threads
+            card is a row of its own, then Challenges (app.css, "STANDARD
+            (WIP)"), at every width. */}
+        <div id="home-row" className="home-row">
+          {aside ? (
+            <aside id="home-aside" className="home-aside">
+              <NeedsYouCard />
+            </aside>
+          ) : null}
+          <ChallengesSection />
+        </div>
         {/*
             ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
 
@@ -542,7 +491,7 @@ export function HomeScreen() {
             they are the Communities tab's page (`#communities`,
             ../communities/). The section is hidden until something is typed
             in the field above, so a search here still finds them. It stays
-            mounted under every look, since it is what reads the pins.
+            mounted, since it is what reads the pins.
         */}
         <HomeCommunityMatches />
         {/*
@@ -552,14 +501,13 @@ export function HomeScreen() {
             once the shell knows who is signed in. Their Home has no
             Challenges (src/routes/home-panels.js leaves it out).
         */}
-        {frame ? null : <WaitlistCard />}
+        <WaitlistCard />
         {/*
             "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
             verified-identity rule holds to it adds a phone here, or links
             GitHub and X. Nothing in the prerender, like the card above.
         */}
-        {frame ? null : <VerifyCard />}
-        {wip || brand ? null : <ChallengesSection />}
+        <VerifyCard />
         <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth

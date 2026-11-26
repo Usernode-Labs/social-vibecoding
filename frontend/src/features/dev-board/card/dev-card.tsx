@@ -893,7 +893,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const heading = approve ? t('project:card.vote.dialog.approval') : t('project:card.vote.dialog.vote');
   // The picker is portaled out of the page, so the page's scoped look cannot
   // reach it: mark it, and the page's own rules paint it. A button on the
-  // thread page marks it "thread" (the carried rules, scripts/thread-look.js);
+  // thread page marks it "thread" (app.css, THE THREAD PAGE);
   // a button on the All items board marks it "board" (app.css).
   // It renders only after the button that opens it has mounted, so the ref is
   // there to ask.

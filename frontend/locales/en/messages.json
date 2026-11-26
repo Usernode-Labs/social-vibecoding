@@ -5047,14 +5047,6 @@
     "text": "Needs you: {{needs}} · <0>{{fresh}} new</0>",
     "description": "The AI tab's main view: the line at the top of the page when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
   },
-  "ai.work.fresh_one": {
-    "text": "{{count}} new",
-    "description": "The AI tab's Needs you list: a small pill beside its heading or a project's name, saying how many threads there have a message the person has not read. Shown only above zero."
-  },
-  "ai.work.fresh_other": {
-    "text": "{{count}} new",
-    "description": "The AI tab's Needs you list: a small pill beside its heading or a project's name, saying how many threads there have a message the person has not read. Shown only above zero."
-  },
   "ai.hero.threadsBoth_one": {
     "text": "{{needs}} thread needs you · In progress: {{next}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{next}} is how many of their pieces of work are being worked on."
@@ -5087,10 +5079,6 @@
     "text": "{{needs}} threads need you · <0>{{fresh}} new</0>",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{fresh}} is how many of those threads have a message they have not read yet (the number in colour)."
   },
-  "ai.work.earlier": {
-    "text": "Earlier",
-    "description": "The AI tab's Needs you list: a small line inside a project, between the threads with something new and the ones the person has already seen."
-  },
   "ai.work.title": {
     "text": "Needs you",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Label over the first list: what waits on the person (a vote, an answer, a plan to say Build it to) in the threads they are in, then their private threads."
@@ -5102,10 +5090,6 @@
   "ai.work.titleCount_other": {
     "text": "Needs you · {{count}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Label over the first list when something in it asks for the person: {{count}} is how many of its rows do (a vote, an answer, a Build it). It is a count, not a link."
-  },
-  "ai.work.empty": {
-    "text": "Nothing needs you right now.",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Shown in the Needs you list when it is empty."
   },
   "ai.work.unreachable": {
     "text": "Not saved on this phone yet. Your lists will load when you’re back online.",
@@ -5126,14 +5110,6 @@
   "ai.work.showMore_other": {
     "text": "Show {{count}} more",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Row at the end of a list showing only its first rows: shows the rest. {{count}} is how many more."
-  },
-  "ai.work.showMoreFresh_one": {
-    "text": "Show {{count}} more · {{fresh}} new",
-    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
-  },
-  "ai.work.showMoreFresh_other": {
-    "text": "Show {{count}} more · {{fresh}} new",
-    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
   },
   "ai.work.showLess": {
     "text": "Show less",
@@ -5327,30 +5303,6 @@
     "text": "Take a look",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row that waits on the person, when it says no more than that. A verb."
   },
-  "ai.busy.title_one": {
-    "text": "Waiting & in progress · {{count}}",
-    "description": "The AI tab's main view: small caps label over the card of the person's work that is under way or waits on someone else, beside Needs you and Live this week. {{count}} is how many rows it holds."
-  },
-  "ai.busy.title_other": {
-    "text": "Waiting & in progress · {{count}}",
-    "description": "The AI tab's main view: small caps label over the card of the person's work that is under way or waits on someone else, beside Needs you and Live this week. {{count}} is how many rows it holds."
-  },
-  "ai.up.stillCount_one": {
-    "text": "Not moving · {{count}}",
-    "description": "The AI tab's main view, Waiting: the folded head at the bottom of Waiting over the rows nobody is moving (nobody is on it, not read yet, an operator task, a person's to decide, nothing to build). Press it to open them. {{count}} is how many rows."
-  },
-  "ai.up.stillCount_other": {
-    "text": "Not moving · {{count}}",
-    "description": "The AI tab's main view, Waiting: the folded head at the bottom of Waiting over the rows nobody is moving (nobody is on it, not read yet, an operator task, a person's to decide, nothing to build). Press it to open them. {{count}} is how many rows."
-  },
-  "ai.live.title_one": {
-    "text": "Live this week · {{count}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Folding label over the person's work that went live in the last week. {{count}} is how many."
-  },
-  "ai.live.title_other": {
-    "text": "Live this week · {{count}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Folding label over the person's work that went live in the last week. {{count}} is how many."
-  },
   "ai.live.row": {
     "text": "{{project}} · #{{number}} · Live",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Tooltip of a one-line row in Live this week: its project and number."
@@ -5374,26 +5326,6 @@
   "ai.filter.label": {
     "text": "Show the work of",
     "description": "The AI tab's main view: accessible name of the row of project chips over the lists, which narrows them to the projects picked; also the title of the More projects panel those chips end with (a sheet on a phone)."
-  },
-  "ai.filter.all": {
-    "text": "All",
-    "description": "The AI tab's main view: the first chip over the lists, showing every project's work. Pressed when no project chip is."
-  },
-  "ai.filter.more_one": {
-    "text": "{{count}} more",
-    "description": "The AI tab's main view: the last chip over the lists, after the three projects that need the person most; opens the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many projects have no chip of their own."
-  },
-  "ai.filter.more_other": {
-    "text": "{{count}} more",
-    "description": "The AI tab's main view: the last chip over the lists, after the three projects that need the person most; opens the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many projects have no chip of their own."
-  },
-  "ai.filter.fresh_one": {
-    "text": "{{count}} new",
-    "description": "The AI tab's filter chips: the number on a project's chip (and on All), how many of that project's threads in Needs you have a message the person has not read. A screen reader hears this instead of the number; shown only above zero."
-  },
-  "ai.filter.fresh_other": {
-    "text": "{{count}} new",
-    "description": "The AI tab's filter chips: the number on a project's chip (and on All), how many of that project's threads in Needs you have a message the person has not read. A screen reader hears this instead of the number; shown only above zero."
   },
   "ai.filter.search": {
     "text": "Find a project",
@@ -5454,10 +5386,6 @@
   "ai.filter.done": {
     "text": "Done",
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
-  },
-  "ai.search.open": {
-    "text": "Search threads and messages",
-    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
   "ai.search.label": {
     "text": "Search threads and messages",
@@ -5555,10 +5483,6 @@
     "text": "Showing only what matches “{{query}}”. Clear search",
     "description": "The Homeroom bot tab's History card, while the page's search box is narrowing it: accessible name and tooltip of the chip beside the History heading. Pressing it empties the search, so History lists everything again. {{query}} is what the person typed."
   },
-  "ai.history.title": {
-    "text": "History",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Its heading, small caps over the card."
-  },
   "ai.history.kind.label": {
     "text": "Show one kind of work",
     "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Accessible name, read by a screen reader, of its row of filter chips (All, Changes, Requests, Votes, Only you)."
@@ -5654,10 +5578,6 @@
   "ai.history.wherePr": {
     "text": "{{project}} · PR {{number}}",
     "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). A row's tooltip, for a change on a project whose code is on GitHub, where its number is its pull request's. {{project}} is the project's name."
-  },
-  "ai.history.left": {
-    "text": "You left",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Beside a project's name over its rows, for a private community the person is no longer in: only what they made there stays listed."
   },
   "ai.history.earlier": {
     "text": "Earlier months",
@@ -6522,14 +6442,6 @@
   "inbox.resize": {
     "text": "Resize the conversation list",
     "description": "Accessible name of the divider between the Messages list and the conversation beside it on a computer, which is dragged left and right to make the list narrower or wider."
-  },
-  "frame.inbox.purpose": {
-    "text": "People and groups you talk to.",
-    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
-  },
-  "frame.inbox.none": {
-    "text": "Nothing here yet.",
-    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when it holds no conversation and none has been read yet."
   },
   "bot.offer.expired": {
     "text": "This offer has expired.",

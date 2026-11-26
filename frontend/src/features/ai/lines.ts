@@ -178,25 +178,6 @@ function dayOf(at: string | null, t: Say): string {
 }
 
 /**
- * Pure (6 Nov 2026): which day a row's divider says, "Today", "Yesterday", or
- * the weekday and date ("Tuesday 3 November"), read in the interface's own
- * language and the reader's time zone.
- */
-export function dayHeading(at: string | null | undefined, t: Say, locale: string | undefined): string {
-  const d = new Date(String(at || ''));
-  if (!Number.isFinite(d.getTime())) return '';
-  const today = new Date(Date.now());
-  // #6479: calendar days in the zone picked in Settings > Language, the same
-  // zone ./model.ts dayKey groups by, so a heading names its group's day.
-  const days = dayNumber(today) - dayNumber(d);
-  if (days <= 0) return t('messages:ai.short.today');
-  if (days === 1) return t('messages:ai.short.yesterday');
-  // The year too, only when it is another one (as History's months say it).
-  const other = zonedDay(d).year !== zonedDay(today).year;
-  return d.toLocaleDateString(locale, inZone({ weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) }));
-}
-
-/**
  * THE THREE BANDS' ROW (24 Nov 2026, Evan's review of the thread list). A
  * Needs you row ends in what the person does, said as a verb: the pill the
  * model gives it where that is one already, and these where it is not. The

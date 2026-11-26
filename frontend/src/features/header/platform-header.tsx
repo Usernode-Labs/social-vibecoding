@@ -54,7 +54,7 @@ import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 import { useDismissibleOpen } from '../../lib/back-stack';
 import { HeaderPlace } from '../dev-board/workshop/place-bar';
-import { ChatBarSlot, DrawerBack, DrawerUntint, useDrawerMode } from '../nav-drawer/header-drawer';
+import { DrawerBack, DrawerUntint, useDrawerMode } from '../nav-drawer/header-drawer';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -701,10 +701,6 @@ export function PlatformHeader() {
               and it is checked BEFORE preventDefault — the rule
               tests/nav-new-tab.test.js pins across the whole shell.
           */}
-          {/* A phone's open conversation puts its own discs here, its members
-              and its ⋯ (../nav-drawer/header-drawer.tsx ChatBarSlot, phone
-              review #131); nothing at rest or in the prerender. */}
-          <ChatBarSlot />
           {/*
               NO DISC AT REST (#2798): the bell sits on the bar with no fill,
               and the periwinkle tint the other header controls wear shows

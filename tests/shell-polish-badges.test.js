@@ -42,16 +42,14 @@ test('the sidebar slides in and out on the compositor, and not at all for reduce
   // synchronously between the two measurements.
   assert.match(src, /flushSync\(commit\);/);
   assert.match(src, /screen\.root\.animate\(\[\{ transform: `translateX\(\$\{dx\}px\)` \}, \{ transform: 'none' \}\], RAIL_SLIDE\);/);
-  // The rail slides in from its own edge and out to it: `dirSign()` flips the
-  // direction, so in Arabic it comes in from the right.
-  assert.match(src, /\[\{ transform: `translateX\(\$\{-100 \* dirSign\(\)\}%\)` \}, \{ transform: 'none' \}\]/);
+  // The rail folds to its strip and does not slide (26 Nov 2026: the looks
+  // whose folded rail left the screen went): only the screen moves, and
+  // `dirSign()` flips it, so in Arabic it plays the other way.
+  assert.match(src, /\* dirSign\(\);/);
   const body = src.slice(src.indexOf('export function slideRail'));
-  assert.equal((body.match(/\.animate\(/g) || []).length, 2, 'the screen and the rail');
+  assert.equal((body.match(/\.animate\(/g) || []).length, 1, 'the screen alone');
   assert.doesNotMatch(body, /\{ (?!transform)[a-zA-Z]+: [`'"]/, 'every keyframe is a transform: nothing lays out again on a frame');
-  // Going away, the rail is drawn until its slide ends.
-  assert.match(src, /bar\.classList\.add\('platform-tabs-leaving'\)/);
-  assert.match(src, /if \(!open\) slide\.finished\.then\(leaving, leaving\);/);
-  assert.match(CSS, /\.platform-tabs\.platform-tabs-folded:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
+  assert.doesNotMatch(src, /platform-tabs-leaving/, 'nothing slides away, so nothing is drawn while it leaves');
 });
 
 // ── #18: grey is new to read; the accent is waiting on you ─────────────

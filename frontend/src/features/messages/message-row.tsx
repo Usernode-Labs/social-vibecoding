@@ -43,7 +43,6 @@ import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from './translate';
 
 /*
@@ -424,18 +423,15 @@ export const MessageRow = memo(function MessageRow({
     || isTwoQuestions(message) || isReadyMessage(message) || !!head
     || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
       && !isTwoQuestions(message) && !isReadyMessage(message));
-  // Under one of the frame's looks no row has a side (the tour's s17: "your
-  // own messages and theirs share one style, so a thread reads top to
-  // bottom"): every row is the named row a channel draws. #6863: so is every
-  // row of a private thread with the bot, alone in its tab's column, where
-  // the thread is drawn as a public thread's one sheet (`flat`).
-  const frame = isFrameSkin(useLiveSkin());
+  // #6863: every row of a private thread with the bot, alone in its tab's
+  // column, is the named row a channel draws: the thread is drawn as a
+  // public thread's one sheet (`flat`).
   // 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
   // the flat named row its answers are, a notice as much as a reply with
   // buttons: the same speaker no longer changes style message by message.
   // People's own messages keep their bubble.
   const botRow = botChat && !!message.sender.bot;
-  const sided = !flat && !frame && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
+  const sided = !flat && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its

@@ -9,7 +9,7 @@
 //
 //   1. the Yes/No tallies hold a slot wide enough for "10/10" and do not
 //      wrap, so the switch's halves keep their size;
-//   2. on a phone and in the standard skin the Votes card's head keeps its
+//   2. on a phone the Votes card's head keeps its
 //      name and figure on one line; the figure ends in "…" if the sentence
 //      is ever too long, and its full words stay in the `title`;
 //   3. the figure's own look (size, weight, colour, tabular digits) is
@@ -32,7 +32,6 @@ const CHANGE_HEAD = fs.readFileSync(
 );
 
 const PHONE = '@media (max-width: 640px)';
-const STANDARD_SKIN = 'html[data-skin]';
 
 // Every rule in the stylesheet with the at-rule it sits inside, so the phone
 // rule is told apart from the base rule of the same selector.
@@ -111,29 +110,6 @@ test('on a phone the Votes head keeps its figure on one line', () => {
   assert.match(figure, /white-space:\s*nowrap/);
   assert.match(figure, /text-overflow:\s*ellipsis/,
     'a sentence too long for the line ends in "…" instead of wrapping');
-});
-
-test('the standard skin keeps the Votes head on one line too', () => {
-  const inSkin = (r) => r.selector.startsWith(STANDARD_SKIN) && r.context === '';
-  const head = bodies(
-    'html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head',
-    inSkin
-  )[0].body;
-  assert.match(head, /flex-wrap:\s*nowrap/);
-  assert.doesNotMatch(head, /flex-wrap:\s*wrap/);
-
-  const name = bodies(
-    'html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-name',
-    inSkin
-  )[0].body;
-  assert.match(name, /flex:\s*none/);
-
-  const figure = bodies(
-    'html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure',
-    inSkin
-  )[0].body;
-  assert.match(figure, /white-space:\s*nowrap/);
-  assert.match(figure, /text-overflow:\s*ellipsis/);
 });
 
 // ── 3. The elided sentence is still readable ────────────────────────

@@ -159,7 +159,7 @@ test('the visitor\'s marker over a stop: up to two faces and "{n} of yours", in 
   assert.equal(message('project:workshop.front.path.mine', { count: 2 }), '2 of yours');
   assert.match(SRC, /Array\.from\(\{ length: Math\.min\(2, n\) \}, \(_, i\) => face\(i\)\)/);
   assert.match(SRC, /\{ key: 'asked', n: d && typeof d\.asked === 'number' \? d\.asked : null, mine: d\?\.mine\?\.asked \|\| 0 \},/);
-  assert.match(CSS, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-front-mine \{[^}]*color: var\(--wip-mark-2-ink\); \}/);
+  assert.match(CSS, /html:root #dev-workshop \.dev-ws-front-mine \{[^}]*color: var\(--wip-mark-2-ink\); \}/);
 });
 
 test('Lately: the last three things that went live, title only; Live by week: three bars, this week\'s solid', () => {
@@ -214,14 +214,14 @@ test('its CSS: tokens only, one motion that stops for reduced motion and on a ph
   assert.ok(block.length > 1000);
   assert.doesNotMatch(block.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, 'every colour is a token');
   assert.doesNotMatch(block, /gray-|indigo-/);
-  assert.match(block, /@media \(prefers-reduced-motion: no-preference\) \{\n  html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-front-run > i \{ animation: ws-front-run 12s linear infinite; \}/,
+  assert.match(block, /@media \(prefers-reduced-motion: no-preference\) \{\n  html:root #dev-workshop \.dev-ws-front-run > i \{ animation: ws-front-run 12s linear infinite; \}/,
     'the dots move only for someone who has not asked for less');
-  assert.match(block, /html:not\(\[data-skin\]\):where\(\[data-motion="reduce"\]\) #dev-workshop \.dev-ws-front-run > i \{ animation: none; \}/, 'nor under Reduce motion');
-  assert.match(block, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-front-run > i \{ position: absolute;[^}]*opacity: 0; \}/, 'not drawn when they do not move');
+  assert.match(block, /html:root:where\(\[data-motion="reduce"\]\) #dev-workshop \.dev-ws-front-run > i \{ animation: none; \}/, 'nor under Reduce motion');
+  assert.match(block, /html:root #dev-workshop \.dev-ws-front-run > i \{ position: absolute;[^}]*opacity: 0; \}/, 'not drawn when they do not move');
   assert.match(block, /@container ws-front \(max-width: 700px\) \{[\s\S]*?\.dev-ws-front-run > i \{ animation: none; \}/, 'no dots on a phone');
-  assert.match(block, /html:not\(\[data-skin\]\)\[dir="rtl"\] #dev-workshop \.dev-ws-front-stops::before \{ background: linear-gradient\(to left,/, 'right to left, the track runs the other way');
+  assert.match(block, /html:root\[dir="rtl"\] #dev-workshop \.dev-ws-front-stops::before \{ background: linear-gradient\(to left,/, 'right to left, the track runs the other way');
   assert.match(CSS, /@keyframes ws-front-run \{\n  0% \{ inset-inline-start: 2%; opacity: 0; \}/, 'and the dots with it (a logical inset)');
-  assert.match(block, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="workshop"\] > \.dev-ws-tabbody:has\(> \.dev-ws-front\) \{ width: 100%; max-width: 1132px; margin-inline: auto; \}/);
+  assert.match(block, /html:root #dev-workshop \.dev-ws\[data-ws-tab="workshop"\] > \.dev-ws-tabbody:has\(> \.dev-ws-front\) \{ width: 100%; max-width: 1132px; margin-inline: auto; \}/);
   // The path's colours are the hub hero's three and the vote's near-black, declared once as the look's tokens.
   assert.match(CSS, /--wip-path-ask: #ffee6f;\n  --wip-path-ask-ink: #121a0e;[\s\S]*?--wip-path-build: #3c7bd8;[\s\S]*?--wip-path-live: #a9cf97;/);
 });

@@ -87,13 +87,6 @@ export function byMonth<T extends { at: string | null }>(rows: readonly T[]): { 
   return months;
 }
 
-/** Pure: a month's name in the interface's language: "October", or "October 2025" in another year. */
-export function monthName(at: string, locale: string | undefined, now = new Date()): string {
-  const d = new Date(at);
-  const other = zonedDay(d).year !== zonedDay(now).year;
-  return d.toLocaleDateString(locale, inZone({ month: 'long', ...(other ? { year: 'numeric' } : {}) }));
-}
-
 /** Pure: a day as History's rows say it, "Oct 24". */
 export function shortDay(at: string | null | undefined, locale: string | undefined): string {
   const d = new Date(String(at || ''));

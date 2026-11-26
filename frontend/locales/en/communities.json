@@ -139,22 +139,6 @@
     "text": "None of your communities match “{{query}}”.",
     "description": "Line on the Communities page when the search finds none of the person's communities. {{query}} is what they typed."
   },
-  "page.discover.heading": {
-    "text": "Discover",
-    "description": "Small-caps heading over the last card of the Communities page, which leads to the public communities the person has not joined. A verb used as a section name, the same word as the button's first."
-  },
-  "page.discover.title": {
-    "text": "Find more communities",
-    "description": "Title of the card at the foot of the Communities page, which leads to the public communities the person has not joined."
-  },
-  "page.discover.text": {
-    "text": "Public communities you have not joined yet are on Home, under Communities to join.",
-    "description": "Line under \"Find more communities\" on the Communities page. Home is the name of the Home screen; \"Communities to join\" is the name of the section there, written as that section's heading is."
-  },
-  "page.discover.button": {
-    "text": "Discover communities",
-    "description": "Button on the card at the foot of the Communities page: opens the Home screen at its Communities to join section. \"Discover\" is a verb."
-  },
   "needsYou.filter.label": {
     "text": "Show votes",
     "description": "Accessible name of the row of filter chips above the Needs you feed (All, Votes that decide, Advisory), which narrows the votes waiting on the person to one kind."

@@ -88,7 +88,7 @@ function factLine(parts) {
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  * @property {boolean} weekShareOpen        — the "Share your week" card is up (#6464)
- * @property {string} tab                   — under a look, which of You's tabs is up (./frame/you-tabs.ts)
+ * @property {string} tab                   — which of You's tabs is up (./you-tabs.ts)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -108,7 +108,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsOpen: false,
   appSlotsOpen: false,
   weekShareOpen: false,
-  // Under a look, which of You's tabs is up (./frame/you-tabs.ts).
+  // Which of You's tabs is up (./you-tabs.ts).
   tab: 'overview',
 }));
 

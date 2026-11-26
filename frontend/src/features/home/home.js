@@ -386,10 +386,9 @@ const Home = {
   // The sidebar's search glyph (features/nav/rail-communities.tsx): Home,
   // with its search box focused, which finds your apps and communities by
   // name. It opened the Communities screen's search until One Home (#6361).
-  // The field a person types in: Home's own, or, under a look, the kit
-  // page's (frame/home-frame.tsx HomeSearch), which writes into Home's own.
+  // The field a person types in: Home's own.
   _searchField() {
-    return document.querySelector('[data-home-frame-search] input') || document.getElementById('home-search-input');
+    return document.getElementById('home-search-input');
   },
   focusSearch() {
     if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
@@ -732,8 +731,8 @@ const Home = {
   _rowBudgetPending: 0,
 
   // Whether New project is drawn outside the grid, so the grid ends with no
-  // tile: under Standard (WIP) only, whose search row carries the button
-  // (features/home/index.tsx), for a viewer who gets a tile.
+  // tile: the search row carries the button (features/home/index.tsx), for a
+  // viewer who gets a tile.
   hasSideCard() {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     if (window.App?.user?.privateMember) return false;
@@ -743,19 +742,12 @@ const Home = {
       const shot = new URLSearchParams(location.search).get('shot');
       if (shot === 'create-enabled' || shot === 'create-disabled') return false;
     } catch { /* no address to read */ }
-    let skin = 'standard';
-    try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
-    // search row at every width, so its grid draws no tile. The brand look
-    // ('brand') has the same button from 768px, where the search row is on
-    // screen; a phone, whose search row waits to be pulled into view, keeps
-    // the tile. The standard look takes Standard (WIP)'s top row (20 Nov
-    // 2026), and both now do as the brand look does (phone review, 23 Nov
-    // 2026): on a phone the button waited under the header with the search,
-    // so nothing on screen started a project until the page was pulled down.
-    // There the collapsed grid ends with the tile again, and the row is the
-    // field alone (app.css).
-    if (skin !== 'brand' && skin !== 'standard') return false;
+    // New project is a button on the search row from 768px, where the search
+    // row is on screen; a phone, whose search row waits to be pulled into
+    // view, keeps the tile (phone review, 23 Nov 2026): on a phone the button
+    // waited under the header with the search, so nothing on screen started
+    // a project until the page was pulled down. There the collapsed grid
+    // ends with the tile again, and the row is the field alone (app.css).
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 
@@ -4107,7 +4099,7 @@ ${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div cl
     // fills the app's own page, search results and demo tiles carry no
     // data-yours, and while edit mode is on there is nothing to start.
     if (!basic && !Home._editing && anchorEl && typeof anchorEl.closest === 'function'
-        && anchorEl.closest('.app-card[data-yours]:not([data-demo]), [data-home-frame-tile="yours"]')) {
+        && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
       items.push({
         key: 'edit-my-apps',
         label: message('home:menu.editMyApps.label'),

@@ -76,7 +76,7 @@ import { ChangeFoot, ChangeGates, PreviousShotsLine, ShotsCard , headPill, phase
 import { ballotHeadline, fixStanding } from './card-model';
 import { StepLayer, ThreadCardContext, ThreadFoot , NoPicture } from './thread-card';
 import { closeStep, openStep, publishLead, useOpenStep } from './step-store';
-import { dotLine } from './frame/topic-page';
+import { dotLine } from './topic-page';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';

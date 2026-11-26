@@ -28,7 +28,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import type { Standing } from '../../../lib/work-state';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import type { FootTone } from './card-model';
-import { dotLine } from './frame/topic-page';
+import { dotLine } from './topic-page';
 import type { RequestSpecCard } from './request-model';
 import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 
