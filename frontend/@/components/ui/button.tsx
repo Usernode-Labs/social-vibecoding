@@ -158,9 +158,10 @@ const buttonVariants = cva('', {
       // community and Discover.
       cta: 'wip-cta',
       // QUIET in the header's own colours: the brand tint, its hairline and
-      // (ink `brand`) its words. Call site: the header's Suggest
+      // (ink `brand`) its words. Call sites: the header's Suggest
       // (features/header/in-app-actions.tsx, #header-in-app-suggest), which
-      // the standard look redraws in the sky tint.
+      // the standard look redraws in the sky tint, and the phone drawer's
+      // back disc (features/nav-drawer/header-drawer.tsx, .nav-drawer-back).
       brandTint: 'rounded-full border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]',
       // The landing site's own PRIMARY and SECONDARY (features/auth/story.tsx):
       // a pill on the site's ink outline with a hard edge under it, in the
