@@ -134,6 +134,20 @@ test('strict batch placement keeps Dockerfile builds on the dedicated pool too',
   assert.deepEqual(body.spec.template.spec.tolerations, [{ key: 'pool', operator: 'Equal', value: 'batch', effect: 'NoSchedule' }]);
   assert.equal(body.spec.template.spec.automountServiceAccountToken, false);
 });
+
+test('a build pool of their own takes builds off the checks pool; an invalid one keeps them there', () => {
+  const manifest = (overrides) => buildkit._forTest.jobManifest(config(overrides).kubernetes, runtimeWith({}), {
+    app, revision, environment: 'staging', sessionId: 1, dockerfile: 'Dockerfile',
+    name: 'build', tag: 'registry.test/app:test', cacheRef: 'registry.test/cache:test', recipe: 'recipe', inputSecretName: 'input',
+  }).spec.template.spec;
+  const own = manifest({ checkNodePoolRequired: true, checkNodePool: 'pool=batch', buildNodePool: 'pool=build' });
+  assert.deepEqual(own.nodeSelector, { pool: 'build' });
+  assert.deepEqual(own.tolerations, [{ key: 'pool', operator: 'Equal', value: 'build', effect: 'NoSchedule' }]);
+  // Required even when the checks pool is only preferred: the pool is the point.
+  assert.deepEqual(manifest({ buildNodePool: 'pool=build' }).nodeSelector, { pool: 'build' });
+  const invalid = manifest({ checkNodePoolRequired: true, checkNodePool: 'pool=batch', buildNodePool: 'not a pair' });
+  assert.deepEqual(invalid.nodeSelector, { pool: 'batch' }, 'an invalid build pool is ignored, never a Job the API refuses');
+});
 // A Job followed after its image was handed over is read again this often.
 buildkit._forTest.setSettlePollMs(5);
 
