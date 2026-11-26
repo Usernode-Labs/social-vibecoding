@@ -79,7 +79,7 @@ import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
-import { changeLine, changeReplyCount, changeStream, joinVoteReasons, keptOnRequest } from '../dev-board/topic/change-model';
+import { changeLine, changeReplyCount, changeStream, keptOnRequest, requestVotePosts } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { messageMenu, messageSheet } from '../message-actions/message-menu';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
@@ -517,9 +517,9 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request asked of
   // Homeroom bot here wears no status chip for the room any more; where it
   // stands is on its own page.
-  if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
+  if (!msg.reactions.length) return <div className="gc-reactions" id={msg.id != null ? `gc-react-${msg.id}` : undefined} />;
   return (
-    <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
+    <div className="gc-reactions" id={msg.id != null ? `gc-react-${msg.id}` : undefined}>
       {msg.reactions.map((r) => (
         <ReactionPill
           key={r.emoji}
@@ -599,7 +599,7 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
 export function newestComment(rows: TranscriptMessage[], withGithub: boolean): TranscriptMessage | null {
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     const m = rows[i];
-    if (m.kind === 'message' && !m.deleted) return m;
+    if (m.kind === 'message' && !m.deleted && !m.voteReasonPost) return m;
     if (withGithub && m.kind === 'github' && !m.githubSpec) return m;
   }
   return null;
@@ -1341,11 +1341,11 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   // changes' rows are in it (`changeOf`), each tagged with its change, and
   // of what happened to a change only what keptOnRequest keeps.
   const changes = useStoreState(requestChangesStore);
-  // #7216: a No's reason handed to the bot is joined back onto its vote row
-  // before the stream is filtered, so the page words it as the vote it came
-  // with (change-model.ts joinVoteReasons) rather than as a plain message.
+  // #7216: a vote's reason is that person's ordinary post, with the change's
+  // vote line above it as its note (change-model.ts requestVotePosts), rather
+  // than words swallowed into the vote line or a plain unlabelled message.
   const stream = useMemo(
-    () => requestStream(foldRepeats(joinVoteReasons(view.messages)).filter((m) => !m.changeOf || keptOnRequest(m))),
+    () => requestStream(requestVotePosts(foldRepeats(view.messages)).filter((m) => !m.changeOf || keptOnRequest(m))),
     [view.messages],
   );
   // #6519: the newest comment, with its GitHub comments, under which the
@@ -1477,8 +1477,17 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
+  // #7216: a vote's reason is drawn as its own post under this line, so the
+  // line is only the note above it: the post carries the time and the change
+  // tag (MessageRow), never both.
+  const shownTag = msg.voteNote ? null : tag;
   return (
-    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind} data-change-event-on={changeId || undefined}>
+    <div
+      className={`gc-msg-system dev-request-event${msg.voteNote ? ' dev-request-vote-note' : ''}`}
+      data-msg-id={msg.id ?? ''}
+      data-change-event={line.kind}
+      data-change-event-on={changeId || undefined}
+    >
       <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
         {/* A line the page words is one whole message: <0> is who did it,
@@ -1504,9 +1513,9 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
         {msg.time ? (
           <span className="dev-request-event-time" title={msg.timeTitle}>
             {msg.time}
-            {tag ? <span data-change-event-tag="">{` · ${tag}`}</span> : null}
+            {shownTag ? <span data-change-event-tag="">{` · ${shownTag}`}</span> : null}
           </span>
-        ) : tag ? <span className="dev-request-event-time" data-change-event-tag="">{tag}</span> : null}
+        ) : shownTag ? <span className="dev-request-event-time" data-change-event-tag="">{shownTag}</span> : null}
       </span>
     </div>
   );

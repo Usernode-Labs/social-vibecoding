@@ -131,7 +131,9 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
 
 /** The people in the stream: what "N replies" counts. */
 export function replyCount(rows: TranscriptMessage[]): number {
-  return rows.filter((m) => (m.kind === 'message' || (m.kind === 'github' && !m.githubSpec)) && !m.deleted).length;
+  // #7216: a vote's reason drawn as a post is the vote's own words, not a
+  // reply of the request's thread, so it counts as a vote line did.
+  return rows.filter((m) => (m.kind === 'message' || (m.kind === 'github' && !m.githubSpec)) && !m.deleted && !m.voteReasonPost).length;
 }
 
 /** A claim, in the words of the page: "evan started working on this". */
