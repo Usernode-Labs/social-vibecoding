@@ -49,6 +49,135 @@ test('the tags name the project, say what it is, and point at its page and its c
   assert.match(small, /<meta name="twitter:card" content="summary">/);
   assert.match(small, /<meta property="og:image" content="https:\/\/app\.example\/app-icons\/abc">/);
   assert.doesNotMatch(small, /og:image:width/);
+  // Its size is said when the server could read it off the icon's bytes.
+  const sized = preview.previewTags({ ...APP, icon_url: '/app-icons/abc' }, ORIGIN, { cover: false, imageSize: { width: 512, height: 512 } });
+  assert.match(sized, /<meta property="og:image:width" content="512">\n<meta property="og:image:height" content="512">/);
+  // In a post on X a playable project stays a player card (request 6274), whatever its picture.
+  assert.match(preview.previewTags(APP, ORIGIN, { player: true }), /<meta name="twitter:card" content="player">/);
+});
+
+test('a picture\'s size is read from its first bytes: PNG, JPEG, GIF and WebP', () => {
+  const png = new PNG({ width: 48, height: 32 });
+  assert.deepEqual(preview.pictureSize(PNG.sync.write(png)), { width: 48, height: 32 });
+  const gif = Buffer.alloc(32); gif.write('GIF89a', 'latin1'); gif.writeUInt16LE(300, 6); gif.writeUInt16LE(200, 8);
+  assert.deepEqual(preview.pictureSize(gif), { width: 300, height: 200 });
+  // A JPEG: start of image, one application segment to step over, then the frame header.
+  const jpeg = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.alloc(14),
+    Buffer.from([0xff, 0xc2, 0x00, 0x11, 0x08, 0x02, 0x00, 0x01, 0x80]), Buffer.alloc(16),
+  ]);
+  assert.deepEqual(preview.pictureSize(jpeg), { width: 384, height: 512 });
+  // The brand's own files: a lossy WebP and a WebP with alpha.
+  const brand = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'brand', f));
+  assert.deepEqual(preview.pictureSize(brand('sky.webp')), { width: 1920, height: 1080 });
+  assert.deepEqual(preview.pictureSize(brand('landing-communities.webp')), { width: 1060, height: 656 });
+  for (const bad of [null, 'text', Buffer.alloc(0), Buffer.alloc(64), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')]) {
+    assert.equal(preview.pictureSize(bad), null);
+  }
+});
+
+test('the front page, signed out: a title that says what Homeroom is, a picture, its one address, and who it is', () => {
+  const tags = preview.landingTags({ origin: 'https://forged.example', canonical: ORIGIN });
+  assert.equal(preview.LANDING_TITLE, 'Homeroom: make apps together, one vote at a time');
+  // The description is the shell's own sentence, word for word.
+  assert.ok(read('frontend/src/head.html').includes(`<meta name="description" content="${preview.LANDING_DESCRIPTION}">`));
+  for (const tag of [
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Homeroom">',
+    `<meta property="og:title" content="${preview.LANDING_TITLE}">`,
+    `<meta property="og:description" content="${preview.LANDING_DESCRIPTION}">`,
+    '<meta property="og:url" content="https://app.example/">',
+    '<link rel="canonical" href="https://app.example/">',
+    `<meta name="description" content="${preview.LANDING_DESCRIPTION}">`,
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:title" content="${preview.LANDING_TITLE}">`,
+    '<meta name="twitter:image" content="https://app.example/brand/sky.webp">',
+    '<meta property="og:image" content="https://app.example/brand/sky.webp">',
+    '<meta property="og:image:type" content="image/webp">',
+    '<meta property="og:image:width" content="1920">',
+    '<meta property="og:image:height" content="1080">',
+  ]) assert.ok(tags.includes(tag), tag);
+  // The configured address names everything: the request's own host names nothing.
+  assert.doesNotMatch(tags, /forged/);
+  // The picture is a file the repository has, at the size the tags say, on a public path.
+  const picture = fs.readFileSync(path.join(__dirname, '..', 'public', preview.LANDING_PICTURE.path));
+  assert.deepEqual(preview.pictureSize(picture), { width: preview.LANDING_PICTURE.width, height: preview.LANDING_PICTURE.height });
+  assert.match(read('src/middleware/auth.js').match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/)[1], /'\/brand\/',/);
+
+  const blocks = ldJson(tags);
+  assert.equal(blocks.length, 1);
+  const graph = JSON.parse(blocks[0][1])['@graph'];
+  const site = graph.find((n) => n['@type'] === 'WebSite');
+  const org = graph.find((n) => n['@type'] === 'Organization');
+  assert.deepEqual([site.name, site.url, site.description], ['Homeroom', 'https://app.example/', preview.LANDING_DESCRIPTION]);
+  assert.equal(site.publisher['@id'], org['@id']);
+  assert.deepEqual([org.name, org.url, org.logo], ['Homeroom', 'https://app.example/', 'https://app.example/brand/homeroom-mark.png']);
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', 'brand', 'homeroom-mark.png')));
+
+  // No configured address (a staging copy, a local server): no canonical and
+  // no og:url; the picture comes from where the page was asked for.
+  const staging = preview.landingTags({ origin: 'https://pr-1.example', canonical: null });
+  assert.doesNotMatch(staging, /rel="canonical"|og:url/);
+  assert.match(staging, /<meta property="og:image" content="https:\/\/pr-1\.example\/brand\/sky\.webp">/);
+  // A value that is not an origin is never written into the page.
+  const odd = preview.landingTags({ origin: 'javascript:alert(1)', canonical: 'https://app.example/"><script>' });
+  assert.doesNotMatch(odd, /rel="canonical"|og:url|og:image|ld\+json|alert/);
+  assert.match(odd, /<meta name="twitter:card" content="summary">/);
+
+  // In the shell: exactly that title, one description, one canonical.
+  const html = '<html>\n<head>\n<title>Homeroom</title>\n'
+    + `  <meta name="description" content="${preview.LANDING_DESCRIPTION}">\n`
+    + '</head>\n<body></body>\n</html>';
+  const out = preview.withHead(html, tags, preview.LANDING_TITLE);
+  assert.match(out, /<title>Homeroom: make apps together, one vote at a time<\/title>/);
+  assert.equal((out.match(/<title>/g) || []).length, 1);
+  assert.equal((out.match(/name="description"/g) || []).length, 1);
+  assert.equal((out.match(/rel="canonical"/g) || []).length, 1);
+  assert.ok(out.indexOf('ld+json') < out.indexOf('</head>'));
+});
+
+test('GET /: signed out, the shell carries the front page\'s tags; its address is the configured one, never the Host', async (t) => {
+  if (!fs.existsSync(path.join(__dirname, '..', 'public', 'index.html'))) { t.skip('no built shell'); return; }
+  const before = { domain: process.env.USERNODE_DOMAIN, env: process.env.USERNODE_ENV };
+  const restore = () => {
+    for (const [key, value] of [['USERNODE_DOMAIN', before.domain], ['USERNODE_ENV', before.env]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  };
+  process.env.USERNODE_DOMAIN = 'app.example';
+  delete process.env.USERNODE_ENV;
+  try {
+    const srv = await startServer();
+    try {
+      const page = await fetch(`${srv.base}/?report=app`, { headers: { accept: 'text/html', 'x-forwarded-host': 'forged.example' } });
+      assert.equal(page.status, 200);
+      assert.equal(page.headers.get('link'), '<https://app.example/>; rel="canonical"');
+      assert.equal(page.headers.get('x-robots-tag'), null);
+      const html = await page.text();
+      assert.match(html, /<title>Homeroom: make apps together, one vote at a time<\/title>/);
+      assert.match(html, /<link rel="canonical" href="https:\/\/app\.example\/">/);
+      assert.match(html, /<meta property="og:url" content="https:\/\/app\.example\/">/);
+      assert.match(html, /<meta property="og:image" content="https:\/\/app\.example\/brand\/sky\.webp">/);
+      assert.doesNotMatch(html, /forged\.example/);
+      assert.equal((html.match(/name="description"/g) || []).length, 1);
+      assert.equal((html.match(/<title>/g) || []).length, 1);
+      assert.ok(html.indexOf('ld+json') < html.indexOf('</head>'));
+      // Something that is not a page (a fetch for JSON) is not answered here.
+      assert.equal(await (await fetch(`${srv.base}/`, { headers: { accept: 'application/json' } })).text(), 'catch-all');
+      // A staging copy names no address, in the header or the page.
+      process.env.USERNODE_ENV = 'staging';
+      const staged = await fetch(`${srv.base}/`, { headers: { accept: 'text/html' } });
+      assert.equal(staged.headers.get('link'), null);
+      const stagedHtml = await staged.text();
+      assert.doesNotMatch(stagedHtml, /rel="canonical"|og:url/);
+      assert.match(stagedHtml, /<meta property="og:title" content="Homeroom: make apps together, one vote at a time">/);
+    } finally { await srv.close(); }
+    delete process.env.USERNODE_ENV;
+    const member = await startServer({ user: { id: 1 } });
+    try {
+      assert.equal(await (await fetch(`${member.base}/`, { headers: { accept: 'text/html' } })).text(), 'catch-all', 'a member\'s own load is the plain shell');
+    } finally { await member.close(); }
+  } finally { restore(); }
 });
 
 test('the shell keeps everything and gains the tags before </head>, named for the project', () => {
