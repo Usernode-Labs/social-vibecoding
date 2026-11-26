@@ -50,6 +50,8 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         moderation_hidden_at timestamptz, edited_at timestamptz, posted_via text, deleted_at timestamptz,
         thread_id bigint
       );
+      -- #7230: every history row carries its author's picture (routes/chat.js).
+      CREATE TABLE user_avatars (id varchar(32) PRIMARY KEY, user_id int UNIQUE NOT NULL);
       -- #6019: a request's stream reads its whole thread (routes/chat.js).
       CREATE TABLE requests (app_id int NOT NULL, number int NOT NULL, thread_id bigint);
       -- #2967: the tables the Messages list's "yours"/"more" sections and
