@@ -640,3 +640,19 @@ test('#4238: the bot\'s first-version message draws its Open button, and leaves 
   assert.equal(gc._messageView({ ...row, metadata: { kind: 'first_version', actions: [{ ...action, target: 'https://elsewhere.test' }] } }).openApp, null, 'only a way into the platform');
   assert.equal(gc._messageView({ ...row, thread_type: 'issue', thread_ref: 4, metadata: { kind: 'first_version', actions: [action] } }).openApp, null, 'the channel only');
 });
+
+// #7216: a No's reason handed to Homeroom bot is the voter's own reply, and
+// the vote row names it so a request's page can join the two into one line.
+test('#7216: a vote row reads the reply that carried its reason, and null when it names none', () => {
+  const gc = loadGroupChat();
+  const vote = gc._threadEvent({
+    content: 'evan voted no on PR #7213: Tidy the request rows',
+    metadata: { vote: { sessionId: 7213, prNumber: 7213, reason: null, reasonMessageId: 501 } },
+  }, 'vote');
+  assert.equal(vote.type, 'vote');
+  assert.equal(vote.reason, '', 'the row itself carries no reason');
+  assert.equal(vote.reasonMessageId, 501, 'the reply it points at');
+  // An older row, or one not handed over, has no reply to name.
+  assert.equal(gc._threadEvent({ content: 'evan voted no on PR #7213', metadata: { vote: { sessionId: 7213 } } }, 'vote').reasonMessageId, null);
+  assert.equal(gc._threadEvent({ content: 'evan voted no on PR #7213' }, 'vote').reasonMessageId, null);
+});

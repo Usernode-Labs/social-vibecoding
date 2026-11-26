@@ -23,6 +23,7 @@ const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib
 const MODEL = 'frontend/src/features/dev-board/topic/request-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+const CHANGE_MODEL = 'frontend/src/features/dev-board/topic/change-model.ts';
 
 const row = (patch) => ({
   id: null, kind: 'message', username: 'maya', time: '09:05 AM',
@@ -1087,3 +1088,143 @@ test('T2.5: a person\'s session no longer hides the stored row\'s words', () => 
   const idle = av._requestStatusView(issue({ in_progress: session('active'), standing: standing('reading', { line: { code: 'waiting' } }) }));
   assert.match(idle.lead, /maya/);
 });
+
+// #7216: a vote's reason on a request's thread is the voter's ordinary post,
+// with the change page's own vote line above it ("evan voted no"), never the
+// words swallowed into the vote line or shown with no sign they came with a
+// vote. A No on Homeroom bot's change is handed to the bot as the voter's own
+// reply (routes/votes.js), and the vote row names it (`event.reasonMessageId`);
+// a Yes (or a No that stayed) keeps its reason on the vote row itself.
+const changeOf7213 = { sessionId: 7213 };
+const onChange = (patch) => row({ changeOf: changeOf7213, ...patch });
+const voteEvent = (patch) => ({
+  sessionId: '7213', prNumber: '7213', title: '', actor: '', sender: '', mine: false,
+  force: false, votes: '', icon: null, here: true, ...patch,
+});
+const noVote = (patch) => onChange({
+  id: 12, kind: 'vote', username: '', systemText: 'evan voted no on PR #7213',
+  at: '2026-10-08T10:12:30Z', bodyHtml: '', text: '',
+  event: voteEvent({ type: 'vote', actor: 'evan', vote: 'no', reason: '', ...patch }),
+});
+const reasonReply = (patch) => onChange({
+  id: 11, kind: 'message', username: 'evan', at: '2026-10-08T10:12:00Z',
+  text: 'I do not agree with the approach. Sorting should happen on the server.',
+  bodyHtml: '<p>I do not agree with the approach. Sorting should happen on the server.</p>',
+  ...patch,
+});
+
+test('#7216 requestVotePosts: a handed-off No becomes its note above the voter\'s own reply', () => {
+  const { requestVotePosts } = loadTsx(CHANGE_MODEL);
+  const reply = reasonReply({});
+  const vote = noVote({ reasonMessageId: 11 });
+  const out = requestVotePosts([reply, vote]);
+  assert.equal(out.length, 2, 'the reply is drawn once, under its note');
+  assert.equal(out[0].voteNote, true, 'the vote row is the note');
+  assert.equal(out[0].id, 12);
+  assert.equal(out[0].event.reason, '', 'the reason is not swallowed into the line');
+  assert.equal(out[1], reply, 'the reply itself is the post, unchanged');
+});
+
+test('#7216 requestVotePosts: a vote whose reason is on its row becomes a note and a post', () => {
+  const { requestVotePosts } = loadTsx(CHANGE_MODEL);
+  const vote = onChange({
+    id: 14, kind: 'vote', username: '', systemText: 'ana voted yes: “Small and right.”',
+    at: '2026-10-08T10:30:00Z', bodyHtml: '', text: '',
+    event: voteEvent({ type: 'vote', actor: 'ana', vote: 'yes', reason: 'Small and right.' }),
+  });
+  const out = requestVotePosts([vote]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].voteNote, true);
+  assert.equal(out[0].event.reason, '');
+  assert.equal(out[1].kind, 'message');
+  assert.equal(out[1].username, 'ana');
+  assert.equal(out[1].text, 'Small and right.');
+  assert.equal(out[1].bodyHtml, '<p>Small and right.</p>');
+  assert.equal(out[1].voteReasonPost, true, 'a post made from a vote is not a reply of the thread');
+  assert.equal(out[1].id, null, 'it is no message of its own');
+  // #7221: the note above names the change, so the post is not tagged again.
+  assert.equal(out[1].changeOf, null, 'the note carries the change');
+});
+
+test('#7216 requestVotePosts: an older No pairs with the voter\'s message directly before it, within two minutes', () => {
+  const { requestVotePosts } = loadTsx(CHANGE_MODEL);
+  const joinable = requestVotePosts([reasonReply({}), noVote({})]);
+  assert.equal(joinable.length, 2);
+  assert.equal(joinable[0].voteNote, true);
+  assert.equal(joinable[1].id, 11);
+
+  const keep = (rows) => {
+    const out = requestVotePosts(rows);
+    assert.equal(out.length, rows.length, 'nothing is paired');
+    assert.ok(out.every((m, i) => m === rows[i]), 'every row keeps its object');
+    assert.ok(!out.some((m) => m.voteNote || m.voteReasonPost), 'no note and no post');
+  };
+  // Somebody else wrote it.
+  keep([reasonReply({ username: 'maya' }), noVote({})]);
+  // Too old to be the vote's reason.
+  keep([reasonReply({ at: '2026-10-08T10:09:00Z' }), noVote({})]);
+  // Written on another change.
+  keep([reasonReply({ changeOf: { sessionId: 9999 } }), noVote({})]);
+  // Another row sits between them.
+  keep([reasonReply({}), onChange({ id: 13, at: '2026-10-08T10:12:10Z' }), noVote({})]);
+  // A Yes with no id is never paired from position alone.
+  keep([reasonReply({}), noVote({ vote: 'yes' })]);
+  // A deleted message is never a reason.
+  keep([reasonReply({ deleted: true }), noVote({})]);
+  // A vote with no reason, and a plain message, are left as they are.
+  keep([reasonReply({}), noVote({ vote: 'yes' })]);
+});
+
+test('#7216 requestVotePosts: a plain message with no vote is returned as the same object', () => {
+  const { requestVotePosts } = loadTsx(CHANGE_MODEL);
+  const alone = reasonReply({});
+  const out = requestVotePosts([alone]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0], alone);
+});
+
+test('#7216 RequestRows: a vote reason is the voter\'s own post, with the vote line above it and the change tag', () => {
+  const model = loadTsx(MODEL);
+  model.publishRequestChanges(7213, [{ id: 7213, number: 7213, title: 'Tidy the request rows' }]);
+  const view = {
+    lead: { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } },
+    messages: [
+      row({ id: 10, kind: 'message', username: 'maya', text: 'Could the list keep its order after a refresh?',
+        bodyHtml: '<p>Could the list keep its order after a refresh?</p>', at: '2026-10-08T09:40:00Z' }),
+      reasonReply({}),
+      noVote({ reasonMessageId: 11 }),
+      onChange({ id: 14, kind: 'vote', username: '', systemText: 'ana voted yes: “Small and right.”',
+        at: '2026-10-08T10:30:00Z',
+        event: voteEvent({ type: 'vote', actor: 'ana', vote: 'yes', reason: 'Small and right.' }) }),
+      onChange({ id: 15, kind: 'message', username: 'maya', text: 'Looks fine on my phone.',
+        bodyHtml: '<p>Looks fine on my phone.</p>', at: '2026-10-08T10:35:00Z' }),
+    ],
+  };
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view }, { stubs: { '../dev-board/topic/request-model': model } });
+  // #7221: the note above the post names the change in its own sentence, and
+  // still carries no reason of its own.
+  assert.match(html, /class="gc-msg-system dev-request-event dev-request-vote-note" data-msg-id="12"[^>]*data-change-event="vote"[\s\S]*?<b>evan<\/b> voted no[\s\S]*?dev-request-vote-note-on[^>]*> · on Change #7213</);
+  assert.doesNotMatch(html, /dev-request-vote-note[\s\S]{0,240}dev-change-event-reason/, 'the reason is not drawn inside the line');
+  // The reason is evan's ordinary post, name and all; the change is named on
+  // the note above it, so the post shows only its time.
+  assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="11"[^>]*data-username="evan"[\s\S]*?I do not agree with the approach\. Sorting should happen on the server\./);
+  assert.doesNotMatch(html.split('data-msg-id="11"')[1].split('data-msg-id="14"')[0], /gc-msg-on-change/, 'evan\'s post is not tagged twice');
+  // The vote row itself is not a bubble.
+  assert.doesNotMatch(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="12"/, 'the vote is a note, not a bubble');
+  // A Yes that kept its reason on its row reads the same way.
+  assert.match(html, /data-msg-id="14"[^>]*data-change-event="vote"[\s\S]*?<b>ana<\/b> voted yes[\s\S]*?dev-request-vote-note-on[^>]*> · on Change #7213</);
+  assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id=""[^>]*data-username="ana"[\s\S]*?Small and right\./);
+  assert.doesNotMatch(html.split('data-msg-id=""')[1].split('data-msg-id="15"')[0], /gc-msg-on-change/, 'ana\'s post is not tagged twice');
+  // A plain reply on the change is still a message, with its tag.
+  assert.match(html, /data-msg-id="15" data-username="maya"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213<[\s\S]*?Looks fine on my phone\./);
+  // The change is named once per entry: the two notes and maya's reply.
+  assert.equal((html.match(/on Change #7213/g) || []).length, 3, 'the reason post never repeats the note\'s tag');
+});
+
+// #7221: the change on a vote's line wraps as one piece, so a narrow line
+// never begins with a lone "·".
+test('#7221: the change on a vote\'s note never breaks onto its own line', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.dev-request-vote-note-on\s*\{[^}]*white-space:\s*nowrap/);
+});
+

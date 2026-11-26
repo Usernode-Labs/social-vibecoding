@@ -385,7 +385,7 @@ test('a re-cast No that already has its line keeps it; a flip to No without a li
 // tests/homeroom-bot-vote-line-postgres.test.js) and hands it over; here
 // that module is a stand-in that says where, and records each hand-off
 // with how many vote rows the thread had at that moment.
-async function withBotDm({ target = null, handed = { ok: true, queued: true } } = {}, fn) {
+async function withBotDm({ target = null, handed = { ok: true, queued: true, messageId: 501 } } = {}, fn) {
   const id = require.resolve('../src/services/homeroom-bot-dm');
   const { voteLineFor } = require(id);
   const orig = require.cache[id];
@@ -422,7 +422,9 @@ test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vo
       assert.equal(ctx.systemMessages.length, 1);
       assert.equal(ctx.systemMessages[0].content, 'evan voted no on PR #26: Native iOS look',
         'the line is the voter\'s reply just above, so the row does not repeat it');
-      assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
+      assert.deepEqual(ctx.systemMessages[0].metadata, {
+        vote: { sessionId: 7, prNumber: 26, reason: null, reasonMessageId: 501 },
+      }, 'the row names the reply that carried the reason (#7216)');
       assert.deepEqual(ctx.prompts, [7], 'everything else a No does, as before');
     });
   });
@@ -434,6 +436,7 @@ test('#3977: when the bot cannot take the line, or the change is not its own, th
       await ctx.post({ vote: 'no', reason: 'Sort the list by date' });
       assert.equal(bot.hands.length, 1);
       assert.equal(ctx.systemMessages[0].content, 'evan voted no: “Sort the list by date”');
+      assert.equal(ctx.systemMessages[0].metadata.vote.reasonMessageId, undefined, 'nothing was handed, so no reply to point at');
     });
   });
   await withBotDm({ target: null }, async (bot) => {
