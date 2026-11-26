@@ -111,7 +111,7 @@ test('Messages is a TAB, and the tab is where its count lives', () => {
   // exist — inside Messages, on the conversation rows, where they read as
   // counts rather than as an alert.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /conversation\.unreadCount > 0 \?/,
+  assert.match(screen, /const unread = conversation\.unreadCount > 0;[\s\S]*bottom=\{unread \? t\('messages:inbox\.newCount'/,
     'the Messages screen still shows a per-conversation unread count');
 });
 

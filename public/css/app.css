@@ -827,120 +827,15 @@ html:is(.un-kb, .platform-kb-open) .messages-list-scroll.platform-safe-scroll {
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
    above, which every chat's scroller wears (1 November 2026). */
 
-/* A conversation row, drawn straight on the strip: the square swatch
-   avatar, then two lines — the name with the time on its trailing edge, the
-   preview with the unread count on its. 15/13px, the grouped list's scale
-   (AGENTS.md, "Type and colour"): 17px bold made every name a heading. */
-.messages-conversation-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 66px;
-  padding: 13px 16px;
-  color: inherit;
-  text-decoration: none;
-  transition: background 150ms;
-}
-/* The row separator, INSET past the avatar to where the name starts: 16px of
-   padding + the 44px `lg` UserAvatar + the 14px gap. A pseudo-element rather
-   than `border-bottom` because a border cannot be inset, and because the row
-   is a fixed-height box whose 66px the border would eat into.
-
-   Same treatment, same reason, as the drawer's nav rows, the home panels and
-   @/components/ui/grouped-list.tsx: the widget language starts a row
-   separator at the content, and the last row has none. */
-.messages-conversation-row::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  inset-inline-start: 74px;
-  inset-inline-end: 0;
-  height: 1px;
-  background: var(--messages-hair);
-  pointer-events: none;
-}
-.messages-conversation-row:last-child::after { display: none; }
-.messages-conversation-active { background: var(--messages-selected); }
-/* A pointer that can actually hover only (the #2892 rule for app tiles). On
-   a touch screen WebKit keeps :hover on the last row tapped, so the row you
-   opened, or merely scrolled from, stayed tinted like the active one after
-   you came back to the list. */
-@media (hover: hover) {
-  .messages-conversation-row:hover { background: var(--messages-selected); }
-}
-.messages-row-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-/* A group row's tile (#5393): the faces of two of its other members, stacked
-   in the same 44px box the `lg` square takes, so the 74px separator inset
-   (16 + 44 + 14) holds. The last face's ring is the card the rows sit on
-   (.messages-section-card paints `--dc-sheet-solid`), so the pair reads as
-   two faces and not one melted one. */
+/* A group's tile (#5393): the faces of two of its other members, stacked
+   in the same 44px box the `lg` square takes, so a row's tile inset
+   (@/components/ui/grouped-list.tsx, 16 + 44 + 16) holds. The last face's
+   ring is the plane colour, so the pair reads as two faces and not one
+   melted one. */
 .messages-group-faces { position: relative; flex: 0 0 44px; width: 44px; height: 44px; }
 .messages-group-faces > * { position: absolute; }
 .messages-group-faces > :first-child { inset-inline-start: 0; top: 0; }
 .messages-group-faces > :last-child { inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--app-bg)); }
-.messages-row-name,
-.messages-row-preview {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* In rem, like everything a person reads in a conversation (a message, its
-   sender and time, the composer): Settings › Accessibility › Text size makes
-   text bigger everywhere by scaling rem, and these were fixed pixels, so at
-   150% the page's headings grew and the messages themselves did not. The
-   same 15 over 13 (and 17 in a conversation) at the default size. */
-.messages-row-name { color: var(--text-primary); font-size: 0.9375rem; font-weight: 650; line-height: 1.25rem; }
-.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 0.8125rem; line-height: 1.125rem; }
-/* An invitation's preview is the ACTION the row offers, so it takes the
-   accent — the language's "actionable / yours". */
-.messages-row-preview-invited { color: var(--accent); font-weight: 500; }
-.messages-row-time {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-}
-/* #18 of the 19 Oct polish board, ONE MEANING PER BADGE: the accent is
-   "waiting on you" (a vote, an answer), and an unread message is new to
-   read, which is grey everywhere. So an unread row's time is the ink, and
-   its count is said, "2 new", in grey (.messages-unread below). */
-.messages-row-time-unread { color: var(--text-primary); font-weight: 600; }
-.messages-group-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 22px;
-  margin-inline-start: 6px;
-  padding: 0 8px;
-  border-radius: 9999px;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  vertical-align: 2px;
-}
-/* NEW TO READ, SAID ON THE ROW (#18): "2 new" in grey at the preview's
-   end, where a blue bubble with a bare number was. A full row says its count
-   in words (the shell's rule); bare numbers are for tabs and the sidebar's
-   compact rows, and grey there too. */
-.messages-unread {
-  flex: 0 0 auto;
-  margin-inline-start: 8px;
-  color: var(--text-muted);
-  font-size: 0.8125rem;
-  font-weight: 650;
-  line-height: 1.125rem;
-  white-space: nowrap;
-}
-
 /* The empty and loading states, at the language's type scale. The list's
    empty state is a white card on the strip with a filled pill; "Choose a
    conversation" (desktop only — below 768px the list IS the screen until you
@@ -26045,32 +25940,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .messages-layout.messages-drawer > .messages-list-pane .messages-toolbar { margin: 12px 12px 4px; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-list-scroll { padding: 0 8px 12px; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-section-head { padding: 12px 10px 4px; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-section-card {
-    display: flex; flex-direction: column; gap: 2px;
-    margin: 0; overflow: visible; border-radius: 0; background: none; box-shadow: none;
-  }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row {
-    min-height: 48px; gap: 10px; padding: 4px 10px; border-radius: 10px;
-  }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row::after { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
-    flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
-  }
-  /* PHONE REVIEW S21 (23 Nov 2026): a group is its members' two faces here
-     too, as in the wide window's list and in the conversation's own head,
-     at the column's size: two 20px faces in the 28px tile, the second over
-     the first's corner. It was the first face alone, a square letter tile,
-     so turning a Duo redrew every group's picture. */
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > * {
-    width: 20px; height: 20px; border-radius: 6px; font-size: 9px;
-  }
-  /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
-     13 at the house weight, and their time: a 400-weight title and a 12px
-     line with no time made the same list two designs, upright and
-     sideways. Only the members chip goes, for the narrower column. */
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; }
   /* In a conversation the header names it, so its sheet keeps only its discs.
      Over the Homeroom bot's Activity strip they float at the top-right
      corner, on the strip's right end, which it leaves them (polish N15: a
@@ -31499,19 +31368,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   text-transform: none;
   white-space: nowrap;
 }
-/* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
-   grouped-list.tsx), spelled here because these rows are app.css's. The same
-   plane colour, the same 20px radius and the same inset hairline in the
-   sheets' edge colour, so Messages, Workshop and Discover read as one
-   material. `overflow: hidden` clips a row's hover and selected fill to the
-   card's corners. */
-.messages-section-card {
-  margin: 0 16px 8px;
-  overflow: hidden;
-  border-radius: 20px;
-  background: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-}
 /* A channel's tile is the `#` it is named with. */
 .messages-channel-tile {
   background: var(--bg-tertiary);
@@ -31520,18 +31376,11 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   font-weight: 700;
 }
 .messages-thread-channel-tile { width: 36px; height: 36px; font-size: 18px; }
-/* An app channel's handle, muted after its name. */
-.messages-channel-handle {
-  margin-inline-start: 6px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-}
 
-/* The two new rows' leading tiles, at the `lg` square UserAvatar's 44px box
-   so all three kinds line up down the left edge. `.app-icon-tile` draws the
-   app face; this call site adds only the geometry, which is the rule app.css
-   states for every tile call site. */
+/* A channel's tile in a conversation's header, at the `lg` square
+   UserAvatar's 44px box. `.app-icon-tile` draws the app face; this call site
+   adds only the geometry, which is the rule app.css states for every tile
+   call site. */
 .messages-inbox-tile {
   flex: 0 0 auto;
   width: 44px;
@@ -39913,8 +39762,8 @@ html:not([data-skin]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-
    features/messages/index.tsx, message-row.tsx, composer.tsx, and features/group-chat/transcript.tsx for a request's
    replies. Shapes are the agreed mockups' (S/mockshots: messages, conversation; request for the replies).
      THE LIST: on the cream wash, never a flush white sheet. The search field and the yellow + (.one-fab) share a row,
-       "DMs & groups" heads the rows, and the rows are ONE white card (radius 20, one hairline), at the row ramp
-       (16/14 on a phone, 15/13 from 768px), each with a 40px round face, the time trailing the name, "N new" kept.
+       "DMs & groups" heads the rows, and the rows are the shared row in the shared card (ListRow in GroupedList,
+       @/components/ui/grouped-list.tsx): nothing of theirs is drawn here.
      A CONVERSATION: a title card (the face, "Direct message" or the group's member line over the name, the discs),
        then ONE white card holding the whole stream with the message bar inside it at its foot. Theirs on the left in
        cream (--one-bubble-in, its first corner square), with the face and the name and the time above; yours on the
@@ -39977,81 +39826,6 @@ html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-asi
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-/* The rows: one white card. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-card {
-  display: block;
-  margin: 0 0 16px;
-  overflow: hidden;
-  border-radius: 20px;
-  background: var(--one-surface);
-  box-shadow: inset 0 0 0 1px var(--one-hair);
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row {
-  min-height: 64px;
-  gap: 12px;
-  padding: 11px 14px;
-  border-radius: 0;
-  color: var(--one-ink);
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row::after {
-  display: block;
-  inset-inline-start: 66px;
-  background: var(--one-line);
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:last-child::after,
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(+ .messages-conversation-active)::after,
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active::after { display: none; }
-/* The conversation open beside the list (from 768px) is lit in pale sun, as a lit row inside a page is. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active { background: var(--one-sun-pale); color: var(--one-ink); }
-@media (hover: hover) {
-  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:not(.messages-conversation-active):hover { background: var(--one-quiet); }
-}
-/* A 40px round face; a group's two faces are the first one's circle with the second as a small square badge on its
-   corner, ringed in the card's white. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > :first-child {
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
-  border-radius: 9999px;
-  font-size: 16px;
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces { border-radius: 0; }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
-  inset: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 9999px;
-  font-size: 16px;
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child:not(:first-child) {
-  inset: auto -3px -3px auto;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  font-size: 9px;
-  box-shadow: 0 0 0 2px var(--one-surface);
-}
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active > .messages-group-faces > :last-child:not(:first-child) { box-shadow: 0 0 0 2px var(--one-sun-pale); }
-/* The two lines at the row ramp; the time trails the name. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-line { gap: 8px; align-items: baseline; }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-name { font: var(--one-row-title); color: var(--one-ink); }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-preview { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-preview-invited { color: var(--one-sky-ink); font-weight: 500; }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-time { color: var(--one-ink-2); font-size: 13px; font-weight: 400; line-height: 1; }
-/* Unread: the preview in the ink, and "N new" in the sky ink, a column of its own at the row's end. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) .messages-row-preview { color: var(--one-ink); font-weight: 500; }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) { padding-inline-end: 70px; }
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-unread {
-  position: absolute;
-  inset-inline-end: 14px;
-  top: 50%;
-  translate: 0 -50%;
-  margin: 0;
-  color: var(--one-sky-ink);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1;
-}
 /* The list's own states on the wash: an empty inbox is a white card whose Start is the page's main action (the sun
    sticker); a search that found nothing offers its way back as a secondary action, flat in sky tint. */
 html:not([data-skin]) #messages-screen .messages-list-pane .messages-empty {
@@ -40075,8 +39849,6 @@ html:not([data-skin]) #messages-screen .messages-state button {
   box-shadow: none;
 }
 html:not([data-skin]) #messages-screen .messages-state button:active { transform: scale(.97); filter: brightness(.95); }
-/* A group's member count is the members dialog's to say; the row keeps its name and its line. */
-html:not([data-skin]) #messages-screen .messages-list-pane .messages-group-tag { display: none; }
 
 /* ── A conversation: a title card, then the stream's card with the message bar inside it ── */
 /* The pane is a column on the wash: no sheet of its own. On a phone it slides in over the list, so it paints the
@@ -40323,8 +40095,6 @@ html:not([data-skin]) .messages-message.messages-message-bubble.messages-message
   html:not([data-skin]) #messages-screen .messages-new-btn.one-fab { width: 36px; height: 36px; }
   html:not([data-skin]) #messages-screen .messages-new-btn.one-fab svg { width: 19px; height: 19px; }
   html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-head { padding: 16px 6px 8px; }
-  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row { min-height: 58px; padding-block: 9px; }
-  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row::after { inset-inline-start: 64px; }
   html:not([data-skin]) #messages-screen .messages-layout > .messages-thread-pane:not(.messages-no-selection) { margin: 0; margin-inline-start: 18px; padding: 12px 0 24px; }
   html:not([data-skin]) #messages-screen .messages-layout.messages-list-collapsed > .messages-thread-pane:not(.messages-no-selection) { margin-inline: auto; }
   html:not([data-skin]) #messages-screen .messages-layout.messages-list-collapsed.messages-has-reply-thread > .messages-thread-pane:not(.messages-no-selection) { margin-inline: 0; }
