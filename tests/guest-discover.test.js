@@ -1259,7 +1259,7 @@ test('the list wears the website\'s look signed out only: repainted by its own h
 test('a search leads with the community named what was typed, the loose matches still under it (#7021)', () => {
   // The real component: CommunitiesToJoin ranks the list it draws, so a
   // change that filters without ranking fails here by the order it renders.
-  const { CommunitiesToJoin } = loadTsx(JOIN, { stubs: { '../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
+  const { CommunitiesToJoin } = loadTsx(JOIN);
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (query) => renderToHtml(createElement(CommunitiesToJoin, {
     apps: APPS, exclude: new Set(), signedIn: false, query,
