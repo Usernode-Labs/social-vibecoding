@@ -6684,8 +6684,8 @@
     "description": "Title of a row in the guide beside the Messages list. Pressing it opens the Communities page. For somebody who came to Messages looking for a community's channel."
   },
   "guide.channels.hint": {
-    "text": "Channels like #general are on each community's page",
-    "description": "Second line of the \"Looking for a project's chat?\" row in the Messages guide: a community's channels, such as #general, are found on that community's own page."
+    "text": "Each community’s Discussion is on its own page",
+    "description": "Second line of the \"Looking for a project's chat?\" row in the Messages guide: a community's Discussion (its posts and replies) and its topics are found on that community's own page, not in Messages."
   },
   "guide.bot": {
     "text": "Homeroom bot has its own tab in the sidebar.",

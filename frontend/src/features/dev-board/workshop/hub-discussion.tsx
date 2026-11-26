@@ -72,7 +72,7 @@
  */
 
 import {
-  useCallback, useEffect, useId, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState,
   type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject,
 } from 'react';
 
@@ -84,20 +84,27 @@ import { messageStamp, shortDate } from '../../../lib/timestamp';
 import { enterSends, isTouchInput } from '../../../lib/enter-sends';
 import { watch as watchLiveReads } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
-import { MessageActionBar } from '../../message-actions/action-bar';
+import { openReport } from '../../dialogs/report';
+import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../../message-actions/action-sheet';
+import { toast } from '../../message-actions/clipboard';
+import { messageMenu, messageSheet } from '../../message-actions/message-menu';
 import { EmojiPicker } from '../../message-actions/emoji-picker';
 import { emojiName } from '../../message-actions/emoji-data';
 import { rememberReaction, useRecentReactions } from '../../message-actions/recents';
 import { useDismiss } from '../../message-actions/use-dismiss';
-import { MessageMarkdown, UserAvatar } from '../../messages/format';
+import { Attachments } from '../../group-chat/transcript';
+import type { Attachment } from '../../group-chat/transcript-store';
+import { attachmentBadge } from '../../messages/attachment-views';
+import { MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
+import { setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
 import {
   POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
   sortItems, toggledReactions,
   type DiscussionItem, type DiscussionPerson, type DiscussionSort, type DiscussionSource, type DiscussionSummary,
-  type EarlierFold, type LiveEvent, type Said,
+  type EarlierFold, type LiveEvent, type Said, type SharedSpec,
 } from './discussion-feed';
 import { takeDiscussionTarget, type DiscussionTarget } from './project-discussion';
 
@@ -111,8 +118,8 @@ export const REFRESH_MS = 5 * 60_000;
 const STALE_MS = 300;
 /** At most this many older posts with a new reply are brought in by one read. */
 const ACTIVE_ROOTS_READ = 5;
-/** Older pages of the room a door's message is looked for in before #general's chat takes it. */
-export const PLACE_PAGES = 3;
+/** Older pages of the room a door's message is looked for in; past them the page opens at its top. */
+export const PLACE_PAGES = 10;
 /** How long a message a door named stays marked. */
 const FOCUS_MS = 2400;
 
@@ -386,20 +393,39 @@ export class DiscussionFeed {
     await Promise.all(reads);
   }
 
-  private async readThread(rootId: number, open: boolean): Promise<void> {
+  private async readThread(rootId: number, open: boolean, all = false): Promise<void> {
     try {
-      const thread = await this.source.thread(rootId);
+      const thread = await this.source.thread(rootId, all);
       const list = thread.root ? [thread.root, ...thread.replies] : thread.replies;
       const opened = open ? new Set([...this.state.opened, rootId]) : this.state.opened;
       this.merge(list, { opened });
     } catch { /* drawn as it was */ }
   }
 
-  /** "View N earlier replies" on a post: its thread, read whole. */
-  async openThread(rootId: number): Promise<void> {
+  /** "View N earlier replies" on a post: its thread, opened; `all` ("Show all replies") reads a very long one whole. */
+  async openThread(rootId: number, all = false): Promise<void> {
     this.set({ busy: true });
-    await this.readThread(rootId, true);
+    await this.readThread(rootId, true, all);
     this.set({ busy: false });
+  }
+
+  /**
+   * An older message's own replies, inside the Earlier post: shown under it
+   * (read the first time), or hidden again. There is no chat to open them in.
+   */
+  async toggleOld(rootId: number): Promise<void> {
+    if (this.state.opened.has(rootId)) {
+      const opened = new Set(this.state.opened);
+      opened.delete(rootId);
+      this.set({ opened });
+      return;
+    }
+    await this.readThread(rootId, true);
+  }
+
+  /** The live replies under one message, oldest first. */
+  repliesOf(rootId: number): Said[] {
+    return [...this.state.messages.values()].filter((m) => m.rootId === rootId && !m.deleted).sort((a, b) => a.id - b.id);
   }
 
   /** "View N earlier replies" on the Earlier post: the next older page of the history. */
@@ -437,6 +463,20 @@ export class DiscussionFeed {
       if (root) updates.push({ ...root, replyCount: root.replyCount + 1, lastReplyAt: said.at });
     }
     this.merge(updates);
+  }
+
+  /** Edit your own message: the room's words once it has kept them. */
+  async edit(messageId: number, content: string): Promise<void> {
+    const words = await this.source.edit(messageId, content);
+    const said = this.state.messages.get(messageId);
+    if (said) this.merge([{ ...said, content: words }]);
+  }
+
+  /** Delete your own message: a post stays as "deleted" while it has replies, a reply leaves. */
+  async remove(messageId: number): Promise<void> {
+    await this.source.remove(messageId);
+    const said = this.state.messages.get(messageId);
+    if (said) this.merge([{ ...said, deleted: true, content: '', reactions: [] }]);
   }
 
   /** Toggle the viewer's reaction: drawn at once, then as the room answers. */
@@ -477,7 +517,16 @@ export class DiscussionFeed {
     if (!said) return null;
     if (said.rootId != null && !this.state.messages.has(said.rootId)) await this.readThread(said.rootId, false);
     const item = this.items().find((it) => (it.kind === 'post' && it.root.id === said.id) || it.replies.some((r) => r.id === said.id));
-    if (!item) return null;
+    if (!item) {
+      // A reply to an older message: it is under that message inside the
+      // Earlier post, which opens, and so do the older message's replies.
+      const fold = this.fold();
+      const root = said.rootId != null ? this.state.messages.get(said.rootId) : null;
+      const earlier = this.items().find((it) => it.kind === 'earlier');
+      if (!fold || !root || root.rootId != null || root.id > fold.lastId || !earlier) return null;
+      this.set({ opened: new Set([...this.state.opened, fold.lastId, root.id]) });
+      return { key: earlier.key, messageId: said.id };
+    }
     const asReply = item.kind === 'earlier' || item.root.id !== said.id;
     if (asReply || rootId) {
       const open = item.kind === 'post' ? item.root.id : item.fold.lastId;
@@ -559,13 +608,6 @@ function nameOf(who: DiscussionPerson): string {
   return who.bot && who.displayName ? who.displayName : who.username;
 }
 
-/** Open a place in the channel's own chat: an old message's thread. */
-function openInGeneral(slug: string, channel: Channel, threadRootId: number): void {
-  const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
-  (window as unknown as { AppView?: { _landOnDiscussion?: (slug: string, target: object) => void } })
-    .AppView?._landOnDiscussion?.(slug, { threadRootId, asChat: true, ...(conversationId ? { conversationId } : {}) });
-}
-
 // ── The card ───────────────────────────────────────────────────────────
 
 export interface DiscussionCardProps {
@@ -576,14 +618,10 @@ export interface DiscussionCardProps {
   mode: 'full' | 'preview' | 'page';
   /** The phone's card: open the page. */
   onOpenPage?: () => void;
-  /** The page: show #general as a chat (its "Open as chat"). */
-  onChat?: () => void;
-  /** The page: a door's message the posts do not show, for #general's chat to take. */
-  onMissing?: (target: DiscussionTarget) => void;
 }
 
-export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onMissing }: DiscussionCardProps): ReactNode {
-  useMessages('project');
+export function DiscussionCard({ slug, name, data, mode, onOpenPage }: DiscussionCardProps): ReactNode {
+  const t = useMessages('project');
   useMessages('messages');
   const headId = useId();
   const { viewer, known } = useViewer();
@@ -592,9 +630,8 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
   const feed = useMemo(() => (channel ? feedFor(slug, channel, me) : null), [slug, channel, me]);
   const host = useRef<HTMLElement | null>(null);
   const [focus, setFocus] = useState<Placed | null>(null);
-  const missing = useRef(onMissing);
-  missing.current = onMissing;
   const focused = useCallback(() => setFocus(null), []);
+  const room = useMemo<Room>(() => ({ slug, visitor: false }), [slug]);
 
   // Read once the viewer is known, so their own reactions read as theirs.
   useEffect(() => (feed && known ? feed.hold() : undefined), [feed, known]);
@@ -611,15 +648,13 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
     let gone = false;
     const room = Number((channel as { conversation_id?: unknown } | null)?.conversation_id) || null;
     const take = () => {
-      const target = takeDiscussionTarget(slug, null, 'posts');
+      const target = takeDiscussionTarget(slug, null);
       if (!target || !(target.threadRootId || target.focusMessageId)) return;
-      // A message of another room than the one this page reads (a demo
-      // #general, an old conversation) is the chat's at once.
-      if (target.conversationId && room && target.conversationId !== room) { missing.current?.(target); return; }
+      // A message of another room than the one this page reads (an old
+      // conversation, a demo's) has no post here: the page opens at its top.
+      if (target.conversationId && room && target.conversationId !== room) return;
       void feed.place(target).then((found) => {
-        if (gone) return;
-        if (found) setFocus(found);
-        else missing.current?.(target);
+        if (!gone && found) setFocus(found);
       });
     };
     take();
@@ -630,7 +665,22 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
     return () => { gone = true; window.removeEventListener('usernode:workshop-discussion', heard); };
   }, [mode, feed, known, slug, channel]);
 
-  if (!channel || !feed) return null;
+  if (!channel || !feed) {
+    // The place itself says why there is nothing: still reading the project,
+    // or a viewer who may not read its Discussion.
+    if (mode !== 'page') return null;
+    return (
+      <div className="dev-ws-discussion-page" data-ws-discussion-page="">
+        {data ? (
+          <p className="dh-empty" data-ws-discussion-none="">{t('project:discussion.none')}</p>
+        ) : (
+          <section className="dev-ws-hub-section dev-ws-hub-discussion" data-ws-hub-discussion="page">
+            <FeedLoading status="loading" onRetry={() => {}} rows={3} />
+          </section>
+        )}
+      </div>
+    );
+  }
   const card = (
     <section
       ref={host}
@@ -638,6 +688,7 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
       data-ws-hub-discussion={mode}
       aria-labelledby={headId}
     >
+      <RoomContext.Provider value={room}>
       <FeedView
         feed={feed}
         slug={slug}
@@ -650,15 +701,15 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
         focus={focus}
         onFocused={focused}
         onOpenPage={onOpenPage}
-        onChat={onChat}
       />
+      </RoomContext.Provider>
     </section>
   );
   if (mode !== 'page') return card;
   return <div className="dev-ws-discussion-page" data-ws-discussion-page="">{card}</div>;
 }
 
-function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus, onFocused, onOpenPage, onChat }: {
+function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus, onFocused, onOpenPage }: {
   feed: DiscussionFeed;
   slug: string;
   name: string;
@@ -671,7 +722,6 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   focus: Placed | null;
   onFocused: () => void;
   onOpenPage?: () => void;
-  onChat?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const state = useStoreState(feed);
@@ -725,17 +775,10 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
     return () => clearTimeout(clear);
   }, [marked]);
 
-  // The page's heading is the place's name; its far end shows the same room as a chat.
   const head = (
     <div className="dev-ws-hub-discussion-head">
       <h2 id={headId} className="dev-ws-hub-discussion-title">{t('project:hub.discussion.title')}</h2>
       <p className="dev-ws-hub-discussion-about">{t('project:hub.discussion.about', { project: name })}</p>
-      {mode === 'page' && onChat ? (
-        <button type="button" className="dh-as-chat" data-ws-discussion-as-chat="" onClick={onChat}>
-          <HashIcon aria-hidden="true" />
-          {t('project:hub.discussion.asChat')}
-        </button>
-      ) : null}
     </div>
   );
 
@@ -882,8 +925,7 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
       if (item.olderToRead || !open) void feed.openEarlier();
       return;
     }
-    if (!open) { void feed.openThread(item.root.id); return; }
-    openInGeneral(slug, channel, item.root.id);
+    void feed.openThread(item.root.id, open);
   };
   const me = viewer?.username || null;
   return (
@@ -914,12 +956,31 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               <ReplyRow said={reply}>
                 <Pills said={reply} feed={feed} me={me} small />
                 {item.kind === 'earlier' && reply.rootId == null && oldThreadCount(item, reply) > 0 ? (
-                  <button type="button" className="dh-old-thread" data-ws-discussion-old-thread={String(reply.id)} onClick={() => openInGeneral(slug, channel, reply.id)}>
+                  <button
+                    type="button"
+                    className="dh-old-thread"
+                    data-ws-discussion-old-thread={String(reply.id)}
+                    aria-expanded={opened.has(reply.id)}
+                    onClick={() => void feed.toggleOld(reply.id)}
+                  >
                     <ThreadIcon aria-hidden="true" />
-                    {t('project:hub.discussion.oldThread', { count: oldThreadCount(item, reply) })}
+                    {opened.has(reply.id)
+                      ? t('project:hub.discussion.oldThreadHide')
+                      : t('project:hub.discussion.oldThread', { count: oldThreadCount(item, reply) })}
                   </button>
                 ) : null}
               </ReplyRow>
+              {item.kind === 'earlier' && reply.rootId == null && opened.has(reply.id) ? (
+                <div className="dh-old-replies" data-ws-discussion-old-replies={String(reply.id)}>
+                  {feed.repliesOf(reply.id).filter((r) => !item.replies.includes(r)).map((old) => (
+                    <Message key={old.id} said={old} feed={feed} me={me} className="dh-reply" marked={marked === old.id} onReply={startReply}>
+                      <ReplyRow said={old}>
+                        <Pills said={old} feed={feed} me={me} small />
+                      </ReplyRow>
+                    </Message>
+                  ))}
+                </div>
+              ) : null}
             </Message>
           ))}
           <Composer
@@ -1011,12 +1072,66 @@ function PostWords({ item, clamp = false }: { item: DiscussionItem; clamp?: bool
   return <Words said={item.root} clamp={clamp} className="dh-words" />;
 }
 
+/** Which project the room is, and whether its reader may only read (a visitor): for what the rows draw. */
+interface Room { slug: string; visitor: boolean }
+const RoomContext = createContext<Room>({ slug: '', visitor: false });
+
+/**
+ * A message's words, as the chat draws them (the same markdown, with `#N`
+ * chips for the project's requests), then what rides on it: a plan it
+ * shares, the cards it shares, its files (images in place, any other file
+ * as the chat's chip). Clamped to two lines in the phone's preview.
+ */
 function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean; className: string }): ReactNode {
   const t = useMessages('project');
+  const tc = useMessages('chat');
+  const room = useContext(RoomContext);
+  const editing = useContext(EditingContext);
+  if (editing && editing.id === said.id) return <EditBox editing={editing} />;
   if (said.deleted) return <p className={`${className} dh-deleted`}>{t('project:hub.discussion.deleted')}</p>;
-  if (!said.content.trim()) return <p className={`${className} dh-quiet`}>{t('project:hub.discussion.files', { count: Math.max(1, said.files) })}</p>;
-  if (clamp) return <p className={`${className} dh-clamp`}>{said.content.replace(/\s+/g, ' ').trim()}</p>;
-  return <div className={className}><MessageMarkdown content={said.content} /></div>;
+  const words = said.content.trim();
+  if (clamp) {
+    const line = words ? said.content.replace(/\s+/g, ' ').trim()
+      : said.spec ? said.spec.title
+        : said.cards.length ? (said.cards[0].title || t('project:hub.discussion.shared'))
+          : t('project:hub.discussion.files', { count: Math.max(1, said.files) });
+    return <p className={`${className} dh-clamp${words ? '' : ' dh-quiet'}`}>{line}</p>;
+  }
+  const files: Attachment[] = said.attachments.map((a) => ({
+    id: a.id,
+    kind: a.image ? 'image' : a.kind === 'html' && a.viewUrl ? 'html' : 'binary',
+    name: a.name || tc('chat:group.attachment.unnamed'),
+    unnamed: !a.name,
+    url: a.url,
+    size: a.size ? fileSize(a.size) : '',
+    badge: attachmentBadge(a.name, ''),
+  }));
+  return (
+    <div className={className}>
+      {words ? <MessageMarkdown content={said.content} appSlug={room.slug || null} /> : null}
+      {said.spec ? <SpecCard spec={said.spec} slug={room.slug} /> : null}
+      {said.cards.length ? (
+        <div className="messages-object-list dh-cards" data-ws-discussion-cards={String(said.cards.length)}>
+          {said.cards.map((card, at) => <ObjectCard key={`${card.type}:${at}`} object={card} compact />)}
+        </div>
+      ) : null}
+      {files.length ? <div className="dh-files" data-ws-discussion-files={String(files.length)}><Attachments items={files} /></div> : null}
+    </div>
+  );
+}
+
+/** A plan shared into a project's chat: its title, and a way to the change it became. */
+function SpecCard({ spec, slug }: { spec: SharedSpec; slug: string }): ReactNode {
+  const t = useMessages('project');
+  const body = (
+    <>
+      <span className="dh-spec-label">{t('project:hub.discussion.sharedPlan')}</span>
+      <span className="dh-spec-title">{spec.title || t('project:hub.discussion.sharedPlanUntitled')}</span>
+    </>
+  );
+  return spec.prNumber && slug
+    ? <a className="dh-spec" data-ws-discussion-spec="" href={`#app/${encodeURIComponent(slug)}/dev/changes/${spec.prNumber}`}>{body}</a>
+    : <div className="dh-spec" data-ws-discussion-spec="">{body}</div>;
 }
 
 /** A reply, drawn as a chat row is: a small face, the name and time, the words. */
@@ -1063,10 +1178,66 @@ function Pills({ said, feed, me, small = false }: { said: Said; feed: Discussion
   );
 }
 
+/** A message being edited in place: what its words draw instead of themselves. */
+interface Editing {
+  id: number;
+  value: string;
+  busy: boolean;
+  error: string;
+  change: (value: string) => void;
+  save: () => void;
+  cancel: () => void;
+}
+const EditingContext = createContext<Editing | null>(null);
+
+/** The platform's in-place editor (as Messages' row draws it): Enter saves, Escape cancels. */
+function EditBox({ editing }: { editing: Editing }): ReactNode {
+  const t = useMessages('messages');
+  const tc = useMessages('core');
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    node.focus({ preventScroll: true });
+    node.setSelectionRange(node.value.length, node.value.length);
+  }, []);
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${node.scrollHeight}px`;
+  }, [editing.value]);
+  return (
+    <div className="dh-edit" data-ws-discussion-editing={String(editing.id)}>
+      <textarea
+        ref={box}
+        className="dh-box"
+        dir="auto"
+        rows={2}
+        maxLength={8000}
+        aria-label={t('messages:row.editLabel')}
+        value={editing.value}
+        onChange={(event) => editing.change(event.target.value.slice(0, 8000))}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.preventDefault(); editing.cancel(); } else if (enterSends(event.nativeEvent)) { event.preventDefault(); editing.save(); }
+        }}
+      />
+      <div className="dh-edit-acts">
+        <button type="button" className="dh-edit-save" disabled={editing.busy || !editing.value.trim()} onClick={editing.save}>{tc('core:common.save')}</button>
+        <button type="button" className="dh-edit-cancel" onClick={editing.cancel}>{tc('core:common.cancel')}</button>
+      </div>
+      {editing.error ? <p className="dh-send-failed" role="alert">{editing.error}</p> : null}
+    </div>
+  );
+}
+
 /**
- * A message that can be reacted to and replied to: the hover bar on a
- * pointer, the long-press sheet on a touch screen. Nobody signed in, or a
- * deleted message: neither.
+ * A message that can be reacted to, replied to and acted on: the hover bar
+ * on a pointer (its reactions, Reply, and the ⋯ menu every chat's rows
+ * open: ../../message-actions/message-menu.ts), the long-press sheet on a
+ * touch screen (Reply, then the same menu). Your own: Edit, in place, and
+ * Delete, once confirmed; somebody else's: Report and Block. Nobody signed
+ * in, or a deleted message: none of it.
  */
 function Message({ said, feed, me, className, marked = false, onReply, children }: {
   said: Said;
@@ -1077,27 +1248,61 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
   onReply: () => void;
   children: ReactNode;
 }): ReactNode {
-  const tm = useMessages('messages');
+  const t = useMessages('project');
+  useMessages('messages');
+  const tc = useMessages('chat');
   const recents = useRecentReactions();
   const [picking, setPicking] = useState(false);
+  const [menu, setMenu] = useState<ReturnType<typeof placementFor> | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [edit, setEdit] = useState<{ value: string; busy: boolean; error: string } | null>(null);
   const bar = useRef<HTMLDivElement | null>(null);
   const pickerButton = useRef<HTMLButtonElement | null>(null);
+  const moreButton = useRef<HTMLButtonElement | null>(null);
   const can = !!me && !said.deleted;
+  const mine = can && said.who.username === me;
   useDismiss(picking, [bar], () => setPicking(false));
-  const press = useLongPress(() => setSheet(true), { disabled: !can });
+  const press = useLongPress(() => setSheet(true), { disabled: !can || !!edit });
   const reacted = (emoji: string) => said.reactions.some((r) => r.emoji === emoji && r.reacted);
   const react = (emoji: string) => { rememberReaction(emoji); void feed.react(said.id, emoji); };
+  const who = said.who;
+  const items: MenuItem[] = can ? messageMenu({
+    edit: mine && said.content.trim() ? () => setEdit({ value: said.content, busy: false, error: '' }) : null,
+    text: said.content || null,
+    pictures: said.attachments.filter((a) => a.image).map((a) => ({ src: a.url, name: a.name })),
+    link: feed.source.address(said),
+    remove: mine ? () => feed.remove(said.id) : null,
+    report: !mine && who.id ? () => openReport(feed.source.kind === 'app'
+      ? { targetType: 'app_message', target: said.id, label: tc('chat:group.report.label', { username: who.username }), userId: who.id || undefined }
+      : { targetType: 'conversation_message', target: said.id, label: t('messages:row.reportLabel', { name: nameOf(who) }), userId: who.id || undefined }) : null,
+    block: !mine && who.id && !who.bot ? { who: { name: `@${who.username}` }, run: () => setUserBlocked(who.id as number, true) } : null,
+    failed: (_error, fallback) => toast(fallback),
+  }) : [];
+  const sheetItems = messageSheet({ reply: () => { setSheet(false); onReply(); } }, items);
+  const editing: Editing | null = edit ? {
+    id: said.id,
+    ...edit,
+    change: (value) => setEdit((was) => (was ? { ...was, value } : was)),
+    cancel: () => setEdit(null),
+    save: () => {
+      const value = edit.value.trim();
+      if (!value || edit.busy) return;
+      setEdit({ ...edit, busy: true, error: '' });
+      feed.edit(said.id, value).then(() => setEdit(null), () => {
+        setEdit((was) => (was ? { ...was, busy: false, error: t('project:hub.discussion.editFailed') } : was));
+      });
+    },
+  } : null;
   const Tag = className === 'dh-post' ? 'article' : 'div';
   return (
     <Tag
       className={`${className} dh-msg`}
       data-ws-discussion-message={String(said.id)}
       data-ws-discussion-marked={marked ? '' : undefined}
-      {...(can ? press : {})}
+      {...(can && !edit ? press : {})}
     >
-      {children}
-      {can ? (
+      <EditingContext.Provider value={editing}>{children}</EditingContext.Provider>
+      {can && !edit ? (
         <MessageActionBar
           className="dh-actions"
           barRef={bar}
@@ -1105,9 +1310,12 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
           reacted={reacted}
           onReact={react}
           pickerOpen={picking}
-          onTogglePicker={() => setPicking((v) => !v)}
+          onTogglePicker={() => { setMenu(null); setPicking((v) => !v); }}
           pickerButtonRef={pickerButton}
           onReply={onReply}
+          moreOpen={!!menu}
+          moreButtonRef={moreButton}
+          onToggleMore={() => { setPicking(false); setMenu((open) => (open ? null : placementFor(moreButton.current, items.length * 38 + 24))); }}
         >
           {picking ? (
             <EmojiPicker
@@ -1117,6 +1325,7 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
               onClose={() => setPicking(false)}
             />
           ) : null}
+          {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
         </MessageActionBar>
       ) : null}
       {can ? (
@@ -1127,7 +1336,7 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
           reacted={reacted}
           onReact={(emoji) => { setSheet(false); react(emoji); }}
           onPick={react}
-          items={[{ key: 'reply', label: tm('messages:actions.reply'), icon: ReplyArrowIcon, onSelect: () => { setSheet(false); onReply(); } }]}
+          items={sheetItems}
           preview={{ who: nameOf(said.who), text: said.content.replace(/\s+/g, ' ').trim().slice(0, 120) }}
         />
       ) : null}

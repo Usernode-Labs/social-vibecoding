@@ -1905,13 +1905,16 @@ async function handleMessage(pool, client, msg) {
     // 'react'); the socket is already scoped to the app room and gated by
     // appAccess.checkAppAccess(...,'collab') at connect time.
     // Inbound: { type: 'edit', messageId, content }.
+    // The REST twin (PATCH /api/apps/:slug/messages/:id, the Discussion's
+    // Edit) reads the answer: `{ ok: true, content, editedAt }`, or a refusal
+    // with its code. The socket ignores it, as it always has.
     case 'edit': {
       const messageId = Number(msg.messageId);
-      if (!Number.isInteger(messageId) || messageId <= 0) return;
+      if (!Number.isInteger(messageId) || messageId <= 0) return { ok: false, code: 'not_found' };
       // Mirror the send path: trim (drops leading/trailing whitespace and
       // blank lines) then cap at MAX_CHAT_LEN. An empty edit is rejected —
       // editing is not a deletion path.
-      if (!msg.content || !msg.content.trim()) return;
+      if (typeof msg.content !== 'string' || !msg.content.trim()) return { ok: false, code: 'empty' };
       const content = msg.content.trim().substring(0, MAX_CHAT_LEN);
 
       // Authorization (enforced server-side so a hand-crafted request can't
@@ -1927,14 +1930,14 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'edit dropped: message not found in app', {
           appId: client.appId, userId: client.user.id, messageId,
         });
-        return;
+        return { ok: false, code: 'not_found' };
       }
       const row = rows[0];
       if (row.moderation_hidden_at || row.user_id !== client.user.id || row.msg_type !== 'message') {
         log.warn('ws', 'edit rejected: not author or not an editable message', {
           appId: client.appId, userId: client.user.id, messageId, msgType: row.msg_type,
         });
-        return;
+        return { ok: false, code: row.moderation_hidden_at ? 'not_found' : 'not_author' };
       }
       // #2387: a deleted message stays deleted — an edit is not a way back.
       if (row.deleted_at) return { ok: false, code: 'message_deleted' };
@@ -1966,7 +1969,7 @@ async function handleMessage(pool, client, msg) {
         editedAt,
         ...(thread ? { thread } : {}),
       }, client.user.id);
-      break;
+      return { ok: true, content, editedAt };
     }
 
     // #25: emoji reaction toggle. Slack-model — a user may stack multiple
