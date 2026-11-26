@@ -394,8 +394,8 @@ export function watchBuild(slug: string): void {
  * the details · 2 min so far"), one line saying where the picture came
  * from, the card's own button when something waits on its maker, and
  * "Watch Homeroom bot build it", which opens the App tab, where the live
- * picture of the build is. Nothing to share: inviting is the Share it
- * card's, and an invite is to the community, not to a picture of its app.
+ * picture of the build is. Nothing to share: inviting is the hero's
+ * Invite, and an invite is to the community, not to a picture of its app.
  *
  * TAPPING IT (#5618): with `onOpen`, the picture and the words open the
  * maker's chat with Homeroom bot. An empty button over them (under the

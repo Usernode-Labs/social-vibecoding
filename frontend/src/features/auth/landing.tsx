@@ -2351,7 +2351,7 @@ export function LandingScreen() {
             />
           ) : null}
           {/* At `/communities`, the page about private communities, in the
-              guest Discover's place under either drawing of it. */}
+              guest Discover's place. */}
           {groupsPage ? (
             <GuestCommunities waitlist={accountsWait} onStart={() => setSheet('start')} />
           ) : (

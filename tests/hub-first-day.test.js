@@ -59,25 +59,25 @@ test('a closed card stays closed for that person on that project, and nowhere el
   const win = { App: { user: { id: 7 } }, localStorage: storage };
   withWindow(win, () => {
     mod.hydrateHubDismissed();
-    assert.equal(mod.isHubCardDismissed('garden', 'share'), false, 'nothing closed yet');
-    mod.dismissHubCard('garden', 'share');
-    assert.equal(mod.isHubCardDismissed('garden', 'share'), true);
+    assert.equal(mod.isHubCardDismissed('garden', 'first'), false, 'nothing closed yet');
+    mod.dismissHubCard('garden', 'first');
+    assert.equal(mod.isHubCardDismissed('garden', 'first'), true);
     assert.equal(mod.isHubCardDismissed('garden', 'start'), false, 'one card, not both');
-    assert.equal(mod.isHubCardDismissed('orchard', 'share'), false, 'one project, not every one');
+    assert.equal(mod.isHubCardDismissed('orchard', 'first'), false, 'one project, not every one');
     const kept = JSON.parse(storage.getItem('hubDismissed:v1:7'));
     assert.deepEqual(Object.keys(kept), ['garden'], 'kept on the device, under this account');
-    assert.equal(typeof kept.garden.share, 'number');
+    assert.equal(typeof kept.garden.first, 'number');
   });
   // Another account on the same device reads its own record.
   withWindow({ App: { user: { id: 8 } }, localStorage: storage }, () => {
     mod.hydrateHubDismissed();
-    assert.equal(mod.isHubCardDismissed('garden', 'share'), false, 'not closed for somebody else');
+    assert.equal(mod.isHubCardDismissed('garden', 'first'), false, 'not closed for somebody else');
   });
   // And the first account, back again (a reload: a fresh module), finds it closed.
   const again = loadTsx(DISMISSED, { cache: false });
   withWindow(win, () => {
     again.hydrateHubDismissed();
-    assert.equal(again.isHubCardDismissed('garden', 'share'), true, 'for good');
+    assert.equal(again.isHubCardDismissed('garden', 'first'), true, 'for good');
   });
   // A private window: closed for the page, and never an error.
   const blocked = loadTsx(DISMISSED, { cache: false });
@@ -91,7 +91,7 @@ test('a closed card stays closed for that person on that project, and nowhere el
   const big = fakeStorage();
   withWindow({ App: { user: { id: 9 } }, localStorage: big }, () => {
     many.hydrateHubDismissed();
-    for (let i = 0; i < many.HUB_DISMISSED_MAX + 5; i++) many.dismissHubCard(`p${i}`, 'share');
+    for (let i = 0; i < many.HUB_DISMISSED_MAX + 5; i++) many.dismissHubCard(`p${i}`, 'first');
     assert.equal(Object.keys(JSON.parse(big.getItem('hubDismissed:v1:9'))).length, many.HUB_DISMISSED_MAX);
   });
   // Read in a layout effect, never during render (the island rule).

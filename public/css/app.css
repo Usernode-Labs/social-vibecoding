@@ -6880,9 +6880,8 @@ html:root {
   --wip-scene-5: url('/brand/bg/collage.webp');
   --wip-scene-6: url('/brand/bg/stripes.webp');
   /* A pinned community's card on the Communities page: the least width a row
-     of them gives each, and under 768px, where it is the small tile. */
+     of them gives each. */
   --wip-pin-card: 16.5rem;
-  --wip-pin-tile: 6.25rem;
   --wip-item-icon: 2.25rem;
   --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
   --wip-ink: var(--text-primary);
@@ -31163,9 +31162,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      the ROUTER's answer about whether this route has a rail, and the two have
      to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
      bar keeps both classes and this rule stands aside for it, which is what
-     makes the hot zone at the window's edge the way back. It stands aside
-     too while the rail slides away (`platform-tabs-leaving`, N21:
-     frontend/src/features/nav/rail-slide.ts). */
+     makes the hot zone at the window's edge the way back. */
   .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
     display: none;
   }

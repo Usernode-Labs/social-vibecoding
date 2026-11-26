@@ -207,7 +207,8 @@ export type CommunityPayload = {
   invite_link?: boolean;
   /** The invite links out, summed (services/community-invites.js
       inviteSummary): the viewer's own, or every one to someone who manages
-      the project. Share it says it in one line. Null when not read. */
+      the project. No screen draws it since the Share it card went (26 Nov
+      2026); it stays in the payload. Null when not read. */
   invite_summary?: InviteSummary | null;
   /** Since when the app itself has been live (routes/apps.js: when it
       first ran), for Recently live's card of the app while none of its
@@ -804,7 +805,7 @@ export async function verifiedToGoPublic(): Promise<boolean> {
   return askToVerifyForPublic();
 }
 
-/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm): a message id. */
+/** What making it public means, said before it is proposed (the Make it public popup): a message id. */
 export const MAKE_PUBLIC_LINE = 'project:communityCard.makePublic.explain';
 
 /**

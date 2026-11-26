@@ -74,7 +74,7 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   // Whoever has the bot (a list, or everyone): botBuildsHere says where it builds.
   assert.match(prompt, /You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says/);
   // The welcome and the maker's hello both offer "How do I invite friends?".
-  assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
+  assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite\. It makes a link to share, and anybody\n  who opens it joins the project, somebody new to Homeroom included\./);
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   // The hub's Invite leads with its glyph.
   assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*<UserPlusIcon aria-hidden="true" \/>\s*\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,

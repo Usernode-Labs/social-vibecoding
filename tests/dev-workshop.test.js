@@ -4348,7 +4348,7 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   assert.match(solo, new RegExp(`<span class="dev-ws-head-title">${message('project:workshop.first.titleLive')}</span>`), 'and not "first" once changes are live');
   assert.equal(message('project:workshop.first.titleLive'), 'Make a change here');
   assert.equal(message('project:workshop.first.textSolo'), 'Pick who does the building. You approve what it makes.');
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'invite' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'start' \| 'first' \| `update:\$\{string\}`;/);
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
 });
 
