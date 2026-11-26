@@ -1837,7 +1837,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // screens and what was also noticed; no check opened that change's page,
   // and the only shots check (#4269) reads route captures from before shots.
   // 708 leaves 172 slots.
-  checkCap.assertPinned(DAPP.tests.length, 708);
+  // 708 → 709: +1 (the hub's Discussion, 26 Nov 2026) a phone's Discussion
+  // card opens the Discussion as a page under the Hub, `?ws=posts`: its own
+  // route, which no check opens, so nothing could take it in a :has(). The
+  // hub's own Discussion card rides the rewritten "#852 review, B8" check on
+  // the hub's route. 709 leaves 171 slots.
+  checkCap.assertPinned(DAPP.tests.length, 709);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
