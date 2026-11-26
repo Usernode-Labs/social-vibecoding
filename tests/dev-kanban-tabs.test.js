@@ -709,6 +709,17 @@ test('All items is one column until the four fit whole, by its pane, and a switc
   // The tabs' ends fade where they run on, and the byline is one line.
   assert.match(css, /\.dev-kanban-stages\[data-more-end\] \{ -webkit-mask-image: linear-gradient\(to right, #000 calc\(100% - 32px\), transparent\);/);
   assert.match(kanban, /data-more-end=\{more\.end \? '' : undefined\}/);
+  // Request 7029: a tab is drawn 40px tall and pressed at 44, on a phone and
+  // wherever the board is one column; the strip keeps the room for it.
+  assert.match(css, /\n  \.dev-kanban-stages \{ margin-top: 0; padding-block: 2px; \}\n  \.dev-kanban-step::after \{ content: ""; position: absolute; inset: -2px 0; \}/);
+  assert.match(css, /\n  \.dev-ws:not\(\[data-ws-side-open\]\) \.dev-kanban-stages \{ margin-top: 0; padding-block: 2px; \}\n  \.dev-ws:not\(\[data-ws-side-open\]\) \.dev-kanban-step::after \{ content: ""; position: absolute; inset: -2px 0; \}/);
+  // And the head's filter chips, one row that scrolls under 640px: no
+  // scrollbar, a fade at the end with more, each chip pressed at 44px.
+  assert.match(css, /\.dev-ws-allbar #dev-filter-chips \{ flex: 0 1 auto; margin-inline-start: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; \}/);
+  assert.match(css, /\n  \.dev-ws-allbar #dev-filter-chips::-webkit-scrollbar \{ display: none; \}\n  \.dev-ws-allbar #dev-filter-chips \{ padding-block: 8px; margin-block: -8px; \}\n  \.dev-ws-allbar #dev-filter-chips button \{ position: relative; flex: none; \}\n  \.dev-ws-allbar #dev-filter-chips button::after \{ content: ""; position: absolute; inset-inline: 0; top: 50%; height: 44px; transform: translateY\(-50%\); \}/);
+  const filterChips = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'kanban-filters.tsx'), 'utf8');
+  assert.match(filterChips, /const chipsFade = useRailFade\(chipsRef\)\.style;/);
+  assert.match(filterChips, /<span id="dev-filter-chips" ref=\{chipsRef\} className="contents" style=\{chipsFade\}>/);
   // One way back on a phone, and one Filters button in words.
   assert.match(css, /@media \(max-width: 767\.98px\) \{\n  #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-allbar \[data-ws-page-back\] \{ display: none; \}\n\}/);
   const filters = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'kanban-filters.tsx'), 'utf8');

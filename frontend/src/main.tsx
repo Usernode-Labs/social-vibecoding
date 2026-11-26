@@ -159,6 +159,8 @@ import './lib/keyboard-open';
 // imports it).
 import './lib/keyboard-hold';
 import './lib/use-auto-grow';
+// …and Enter sends in their message boxes by the one rule every box keeps.
+import './lib/enter-sends';
 // …and a sheet, dialog or menu opened over a dark app takes the app's tone
 // rather than the viewer's light mode (#2803).
 import './lib/surface-tone';

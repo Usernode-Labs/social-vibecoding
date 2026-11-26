@@ -138,6 +138,68 @@ test('there is no close, dismiss or swipe: only a fix takes a row away', () => {
   assert.deepEqual(actions, ['credit', 'raise', 'raise', 'check'], 'one action a row, each to where it is fixed');
 });
 
+// ─── On a phone (request 7164, the phone audit of 25 Nov 2026) ──────────
+
+const foldOf = (html) => {
+  const start = html.indexOf('data-limit-fold=');
+  assert.ok(start >= 0, 'the one line');
+  return html.slice(html.lastIndexOf('<button', start), html.indexOf('</button>', start));
+};
+
+test('under 768px the area is one 44px line naming the worst row, and the card waits behind it', () => {
+  const html = card([CREDIT_OUT, APPS_AT, SESSIONS_NEAR]);
+  const fold = foldOf(html);
+  assert.match(fold, /data-limit-fold="folded"/);
+  assert.match(fold, /aria-expanded="false"/);
+  assert.match(fold, /aria-controls="platform-limits-card"/);
+  assert.match(fold, /md:hidden/, 'a desktop never draws the line');
+  assert.match(fold, /min-h-\[44px\]/, 'a whole tap target');
+  assert.match(fold, /Out of credit/, "the first row's kicker: the server ranks the worst first");
+  assert.match(fold, /text-red-600/, "in its row's ink");
+  assert.match(fold, /OpenRouter credit: out/);
+  assert.match(fold, new RegExp(message('notifications:limits.fold.more_other').replace('{{count}}', '2')));
+  assert.doesNotMatch(fold, /data-limit-row|data-limit-action/, 'the line is not a row and offers no action of its own');
+  assert.match(html, /<div id="platform-limits-card" class="[^"]*hidden md:block[^"]*"/,
+    'the card is out of the way on a phone and unchanged from 768px');
+  assert.match(html, /<h2 class="[^"]* hidden md:block [^"]*">Platform limits</, 'the small-caps label is the desktop\'s');
+  // Folded is not put away: every row and its action is still drawn.
+  assert.equal([...html.matchAll(/data-limit-row="/g)].length, 3);
+
+  const one = foldOf(card([APPS_NEAR]));
+  assert.match(one, /Near the limit/);
+  assert.match(one, /Apps: 262 of 300/);
+  assert.match(one, /text-amber-700/);
+  assert.doesNotMatch(one, / more</, 'one row: nothing more to count');
+  assert.match(foldOf(card([APPS_AT, APPS_NEAR])), new RegExp(`>${message('notifications:limits.fold.more_one')}<`));
+});
+
+test('a press opens the same card under the line, and each opening of the sheet starts folded', () => {
+  const html = words(renderComponent(ENTRY, 'PlatformLimitsCard', {
+    payload: { rows: [APPS_AT, SESSIONS_NEAR], broken: true }, unfolded: true,
+  }));
+  const fold = foldOf(html);
+  assert.match(fold, /data-limit-fold="open"/);
+  assert.match(fold, /aria-expanded="true"/);
+  assert.match(fold, new RegExp(`>${message('notifications:limits.heading')}<`), "open, the line reads the area's name");
+  assert.doesNotMatch(fold, /Apps: 300 of 300/, 'the figure is in its row just below, not said twice');
+  assert.match(fold, /rotate-180/);
+  assert.doesNotMatch(html, /<div id="platform-limits-card" class="[^"]* hidden[ "]/);
+  assert.match(rowOf(html, 'apps'), /Apps: 300 of 300/);
+  assert.match(SOURCE, /const \[unfolded, setUnfolded\] = useState\(false\);/);
+  assert.match(SOURCE, /if \(!open\) setUnfolded\(false\);/, 'folded again when the sheet closes');
+  assert.match(SOURCE, /onFold=\{\(\) => setUnfolded\(\(was\) => !was\)\}/);
+});
+
+test("a row's action keeps its 32px pill and takes a 44px tap area", () => {
+  const html = card([APPS_AT, CREDIT_UNKNOWN]);
+  for (const key of ['apps', 'openrouter_credit']) {
+    const row = rowOf(html, key);
+    const action = row.slice(row.lastIndexOf('<', row.indexOf('data-limit-action=')));
+    assert.match(action, /^<(a|button) [^>]*class="[^"]*\bun-touch-target\b[^"]*"/, `${key}: the kit's tap area`);
+    assert.match(action, /min-h-\[32px\]/, `${key}: drawn as before`);
+  }
+});
+
 test('only a full admin page asks for the figures', async () => {
   const mod = loadTsx(ENTRY);
   const calls = [];

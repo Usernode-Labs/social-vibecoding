@@ -704,7 +704,7 @@ test('the filter: projects ranked by what needs you most, one control that opens
   assert.match(rail, /class="[^"]*\bpx-1 pb-2"/);
   assert.doesNotMatch(rail, /class="[^"]*\bpx-4\b[^"]*"/, 'the caller\'s padding replaces the rail\'s');
   assert.match(rail, /data-x="y"/);
-  assert.equal(typeof PlainRail, 'function', 'the plain rail stays for callers that only clip');
+  assert.equal(PlainRail, FadeRail, 'one rail since request 7029: every chip row fades at the end with more');
 
   const picker = read('frontend/src/features/ai/project-picker.tsx');
   assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,

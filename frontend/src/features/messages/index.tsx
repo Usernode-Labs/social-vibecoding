@@ -14,6 +14,7 @@ import {
   ChevronRightIcon, HashIcon,
 } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
+import { GroupedList, ListRow, ListRowMeta } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
@@ -58,7 +59,6 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
-import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
@@ -112,7 +112,7 @@ import { useFramePage } from '../frame/frame-page-store';
 import { Av as KitAv } from '@/components/ui/kit';
 import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow } from './frame-list';
-import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery, type AppDiscussion } from './inbox';
+import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
 
@@ -180,28 +180,6 @@ function directPerson(conversation: ConversationSummary) {
   if (conversation.kind !== 'direct') return null;
   return conversationPeer(conversation)
     || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
-}
-
-/**
- * How many people a group row holds: the people glyph and the figure, the
- * same UserGroupIcon at the same size the join screen draws before a
- * community's member count (AGENTS.md, "Say it in words or a very obvious
- * glyph"). The glyph and the figure are hidden from a screen reader, which
- * hears the words instead ("5 members"); the hover title says the same. A
- * zero says nothing, so a group with no count yet shows no tag.
- */
-function GroupMemberCount({ count }: { count: number }) {
-  const t = useMessages('messages');
-  const n = Math.floor(Number(count));
-  if (!Number.isFinite(n) || n < 1) return null;
-  const words = t('messages:inbox.memberCount', { count: n });
-  return (
-    <span className="messages-group-tag" title={words}>
-      <UserGroupIcon className="w-3.5 h-3.5" aria-hidden="true" />
-      <span aria-hidden="true">{n}</span>
-      <span className="sr-only">{words}</span>
-    </span>
-  );
 }
 
 /**
@@ -303,8 +281,15 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
   const activity = rowStamp(conversation.lastActivityAt, useLiveSkin() === 'standard');
+  // THE SHARED ROW (@/components/ui/grouped-list.tsx). The inbox drew its own
+  // two lines here, with the time at the end of the name's line and the count
+  // at the end of the preview's; ListRowMeta is that pair as the row's
+  // trailing column, so an unread row still says so three ways (the time in
+  // ink, "2 new" under it, and the bold name the row always has) without a
+  // third line. The open conversation is lit by its aria-current.
   return (
-    <a
+    <ListRow
+      as="a"
       href={`#messages/${conversation.id}`}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
@@ -312,137 +297,28 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           event.preventDefault(); selectConversation(conversation.id);
         }
       }}
-      className={`messages-conversation-row ${conversation.homeroomBot ? 'messages-bot-row' : ''} ${active ? 'messages-conversation-active' : ''}`}
+      className="messages-conversation-row"
       aria-current={active ? 'page' : undefined}
       data-inbox-row={rowKey}
-    >
-      {conversation.kind === 'group' && !invited
+      data-inbox-bot={conversation.homeroomBot ? '' : undefined}
+      data-inbox-unread={unread ? '' : undefined}
+      chevron={false}
+      leading={conversation.kind === 'group' && !invited
         ? <GroupFaces conversation={conversation} />
         : <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />}
-      <div className="min-w-0 flex-1">
-        {/* Two lines, the row's own geometry: the name with the time on its
-            trailing edge, then the preview with the unread count on its. The
-            time and the count read as one column, which is what lets an
-            unread row state itself three ways — bold name, the time in ink,
-            "2 new" in grey (#18: grey is new to read, the accent is waiting
-            on you) — without adding a third line. */}
-        <div className="messages-row-line">
-          <span className="messages-row-name" title={rowName || undefined}>{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
-          <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
-        </div>
-        <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{rowPreview(conversation, t, preview)}</span>
-          {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
-        </div>
-      </div>
-    </a>
-  );
-});
-
-/**
- * #general, the room every user is in (#2783).
- *
- * A `channel` conversation, so unlike an app's channel it DOES carry an
- * unread count: it lives in the conversations domain, which keeps a read
- * cursor per member. The tile is the `#` a channel is named with, where a
- * person's row has their face.
- */
-const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
-  const t = useMessages('messages');
-  const unread = conversation.unreadCount > 0;
-  const activity = agoStamp(conversation.lastActivityAt);
-  const by = conversation.latestMessage?.sender?.username;
-  const handle = conversation.channelKey || conversation.title;
-  return (
-    <a
-      href={`#messages/${conversation.id}`}
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-        if (window.location.hash === `#messages/${conversation.id}`) {
-          event.preventDefault(); selectConversation(conversation.id);
-        }
-      }}
-      data-inbox-channel={handle}
-      className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
-      aria-current={active ? 'page' : undefined}
-    >
-      <span className="messages-inbox-tile messages-channel-tile" aria-hidden="true">#</span>
-      <div className="min-w-0 flex-1">
-        <div className="messages-row-line">
-          <span className="messages-row-name">{handle}</span>
-          <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
-        </div>
-        <div className="messages-row-line">
-          <span className="messages-row-preview">
-            {conversation.latestSummary
-              ? (by ? t('messages:inbox.previewBy', { username: by, message: ownDirection(conversation.latestSummary) }) : ownDirection(conversation.latestSummary))
-              : t('messages:inbox.everyone')}
-          </span>
-          {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
-        </div>
-      </div>
-    </a>
-  );
-});
-
-/**
- * An app's channel — the general thread on its board, one per app the
- * viewer is a member of, including one nobody has spoken in yet (#2783).
- *
- * It carries NO unread count, and its absence is honest rather than an
- * omission: `chat_messages` has no per-viewer read cursor, so a number here
- * would be invented. What the row says instead is when the last thing was
- * said and who said it, which is what makes it worth a tap.
- *
- * An anchor at the channel's address in this inbox, so a modified click
- * opens it in a tab the way every other row on this screen does.
- */
-const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
-  const t = useMessages('messages');
-  const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
-  // #2387: app channels keep a read cursor now, so they carry a count like
-  // #general's — only while the viewer is not reading it.
-  const unread = !active && (discussion.unreadCount || 0) > 0 ? discussion.unreadCount || 0 : 0;
-  const record = {
-    icon_url: discussion.iconUrl,
-    icon_emoji: discussion.iconEmoji,
-    name: discussion.name,
-  };
-  const handle = discussion.channel || discussion.slug;
-  return (
-    <a
-      href={`#messages/app/${encodeURIComponent(discussion.slug)}`}
-      data-inbox-app={discussion.slug}
-      data-inbox-channel={handle}
-      className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
-      aria-current={active ? 'page' : undefined}
-    >
-      <AppIconLink
-        nested
-        slug={discussion.slug}
-        name={discussion.name}
-        data-icon={appIconKind(record as never)}
-        className="app-icon-tile messages-inbox-tile"
-      >
-        <AppIconContent app={record as never} />
-      </AppIconLink>
-      <div className="min-w-0 flex-1">
-        <div className="messages-row-line">
-          <span className="messages-row-name">{discussion.name}<span className="messages-channel-handle">#{handle}</span></span>
-          {activity
-            ? <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
-            : null}
-        </div>
-        <div className="messages-row-line">
-          <span className="messages-row-preview">
-            {discussion.lastMessage
-              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: ownDirection(plainText(discussion.lastMessage)) }) : ownDirection(plainText(discussion.lastMessage)))
-              : t('messages:inbox.noMessages')}
-          </span>
-          {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: unread })}</span> : null}
-        </div>
-      </div>
-    </a>
+      tooltip={rowName || undefined}
+      title={<>{rowName}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge ms-1.5 align-[2px]">{t('messages:inbox.aiBadge')}</span> : null}</>}
+      // An invitation's line is the action the row offers, so it takes the accent.
+      subtitle={rowPreview(conversation, t, preview)}
+      subtitleClassName={invited ? 'font-medium text-violet-700 dark:text-violet-400' : undefined}
+      trailing={(
+        <ListRowMeta
+          tone={unread ? 'strong' : 'quiet'}
+          top={<time dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>}
+          bottom={unread ? t('messages:inbox.newCount', { count: conversation.unreadCount }) : null}
+        />
+      )}
+    />
   );
 });
 
@@ -660,12 +536,12 @@ function inboxMatches(text: string | null | undefined, query: string): boolean {
  * conversations are going and roughly how many, so the arriving rows land on
  * their own outlines instead of replacing a centred line of grey text.
  *
- * The wrapper IS `.messages-conversation-row`, not an imitation of it: that
- * class owns the 66px minimum height, the padding, the gap and the inset
- * separator, all in app.css. Borrowing it means the placeholder cannot
- * drift from the row the first time any of those move — and the separator
- * between placeholders is drawn for free, which is most of what makes a list
- * read as a list.
+ * The placeholders ARE the shared row in the shared card, not an imitation
+ * of them: ListRow owns the padding, the gap and the inset separator, and
+ * GroupedList the card. Borrowing them means the placeholder cannot drift
+ * from the row the first time any of those move, and the separator between
+ * placeholders is drawn for free, which is most of what makes a list read as
+ * a list.
  *
  * Six, because the pane is taller than that on every phone and a list that
  * stops halfway reads as a short list rather than a loading one.
@@ -674,22 +550,20 @@ function ConversationRowSkeleton() {
   const t = useMessages('messages');
   return (
     <SkeletonGroup label={t('messages:inbox.loading')}>
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="messages-conversation-row">
-          {/* The `lg` square UserAvatar's 44px box. */}
-          <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
-          <div className="min-w-0 flex-1">
-            {/* The name line, with the timestamp's short bar pushed right —
-                the real row's trailing <time>. */}
-            <div className="flex items-center gap-2">
-              <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-              <Skeleton shape="muted" className="ms-auto w-8" />
-            </div>
-            {/* The preview line under it. */}
-            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
-          </div>
-        </div>
-      ))}
+      <GroupedList className="mx-0">
+        {Array.from({ length: 6 }, (_, i) => (
+          <ListRow
+            key={i}
+            chevron={false}
+            // The `lg` square UserAvatar's 44px box.
+            leading={<Skeleton shape="block" className="w-11 h-11 shrink-0 rounded-xl" />}
+            title={<Skeleton className={i % 2 ? 'w-28' : 'w-36'} />}
+            subtitle={<Skeleton shape="muted" className={i % 3 ? 'w-3/5' : 'w-2/5'} />}
+            // The trailing time's short bar.
+            trailing={<Skeleton shape="muted" className="w-8 self-start" />}
+          />
+        ))}
+      </GroupedList>
     </SkeletonGroup>
   );
 }
@@ -1039,9 +913,9 @@ function ConversationList({ drawer = false }: {
         {found.length ? (
           <>
             <PeopleHead aside={unreadAside} />
-            <div className="messages-section-card" data-inbox-card="people">
+            <GroupedList className="mx-0 mb-4" data-inbox-card="people">
               {found.map(inboxRow)}
-            </div>
+            </GroupedList>
           </>
         ) : null}
       </div>
