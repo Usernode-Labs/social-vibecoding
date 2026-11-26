@@ -706,7 +706,8 @@ carry most of them.
   15 over 13 at a desktop's reading distance (the design review of 25 Nov
   2026). The standard look's `--one-row-title` / `--one-row-sub` (app.css,
   ONE LOOK · SHARED PARTS) carry the same pair for a row drawn outside the
-  primitive, Messages' `.messages-row-name` / `-preview` among them. A 17px
+  primitive. Messages' inbox is the primitive itself (its time over its
+  unread count is `ListRowMeta`, the row's trailing pair). A 17px
   bold row title makes every row a heading. Write them in rem (1rem over
   0.875rem, then 0.9375rem over 0.8125rem), as the primitives do: Settings'
   Text size scales rem, and a size in px stays put when someone turns it up.
@@ -729,8 +730,8 @@ carry most of them.
   hero's name.
 - **Cards are the plane colour, 20px, one hairline.** `GroupedList` draws
   them: `--dc-sheet-solid` (tone `plane`) or white, `rounded-[20px]`, and an
-  inset `--app-sheet-line` hairline. A list drawn outside the primitive (for
-  example `.messages-section-card`) spells the same three values.
+  inset `--app-sheet-line` hairline. A list drawn outside the primitive
+  spells the same three values.
 - **One accent, with three jobs kept apart.**
   - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
     mark an action, or a number that asks for the viewer ("3 to vote").

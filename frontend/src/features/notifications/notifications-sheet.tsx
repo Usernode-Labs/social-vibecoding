@@ -109,7 +109,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
-import { SectionHeader } from '@/components/ui/grouped-list';
+import { ListRow, ListRowMeta, SectionHeader } from '@/components/ui/grouped-list';
+import { Skeleton } from '@/components/ui/skeleton';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, NewspaperIcon, SearchIcon, XIcon,
@@ -318,12 +319,18 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
 /**
  * #6785: one row of the Recent threads tab. It is the tab's whole content:
  * the project's own tile on the left (the tile notification rows from
- * Homeroom bot already wear), then what the thread is (Request #N, Change #N
- * or Decision), its title, and the project and when something last happened
- * in it. The row opens the thread's page and closes the sheet, as a
- * notification row does. It carries none of a notification's own controls —
- * no unread dot, no bookmark, no swipe — because it stands for a discussion,
- * not a row sent to the viewer.
+ * Homeroom bot already wear), then the thread's title over what it is
+ * (Request #N, Change #N or Decision) and its project, and when something
+ * last happened in it on the trailing edge. The row opens the thread's page
+ * and closes the sheet, as a notification row does. It carries none of a
+ * notification's own controls (no unread dot, no bookmark, no swipe)
+ * because it stands for a discussion, not a row sent to the viewer.
+ *
+ * It is the shared row (ListRow, @/components/ui/grouped-list.tsx), whose
+ * time over nothing is ListRowMeta, as the Messages inbox's is. It was a
+ * three-line row of its own (the kind, the title, then the project and the
+ * time) drawn with this sheet's hairline rule; the kind and the project are
+ * one line now, under the title, and the time is the row's trailing fact.
  */
 function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
   const t = useMessages('notifications');
@@ -336,16 +343,22 @@ function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
     icon_emoji: thread.appIconEmoji || null,
   };
   const number = thread.number != null ? String(thread.number) : '';
+  const project = thread.appName || '';
   const kind = thread.kind === 'request'
     ? t('notifications:sheet.threads.kind.request', { number })
     : thread.kind === 'change'
       ? t('notifications:sheet.threads.kind.change', { number })
       : t('notifications:sheet.threads.kind.decision');
+  const line = thread.kind === 'request'
+    ? t('notifications:sheet.threads.line.request', { number, project })
+    : thread.kind === 'change'
+      ? t('notifications:sheet.threads.line.change', { number, project })
+      : t('notifications:sheet.threads.line.decision', { project });
   return (
-    <button
-      type="button"
+    <ListRow
+      as="button"
       data-thread-id={thread.threadId}
-      className="notifications-row w-full text-start ps-4 pe-4 py-3.5 hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4"
+      chevron={false}
       onClick={(event) => {
         // Stopped like every handler in this sheet: the click navigates and
         // dismisses, and an outside-click listener must not also answer it.
@@ -353,27 +366,22 @@ function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
         window.location.hash = thread.href;
         NotificationsSheet.close();
       }}
-    >
-      <span
-        aria-hidden="true"
-        data-icon={appIconKind(app)}
-        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
-      >
-        <AppIconContent app={app} />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{kind}</span>
-        {/* A thread with no title of its own is called what it is (services/recent-threads.js). */}
-        <span className="block text-[15px] font-[650] text-zinc-800 dark:text-zinc-100 truncate">{thread.title || kind}</span>
-        <span className="block text-[13px] text-zinc-500 dark:text-zinc-400 truncate">
-          <RichMessage
-            id="notifications:sheet.threads.meta"
-            values={{ project: thread.appName || '', when }}
-            components={[<time title={whenTitle} />]}
-          />
+      leading={(
+        <span
+          aria-hidden="true"
+          data-icon={appIconKind(app)}
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+        >
+          <AppIconContent app={app} />
         </span>
-      </span>
-    </button>
+      )}
+      // A thread with no title of its own is called what it is
+      // (services/recent-threads.js), and its line is then its project.
+      title={thread.title || kind}
+      tooltip={thread.title || kind}
+      subtitle={thread.title ? line : project}
+      trailing={<ListRowMeta top={<time title={whenTitle}>{when}</time>} />}
+    />
   );
 }
 
@@ -2406,16 +2414,16 @@ export function NotificationsSheetView() {
       {/* #6785: the first page's wait is the list's own placeholders, the
           same row shape it fills with, so nothing jumps when it arrives. */}
       {!searching && isThreads && threadsPending && !threadsError ? (
-        <div id="notifications-threads-list" aria-busy="true">
+        <div id="notifications-threads-list" aria-busy="true" className="animate-pulse">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="notifications-row w-full ps-4 pe-4 py-3.5 flex items-center gap-4 animate-pulse">
-              <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl bg-zinc-200 dark:bg-zinc-700" />
-              <span className="flex-1 min-w-0">
-                <span className="block h-3 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
-                <span className="mt-2 block h-3.5 w-3/4 rounded bg-zinc-200 dark:bg-zinc-700" />
-                <span className="mt-2 block h-3 w-1/3 rounded bg-zinc-200 dark:bg-zinc-700" />
-              </span>
-            </div>
+            <ListRow
+              key={i}
+              chevron={false}
+              leading={<Skeleton shape="block" className="w-11 h-11 shrink-0 rounded-xl" />}
+              title={<Skeleton className="w-3/4" />}
+              subtitle={<Skeleton shape="muted" className="w-1/3" />}
+              trailing={<Skeleton shape="muted" className="w-10 self-start" />}
+            />
           ))}
         </div>
       ) : null}

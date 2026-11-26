@@ -233,19 +233,27 @@
   },
   "sheet.threads.kind.request": {
     "text": "Request #{{number}}",
-    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a request. {{number}} is its number, like 214."
+    "description": "Title of a row on the notifications sheet's Recent threads filter, for a thread with no title of its own: the thread is a request. {{number}} is its number, like 214."
   },
   "sheet.threads.kind.change": {
     "text": "Change #{{number}}",
-    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a change. {{number}} is its number, like 88."
+    "description": "Title of a row on the notifications sheet's Recent threads filter, for a thread with no title of its own: the thread is a change. {{number}} is its number, like 88."
   },
   "sheet.threads.kind.decision": {
     "text": "Decision",
-    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a group decision, which has no number."
+    "description": "Title of a row on the notifications sheet's Recent threads filter, for a thread with no title of its own: the thread is a group decision, which has no number."
   },
-  "sheet.threads.meta": {
-    "text": "{{project}} · <0>{{when}}</0>",
-    "description": "Small last line of a row on the notifications sheet's Recent threads filter: the thread's project, then how long ago something last happened in it. Keep the <0></0> tags around the time. {{project}} is the project's name, like Plant Pal; {{when}} is the time, like 5m ago."
+  "sheet.threads.line.request": {
+    "text": "Request #{{number}} · {{project}}",
+    "description": "Second line of a row on the notifications sheet's Recent threads filter, under the thread's title: the thread is a request, then the project it belongs to. {{number}} is its number, like 214; {{project}} is the project's name, like Plant Pal."
+  },
+  "sheet.threads.line.change": {
+    "text": "Change #{{number}} · {{project}}",
+    "description": "Second line of a row on the notifications sheet's Recent threads filter, under the thread's title: the thread is a proposed change, then the project it belongs to. {{number}} is its number, like 4223; {{project}} is the project's name, like Plant Pal."
+  },
+  "sheet.threads.line.decision": {
+    "text": "Decision · {{project}}",
+    "description": "Second line of a row on the notifications sheet's Recent threads filter, under the thread's title: the thread is a decision the group votes on, then the project it belongs to. {{project}} is the project's name, like Plant Pal."
   },
   "sheet.today": {
     "text": "Today",
