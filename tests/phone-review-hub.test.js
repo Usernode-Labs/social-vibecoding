@@ -96,7 +96,7 @@ test('#91: a door\'s one pill is on its title line, so the line under it has the
 });
 
 test('#139 and #76: Recently live shares its row by width; the hero\'s words stop short of its picture', () => {
-  assert.match(CSS, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-recent\] \.dev-ws-recent-list \{ grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 18\.75rem\), 1fr\)\); \}/);
+  assert.match(CSS, /html:root #dev-workshop \[data-ws-hub-recent\] \.dev-ws-recent-list \{ grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 18\.75rem\), 1fr\)\); \}/);
   assert.doesNotMatch(CSS, /\[data-ws-hub-recent\] \.dev-ws-recent-list \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/);
   assert.match(CSS, /\.dev-ws-tabbody > \.dev-ws-hero-summary \{ padding-inline-end: calc\(min\(30%, 20rem\) \+ 1\.5rem\); \}/);
 });

@@ -544,9 +544,9 @@ test('every rule in the block is keyed on the strip, but the off switch', () => 
   assert.ok(selectors.length > 10);
   for (const sel of selectors) {
     if (/^\.platform-side-strip-top,\s*\.platform-side-strip-ground,\s*\.platform-side-strip-frost,\s*\.platform-side-apps$/.test(sel)) continue;
-    // The standard look keys its ink on the strip too, with its look prefix
-    // before the attribute.
-    assert.match(sel, /html(?::not\(\[data-skin\]\))?\[data-side-strip/, `${sel} applies only with the strip`);
+    // The standard look keys its ink on the strip too, with its `:root`
+    // prefix before the attribute.
+    assert.match(sel, /html(?::root)?\[data-side-strip/, `${sel} applies only with the strip`);
   }
   assert.match(block, /\.platform-side-strip-top,\n\.platform-side-strip-ground,\n\.platform-side-strip-frost,\n\.platform-side-apps \{\s*display: none;/, 'no strip, no strip pieces');
 });

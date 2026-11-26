@@ -8,8 +8,7 @@
  * the photo the Edit profile sheet may have staged, and each sends the other
  * field as the account holds it so saving one never rewrites the other.
  *
- * Only the standard look renders these (./profile-view.tsx): the brand look
- * and the frame's looks keep their own profile.
+ * Rendered by ./profile-view.tsx.
  */
 import { useState } from 'react';
 

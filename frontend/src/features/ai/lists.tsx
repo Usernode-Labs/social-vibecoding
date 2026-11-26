@@ -781,11 +781,12 @@ export function AiLists({
         {/* THE HEAD'S LINE: the Homeroom mark, the counts the bands below
             carry, and New chat. The page is named once on screen, by the bar
             above (phone review, 23 Nov 2026, S14): the heading stays for a
-            screen reader. */}
+            screen reader, by role and not as an <h1>, because this screen
+            is in the served document while hidden (request #7166). */}
         <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
           <img src={BOT_AVATAR} alt="" className="h-10 w-10 shrink-0 rounded-[13px] object-cover" />
           <span className="flex min-w-0 flex-1 flex-col">
-            <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
+            <div role="heading" aria-level={1} className="sr-only">{t('messages:ai.hero.name')}</div>
             {counts ? (
               <span className="truncate text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
                 <RichMessage

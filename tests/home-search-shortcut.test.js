@@ -207,7 +207,7 @@ test('the search box names the device\'s own shortcut, and none on a phone', () 
   assert.equal(searchHintFor({ coarse: true, platform: 'MacIntel' }), 'none', 'an iPad says it is a Mac, and has no key to press');
   // Every screen that draws the field asks the one hook.
   const fs = require('node:fs'); const path = require('node:path');
-  for (const file of ['features/home/index.tsx', 'features/home/frame/home-frame.tsx', 'features/guest/frame/landing-frame.tsx', 'features/guest/guest-discover.tsx']) {
+  for (const file of ['features/home/index.tsx', 'features/guest/guest-discover.tsx']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', file), 'utf8');
     assert.match(src, /placeholder=\{searchPlaceholder\}/, file);
     assert.match(src, /const searchPlaceholder = useHomeSearchPlaceholder\(\);/, file);

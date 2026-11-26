@@ -9,14 +9,15 @@
  * attribution on the meta line: a person is found when they are the
  * subject, as they are on a message notification.
  *
- * Import-free, like the rest of this directory's logic modules — the tests
- * extract the two functions from this source and run them against stubs, so
- * they cannot drift from what the sheet actually calls.
+ * What counts as found is the shell's one rule (lib/search-rank.js): inside
+ * the text, in any case and with Latin accents set aside, so "cafe" finds a
+ * project called Café here as it does on Home.
  */
+import { matchesSearch, searchKey } from '../../lib/search-rank.js';
 
-/** Trim and case-fold what was typed; whitespace-only becomes ''. */
+/** Trim, case-fold and set accents aside; whitespace-only becomes ''. */
 export function normalizeNotificationQuery(q) {
-  return String(q == null ? '' : q).trim().toLowerCase();
+  return searchKey(q);
 }
 
 /**
@@ -31,20 +32,17 @@ export function matchesNotificationQuery(entry, needle) {
   if (!entry) return false;
   if (entry.type === 'session') {
     const session = entry.session || {};
-    const haystack = [session.title, session.appName]
-      .filter((part) => typeof part === 'string' && part)
-      .join(' ')
-      .toLowerCase();
-    return haystack.includes(needle);
+    return matchesSearch(needle, joined([session.title, session.appName]));
   }
   const view = entry.view || {};
   const parts = [view.appLine, view.label];
   for (const segment of view.segments || []) {
     if (segment && typeof segment.v === 'string') parts.push(segment.v);
   }
-  const haystack = parts
-    .filter((part) => typeof part === 'string' && part)
-    .join(' ')
-    .toLowerCase();
-  return haystack.includes(needle);
+  return matchesSearch(needle, joined(parts));
+}
+
+/** The texts a row prints, as one line, so a query may span two of them. */
+function joined(parts) {
+  return parts.filter((part) => typeof part === 'string' && part).join(' ');
 }

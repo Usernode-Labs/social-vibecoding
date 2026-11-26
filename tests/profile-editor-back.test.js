@@ -4,9 +4,10 @@
 //
 // Back walked past the open editor to the history entry under Profile, so it
 // closed the card AND left the screen, and a half-typed bio went with it. The
-// editor claims the press now through lib/back-stack.ts, the mechanism the
-// dialogs already use (features/dialogs/use-dialog.ts), so Back closes the
-// card and nothing else; and what was typed is kept for the next open.
+// editor's Sheet (lib/sheet.ts) claims the press through lib/back-stack.ts,
+// the mechanism the dialogs already use (features/dialogs/use-dialog.ts), so
+// Back closes the card and nothing else; and what was typed is kept for the
+// next open.
 //
 // Run with: node --test tests/profile-editor-back.test.js
 
@@ -21,6 +22,7 @@ const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const PROFILE = read('frontend/src/features/profile/profile.js');
 const SHEET = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+const SHEET_LIB = read('frontend/src/lib/sheet.ts');
 
 function renderSheet(draft) {
   const Profile = {
@@ -35,24 +37,28 @@ function renderSheet(draft) {
 }
 
 test('the editor claims Back when it opens, the way the dialogs do', () => {
-  assert.match(PROFILE, /import \{ pushDismissible \} from '\.\.\/\.\.\/lib\/back-stack';/);
+  // Its Sheet (lib/sheet.ts) takes the record while the card is mounted, and
+  // Back runs the Sheet's onClose: the card closes, keeping what was typed.
+  assert.match(SHEET, /useSheet\(\{\s*kind: 'modal',\s*onClose: \(\) => Profile\._dismissSheet\(\{ keepDraft: true \}\),/,
+    'Back closes the card, keeping what was typed');
+  assert.match(SHEET_LIB, /pushDismissible\(\(\) => \{\s*backed = true;\s*close\(\);\s*return true;/,
+    'and the press is consumed');
   const show = PROFILE.slice(PROFILE.indexOf('  showEditSheet() {'), PROFILE.indexOf('  _dismissSheet({'));
-  assert.match(show, /Profile\._releaseBack = pushDismissible\(\(\) => \{\s*Profile\._releaseBack = null;\s*Profile\._dismissSheet\(\{ keepDraft: true \}\);\s*return true;/,
-    'Back closes the card, keeping what was typed, and the press is consumed');
+  assert.doesNotMatch(show, /pushDismissible/, 'the controller does not hold a second record');
 });
 
 test('every close hands the claim back, as a navigating release', () => {
   // Several closes are the first half of a link (Email & recovery, Open
   // public page, leaving the screen): the record must not be spent under it.
-  const dismiss = PROFILE.slice(PROFILE.indexOf('  _dismissSheet({'), PROFILE.indexOf('  takeDraft() {'));
-  assert.match(dismiss, /const release = Profile\._releaseBack;\s*Profile\._releaseBack = null;\s*if \(release\) release\(\{ navigating: true \}\);/);
+  assert.match(SHEET_LIB, /return \(\) => \{ if \(!backed\) release\(\{ navigating: true \}\); \};/);
 });
 
 test('only a dismissal keeps the draft; Cancel and Save are decisions', () => {
   const dismiss = PROFILE.slice(PROFILE.indexOf('  _dismissSheet({'), PROFILE.indexOf('  takeDraft() {'));
   assert.match(dismiss, /Profile\._draft = keepDraft && typeof source === 'function' && user\.username/);
-  // The kit's backdrop / Escape keeps it, as Back does…
-  assert.match(SHEET, /if \(!adoption\) return;\s*adoption = null;\s*Profile\._dismissSheet\(\{ keepDraft: true \}\);/);
+  // The kit's backdrop / Escape keeps it, as Back does: all three are the
+  // Sheet's onClose…
+  assert.match(SHEET, /onClose: \(\) => Profile\._dismissSheet\(\{ keepDraft: true \}\),/);
   // …Cancel does not.
   assert.match(SHEET, /onClick=\{\(\) => Profile\._dismissSheet\(\)\}\s*>\s*\{t\('core:common\.cancel'\)\}/);
   assert.equal(message('core:common.cancel'), 'Cancel');

@@ -6579,33 +6579,9 @@
     "text": "Interaction for {{claim}}",
     "description": "Accessible name of a video recording of the changed feature being used. {{claim}} is the author's own sentence describing that change."
   },
-  "shots.screen.noShot": {
-    "text": "No screenshot",
-    "description": "Placeholder in the before/after viewer where one side has no screenshot."
-  },
   "shots.screen.nothingBefore": {
     "text": "New app: nothing before",
     "description": "Shown in the before/after viewer in place of the screenshot before the change, when the change builds a new app's first real screens: before it the app had only the starter template's placeholder screen, so there is no before."
-  },
-  "shots.screen.altAfter": {
-    "text": "After: {{changes}}",
-    "description": "Description, for people who cannot see it, of the screenshot taken after the change. {{changes}} is the author's own sentences describing what changes on that screen."
-  },
-  "shots.screen.altBefore": {
-    "text": "Before: {{changes}}",
-    "description": "Description, for people who cannot see it, of the screenshot taken before the change. {{changes}} is the author's own sentences describing what changes on that screen."
-  },
-  "shots.screen.altBeforeAbsent": {
-    "text": "Before, not there yet: {{changes}}",
-    "description": "Description, for people who cannot see it, of the screenshot taken before the change when the changed feature did not exist yet. {{changes}} is the author's own sentences describing what changes on that screen."
-  },
-  "shots.screen.keyOutline": {
-    "text": "Dashed outline: also changed here, but no change on this list describes it",
-    "description": "Legend under a before/after screenshot explaining a dashed box drawn on it: that area differs between before and after, but none of the listed changes accounts for it."
-  },
-  "shots.screen.keyLine": {
-    "text": "Dashed line: where the change begins on a side that doesn’t have it",
-    "description": "Legend under a before/after screenshot explaining a dashed line drawn on it: it marks where the new content starts, on the side (before or after) where that content is absent."
   },
   "shots.claim.failedBadge": {
     "text": "Didn’t work",
@@ -6626,58 +6602,6 @@
   "shots.claim.where": {
     "text": "{{sizes}} · {{persona}}",
     "description": "Small print under a declared change on a proposal's screenshots card. {{sizes}} is the list of screen sizes it was screenshot at, for example \"desktop, phone\", and {{persona}} who the screen was viewed as, for example \"member\"."
-  },
-  "shots.compare.fallbackTitle": {
-    "text": "Before & after",
-    "description": "Title of the full-screen before/after comparison when the change it shows has no description of its own."
-  },
-  "shots.compare.before": {
-    "text": "Before",
-    "description": "Heading over the left picture in the full-screen before/after comparison: the screen before the change."
-  },
-  "shots.compare.beforeAbsent": {
-    "text": "Before · Not there yet",
-    "description": "Heading over the left picture in the full-screen before/after comparison when the changed feature did not exist before the change."
-  },
-  "shots.compare.after": {
-    "text": "After",
-    "description": "Heading over the right picture in the full-screen before/after comparison: the screen after the change."
-  },
-  "shots.compare.notThereYet": {
-    "text": "Not there yet",
-    "description": "Placeholder in the full-screen before/after comparison where the \"before\" picture would be: the changed feature did not exist yet."
-  },
-  "shots.compare.noShot": {
-    "text": "No screenshot",
-    "description": "Placeholder in the full-screen before/after comparison where one side has no screenshot."
-  },
-  "shots.compare.openOriginal": {
-    "text": "Open original ↗",
-    "description": "Link under a picture in the full-screen before/after comparison: opens the full-size image in a new tab. Keep the arrow."
-  },
-  "shots.compare.altBefore": {
-    "text": "Before: {{claim}}",
-    "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison. {{claim}} is the author's own sentence describing the change."
-  },
-  "shots.compare.altBeforeUnnamed": {
-    "text": "Before: before/after screenshot",
-    "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the change has no description of its own."
-  },
-  "shots.compare.altBeforeAbsent": {
-    "text": "Before · Not there yet: {{claim}}",
-    "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the changed feature did not exist yet. {{claim}} is the author's own sentence describing the change."
-  },
-  "shots.compare.altBeforeAbsentUnnamed": {
-    "text": "Before · Not there yet: before/after screenshot",
-    "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the changed feature did not exist yet and the change has no description of its own."
-  },
-  "shots.compare.altAfter": {
-    "text": "After: {{claim}}",
-    "description": "Description, for people who cannot see it, of the \"after\" picture in the full-screen comparison. {{claim}} is the author's own sentence describing the change."
-  },
-  "shots.compare.altAfterUnnamed": {
-    "text": "After: before/after screenshot",
-    "description": "Description, for people who cannot see it, of the \"after\" picture in the full-screen comparison when the change has no description of its own."
   },
   "shots.toast.takingAgain": {
     "text": "Taking the before & after screenshots again.",
@@ -8079,34 +8003,6 @@
     "text": "Your own API key must be enabled while platform credits are locked.",
     "description": "Error in the AI access dialog when the person unticked the own-API-key checkbox although they have no platform credits to use instead."
   },
-  "age.justNow": {
-    "text": "just now",
-    "description": "Compact age of a card or row on a project's page: less than a minute ago."
-  },
-  "age.minutes_one": {
-    "text": "{{count}}m ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of minutes; \"m\" abbreviates minutes."
-  },
-  "age.minutes_other": {
-    "text": "{{count}}m ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of minutes; \"m\" abbreviates minutes."
-  },
-  "age.hours_one": {
-    "text": "{{count}}h ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of hours; \"h\" abbreviates hours."
-  },
-  "age.hours_other": {
-    "text": "{{count}}h ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of hours; \"h\" abbreviates hours."
-  },
-  "age.days_one": {
-    "text": "{{count}}d ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of days; \"d\" abbreviates days."
-  },
-  "age.days_other": {
-    "text": "{{count}}d ago",
-    "description": "Compact age of a card or row on a project's page. {{count}} is the number of days; \"d\" abbreviates days."
-  },
   "page.menu.editRequests": {
     "text": "Edit requests",
     "description": "Row in the ⋯ menu of a change's page, for its owner, when the change is already linked to requests (filed issues): opens the editor that changes which requests it is linked to. \"Edit\" is a verb."
@@ -9394,25 +9290,5 @@
   "governance.menu.copyLinkDone": {
     "text": "Link copied",
     "description": "Brief notice after pressing Copy link on a governance vote's page: the link is on the clipboard."
-  },
-  "track.plan": {
-    "text": "Plan",
-    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
-  },
-  "track.build": {
-    "text": "Build",
-    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
-  },
-  "track.checks": {
-    "text": "Checks",
-    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
-  },
-  "track.vote": {
-    "text": "Vote",
-    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
-  },
-  "track.live": {
-    "text": "Live",
-    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
   }
 }

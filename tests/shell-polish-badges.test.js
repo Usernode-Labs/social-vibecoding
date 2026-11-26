@@ -42,16 +42,14 @@ test('the sidebar slides in and out on the compositor, and not at all for reduce
   // synchronously between the two measurements.
   assert.match(src, /flushSync\(commit\);/);
   assert.match(src, /screen\.root\.animate\(\[\{ transform: `translateX\(\$\{dx\}px\)` \}, \{ transform: 'none' \}\], RAIL_SLIDE\);/);
-  // The rail slides in from its own edge and out to it: `dirSign()` flips the
-  // direction, so in Arabic it comes in from the right.
-  assert.match(src, /\[\{ transform: `translateX\(\$\{-100 \* dirSign\(\)\}%\)` \}, \{ transform: 'none' \}\]/);
+  // The rail folds to its strip and does not slide (26 Nov 2026: the looks
+  // whose folded rail left the screen went): only the screen moves, and
+  // `dirSign()` flips it, so in Arabic it plays the other way.
+  assert.match(src, /\* dirSign\(\);/);
   const body = src.slice(src.indexOf('export function slideRail'));
-  assert.equal((body.match(/\.animate\(/g) || []).length, 2, 'the screen and the rail');
+  assert.equal((body.match(/\.animate\(/g) || []).length, 1, 'the screen alone');
   assert.doesNotMatch(body, /\{ (?!transform)[a-zA-Z]+: [`'"]/, 'every keyframe is a transform: nothing lays out again on a frame');
-  // Going away, the rail is drawn until its slide ends.
-  assert.match(src, /bar\.classList\.add\('platform-tabs-leaving'\)/);
-  assert.match(src, /if \(!open\) slide\.finished\.then\(leaving, leaving\);/);
-  assert.match(CSS, /\.platform-tabs\.platform-tabs-folded:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
+  assert.doesNotMatch(src, /platform-tabs-leaving/, 'nothing slides away, so nothing is drawn while it leaves');
 });
 
 // ── #18: grey is new to read; the accent is waiting on you ─────────────
@@ -60,13 +58,16 @@ test('an unread count is grey wherever it is, and said in words on a full row', 
   // The tab bar's grey, the one the rest match.
   assert.match(rule('\n.platform-tab-badge'), /background: var\(--text-faint, #8e8e93\);/);
   // Messages' rows: "2 new" in grey, no blue bubble, and the time in ink.
-  const unread = rule('\n.messages-unread');
-  assert.match(unread, /color: var\(--text-muted\);/);
-  assert.doesNotMatch(unread, /--accent|background/);
-  assert.match(rule('.messages-row-time-unread'), /color: var\(--text-primary\);/);
+  // The shared row's trailing pair (ListRowMeta) draws them now.
+  const row = read('frontend/@/components/ui/grouped-list.tsx');
+  const meta = row.slice(row.indexOf('const rowMetaTop = cva('));
+  assert.match(meta, /strong: 'font-semibold text-zinc-900 dark:text-zinc-100'/, 'an unread row\'s time in the ink');
+  assert.match(meta, /<span className="ui-lrow-mb [^"]*text-zinc-500[^"]*">\{bottom\}<\/span>/, 'its count in grey');
+  assert.doesNotMatch(meta.slice(0, meta.indexOf('\n}\n')), /violet|accent/, 'never the accent');
   const inbox = read('frontend/src/features/messages/index.tsx');
-  assert.equal((inbox.match(/<span className="messages-unread">\{t\('messages:inbox\.newCount', \{ count: /g) || []).length, 3,
-    'a conversation, #general and an app\'s channel say it the same way');
+  assert.match(inbox, /tone=\{unread \? 'strong' : 'quiet'\}/);
+  assert.match(inbox, /bottom=\{unread \? t\('messages:inbox\.newCount', \{ count: conversation\.unreadCount \}\) : null\}/,
+    'a conversation says it in words');
   assert.equal(message('messages:inbox.newCount', { count: 2 }), '2 new');
   // The sidebar's chats and a project's channels: grey; Needs you keeps the accent.
   assert.match(CSS, /\.platform-rail-nest :is\(\.platform-rail-sub-count, :is\(\[data-place="discussion"\], \[data-place\^="c:"\]\) > \.dev-ws-place-count\) \{\s*background: var\(--text-faint, #8e8e93\);/);
@@ -107,16 +108,16 @@ test('the desktop bar is one centred row in every state but over a running app',
 });
 
 test('a group\'s header leads with a member\'s face and says who is still invited (N14)', () => {
-  const { threadWords } = loadTsx('frontend/src/features/messages/index.tsx');
-  const members = [{ id: 1, username: 'evan', status: 'member' }, { id: 2, username: 'lukas', status: 'member' },
-    { id: 3, username: 'iqiyi', status: 'invited' }];
-  const group = { id: 8, kind: 'group', myRole: 'member', memberCount: 2, membershipStatus: 'member', title: 'Evan + Lukas / iqiyi', members };
-  // The count is the members who joined; the title can name one still asked.
-  assert.equal(threadWords(group).sub, '2 members · 1 invited');
-  assert.equal(threadWords({ ...group, members: members.slice(0, 2) }).sub, '2 members', 'nobody pending, nothing added');
-  assert.equal(threadWords({ ...group, membershipStatus: 'invited' }).sub, 'Invitation pending', 'an invitee reads the invitation');
   const src = read('frontend/src/features/messages/index.tsx');
   const header = src.slice(src.indexOf('function ThreadHeader('), src.indexOf('/** The day a message was sent'));
+  // The count is the members who joined; the title can name one still asked,
+  // so the people asked are said beside it, and an invitee reads the invitation.
+  assert.match(header, /: invited\s*\? t\('messages:header\.subtitle\.invited'\)/);
+  assert.match(header, /const asked = active\.kind === 'group' && !invited \? active\.members\.filter\(\(m\) => m\.status === 'invited'\)\.length : 0;/);
+  assert.match(header, /const subtitle = asked \? dotText\(\[said, t\('messages:header\.subtitle\.invitedCount', \{ count: asked \}\)\]\) : said;/);
+  assert.equal(message('messages:header.subtitle.group', { count: 2 }), '2 members');
+  assert.equal(message('messages:header.subtitle.invitedCount', { count: 1 }), '1 invited');
+  assert.equal(message('messages:header.subtitle.invited'), 'Invitation pending');
   // Audit C02: the members' faces its row in the list draws (GroupFaces), not one of them.
   assert.match(header, /const groupFaces = active\.kind === 'group' && !invited;/);
   assert.match(header, /: groupFaces \? <GroupFaces conversation=\{active\} \/>/, 'not the initials of its name ("E+")');

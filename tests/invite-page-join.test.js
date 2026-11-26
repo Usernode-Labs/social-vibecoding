@@ -477,7 +477,7 @@ test('the page lands its Join, and the platform reaches it by URL', () => {
   // new one: the manifest stands at its floor (tests/lib/check-cap.js).
   const checks = JSON.parse(read('dapp.json')).tests.filter((t) => /shot=invite-join/.test(t.path));
   assert.equal(checks.length, 1, 'a declared check reaches the invite head');
-  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite-line \+ \.dev-ws-hero-row \[data-ws-invite-join\]\) > \.dev-ws-hero-id \[data-ws-community-name\] \+ \[data-ws-members-cell\] > \[data-ws-community-audience\]$/);
+  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite-line \+ \.dev-ws-hero-row \[data-ws-invite-join\]\) > \.dev-ws-hero-id \[data-ws-community-name\] \+ \[data-ws-members-cell\] > \.wip-hub-meta > \.wip-hub-meta-kind\[data-audience="open"\]$/);
   assert.match(read('public/css/app.css'), /\.dev-ws-invite \{\s+display: flex; flex-direction: column; gap: 10px;/);
   assert.match(read('public/css/app.css'), /\.dev-ws-invite-line \{ display: flex; flex-direction: column; gap: 2px; min-width: 0; \}/);
 });

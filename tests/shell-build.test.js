@@ -72,6 +72,20 @@ const viteSsrConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.ssr.conf
 const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
 const kubernetesDockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile.kubernetes'), 'utf8');
 
+test('the served document carries no <h1> from the bar or a hidden screen (request #7166)', () => {
+  // The audit of 25 Nov 2026 found three on every address: the bar's title,
+  // holding only the logotype's drawing, and the titles of two screens that
+  // are hidden when the page is served. The screen that is shown names
+  // itself once it is drawn.
+  assert.doesNotMatch(html, /<h1[\s>]/);
+  const title = html.match(/<div id="header-title"[^>]*>/);
+  assert.ok(title, 'the bar\'s title is still in the page');
+  assert.doesNotMatch(title[0], /role="heading"/, 'and is no heading while it holds only the drawing');
+  // The hidden screens keep their level-1 heading for a screen reader.
+  assert.match(html, /<div role="heading" aria-level="1" class="settings-frame-title">Settings<\/div>/);
+  assert.match(html, /<div role="heading" aria-level="1" class="sr-only">Homeroom bot<\/div>/);
+});
+
 test('the build still gates on adjacent text children', () => {
   assert.match(
     prerenderSrc, /renderToString/,
@@ -325,4 +339,161 @@ test('kpack excludes dependency trees from the platform source', () => {
   assert.match(project, /schema-version = "0\.2"/);
   assert.match(project, /exclude = \[[\s\S]*"node_modules\/"[\s\S]*\]/,
     'a committed dependency tree must not switch Paketo from npm ci to npm rebuild');
+});
+
+// ── The served head carries no developer comments (request #7165) ───────
+//
+// frontend/src/head.html explains itself at length; the build takes those
+// comments out of the document it writes (frontend/scripts/slim-document.cjs)
+// and leaves every tag and every byte of code. These hold both halves: that
+// the comments are gone, and that nothing else is.
+
+const { createRequire } = require('node:module');
+const { slimHead, stripJsComments, stripCssComments } = require('../frontend/scripts/slim-document.cjs');
+
+const esbuild = createRequire(path.join(ROOT, 'frontend', 'package.json'))('esbuild');
+const headSource = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'head.html'), 'utf8');
+const builtHead = html.slice(0, html.indexOf('<body '));
+
+// The tags of a head, in order, comments and the text of scripts and styles
+// left out: what must be the same before and after.
+function headTags(markup) {
+  return markup
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/(<(script|style)\b[^>]*>)[\s\S]*?(<\/\2>)/g, '$1$3')
+    .match(/<[^>]+>/g) || [];
+}
+
+test('the served head has no comment but the stamp and the do-not-edit notice', () => {
+  const comments = builtHead.match(/<!--[\s\S]*?-->/g) || [];
+  assert.equal(comments.length, 2, `comments left in the served head:\n${comments.map((c) => c.slice(0, 80)).join('\n')}`);
+  assert.match(comments[0], /^<!-- shell-build stamp: [0-9a-f]{64} -->$/);
+  assert.match(comments[1], /GENERATED FILE — DO NOT EDIT/);
+  // The paragraph the audit quoted, and the head's others, are in the source.
+  assert.match(headSource, /BEFORE ANY STYLE IS PARSED/);
+  assert.doesNotMatch(builtHead, /BEFORE ANY STYLE IS PARSED/);
+  assert.ok(builtHead.length < headSource.length * 0.6,
+    `the served head is ${builtHead.length} bytes of a ${headSource.length} byte source: the comments are still in it`);
+});
+
+test('taking the comments out of the head leaves every tag, in order, and all of the code', () => {
+  const slim = slimHead(headSource, { esbuild });
+  assert.deepEqual(headTags(slim), headTags(headSource));
+  // What the build wrote is this same text (asset addresses are plain in a
+  // local document), so the check above is a check of the served page.
+  assert.ok(builtHead.includes(slim.trim()), 'the served head is not the slimmed source');
+
+  const blocks = (markup, name) => [...markup.matchAll(new RegExp(`<${name}\\b(?![^>]*\\ssrc=)[^>]*>([\\s\\S]*?)</${name}>`, 'g'))]
+    .map((m) => m[1]);
+  const printed = (code, loader) => esbuild.transformSync(code, {
+    loader, minifyWhitespace: true, legalComments: 'none', charset: 'utf8',
+  }).code;
+  for (const [name, loader] of [['script', 'js'], ['style', 'css']]) {
+    const before = blocks(headSource.replace(/<!--[\s\S]*?-->/g, ''), name);
+    const after = blocks(slim, name);
+    assert.equal(after.length, before.length, `inline <${name}> count`);
+    assert.ok(after.length > 0, `the head has inline <${name}> blocks to check`);
+    after.forEach((code, i) => {
+      assert.equal(printed(code, loader), printed(before[i], loader), `inline <${name}> ${i + 1} reads the same`);
+      assert.doesNotMatch(code, /\/\*(?!!)/, `inline <${name}> ${i + 1} still has a block comment`);
+    });
+  }
+});
+
+test('the comment scanner keeps what only looks like a comment', () => {
+  const js = [
+    "const a = 'http://x/y'; // gone",
+    'const b = "/* kept */";',
+    'const c = `// kept ${ d /* gone */ } /* kept */ ${`//kept`}`;',
+    'const re = /[/]\\/\\/ kept/g; // gone',
+    'const half = total / 2; // gone',
+    'if (ok) /\\/\\*kept/.test(s);',
+    '/*! kept: a licence */',
+    '/* gone',
+    '   over lines */',
+    'next();',
+    'x = y /* gone */ + z;',
+    '',
+  ].join('\n');
+  assert.equal(stripJsComments(js), [
+    "const a = 'http://x/y';",
+    'const b = "/* kept */";',
+    'const c = `// kept ${ d  } /* kept */ ${`//kept`}`;',
+    'const re = /[/]\\/\\/ kept/g;',
+    'const half = total / 2;',
+    'if (ok) /\\/\\*kept/.test(s);',
+    '/*! kept: a licence */',
+    'next();',
+    'x = y  + z;',
+    '',
+  ].join('\n'));
+
+  const css = [
+    '/* gone */',
+    'a { background: url(/img/*.png); content: "/* kept */"; } /* gone */',
+    'b { color: red; /* gone */ margin: 0; }',
+    '',
+  ].join('\n');
+  assert.equal(stripCssComments(css), [
+    'a { background: url(/img/*.png); content: "/* kept */"; }',
+    'b { color: red;  margin: 0; }',
+    '',
+  ].join('\n'));
+});
+
+test('slimming the head keeps a named comment, skips what is not script, and refuses a change to code', () => {
+  const head = [
+    '<!-- note -->',
+    '<!-- marker: keep me -->',
+    '<!--[if IE]><p>old</p><![endif]-->',
+    '<meta name="x" content="<!-- not a comment -->">',
+    '<script type="application/json">{"a": "// data"} /* data */</script>',
+    '<script src="/a.js"></script>',
+    '<script>',
+    '  // note',
+    '  run(); // note',
+    '</script>',
+    '',
+  ].join('\n');
+  assert.equal(slimHead(head, { esbuild, keep: ['marker:'] }), [
+    '<!-- marker: keep me -->',
+    '<!--[if IE]><p>old</p><![endif]-->',
+    '<meta name="x" content="<!-- not a comment -->">',
+    '<script type="application/json">{"a": "// data"} /* data */</script>',
+    '<script src="/a.js"></script>',
+    '<script>',
+    '  run();',
+    '</script>',
+    '',
+  ].join('\n'));
+
+  assert.throws(() => slimHead('<script>a = 1</script>', {}), /esbuild is needed/);
+  // A parser that says the two differ stops the build.
+  const disagreeing = { transformSync: (code) => ({ code }) };
+  assert.throws(() => slimHead('<script>a(); // note\n</script>', { esbuild: disagreeing }),
+    /taking the comments out of inline <script> 1 changed it/);
+});
+
+test('the build slims the head in every mode, the stamp counts the scanner, and the body is left alone', () => {
+  const build = fs.readFileSync(path.join(ROOT, 'frontend', 'scripts', 'build-shell.mjs'), 'utf8');
+  // One composition, after the mode branches: --document, --no-bundle and a
+  // full run all write the same slimmed head.
+  assert.equal(build.split('slimHead(').length - 1, 1);
+  assert.ok(build.indexOf('servedHead = slimHead(') > build.indexOf('const { renderShell, renderShellWithSeparators }'));
+  assert.match(build, /\$\{servedHead\}<\/head>\n<body \$\{BODY_ATTRS\}>\$\{markup\}<\/body>/);
+  assert.ok(require('../scripts/shell-stamp').INPUT_PATHS.includes('frontend/scripts/slim-document.cjs'));
+});
+
+test('the head preloads the one font the first screen is set in', () => {
+  const preloads = builtHead.match(/<link rel="preload"[^>]*>/g) || [];
+  assert.deepEqual(preloads,
+    ['<link rel="preload" href="/fonts/geist/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>']);
+  const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
+  const face = /@font-face\s*\{\s*font-family:\s*'Geist';[\s\S]*?\}/.exec(css);
+  assert.ok(face, "app.css declares the 'Geist' face");
+  assert.match(face[0], /url\('\/fonts\/geist\/Geist-Variable\.woff2'\) format\('woff2'\)/,
+    'the preload must name the address the @font-face names, or the file is fetched twice');
+  assert.ok(fs.existsSync(path.join(ROOT, 'public', 'fonts', 'geist', 'Geist-Variable.woff2')));
+  // Before the stylesheets, so it is asked for while they are still loading.
+  assert.ok(builtHead.indexOf(preloads[0]) < builtHead.indexOf('<link rel="stylesheet"'));
 });

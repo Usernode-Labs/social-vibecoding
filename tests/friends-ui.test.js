@@ -101,11 +101,11 @@ test('the own Friends section: requests first, then friends, then what you sent,
   }, NOW);
   assert.equal(view.loaded, true);
   assert.deepEqual(view.incoming.map((r) => [r.username, r.href, r.meta, r.avatarUrl]),
-    [['lin', '#profile/lin', 'Asked 3 days ago', null]]);
+    [['lin', '#profile/lin', 'Asked 3d ago', null]]);
   assert.equal(view.friends[0].href, '#profile/ada');
   assert.match(view.friends[0].meta, /^Friends since \S+ 2026$/);
   assert.equal(view.friends[0].avatarUrl, '/avatars/' + 'a'.repeat(32));
-  assert.deepEqual(view.outgoing.map((r) => [r.username, r.meta]), [['grace', 'Requested yesterday']],
+  assert.deepEqual(view.outgoing.map((r) => [r.username, r.meta]), [['grace', 'Requested 1d ago']],
     'the pending cap says to cancel one, so they are all listed here');
   assert.deepEqual(friendsView(null), { loaded: false, incoming: [], friends: [], outgoing: [] },
     'a failed read is told apart from "no friends yet"');

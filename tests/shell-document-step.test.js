@@ -28,6 +28,10 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const SHA = '0123456789abcdef0123456789abcdef01234567';
+// The document step checks the head it slims against esbuild, which every
+// real run finds in frontend/node_modules (the image mounts it for both
+// runs). This small tree has none, so it is lent the workspace's.
+const NODE_PATH = path.join(ROOT, 'frontend', 'node_modules');
 
 // The rendered tree ends in <script> tags whose URLs carry the build, so the
 // stand-in does too. Padded past the script's "the tree looks empty" floor.
@@ -41,6 +45,7 @@ export const renderShellWithSeparators = body;
 `;
 
 const HEAD = [
+  '  <!-- A note for whoever edits the head: the build takes it out. -->',
   '  <meta charset="utf-8">',
   '  <link rel="manifest" href="/manifest.webmanifest">',
   '  <link rel="stylesheet" href="/css/app.css">',
@@ -58,6 +63,7 @@ function fixture(t) {
   };
   put('frontend/scripts/build-shell.mjs', fs.readFileSync(path.join(ROOT, 'frontend/scripts/build-shell.mjs')));
   put('scripts/shell-stamp.js', fs.readFileSync(path.join(ROOT, 'scripts/shell-stamp.js')));
+  put('frontend/scripts/slim-document.cjs', fs.readFileSync(path.join(ROOT, 'frontend/scripts/slim-document.cjs')));
   put('frontend/package.json', '{ "type": "module" }\n');
   put('frontend/src/head.html', HEAD);
   put('frontend/src/main.tsx', 'export {};\n');
@@ -69,7 +75,7 @@ function fixture(t) {
   put(stamp.JS_OUTPUT, bundle);
 
   const run = (args, gitSha) => {
-    const env = { ...process.env };
+    const env = { ...process.env, NODE_PATH };
     delete env.NODE_TEST_CONTEXT;
     if (gitSha === undefined) delete env.GIT_SHA; else env.GIT_SHA = gitSha;
     return spawnSync(process.execPath, [path.join(root, 'frontend/scripts/build-shell.mjs'), ...args], { cwd: root, env, encoding: 'utf8' });
@@ -93,6 +99,11 @@ test('--document writes the document for the commit id and leaves the bundle alo
   assert.ok(html.includes(`<script type="module" src="/b/${SHA}/shell/assets/shell.js"></script>`), 'the entry is scoped');
   assert.ok(html.includes(`<script src="/b/${SHA}/js/app.js"></script></body>`), 'the tree was rendered again, under the id');
   assert.ok(html.includes('<link rel="manifest" href="/manifest.webmanifest">'), 'the manifest keeps its fixed URL');
+  // The head is served without its comments in this mode too; the stamp and
+  // the do-not-edit notice are the two the build writes itself.
+  assert.ok(!html.includes('A note for whoever edits the head'), 'the head comment is not served');
+  assert.ok(!html.includes('React shell entry'), "nor is the entry tag's");
+  assert.equal(html.split('<!--').length - 1, 2);
 
   assert.equal(f.js(), f.bundle, 'the bundle is byte-for-byte what the first run wrote: not rebuilt, not stamped twice');
   assert.equal(f.read('frontend/.ssr/prerender.js'), null, 'the prerender bundle is removed once the document is final');
@@ -215,7 +226,7 @@ function buildable(t) {
   f.put('scripts/language-packs.js', LANGUAGE_PACKS);
   f.put('scripts/ensure-shell-artifacts.js', fs.readFileSync(path.join(ROOT, 'scripts/ensure-shell-artifacts.js')));
   const ensure = (args) => {
-    const env = { ...process.env };
+    const env = { ...process.env, NODE_PATH };
     for (const name of ['NODE_TEST_CONTEXT', 'GIT_SHA', 'USERNODE_SHELL_ASSETS_PREBUILT']) delete env[name];
     return spawnSync(process.execPath, [path.join(f.root, 'scripts/ensure-shell-artifacts.js'), ...args], { cwd: f.root, env, encoding: 'utf8' });
   };

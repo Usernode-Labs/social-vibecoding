@@ -311,14 +311,6 @@ export interface WorkRow {
   named?: { messageId: number | null } | null;
 }
 
-/**
- * How many rows each project shows in a section before its own Show more
- * (./lists.tsx groups every section's rows by project). Needs you shows the
- * most: it is what you came for. Waiting & in progress is ONE section of the
- * work under way and the work waiting, so it keeps the same three.
- */
-export const GROUP_FIRST = { needs: 5, busy: 3, live: 3 } as const;
-
 /** Pure: rows under their project, once each, in the order the projects first come. */
 export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: AiApp | null; items: T[] }[] {
   const groups: { app: AiApp | null; items: T[] }[] = [];
@@ -486,45 +478,6 @@ export function freshByProject(rows: { app: AiApp | null; unread?: number }[]): 
     counts[row.app.slug] = (counts[row.app.slug] || 0) + 1;
   }
   return counts;
-}
-
-/**
- * Pure: a group's rows with the new ones first (a stable sort: equally new
- * rows keep the order they came in), so Needs you opens on what changed.
- */
-export function freshFirst<T extends { fresh?: boolean }>(lines: T[]): T[] {
-  return [...(lines || [])].sort((a, b) => Number(!!b.fresh) - Number(!!a.fresh));
-}
-
-/**
- * Pure (14 Nov 2026, request #6672: "Private chats are always at the bottom of
- * Needs you, even if they're the most recent active thread"). `byProject`
- * places a project where its first row first comes, and Needs you's rows
- * arrive votes and plans first, private chats last, so a project whose only
- * row is a fresh private chat sat at the bottom however recently you were
- * talking in it. This lifts those groups: the ones with something new first,
- * then each by its newest row's readable time, newest first. A group with no
- * readable time keeps today's place after the dated ones, and rows inside a
- * group keep the order they came in.
- */
-export function recentGroupsFirst<T extends { app: AiApp | null; fresh?: boolean; at?: string | null }>(lines: T[]): T[] {
-  const groups = byProject(lines).map((group, i) => {
-    let newest: number | null = null;
-    let fresh = false;
-    for (const row of group.items) {
-      if (row.fresh) fresh = true;
-      const at = new Date(String(row.at || '')).getTime();
-      if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
-    }
-    return { items: group.items, fresh, newest, i };
-  });
-  groups.sort((a, b) => {
-    if (a.fresh !== b.fresh) return a.fresh ? -1 : 1;
-    if ((a.newest === null) !== (b.newest === null)) return a.newest === null ? 1 : -1;
-    if (a.newest !== null && b.newest !== null && a.newest !== b.newest) return b.newest - a.newest;
-    return a.i - b.i;
-  });
-  return groups.flatMap((group) => group.items);
 }
 
 /** How many projects the filter shows as chips before its More (./lists.tsx). */

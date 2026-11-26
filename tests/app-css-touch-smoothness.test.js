@@ -49,14 +49,15 @@ test('Home\'s app tiles hold their press back on touch, like the Workshop rows (
   assert.doesNotMatch(TOP_LEVEL, /\.app-card\[role="button"\]:active/, 'a mouse keeps the instant press');
 });
 
-test('a Messages row tints on hover only where a pointer can hover', () => {
-  assert.doesNotMatch(TOP_LEVEL, /\.messages-conversation-row:hover\s*[,{]/,
-    'no unconditional hover tint for WebKit to leave stuck after a tap');
-  const hover = mediaBlocks(RULES, '(hover: hover)').find((b) => /\.messages-conversation-row:hover \{/.test(b));
-  assert.ok(hover, 'the tint lives in a (hover: hover) block');
-  assert.match(hover, /\.messages-conversation-row:hover \{ background: var\(--messages-selected\); \}/);
-  assert.match(TOP_LEVEL, /\.messages-conversation-active \{ background: var\(--messages-selected\); \}/,
-    'the open conversation is marked everywhere');
+test('a Messages row is the shared row, so no hover tint of its own can stick after a tap', () => {
+  // The inbox drew its own row with a hover tint, kept to (hover: hover) so
+  // WebKit did not leave it on the last row tapped. It is ListRow now, which
+  // has no hover tint at all: its press is `active:` and the open
+  // conversation is lit by its aria-current.
+  assert.doesNotMatch(RULES, /\.messages-conversation-row[^{,]*\{/, 'app.css draws nothing of the row');
+  const row = read('frontend/@/components/ui/grouped-list.tsx');
+  assert.doesNotMatch(row, /hover:bg-/, 'the shared row tints on press, never on hover');
+  assert.match(row, /'aria-\[current=page\]:bg-\[color:var\(--lit-tint\)\]'/, 'the open conversation is marked everywhere');
 });
 
 test('the dev chat pane does not smooth-scroll its own follow-to-bottom', () => {

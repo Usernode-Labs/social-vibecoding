@@ -25,9 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { kanbanHtml, workshopHtml, legacyLook } = require('./lib/dev-card-html');
-// These rows are the board as every look but the kit's draws it; tests/home-needs-you-card.test.js holds the kit's.
-legacyLook();
+const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
@@ -121,12 +119,12 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   assert.ok(!/data-edge=/.test(html), 'no coloured edge');
   assert.ok(!html.includes('dev-card-icon'), 'no coloured glyph');
 
-  // A request Underway: its number, author and age in words; the category
+  // A request Underway: its author and age, then its number, in words; the category
   // chip and the 💬 count lead the tags; who is on it in words; ☰.
   const under = column(html, 'inprogress');
-  assert.match(under, /<div class="dev-ws-wrow dev-ws-brow" data-ws-row="issue:1575" data-ws-kind="request" data-ws-open="issue:1575" data-issue-row="1575">/,
+  assert.match(under, /<div class="dev-ws-wrow dev-ws-brow" data-ws-row="issue:1575" data-ws-kind="request" data-ws-open="issue:1575" data-issue-row="1575" data-ws-noun="request" data-ws-num="1575">/,
     'the item’s hook rides on the row, as on the folded card it replaces');
-  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">#1575 · sam · 4d ago<\/span>/);
+  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">sam · 4d ago · R#1575<\/span>/);
   assert.match(under, /<span class="dev-ws-wrow-status"><button type="button" class="attr-chip dev-badge [^"]*" data-attr-chip="" data-attr-field="category"[^>]*>[\s\S]*?Bug[\s\S]*?<\/button><span class="dev-chat-badge dev-badge [^"]*" data-count="3"[^>]*>💬 3<\/span><span class="dev-ws-tag" data-tone="plain">Picked up · zura<\/span><\/span>/,
     'category chip, then 💬, then who is on it');
   assert.ok(!/data-attr-field="assignee"/.test(under), 'no @ chip: the tag says who');
@@ -136,7 +134,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // A change waiting for approval: "for #1574", "Checks passed", and the
   // card's bar with Vote across the row.
   const wait = column(html, 'inreview');
-  assert.match(wait, /<span class="dev-ws-wrow-sub">PR 1540 · evan · for #1574 · 1d ago<\/span>/);
+  assert.match(wait, /<span class="dev-ws-wrow-sub">evan · 1d ago · PR#1540 · for #1574<\/span>/);
   assert.match(wait, /<span class="dev-ws-tag" data-tone="ok"><svg[^>]*>[\s\S]*?<\/svg>Checks passed<\/span>/);
   assert.match(wait, /<span class="dev-ws-row-band"><span class="dev-ws-row-state dev-ws-row-state-[a-z]+"[^>]*>Vote · 0\/1<\/span><span class="dev-ws-row-trailing"><button type="button" class="dev-vote-btn"/,
     'the bar with its own words, then Vote, and none of the band’s chips');
@@ -145,7 +143,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // Done: every row is live, so the bar leads the tags at its words' width,
   // and there is no band.
   const done = column(html, 'done');
-  assert.match(done, /<span class="dev-ws-wrow-sub">PR 1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/,
+  assert.match(done, /<span class="dev-ws-wrow-sub">alice · 2d ago · PR#1572 · closed #1500<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/,
     '#6075: the final counted vote sits beside the live pill');
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');
@@ -302,6 +300,26 @@ test('All items in the Workshop: the head is one row, the strip pins with it, an
   assert.match(html, /<\/div><div id="dev-kanban-tabs" role="tablist" aria-label="Board columns" class="dev-kanban-stages">[\s\S]*?<\/div><\/div><div class="dev-ws-pane-body"><div class="dev-ws-board" data-ws-stage=""><div id="dev-kanban"/,
     'the strip is in the pinned head, the board in the body');
   assert.ok(!html.includes('data-ws-pagebar'), 'no back bar of its own above the pane');
+});
+
+test('#7101: a vote with no cached row still repaints once the server saves it', async () => {
+  const AppView = makeAppView();
+  // The board read this row from a list `_findItem` does not consult (or its
+  // lists were not current), so no optimistic target existed and nothing
+  // repainted when the vote was cast.
+  AppView._proposals = [];
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._merged = [];
+  AppView._topicProposal = null;
+  let repaints = 0;
+  AppView._repaintDevBody = () => { repaints += 1; };
+  AppView._publishVoteSaved = () => {};
+  AppView.refreshDevData = () => {};
+  AppView._sendVote = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  const ok = await AppView.castVote(7, 'yes');
+  assert.equal(ok, true);
+  assert.equal(repaints, 1, 'the board is repainted once, after the vote is saved');
 });
 
 test('a row is square at rest, so the hairline between rows runs straight', () => {

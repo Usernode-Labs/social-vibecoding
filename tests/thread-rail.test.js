@@ -8,8 +8,7 @@
 // tests said, then where the thread stands, which is the standing the server
 // stored and worded. These tests read its steps in words, and hold the three
 // places that draw it: the shell's host between the root post and the
-// replies, the two heads that portal into it (never under one of the frame's
-// looks), and the stylesheet that stands it beside the card on a wide page
+// replies, the two heads that portal into it, and the stylesheet that stands it beside the card on a wide page
 // and folds its earlier steps into a pile on a narrow one.
 
 const test = require('node:test');
@@ -263,16 +262,15 @@ test('the shell holds the rail between the root post and the replies, on a reque
   assert.match(shell, /<div id="gc-thread-head" \/>[\s\S]{0,600}\{decision \? null : <div id="gc-thread-rail" className="dev-request-rail" \/>\}\s*<div id="gc-thread-messages" \/>/);
 });
 
-test('both heads portal the rail into its host, and never under one of the frame\'s looks', () => {
+test('both heads portal the rail into its host', () => {
   for (const file of ['frontend/src/features/dev-board/topic/request-head.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = read(file);
-    assert.match(src, /const rail = frame \? null : host\('gc-thread-rail'\);/, file);
+    assert.match(src, /const rail = host\('gc-thread-rail'\);/, file);
     // `current`: the step open over the card, which the rail marks (thread-card.tsx).
-    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{cardLook \? openNow : null\} \/>, rail\) : null\}/, file);
+    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{openNow\} \/>, rail\) : null\}/, file);
   }
   const request = read('frontend/src/features/dev-board/topic/request-head.tsx');
-  assert.match(request, /open\.kind === 'plan'[\s\S]{0,160}openRequestSpec\(card\)/, 'a plan opens in the reader it always did');
-  assert.match(request, /call\('openTechnicalDetails', \[open\.changeId\]\)/, 'failed tests open the change\'s details');
+  assert.match(request, /if \(open\.kind === 'request' \|\| open\.kind === 'plan' \|\| open\.kind === 'track'\) \{\s*openStep\(page, open\);/, 'the request, a plan and the track open as a step over the card');
   assert.match(request, /showChangeSection\(open\.changeId\)/, 'a competing change opens its own section');
 });
 
@@ -290,14 +288,14 @@ test('the rail draws its steps, the folded pile, and the links by what they open
   assert.equal(message('project:topic.rail.since', { when: 'Nov 13' }), 'since Nov 13');
 });
 
-test('the stylesheet: beside the card on a wide page, a folded pile on a narrow one, the standard and brand looks only', () => {
+test('the stylesheet: beside the card on a wide page, a folded pile on a narrow one', () => {
   const css = read('public/css/app.css');
   const at = css.indexOf("THE THREAD'S RAIL: \"How it got here\"");
-  // Before the bell's sheet, which is the block that ends at the generated
-  // looks (tests/frame-app.test.js), and so before the brand look too.
-  const next = css.indexOf("/* THE BELL'S SHEET");
-  const brand = css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING');
-  assert.ok(at > 0 && at < next && next < brand, 'the block sits before the brand look, which repaints it');
+  // After the thread page's own block (THE THREAD PAGE, which draws the
+  // cards' paint), and ending at the faces the pages name.
+  const page = css.indexOf('/* ── THE THREAD PAGE: ');
+  const next = css.indexOf('/* ── THE FACES THE PAGES NAME');
+  assert.ok(page > 0 && page < at && at < next, 'the block sits after the thread page\'s block');
   const block = css.slice(at, next);
   assert.match(block, /\.dev-request-rail:empty \{ display: none; \}/);
   assert.match(block, /@media \(max-width: 1179\.98px\) \{\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-pile \{ display: flex; \}\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-step:not\(\[data-rail-now\]\) \{ display: none; \}/);
@@ -311,10 +309,10 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
     else if (block[wideEnd] === '}' && --wideDepth === 0) break;
   }
   const wide = block.slice(wideAt, wideEnd + 1);
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
+  const scope = 'html:root:not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
   const rules = wide.split('\n').filter((line) => /^\s*html/.test(line));
   assert.ok(rules.length >= 9, 'the wide layout has its rules');
-  for (const line of rules) assert.ok(line.trim().startsWith(scope), `scoped to the two looks, a page, and no open reader: ${line.trim().slice(0, 80)}`);
+  for (const line of rules) assert.ok(line.trim().startsWith(scope), `scoped to a page and no open reader: ${line.trim().slice(0, 80)}`);
   assert.match(wide, /\.dev-request-scroll \{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) var\(--thread-rail-w\);/);
   assert.match(wide, /\.dev-request-rail \{\s*grid-column: 2;\s*grid-row: 1 \/ span 2;\s*align-self: start;\s*position: sticky;/);
   // The cards are cards at every width (a phone's three, a desktop's two
@@ -325,16 +323,16 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   // …on a full page, and in the two side panels (the Workshop's, and the
   // column beside Homeroom bot's list) and beside the open reader, which
   // have a scope of their own.
-  const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
+  const panel = 'html:root :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   for (const line of cards.split('\n').filter((l) => /^html/.test(l))) {
-    const reader = 'html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
+    const reader = 'html:root .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
     assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker')
-      || line.startsWith('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread'),
+      || line.startsWith('html:root #ai-screen .dev-private-thread'),
       `scoped as the wide layout is, or to a side panel: ${line.slice(0, 80)}`);
   }
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
   assert.match(cards, /:is\(#gc-thread-head, #gc-thread-messages, \.dev-request-rail\) \{\s*min-width: 0;\s*border-radius: var\(--thread-card-r\);\s*background: var\(--thread-card\);/);
-  assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+  assert.match(css.slice(page, at), /:where\(#dev-topic-thread\) \.dev-request \{ --thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
 });
 
 // #7171: the rail's height cap was written for the wide sticky column, but it
@@ -451,10 +449,10 @@ test("a phone's thread page uses one scale", () => {
   for (const m of block.matchAll(/font-size:\s*([^;]+);/g)) {
     assert.doesNotMatch(m[1].trim(), /^(12\.5|13\.5|14\.5|15\.5|17)(px|rem|em)$/, `no in-between size: ${m[1].trim()}`);
   }
-  // Scoped to the standard and brand looks, on the page's own thread, so
+  // Scoped to the page's own thread, so
   // desktop and the Homeroom bot column are untouched.
   for (const line of block.split('\n').filter((l) => /^\s*html/.test(l))) {
-    assert.match(line, /^\s*html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #dev-topic-thread /, `scoped to the two looks and the thread page: ${line.trim().slice(0, 90)}`);
+    assert.match(line, /^\s*html:root #dev-topic-thread /, `scoped to the thread page: ${line.trim().slice(0, 90)}`);
   }
 });
 

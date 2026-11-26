@@ -54,7 +54,7 @@ test('the seed runner walks the list in order, background seeds included, and sk
 // the demo data its declared checks read, which no other test would catch.
 const BOOT_ORDER = [
   'reservePreviewReviewerIds', 'seedAdmin', 'seedCaptureUser',
-  'seedCaptureAdminUser', 'seedStagingLongInbox', 'seedStagingDemoUser',
+  'seedCaptureAdminUser', 'seedStagingLongInbox', 'seedStagingLinkedBrowsers', 'seedStagingDemoUser',
   'seedStagingAdminDetailsUser', 'seedStagingSupportUser', 'seedStagingDuplicateUser',
   'seedSelfApp', 'seedTermsVersions', 'seedStagingPrivateRequest',
   'seedStagingCollabOnlyVote', 'seedStagingCloseVote', 'seedStagingJoinedBuildOffer', 'seedStagingNamedInThread',

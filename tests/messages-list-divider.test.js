@@ -59,7 +59,7 @@ test('09: the list\'s width is Messages\' own, clamped to 280px..42%, and never 
   assert.match(CSS, /--ai-list-min: var\(--list-pane-w\);/, 'the bot tab\'s list is untouched');
   assert.doesNotMatch(CSS, /--list-pane-w:\s*var\(--messages-list-chosen-w/, 'the shared measure is never the chosen width');
   // With nothing open, the standard look's two-up page keeps its 26rem default.
-  assert.match(CSS, /html:not\(\[data-skin\]\) \.messages-layout\.messages-list-page > \.messages-list-pane \{ flex: none; width: var\(--messages-list-chosen-w, 26rem\); max-width: 42%;/);
+  assert.match(CSS, /html:root \.messages-layout\.messages-list-page > \.messages-list-pane \{ flex: none; width: var\(--messages-list-chosen-w, 26rem\); max-width: 42%;/);
 });
 
 test('09: the handle is a focusable separator with the bot tab\'s grip, after the list\'s foot', () => {
@@ -72,7 +72,7 @@ test('09: the handle is a focusable separator with the bot tab\'s grip, after th
   assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>\n(\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<ListDivider \/>\n\s*<\/section>/);
   // The grip is `.split-handle`'s: 6 x 48, unseen at rest, half strength
   // under an armed pointer, the accent while held.
-  assert.match(CSS, /:is\(\.split-handle, html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.side-panel-divider\)::before \{[^}]*width: 6px;[^}]*height: 48px;/);
+  assert.match(CSS, /:is\(\.split-handle, html:root \.side-panel-divider\)::before \{[^}]*width: 6px;[^}]*height: 48px;/);
   const src = read(DIVIDER);
   assert.match(src, /armOnMove\(ref\.current\)/, 'armed by a real move, as the Workshop\'s handle');
   assert.match(src, /startSplitDrag\(e, drag\)/);
@@ -90,7 +90,7 @@ test('09: the handle is drawn from 768px only, and not where nothing stands besi
   assert.match(desk, /touch-action: none;/);
   assert.match(CSS, /\.messages-layout\.messages-list-page > \.messages-list-pane > \.messages-list-divider \{ display: none; \}/,
     'a look that draws the list as the page alone has no handle');
-  assert.match(CSS, /html:not\(\[data-skin\]\) \.messages-layout\.messages-list-page > \.messages-list-pane > \.messages-list-divider \{ display: block;/,
+  assert.match(CSS, /html:root \.messages-layout\.messages-list-page > \.messages-list-pane > \.messages-list-divider \{ display: block;/,
     'the standard look\'s two-up page has one');
 });
 

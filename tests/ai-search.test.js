@@ -230,7 +230,7 @@ test('the client marks the found words by splitting the text, and checks an answ
   assert.equal(parts.map((p) => p.text).join(''), '<b>improve</b> <img src=x onerror=alert(1)>');
   const found = read('frontend/src/features/ai/found.tsx');
   assert.match(found, /<mark key=\{i\} className=\{className\}>\{part\.text\}<\/mark>/);
-  for (const file of ['frontend/src/features/ai/found.tsx', 'frontend/src/features/ai/lists.tsx', 'frontend/src/features/ai/frame-list.tsx', SEARCH]) {
+  for (const file of ['frontend/src/features/ai/found.tsx', 'frontend/src/features/ai/lists.tsx', SEARCH]) {
     assert.doesNotMatch(read(file), /dangerouslySetInnerHTML|innerHTML/, `${file} never reads the answer as markup`);
   }
 

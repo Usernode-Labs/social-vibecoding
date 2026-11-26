@@ -4469,8 +4469,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // hasLiveLink.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
-      // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
-      // sent · nobody has joined yet · 7 days left". The links listInvites
+      // WHAT INVITE IS OUT (15 Oct 2026; Share it's line until that card
+      // went on 26 Nov 2026): "Invite link sent · nobody has joined yet ·
+      // 7 days left". The links listInvites
       // shows this viewer (their own, or every link to someone who manages
       // the project), summed: how many are live, who joined through them,
       // who still waits, and when the soonest ends. For a member or someone

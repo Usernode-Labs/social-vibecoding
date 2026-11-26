@@ -38,6 +38,7 @@ const {
 
 const DIALOG = read('frontend/src/features/profile/avatar-crop-dialog.tsx');
 const SHEET = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+const SHEET_LIB = read('frontend/src/lib/sheet.ts');
 const PROFILE = read('frontend/src/features/profile/profile.js');
 const VIEW = read('frontend/src/features/profile/profile-view.tsx');
 
@@ -254,21 +255,24 @@ test('the step checks and measures the file before it opens, and only over an op
 });
 
 test('Back cancels the step and leaves the editor open', () => {
+  // The step's claim on Back is its Sheet's (lib/sheet.ts), taken when it
+  // opens over the editor, so it is the top record; Back runs its onClose,
+  // which is Cancel, and the editor stays.
   const begin = PROFILE.slice(PROFILE.indexOf('  async beginAvatarCrop('), PROFILE.indexOf('  async acceptAvatarCrop('));
-  assert.match(begin, /Profile\._releaseCropBack = pushDismissible\(\(\) => \{\s*Profile\._releaseCropBack = null;\s*Profile\._endAvatarCrop\(\);\s*return true;/);
-  // Closing the editor closes the step first: its record is on top, and only
-  // the top record may be spent.
+  assert.doesNotMatch(begin, /pushDismissible/, 'the controller no longer holds the record itself');
+  assert.match(DIALOG, /useSheet\(\{[\s\S]*?onClose: onCancel,/);
+  assert.match(SHEET, /onCancel=\{\(\) => Profile\.cancelAvatarCrop\(\)\}/);
+  assert.match(SHEET_LIB, /pushDismissible\(\(\) => \{\s*backed = true;\s*close\(\);\s*return true;/);
+  // Closing the editor closes the step with it.
   const dismiss = PROFILE.slice(PROFILE.indexOf('  _dismissSheet({'), PROFILE.indexOf('  takeDraft() {'));
-  const cropAt = dismiss.indexOf('Profile._endAvatarCrop({ navigating: true });');
-  const editorAt = dismiss.indexOf('const release = Profile._releaseBack;');
-  assert.ok(cropAt > 0 && editorAt > cropAt, 'the step is released before the editor');
+  assert.match(dismiss, /Profile\._endAvatarCrop\(\);\s*profileStore\.set\(\{ sheetOpen: false \}\);/);
 });
 
 test('the object URL outlives the dialog copy the kit animates out', () => {
   // lib/kit-surface.ts leaves a copy of the card to play the exit; revoking
   // the URL before the store closed the dialog made that copy's <img> fail
   // to load, which logs a console error.
-  const fn = PROFILE.slice(PROFILE.indexOf('  _endAvatarCrop({'));
+  const fn = PROFILE.slice(PROFILE.indexOf('  _endAvatarCrop() {'));
   const closeAt = fn.indexOf('profileStore.set({ cropSource: null });');
   const revokeAt = fn.indexOf('URL.revokeObjectURL(source.url)');
   assert.ok(closeAt > 0 && revokeAt > closeAt);
@@ -282,16 +286,20 @@ test('decoding honours EXIF rotation, as the <img> in the frame does', () => {
 // ── The dialog ─────────────────────────────────────────────────────────
 
 test('it is a kit modal over the editor, presented the way the editor is', () => {
-  assert.match(DIALOG, /adoptKitSurface\(\{\s*kind: 'modal',/);
-  assert.match(DIALOG, /home: 'placeholder'/);
-  assert.match(DIALOG, /adoptedOn: flagEl/);
+  // The Sheet (lib/sheet.ts) lifts the card into the kit's modal, flags the
+  // root, and brings the card home before React removes it.
+  assert.match(DIALOG, /const \{ rootRef, panelRef: cardRef \} = useSheet\(\{\s*kind: 'modal',\s*hugDesignWidth: true,/);
+  assert.match(SHEET_LIB, /home: 'placeholder'/);
+  assert.match(SHEET_LIB, /adoptedOn: rootRef\.current \|\| undefined/);
   // Both kit-written nodes render a constant className.
   assert.match(DIALOG, /const ROOT_CLASS = '[^']*';/);
   assert.match(DIALOG, /id="profile-photo-crop"\s*ref=\{rootRef\}\s*className=\{ROOT_CLASS\}/);
   assert.match(DIALOG, /<DialogCard id="profile-photo-crop-card" ref=\{cardRef\}>/);
-  // The backdrop and Escape are Cancel; a dismissal after our own teardown is not.
-  assert.match(DIALOG, /onDismiss: \(\) => \{\s*if \(!adoption\) return;\s*adoption = null;\s*onCancelRef\.current\(\);/);
-  assert.match(DIALOG, /handle\.release\(\);/);
+  // The backdrop, Escape and Back are Cancel; a dismissal after our own
+  // teardown is not.
+  assert.match(DIALOG, /onClose: onCancel,/);
+  assert.match(SHEET_LIB, /onDismiss: \(\) => \{\s*adoption = null;\s*if \(live\) close\(\);/);
+  assert.match(SHEET_LIB, /handle\.release\(\);/);
 });
 
 test('the editor under it is inert, and the step renders after the lifted card', () => {
@@ -327,7 +335,11 @@ test('it is reachable and named for a keyboard and a screen reader', () => {
   assert.match(DIALOG, /onKeyDown=\{onKeyDown\}/);
   assert.match(DIALOG, /aria-label=\{t\('profile:crop\.zoom'\)\}/);
   assert.equal(message('profile:crop.zoom'), 'Zoom');
-  assert.match(DIALOG, /shell\.setAttribute\('aria-labelledby', 'profile-photo-crop-title'\)/);
+  // The root names and describes it; lifted, the Sheet hands both to the
+  // kit's shell, which is the dialog then. Focus goes to the frame.
+  assert.match(DIALOG, /aria-labelledby="profile-photo-crop-title"\s*aria-describedby="profile-photo-crop-help"/);
+  assert.match(SHEET_LIB, /for \(const attr of \['aria-labelledby', 'aria-describedby'\]\)/);
+  assert.match(DIALOG, /initialFocus: \(\) => stageRef\.current,/);
 });
 
 test('it renders the photo at its opening square, with Use photo and Cancel', () => {

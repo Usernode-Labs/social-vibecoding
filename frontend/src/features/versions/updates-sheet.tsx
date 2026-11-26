@@ -29,8 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useSheet } from '../../lib/sheet';
 import { proposeFollow, upstreamAction, upstreamAnswered, useUpstream } from './upstream';
 
 const LINK = 'text-violet-700 dark:text-violet-400 underline';
@@ -42,24 +41,15 @@ export function UpdatesSheet({ slug, original, onClose }: {
   onClose: () => void;
 }) {
   const t = useMessages('project');
-  const root = useRef<HTMLDivElement>(null);
-  const card = useRef<HTMLDivElement>(null);
-  const close = useRef(onClose);
-  useIsomorphicLayoutEffect(() => { close.current = onClose; }, [onClose]);
+  // Lifted into the kit's modal while it is open (lib/sheet.ts), which owns
+  // the backdrop, Escape, Back and focus.
+  const { rootRef: root, panelRef: card } = useSheet({ kind: 'modal', onClose });
   const up = useUpstream(slug, true);
   const [busy, setBusy] = useState<'follow' | 'share' | null>(null);
   const [error, setError] = useState('');
   const [proposed, setProposed] = useState<string | null>(null);
   const name = up?.original?.name || original.name;
 
-  useIsomorphicLayoutEffect(() => {
-    if (!root.current || !card.current) return undefined;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'modal', contentEl: card.current, adoptedOn: root.current, home: 'placeholder', gate: 'kit',
-      onDismiss: () => { adoption = null; close.current(); },
-    });
-    return () => { if (adoption) adoption.release(); };
-  }, []);
 
   const following = up ? up.following : !!original.following;
   const turnFollow = async (next: boolean) => {

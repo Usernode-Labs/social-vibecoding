@@ -219,7 +219,7 @@ test('no .dc- surface reads the raw surface tokens', () => {
 });
 
 test('the standard look: the pane is the page and a sheet is the kit\'s card (WHITE CARDS)', () => {
-  // 20 Nov 2026: the standard look (html:not([data-skin]), Standard (WIP)
+  // 20 Nov 2026: the standard look (html:root, Standard (WIP)
   // too) takes one idea of "Paper, simplified, with brand styling". The pane
   // a screen stands on is the page itself, and a sheet is the white card Home
   // and Communities already draw (the kit's --wip-card-bg and hairline). It
@@ -235,8 +235,8 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
     assert.ok(at >= 0, `the block has ${sel}`);
     return block.slice(at, block.indexOf('\n}', at));
   };
-  const light = ruleIn('html:not([data-skin])');
-  const dark = ruleIn('html:not([data-skin]).dark');
+  const light = ruleIn('html:root');
+  const dark = ruleIn('html:root.dark');
   // The pane is clear; a sheet, and the same colour opaque for what content
   // passes behind or what floats, is the kit's card in both themes.
   assert.match(light, /--dc-strip-fill: transparent;/);
@@ -246,14 +246,14 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   // The pane draws no edge and no lift; the sheet wears the kit card's one
   // hairline. Neither blurs: the base rules' --dc-frost is none, and this
   // block adds no filter of its own.
-  assert.match(ruleIn('html:not([data-skin]) .dc-lift-strip'), /border-top-color: transparent;\s*box-shadow: none;/);
-  assert.match(ruleIn('html:not([data-skin]) .dc-lift-session'),
+  assert.match(ruleIn('html:root .dc-lift-strip'), /border-top-color: transparent;\s*box-shadow: none;/);
+  assert.match(ruleIn('html:root .dc-lift-session'),
     /border-top-color: transparent;\s*box-shadow: inset 0 0 0 1px var\(--wip-card-line\), var\(--wip-card-shadow\);/);
   assert.doesNotMatch(block, /backdrop-filter|blur\(/);
   // Colours are written in the two token rules alone.
   for (const r of block.split('}')) {
     const head = r.slice(0, r.indexOf('{')).trim();
-    if (head === 'html:not([data-skin])' || head === 'html:not([data-skin]).dark') continue;
+    if (head === 'html:root' || head === 'html:root.dark') continue;
     assert.doesNotMatch(r, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${head} writes a colour of its own`);
   }
 
@@ -268,7 +268,7 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
   const cardIn = (theme) => {
-    const re = new RegExp(`\\nhtml:not\\(\\[data-skin\\]\\)${theme === 'dark' ? '\\.dark' : ''} \\{([^}]*)\\}`, 'g');
+    const re = new RegExp(`\\nhtml:root${theme === 'dark' ? '\\.dark' : ''} \\{([^}]*)\\}`, 'g');
     const decls = [...APP_CSS.matchAll(re)].map((m) => m[1].match(/--wip-card-bg:\s*([^;]+);/)).filter(Boolean).map((m) => m[1].trim());
     assert.ok(decls.length > 0, `${theme}: the kit declares its card`);
     const last = decls[decls.length - 1];
@@ -287,7 +287,7 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   const bubble = light.match(/--wip-bubble-bg: (#[0-9a-f]{6});/);
   assert.ok(bubble, 'the other side\'s bubble is a colour in light');
   assert.ok(lum(cardIn('light')) - lum(bubble[1]) >= 8, `the bubble (${bubble[1]}) reads on the card`);
-  assert.match(ruleIn('html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,\nhtml:not([data-skin]) .gc-bubble:not(.gc-bubble-self)'),
+  assert.match(ruleIn('html:root .messages-message:not(.messages-message-self) .messages-bubble,\nhtml:root .gc-bubble:not(.gc-bubble-self)'),
     /background-color: var\(--wip-bubble-bg\);/);
   assert.doesNotMatch(block, /messages-message-self \.messages-bubble|\.gc-bubble-self \{/);
 
@@ -296,10 +296,10 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   // takes the kit card's hairline; a row under the pointer or open takes the
   // kit's soft row ground, not the white veil it wore. And a phone's
   // Messages list stands on the card, as the conversation over it does.
-  const messages = ruleIn('html:not([data-skin]) :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar)');
+  const messages = ruleIn('html:root :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar)');
   assert.match(messages, /--messages-selected: var\(--wip-item-hover\);/);
   assert.match(messages, /--messages-disc-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
-  assert.match(ruleIn('html:not([data-skin]) .gc-composer-card,\nhtml:not([data-skin]) #settings-root .ui-card.bg-white'),
+  assert.match(ruleIn('html:root .gc-composer-card,\nhtml:root #settings-root .ui-card.bg-white'),
     /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
-  assert.match(ruleIn('html:not([data-skin]) .messages-layout.messages-drawer'), /background-color: var\(--wip-card-bg\);/);
+  assert.match(ruleIn('html:root .messages-layout.messages-drawer'), /background-color: var\(--wip-card-bg\);/);
 });

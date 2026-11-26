@@ -89,6 +89,33 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.ok(!created.body.spec.tags[0].endsWith(`-${unstampedRecipe}`), 'the same commit must rebuild its previously unstamped image');
 });
 
+test('a build pool of their own applies to kpack Build Pods too', async () => {
+  let created;
+  kubernetes._setClientsForTest({
+    core: { async listNode({ labelSelector }) {
+      assert.equal(labelSelector, 'pool=build', 'the build waits for its own pool');
+      return { items: [{ metadata: {}, spec: {}, status: { conditions: [{ type: 'Ready', status: 'True' }] } }] };
+    } },
+    custom: {
+      async createNamespacedCustomObject(request) { created = request; },
+      async getNamespacedCustomObject() {
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'registry.test/demo@sha256:built' } };
+      },
+    },
+  });
+  try {
+    const cfg = config();
+    Object.assign(cfg.kubernetes, { checkNodePoolRequired: true, checkNodePool: 'pool=batch', buildNodePool: 'pool=build',
+      builderImage: `builder.example/image@sha256:${'d'.repeat(64)}` });
+    await kubernetes.createBuild(cfg, { app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+      revision: 'f'.repeat(40), environment: 'production' });
+    assert.deepEqual(created.body.spec.nodeSelector, { pool: 'build' });
+    assert.deepEqual(created.body.spec.tolerations, [{ key: 'pool', operator: 'Equal', value: 'build', effect: 'NoSchedule' }]);
+  } finally {
+    kubernetes._setClientsForTest(null);
+  }
+});
+
 test('strict batch placement applies to kpack Build Pods and reuses completed images without a pool', async () => {
   let created;
   let available = true;
@@ -1012,6 +1039,41 @@ test('an exhausted batch wait is infrastructure failure and an aborted wait stay
   const pending = kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 50, signal: controller.signal });
   controller.abort(new Error('cancelled batch wait'));
   await assert.rejects(pending, /cancelled batch wait/);
+});
+
+test('with a build pool of their own, builds wait for that pool, not for room in the checks pool', async (t) => {
+  const cfg = { kubernetes: { checkNodePoolRequired: true, checkNodePool: 'pool=batch', buildNodePool: 'pool=build',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  const asked = [];
+  let nodes = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    asked.push(new URL(url).searchParams.get('query'));
+    return { ok: true, json: async () => ({ status: 'success', data: { resultType: 'vector', result: nodes } }) };
+  });
+  await assert.rejects(kubernetes.waitForBatchPool(cfg, { waitMs: 10, pollMs: 1 }),
+    (err) => err.infrastructure === true && /dedicated build pool/.test(err.message), 'no Ready node there yet');
+  assert.ok(asked.every((q) => q.includes('label_pool="build"')), 'it asks about the build pool only');
+  // One small Ready node is enough: the scheduler judges a build's room.
+  nodes = [{ metric: { node: 'small', resource: 'cpu' }, value: [0, '12'] }];
+  await kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 1 });
+});
+
+test('the build pool through the node API: Ready, schedulable, tainted only with its own pair', async () => {
+  const node = (extra = {}) => ({ metadata: {}, spec: { taints: [{ key: 'pool', value: 'build', effect: 'NoSchedule' }], ...extra },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } });
+  let items = [];
+  const selectors = [];
+  kubernetes._setClientsForTest({ core: { async listNode({ labelSelector }) { selectors.push(labelSelector); return { items }; } } });
+  try {
+    const cfg = { kubernetes: { buildNodePool: 'pool=build' } };
+    items = [node({ unschedulable: true }), node({ taints: [{ key: 'other', value: 'x', effect: 'NoSchedule' }] })];
+    await assert.rejects(kubernetes.waitForBatchPool(cfg, { waitMs: 10, pollMs: 1 }), /dedicated build pool/);
+    items = [node()];
+    await kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 1 });
+    assert.ok(selectors.every((s) => s === 'pool=build'));
+  } finally {
+    kubernetes._setClientsForTest(null);
+  }
 });
 
 test('batch configuration errors fail immediately rather than entering a monitoring retry', async (t) => {

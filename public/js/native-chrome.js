@@ -2107,9 +2107,8 @@
     },
 
     // Where app.css draws the phone's top bar in the tab bar's blue ("THE
-    // PHONE'S TOP BAR IS THE TAB BAR'S BLUE"): under 768px, in the standard
-    // look (no `data-skin`), on a top-level screen or a project page the
-    // platform draws. Keep the query and the screens in step with that rule.
+    // PHONE'S TOP BAR IS THE TAB BAR'S BLUE"): under 768px, on a top-level
+    // screen or a project page the platform draws. Keep the query and the screens in step with that rule.
     // The side strip and the community tint are left to statusBarToneFor,
     // which answers them first.
     _PHONE_BAR_QUERY: '(max-width: 767.98px)',
@@ -2118,7 +2117,6 @@
       'communities-screen', 'ai-screen', 'profile-proposals-screen'],
 
     _phoneBarUp(shown) {
-      if (document.documentElement.getAttribute('data-skin') !== null) return false;
       if (typeof window.matchMedia !== 'function'
         || !window.matchMedia(NativeChrome._PHONE_BAR_QUERY).matches) return false;
       if (!shown(document.getElementById('platform-header'))) return false;
@@ -2234,7 +2232,7 @@
           NativeChrome.publishStatusBarTone();
         });
         observer.observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint', 'data-side-strip', 'data-skin'] });
+          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] });
         // Both overlays are in the shell's static markup ahead of this
         // script, and their islands never unmount (the staging one holds
         // the preview iframe, whose identity is pinned).

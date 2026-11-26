@@ -107,3 +107,45 @@ test('the guest directory: the project named what was typed leads, whatever the 
   assert.deepEqual(shown('sketch', 'trending'), ['one', 'two', 'three', 'mine'], 'a partial query keeps the sort');
   assert.deepEqual(shown('sketchbook', 'trending', 'games'), [], 'a kind still narrows');
 });
+
+test('matchesSearch: inside any text, any case, accents aside; an empty query finds everything', () => {
+  const { matchesSearch } = loadTsx(RANK);
+  assert.equal(matchesSearch('cafe', 'Café Corner'), true, '"cafe" finds Café');
+  assert.equal(matchesSearch('CAFÉ', 'my cafe'), true, 'and Café finds cafe');
+  assert.equal(matchesSearch('corner', null, undefined, 'Café Corner'), true, 'a missing text is passed over');
+  assert.equal(matchesSearch('board', 'Café Corner'), false);
+  assert.equal(matchesSearch('   ', 'anything'), true);
+  assert.equal(matchesSearch('', null), true);
+  assert.equal(matchesSearch('x', null), false);
+  assert.equal(matchesSearch('Всё', 'Все'), false, 'Cyrillic keeps its marks');
+});
+
+// The searches that only narrow a list (no lead) find what Home's grid
+// finds: typing "cafe" on Home found an app called Café but not a community
+// called Café beside it, and the guest's own pins the same.
+test('Home and the Communities page: a community called Café is found by "cafe" (use-home-query)', () => {
+  const { matchesQuery } = loadTsx('frontend/src/features/home/use-home-query.ts');
+  assert.equal(matchesQuery('cafe', 'Café', 'cafe-7a1f'), true);
+  assert.equal(matchesQuery('ecole', 'Petite École', null), true);
+  assert.equal(matchesQuery('chess', 'Café', 'cafe-7a1f'), false);
+  assert.equal(matchesQuery('', 'Café'), true);
+});
+
+test('every list search in the shell reads the one matcher, not a matcher of its own', () => {
+  const fs = require('node:fs');
+  const read = (p) => fs.readFileSync(require('node:path').join(__dirname, '..', p), 'utf8');
+  for (const file of [
+    'frontend/src/features/home/use-home-query.ts',
+    'frontend/src/features/guest/guest-discover.tsx',
+    'frontend/src/features/home/home.js',
+    'frontend/src/features/ai/lines.ts',
+    'frontend/src/features/ai/project-picker.tsx',
+    'frontend/src/features/notifications/notifications-search.js',
+    'frontend/src/features/notifications/notifications-sheet.tsx',
+    'frontend/src/features/messages/index.tsx',
+  ]) {
+    const src = read(file);
+    assert.match(src, /lib\/search-rank\.js'/, `${file} imports lib/search-rank.js`);
+    assert.doesNotMatch(src, /\.toLowerCase\(\)\.includes\(/, `${file} matches with no .toLowerCase().includes() of its own`);
+  }
+});

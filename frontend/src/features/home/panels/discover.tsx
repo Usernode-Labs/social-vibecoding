@@ -37,6 +37,7 @@ function CardArt({ icon }: { icon: IconView }) {
         src={icon.src}
         alt=""
         loading="lazy"
+        decoding="async"
         draggable={false}
         className="home-discover-art-img"
       />
@@ -76,10 +77,10 @@ function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   const style = { transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` };
   const hasDark = !!art.darkUrl && !darkFailed;
   return <>
-    <img src={art.url} alt="" draggable={false}
+    <img src={art.url} alt="" loading="lazy" decoding="async" draggable={false}
       className={`home-discover-illustration ${hasDark ? 'illustration-light' : ''}`}
       onError={() => setFailed(true)} style={style} />
-    {hasDark ? <img src={art.darkUrl!} alt="" draggable={false}
+    {hasDark ? <img src={art.darkUrl!} alt="" loading="lazy" decoding="async" draggable={false}
       className="home-discover-illustration illustration-dark"
       onError={() => setDarkFailed(true)} style={style} /> : null}
   </>;

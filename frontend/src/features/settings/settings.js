@@ -750,27 +750,6 @@
         });
       }
 
-      // The Look menu (an admin's preview of the looks), kept on the device
-      // by the head's window.Skin: the change is the save, and the look
-      // applies at once. Its options are the looks the head stores
-      // ('brand', lib/skin.ts MENU_SKINS); nothing stored reads as
-      // Standard.
-      const lookSelect = document.getElementById('settings-look');
-      const paintLooks = () => {
-        const entry = window.Skin?.get?.();
-        if (lookSelect) {
-          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === entry) ? entry : '';
-        }
-      };
-      if (lookSelect) {
-        lookSelect.addEventListener('change', (e) => {
-          window.Skin?.set?.(String(e.target.value || 'standard'));
-          paintLooks();
-        });
-        // Another tab changing it repaints the menu here too.
-        window.Skin?.onChange?.(paintLooks);
-      }
-
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -997,7 +976,6 @@
       this._renderDevConsoleSection();
       this._renderLanguageSection();
       this._loadMobilePushPreferences();
-      this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
     },
@@ -1854,14 +1832,6 @@
       if (!toggle) return;
       const mode = window.DevConsole ? DevConsole.getMode() : 'errors-only';
       toggle.checked = mode === 'always';
-    },
-
-    _renderExperimentalSection() {
-      const lookMenu = document.getElementById('settings-look');
-      if (lookMenu) {
-        const stored = window.Skin?.get?.();
-        lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
-      }
     },
 
     // Home sections are permanent (#1801); the old widget visibility
@@ -3504,10 +3474,6 @@
     // applied the mask either, so the live value still reflects the
     // server truth. `??` (not `||`) so an explicit `false` from a
     // current-cache app.js wins over the fallback.
-    //
-    // The Look menu in Experimental is gated the same way: an admin's
-    // preview of looks drawn screen by screen, hidden from everyone else
-    // until they are whole (a `?skin=<look>` pin in the address stays open).
     _renderAdminSection() {
       const section = document.getElementById('settings-admin-section');
       const toggle = document.getElementById('view-as-non-admin');
@@ -3523,18 +3489,6 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
-      // A device left in one of the menu's looks keeps the menu whoever is
-      // signed in (an admin's device in other hands, an admin who lost the
-      // role, a device that had the old New look switch on, which stored
-      // 'brand'): the look is stored on the device and the menu is what
-      // clears it.
-      const lookSection = document.getElementById('settings-look-section');
-      if (lookSection) {
-        const lookMenu = document.getElementById('settings-look');
-        const stored = window.Skin?.get?.();
-        const inLook = !!lookMenu && Array.from(lookMenu.options).some((o) => o.value && o.value === stored);
-        lookSection.classList.toggle('hidden', !realAdmin && !inLook);
-      }
       if (!section || !toggle) return;
       if (!realAdmin) {
         section.classList.add('hidden');

@@ -56,19 +56,6 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 };
 
 /**
- * The radio mark a row wears under one of the frame's looks (looks v2: the
- * choices are radio rows in a card there). Never drawn by the standard look
- * (`ui-look-only`, app.css), whose segment says which one is chosen by its own fill.
- */
-function RadioMark({ on }: { on: boolean }) {
-  return (
-    <span aria-hidden="true" className={on ? 'ui-chk ui-chk-on ui-look-only' : 'ui-chk ui-look-only'}>
-      {on ? <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" /> : null}
-    </span>
-  );
-}
-
-/**
  * The Light / Dark / System segmented control — App.HeaderMenu's
  * _renderThemeButtons(), as state.
  *
@@ -137,7 +124,6 @@ function ThemeControl() {
           className={mode === m ? `${THEME_SEG_CLASS} theme-seg-active` : THEME_SEG_CLASS}
           onClick={() => choose(m)}
         >
-          <RadioMark on={mode === m} />
           {t(THEME_LABELS[m])}
         </button>
       ))}

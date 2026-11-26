@@ -64,6 +64,7 @@ import { DetailPicker } from '../detail/detail-card';
 import { useStoreState } from '../../lib/use-store-state';
 import { LiveDraftControls, useDraftForSession, useLiveDraftActs } from '../messages/live-draft-bar';
 import { PreviewPinLayer, togglePreviewPins, usePreviewPins } from './preview-pin';
+import { ShotsViewer } from '../review-flow/shots-viewer';
 
 /**
  * The first visit's line. A project that is just yours goes live when you
@@ -183,7 +184,7 @@ export function StagingOverlay(): ReactNode {
   const noteShown = !state.noteSeen;
   const testShown = !state.testBtnHidden;
   const clockShown = !!state.clockLabel;
-  const shotsOffered = !!state.shotsHtml;
+  const shotsOffered = !!state.shots;
   const showingShots = shotsOffered && state.view === 'shots';
 
   useHiddenClass(retryRef, !state.loaderRetry);
@@ -514,9 +515,9 @@ export function StagingOverlay(): ReactNode {
         >
         </iframe>
         {/*
-            The other side of the switch: the change's before and after
-            viewer (AppView.shotsHtml's `thread` reading, escaped where it is
-            built). Over the frame, which keeps running underneath.
+            The other side of the switch: the change's before and after, in
+            the one viewer every surface draws. Over the frame, which keeps
+            running underneath.
         */}
         <div
           id="staging-shots"
@@ -524,8 +525,8 @@ export function StagingOverlay(): ReactNode {
           className="hidden staging-shots"
           role="region"
           aria-label={t('devchat:staging.switch.shots')}
-          dangerouslySetInnerHTML={{ __html: state.shotsHtml }}
         >
+          <ShotsViewer source={state.shots} expanded />
         </div>
         {/* J: a live draft's pinned comment, over the app's frame only.
             Always rendered (it draws nothing until Comment is pressed), so

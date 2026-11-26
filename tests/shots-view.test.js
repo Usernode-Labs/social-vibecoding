@@ -561,27 +561,24 @@ test('close-ups reach only a viewer in the experiment, in their own shape, and n
       contentType: 'image/png', part: 2, rect: { x: 40, y: 30, w: 66, h: 40 }, width: 594, height: 360, density: 8.2, bytes: 7,
       url: `/api/apps/demo/proposals/42/shots/${id(1002)}?density=device` },
   ]);
-  // Each passes the change page's own address checks (app-view.js shotsUrl,
-  // openShotsComparison's and _workshopVisuals's urlOk).
+  // Each passes the address checks a still is drawn through: Needs you's
+  // (app-view.js _workshopVisuals's urlOk) and the before & after viewer's
+  // (review-flow/shots-model.ts shotUrl). #6825: both take a smaller copy's
+  // own address too (`?size=thumb`, `?size=screen`).
   const appView = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
-  // #6825: the two checks a still is drawn through (`_workshopVisuals`,
-  // `shotsHtml`) take a smaller copy's own address too (`?size=thumb`,
-  // `?size=screen`); the comparison overlay's takes only the still itself.
-  const densityOnly = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
   const withSizes = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\|\\\?size=\(\?:thumb\|screen\)\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
-  const checks = [...densityOnly, ...withSizes];
-  assert.equal(densityOnly.length, 1);
-  assert.equal(withSizes.length, 2);
+  assert.equal(withSizes.length, 1);
+  const { shotUrl } = require('./lib/render-tsx').loadTsx('frontend/src/features/review-flow/shots-model.ts');
+  const viewerCheck = { test: (value) => shotUrl(value, 42) === value };
+  const checks = [...withSizes, viewerCheck];
   for (const artifact of dense.artifacts.filter((a) => a.variant === 'closeup')) {
-    for (const check of checks) assert.match(artifact.url, check);
+    for (const check of checks) assert.ok(check.test(artifact.url), artifact.url);
   }
-  // A still's smaller copy is drawn by the two that take one, and refused
-  // by the overlay, which shows the whole still.
-  for (const check of withSizes) {
-    assert.match(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=thumb`, check);
-    assert.doesNotMatch(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=huge`, check);
+  // A still's smaller copy is drawn, and an address with anything else after the id is not.
+  for (const check of checks) {
+    assert.ok(check.test(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=thumb`));
+    assert.ok(!check.test(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=huge`));
   }
-  for (const check of densityOnly) assert.doesNotMatch(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=thumb`, check);
   // A malformed one is left out.
   for (const odd of [{ scale: 1 }, { scale: 20 }, { part: 3 }, { focusRect: null }, { focusRect: { x: -1, y: 0, w: 1, h: 1 } }, { side: 'base' }]) {
     const out = view.serialize(run({ artifactSummary: [closeup(1, odd)] }), session(), 'demo', HEAD, { dense: true });

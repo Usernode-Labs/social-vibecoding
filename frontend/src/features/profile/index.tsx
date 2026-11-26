@@ -13,7 +13,7 @@
 // rather than incidental. It is NOT one of the nine dialogs that go through
 // frontend/src/lib/static-modal.ts — there is no static root whose card gets
 // lifted — so it is rendered here, inside #profile-root, and handed to the
-// native kit by lib/kit-surface.ts. Its no-kit fallback was already "leave the
+// native kit by lib/sheet.ts. Its no-kit fallback was already "leave the
 // panel at the top of #profile-root", which is exactly where React puts it.
 //
 // Visibility comes from the store; `false` is the shipped state. It has to be
