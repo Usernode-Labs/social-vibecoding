@@ -251,7 +251,7 @@ test('For you on a project nobody else is in: Needs you, the Workshop and the Di
   assert.equal(declared.expectText, 'Workshop');
   assert.match(declared.path, /#app\/usernode-2d5619\/workshop$/);
   assert.equal(declared.expectSelector,
-    '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]',
+    '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hub-cols > .dev-ws-hub-side > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]',
     'For you\'s Workshop row, opening the place on this page');
   const src = read(HUB);
   assert.equal(hub.hubWorkEmpty, undefined, 'no other words for an empty Your work');

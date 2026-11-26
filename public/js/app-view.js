@@ -13725,7 +13725,10 @@ const AppView = {
   // select against it and the proposal screenshots are shot from it.
   // `bot` (16 Oct 2026): Homeroom bot's slots, a page under the Workshop,
   // as All items is (frontend/src/features/dev-board/workshop/bot-slots.tsx).
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'bot'],
+  // `posts` (26 Nov 2026): the project's Discussion whole, a page under the
+  // hub that a phone's Discussion card opens (hub-discussion.tsx); visited,
+  // never reopened on, as the plan is: the hub draws the Discussion itself.
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'posts', 'bot'],
   // #4417: the page is navigated by its PLACES now — the three pages, then
   // its channels — and a topic's channel is a place too: `c:<handle>`
   // (frontend/src/features/dev-board/workshop/places.ts). It is remembered,
@@ -13806,7 +13809,7 @@ const AppView = {
       const stored = key ? window.localStorage.getItem(key) : null;
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
+      if (AppView._isWorkshopPlace(stored) && stored !== 'plan' && stored !== 'posts') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in: migrating the retired mode without carrying what it
       // MEANT would hand them a digest where they had chosen a worklist.
@@ -14144,8 +14147,9 @@ const AppView = {
   },
 
   _setWorkshopTab(key, slug) {
-    // The plan is gone once it is built, so the page reopens on the hub.
-    const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub; the
+    // Discussion page is the hub's own card, whole, so it reopens there too.
+    const next = AppView._isWorkshopPlace(key) && key !== 'plan' && key !== 'posts' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
