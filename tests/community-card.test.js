@@ -115,8 +115,9 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   assert.equal(renderToHtml(createElement(CommunityCard, { slug: 'notes' })), '');
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
   assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
-  // One look (25 Nov 2026): Open app wears the shared sticker part, the page's one main action.
-  assert.match(pending, /<button type="button" class="dev-ws-open-app one-btn one-btn-1" data-ws-community-open-app="">/);
+  // One look (25 Nov 2026): Open app wears the shared sticker part, the page's one main action,
+  // drawn by the Button primitive's primary `sun` variant.
+  assert.match(pending, /<button type="button" data-ws-community-open-app="" class="one-btn one-btn-1 dev-ws-open-app">/);
   // Open app wears the community's colour from the root, where the header
   // sets it (features/header/community-tint.ts), not from a prop.
   assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--community-tint, var\(--accent\)\)/);

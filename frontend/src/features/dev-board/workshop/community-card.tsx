@@ -1084,16 +1084,19 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   // app and the ⋯), so a read that fails cannot take the project's settings
   // off the page. The name and tile come with the read (HeroIdentity).
   const openApp = canOpenApp ? (
-    <button
+    <Button
       type="button"
       // ONE LOOK (25 Nov 2026): the page's one main action, the sun sticker.
-      className="dev-ws-open-app one-btn one-btn-1"
+      variant="sun"
+      size="none"
+      ink="none"
+      className="dev-ws-open-app"
       data-ws-community-open-app=""
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >
       <PlayIcon className="w-3 h-3" aria-hidden="true" />
       {t('project:communityCard.openApp')}
-    </button>
+    </Button>
   ) : null;
   if (!data) {
     return (openApp || menu) ? (

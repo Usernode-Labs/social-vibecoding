@@ -50,6 +50,28 @@ import { cn } from '@/lib/utils';
  * very END of the string instead; they pass them through `className`, which
  * lands last.
  *
+ * ── The four kinds ─────────────────────────────────────────────────────
+ *
+ * A page's actions come in four kinds, and every one of them is drawn here
+ * rather than as a hand-written <button> with its own class string
+ * (tests/button-primitive-ratchet.test.js holds the number of those down).
+ * The standard look's BUTTONS block in app.css draws each kind from the
+ * classes a variant writes, so a kind is a `variant`, not a group of its own:
+ *
+ *   primary    the main action: the yellow pill with the dark sticker edge.
+ *              `pillAccent` (and `default`, `pill`, `compact`, the boxes of
+ *              the same accent fill); `sun` for the shared `.one-btn-1`
+ *              recipe; `cta` for the page's top action (New project).
+ *   secondary  the white pill beside it: `pillRaised`.
+ *   quiet      the tinted pill (Invite, Skip, Decline): `pillNeutral` with
+ *              ink `neutral` (and `neutral`, `pillOnCard`, the same tint on
+ *              other grounds); `brandTint` in the header's own colours.
+ *   link       words underlined (Settings' Change and Add): `link`.
+ *
+ * A NEW action picks the kind's variant and the size the screen needs. A
+ * value is added only where no existing one writes the same classes, so a
+ * converted button keeps every class it wore and looks exactly as it did.
+ *
  * ── Rules for editing this file ────────────────────────────────────────
  *
  * - Do NOT add utilities the shell doesn't already apply to that element.
@@ -78,8 +100,6 @@ const buttonVariants = cva('', {
       flex: 'flex-1',
       // #wallet-link-btn, #register-submit, #login-submit.
       full: 'w-full',
-      // #waiting-continue.
-      blockFull: 'block w-full',
       // The landing page's inline call to action.
       inlineBlock: 'inline-block',
       // #settings-save, #settings-openrouter-save, #connector-add — beside a
@@ -89,18 +109,16 @@ const buttonVariants = cva('', {
       hiddenShrink: 'hidden shrink-0',
       // #members-invite-confirm.
       hidden: 'hidden',
-      // #password-change-submit.
-      stacked: 'mt-2 w-full',
-      // #password-set-submit, revealed only for passwordless accounts.
-      hiddenStacked: 'hidden mt-2 w-full',
       // The profile screen writes its padding and its 44px tap target BEFORE
-      // the box rather than after it, so on those two buttons the padding
-      // travels here and the `size` group contributes nothing. #profile-edit-save.
+      // the box rather than after it, so on that button the padding travels
+      // here and the `size` group contributes nothing. #profile-edit-save.
       tapFull: 'w-full px-4 min-h-[44px]',
-      // The profile's publish/unpublish button, beside a bordered sibling.
-      tap: 'px-3 min-h-[44px]',
-      // #browse-detail-open, whose label is an arrow glyph beside a word.
+      // A glyph beside a word, in a row of its own.
       iconRow: 'inline-flex items-center gap-2',
+      // The landing site's pills (features/auth/story.tsx and
+      // features/guest/guest-communities.tsx): a 44px row, its words on one
+      // line. With variant `sitePrimary` or `siteSecondary`.
+      site: 'inline-flex min-h-11 items-center justify-center whitespace-nowrap',
       // #improve-row-feedback — the Improve panel's "Give feedback" (#1367).
       // The same glyph-beside-a-word row as iconRow, spanning the panel's
       // width and centred in it, which is what makes it read as the panel's
@@ -124,10 +142,38 @@ const buttonVariants = cva('', {
       // action inside a `text-xs` row card, where the smaller radius matches
       // the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
-      // #browse-detail-open. Radius only: the browse detail page writes its
-      // transition BEFORE the fill, so on that one button the surface travels
-      // in `ink` instead — see `fillLate` / `unavailableLate` below.
+      // Radius only, the fill in `ink`: the hub's invite hero button
+      // (features/dev-board/workshop/community-card.tsx, .dev-ws-invite-hero-btn).
       roundedFull: 'rounded-full',
+      // PRIMARY, as the shared recipe draws it (app.css, ONE LOOK · SHARED
+      // PARTS: `.one-btn.one-btn-1`, the sun with the sticker edge, 44px on a
+      // phone and 36px from 768px). The recipe carries its own box, size and
+      // ink, so it goes with size `none` and ink `none`. Call site: a
+      // project's Open app (features/dev-board/workshop/community-card.tsx).
+      sun: 'one-btn one-btn-1',
+      // PRIMARY as the page's top action (app.css `.wip-cta`, and the ids'
+      // own rules for New project and New community): the same recipe-only
+      // shape as `sun`, with size `none` and ink `none`. Call site: WipCta
+      // (features/home/wip-kit.tsx), Home's New project and Communities' New
+      // community and Discover.
+      cta: 'wip-cta',
+      // QUIET in the header's own colours: the brand tint, its hairline and
+      // (ink `brand`) its words. Call sites: the header's Suggest
+      // (features/header/in-app-actions.tsx, #header-in-app-suggest), which
+      // the standard look redraws in the sky tint, and the phone drawer's
+      // back disc (features/nav-drawer/header-drawer.tsx, .nav-drawer-back).
+      brandTint: 'rounded-full border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]',
+      // The landing site's own PRIMARY and SECONDARY (features/auth/story.tsx):
+      // a pill on the site's ink outline with a hard edge under it, in the
+      // sun or in the panel's white. With layout, size and ink `site`
+      // (`siteOnSun` on the sun).
+      sitePrimary: 'rounded-full shadow-[inset_0_0_0_1px_var(--site-line),0_2px_0_var(--site-line)] bg-[var(--site-sun)]',
+      siteSecondary: 'rounded-full shadow-[inset_0_0_0_1px_var(--site-line),0_2px_0_var(--site-line)] bg-[var(--site-panel)]',
+      // LINK: a word that acts, inside a row (app.css `.ui-link`, underlined
+      // by the standard look's Settings rules). With size `link` and ink
+      // `link`. Call site: Settings' sign-in rows' Change and Add
+      // (features/settings/sections/sign-in-row.tsx RowAction).
+      link: 'ui-link rounded-lg',
       // The neutral bordered sibling of `compact`: the Connectors pane's Copy
       // buttons and the welcome tour's Back.
       //
@@ -223,13 +269,24 @@ const buttonVariants = cva('', {
       // primary button.
       pill: 'px-5 py-2.5 text-[15px] font-semibold',
       pillLg: 'px-5 py-3 text-[17px] font-semibold',
+      // The 40px pill with the text size spelled `text-sm`: the bell drawer's
+      // invite Decline (features/notifications/notifications-list.tsx).
+      pillText: 'px-5 py-2.5 text-sm font-semibold',
+      // The header's small pill: a pencil alone on a phone, with its word
+      // from `sm` (#header-in-app-suggest).
+      chip: 'px-1.5 sm:px-2.5 text-[0.8125rem] font-semibold',
+      // A row's word action (variant `link`).
+      link: 'px-2 py-1 text-[15px] font-medium',
+      // The landing site's pills, in its display face (variant `sitePrimary`
+      // or `siteSecondary`).
+      site: 'px-[18px] py-2 text-center font-[family-name:var(--site-display)] text-[16px] leading-[22px] font-medium',
       // #more-submit.
       xl: 'px-6 py-2 text-sm font-medium',
       // Icon buttons carry their own sizing from the surrounding layout.
       icon: '',
-      // The `tap*` layouts above already carry the padding, and the profile
-      // screen writes its text size after the ink rather than before it, so
-      // this group has nothing to add on those two call sites.
+      // Nothing to add: the box comes from elsewhere — the `tapFull` layout's
+      // padding, a recipe variant's own box (`sun`, `cta`), or the call
+      // site's className.
       none: '',
       // Text-only controls add no box of their own.
       inline: 'text-sm',
@@ -246,15 +303,6 @@ const buttonVariants = cva('', {
       solidText: 'text-white text-sm font-medium',
       // The auth screens' spelling of the same pair — see the header.
       solidLate: 'transition-colors text-white',
-      // #browse-detail-open's two states. The browse detail page is the one
-      // place that writes the whole surface after the transition, because the
-      // button swaps its ENTIRE fill (violet action ↔ inert grey) on
-      // `canOpen` and the shared run in front of it never changes. Carrying
-      // the fill in `variant` would put the swap two groups earlier and move
-      // the rendered class attribute.
-      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
-      unavailableLate:
-        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
       // The quiet secondary label: `outline`'s Copy and Back, and the
       // dialogs' Cancel and Done.
       muted:
@@ -274,6 +322,14 @@ const buttonVariants = cva('', {
       // the Getting started card's outlined step buttons, retired with the
       // card (#4635).
       accent: 'text-violet-600 dark:text-violet-400 transition-colors',
+      // The header's ink on `brandTint`.
+      brand: 'text-[color:var(--brand-ink)]',
+      // The landing site's ink, and its ink on the sun.
+      site: 'text-[color:var(--site-ink)]',
+      siteOnSun: 'text-[color:var(--site-on-sun)]',
+      // The link's words, its hover a step lighter, and the keyboard's ring
+      // as Settings' rows have always drawn it (variant `link`).
+      link: 'text-violet-700 hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
     },
   },
   defaultVariants: {

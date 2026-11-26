@@ -35,7 +35,9 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { Button, buttonVariants } from '@/components/ui/button';
 import { ChevronRightIcon } from '@/components/ui/icons';
+import { cn } from '@/lib/utils';
 
 import { Message, RichMessage } from '../../lib/i18n/react';
 import { noteSignUpFrom } from './sign-up-from';
@@ -73,11 +75,12 @@ const SITE_LINK = 'font-semibold text-[color:var(--site-ink)] underline decorati
 // One of the three dots a window's strip carries.
 const WINDOW_DOT = 'h-2 w-2 rounded-full border border-[color:var(--site-line)] md:h-2.5 md:w-2.5';
 
-// The short story's two buttons: a sun pill on an ink outline, as the bar's
-// button is, and its plain twin beside it.
-const HERO_PILL = 'inline-flex min-h-11 items-center justify-center rounded-full whitespace-nowrap px-[18px] py-2 text-center font-[family-name:var(--site-display)] text-[16px] leading-[22px] font-medium no-underline shadow-[inset_0_0_0_1px_var(--site-line),0_2px_0_var(--site-line)] un-touch-target';
-export const HERO_PRIMARY = `${HERO_PILL} bg-[var(--site-sun)] text-[color:var(--site-on-sun)]`;
-export const HERO_SECONDARY = `${HERO_PILL} bg-[var(--site-panel)] text-[color:var(--site-ink)]`;
+// The short story's two buttons, the Button primitive's site kinds: a sun
+// pill on an ink outline (primary), as the bar's button is, and its plain
+// white twin beside it (secondary), which is a link here, so it takes the
+// same classes from buttonVariants.
+export const HERO_TAP = 'no-underline un-touch-target';
+export const HERO_SECONDARY = cn(buttonVariants({ layout: 'site', variant: 'siteSecondary', size: 'site', ink: 'site' }), HERO_TAP);
 
 // "Explore apps" brings what follows the story (the communities, which start
 // right under it) to the top of the screen, clear of the bar.
@@ -347,9 +350,9 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
               </p>
             ) : null}
             <div data-landing-story-actions="" className="mt-5 flex flex-wrap justify-center gap-2.5 md:mt-6">
-              <button type="button" data-landing-story-explore="" className={HERO_PRIMARY} onClick={exploreApps}>
+              <Button type="button" data-landing-story-explore="" layout="site" variant="sitePrimary" size="site" ink="siteOnSun" className={HERO_TAP} onClick={exploreApps}>
                 {t('auth:guest.hero.explore')}
-              </button>
+              </Button>
               <a href={COMMUNITIES_PATH} data-landing-story-private="" className={HERO_SECONDARY}>
                 {t('auth:guest.hero.privateHow')}
               </a>

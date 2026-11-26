@@ -42,6 +42,9 @@ function createFakeReact() {
   let renderFn = null;
   let passive = [];
   const React = {
+    // The card's story module draws its buttons with the Button primitive,
+    // which calls forwardRef at module load; nothing here renders it.
+    forwardRef: (render) => render,
     useState(initial) {
       const i = cursor++;
       if (!(i in slots)) {

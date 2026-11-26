@@ -9,7 +9,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { returnKeyHandler } from '../../../lib/return-to-next';
 import {
-  EDITOR_ACTIONS, EDITOR_NOTE, ROW_ACTION, ROW_EDITOR, SignInRow,
+  EDITOR_ACTIONS, EDITOR_NOTE, RowAction, ROW_EDITOR, SignInRow,
 } from './sign-in-row';
 
 type AccountEmail = {
@@ -172,14 +172,14 @@ function EmailForm() {
             // that has one is for reading and offers no action. Add stays for
             // an account with no email, since a first address is not a change.
             !open && !account.email ? (
-              <button type="button" className={ROW_ACTION} aria-expanded="false" onClick={openEditor}>
+              <RowAction type="button" aria-expanded="false" onClick={openEditor}>
                 {t('settings:account.add')}
-              </button>
+              </RowAction>
             ) : null
           ) : error ? (
-            <button type="button" className={ROW_ACTION} onClick={() => setReload((n) => n + 1)}>
+            <RowAction type="button" onClick={() => setReload((n) => n + 1)}>
               {t('core:common.tryAgain')}
-            </button>
+            </RowAction>
           ) : null}
         />
         {account && open ? (
@@ -218,9 +218,9 @@ function EmailForm() {
                   {t('core:common.cancel')}
                 </Button>
               </div>
-              {pending ? <button type="button" className={ROW_ACTION} disabled={busy} onClick={() => {
+              {pending ? <RowAction type="button" disabled={busy} onClick={() => {
                 setPending(''); setCode(''); setMessage(''); setError('');
-              }}>{t('settings:email.startOver')}</button> : null}
+              }}>{t('settings:email.startOver')}</RowAction> : null}
             </form>
           </div>
         ) : null}

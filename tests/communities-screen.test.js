@@ -123,7 +123,9 @@ test('the page draws Pinned, then Joined, as cards, New community beside the sea
   assert.doesNotMatch(joined, /communities-edit/, 'one Edit on the page');
   assert.doesNotMatch(joined, new RegExp(message('home:communities.pinNamed', { community: 'Orchard' })), 'no + until Edit is pressed');
   // New community is the kit's filled button beside the search, as New project is on Home; no tile of it ends Joined.
-  assert.match(html, new RegExp(`<div class="communities-top">[\\s\\S]*?<button type="button" class="wip-cta" id="communities-new-top"[^>]*>[\\s\\S]*?${message('home:communities.new')}</button></div>`));
+  // It is the Button primitive's `cta` variant (features/home/wip-kit.tsx), which writes the element's own attributes
+  // first and its class last: the class is still exactly wip-cta.
+  assert.match(html, new RegExp(`<div class="communities-top">[\\s\\S]*?<button type="button" id="communities-new-top"[^>]*? class="wip-cta">[\\s\\S]*?${message('home:communities.new')}</button></div>`));
   assert.doesNotMatch(html, /communities-new-community/);
   // Every community there is to join is listed on the page, under ids of its own; no Discover card leads to it.
   assert.match(html, /<section id="communities-all-section" data-home-join-section=""/);
