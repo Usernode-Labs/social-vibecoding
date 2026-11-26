@@ -128,12 +128,13 @@ function catalogFixtures(curation = false) {
       name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
-    // A name with an accent, so a search shows it is found however it is
-    // typed: "cafe" finds "Café" on Home, Communities and the guest's page,
-    // as it finds an app (frontend/src/lib/search-rank.js).
+    // A name with accents that its address does not spell, so a search
+    // shows the name is found however it is typed: "creme" finds "Crème
+    // Brûlée" on Home, Communities and the guest's page, as it finds an app
+    // (frontend/src/lib/search-rank.js). Nothing in the slug says "creme".
     {
-      ...base, id: 990037, slug: 'staging-demo-cafe',
-      name: 'Staging demo Café', icon_emoji: '☕', active_users: 3,
+      ...base, id: 990037, slug: 'staging-demo-dessert-club',
+      name: 'Staging demo Crème Brûlée', icon_emoji: '🍮', active_users: 3,
       created_at: demoAgo(20 * 24), last_deploy_at: demoAgo(9 * 24),
     },
   ];
