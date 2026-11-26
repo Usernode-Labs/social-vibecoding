@@ -4153,7 +4153,7 @@
       "name": "#signup/<address> opens the sheet's code step with its own address and the resend held (#1548)",
       "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
       "expectSelector": "[data-sign-in-sheet=\"code\"]:has(button[disabled]) [data-sign-in-sheet-sent-to]",
-      "expectText": "demo@example.invalid"
+      "expectText": "@example.invalid"
     },
     {
       "name": "#2916: back from a request is the chip above its sheet, named for where its press goes: on a cold load its link, which opens the Workshop (audit N03 follow-up), and the header draws no arrow beside it (#4453)",

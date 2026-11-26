@@ -181,6 +181,10 @@ test('the post-send screen is URL-reachable for captures and checks', () => {
     assert.match(t.path, /#signup\/demo%40example\.invalid$/,
       'the check must carry an encoded address, like a real link');
     assert.match(t.expectSelector, /button\[disabled\]/);
+    // The sheet draws the address as two parts (the name part shortens on a
+    // phone, ./sign-in-sheet.tsx SentAddress), which the page's text reads on
+    // two lines, so the check reads the provider's part.
+    assert.equal(t.expectText, '@example.invalid');
   }
 });
 
