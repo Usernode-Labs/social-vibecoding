@@ -1909,6 +1909,13 @@
     {
       "source": "src/services/public-project.js",
       "kind": "structural-template",
+      "fingerprint": "74ddd9b3aa742022a665",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, COALESCE(cs.pr_title, cs.session_title) AS title, cs.pr_summary_md, COALESCE(cs.merged_at, cs.created_at) AS merged_at, (SELECT COU"
+    },
+    {
+      "source": "src/services/public-project.js",
+      "kind": "structural-template",
       "fingerprint": "8f593625b11c7947973f",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, COALESCE(cs.pr_title, cs.session_title) AS title, cs.pr_summary_md, cs.promoted_at, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.sess"

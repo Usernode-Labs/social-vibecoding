@@ -65,7 +65,34 @@ export interface GuestMerged {
   merged_at: string | null;
   /** Its after picture, where anybody may see it (src/services/shots-public.js); else null. */
   picture?: string | null;
+  /**
+   * Who said yes to it, in words that name nobody (src/services/
+   * public-project.js approvedBy): two or more people ('community'), the
+   * creator alone ('creator'), one other person ('member'), or nobody
+   * counted (a first version, null). Absent from an older server.
+   */
+  approved_by?: 'community' | 'creator' | 'member' | null;
 }
+
+/** One person on a public project's Top contributors: a username and one count. */
+export interface GuestContributor {
+  username: string;
+  n: number;
+}
+
+/** GET /api/public/apps/:slug/top-contributors: this month's and all time's, up to five each, the most first. */
+export interface GuestTopContributors {
+  month: GuestContributor[];
+  all_time: GuestContributor[];
+}
+
+/**
+ * The fewest people over all time for whom the page lists Top contributors:
+ * no list of one. The member hub's own rule (dev-board/workshop/hub-cards.tsx
+ * HUB_CONTRIBUTORS_MIN), restated so the signed-out page does not load the
+ * hub to read it; tests/guest-discover.test.js holds the two equal.
+ */
+export const CONTRIBUTORS_MIN = 2;
 
 export interface GuestOverview {
   app: GuestApp & { builders: number };
@@ -260,6 +287,21 @@ export function projectPath(slug: string): string {
  */
 export function projectVotesHash(slug: string): string {
   return `#app/${encodeURIComponent(slug)}/workshop?ws=workshop`;
+}
+
+/** A public project's Top contributors, or null when it is not public (404) or cannot be read. */
+export async function fetchTopContributors(slug: string): Promise<GuestTopContributors | null> {
+  try {
+    const res = await fetch(`/api/public/apps/${encodeURIComponent(slug)}/top-contributors`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as Partial<GuestTopContributors>;
+    return {
+      month: Array.isArray(body.month) ? body.month : [],
+      all_time: Array.isArray(body.all_time) ? body.all_time : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** A project's overview, or null when it is not public (404) or cannot be read. */
