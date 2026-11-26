@@ -676,6 +676,41 @@ test('a still\'s density is a whole multiple of its screen\'s width, else 1', ()
   assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 3]);
 });
 
+test('a screen shot is the declared screen\'s width at 1x, 2x, 3x or 4x, and nothing else', () => {
+  assert.equal(shots.screenDensityOf(390, 390), 1);
+  assert.equal(shots.screenDensityOf(780, 390), 2);
+  assert.equal(shots.screenDensityOf(1170, 390), 3);
+  assert.equal(shots.screenDensityOf(1560, 390), 4);
+  // The same 2 percent the density check allows.
+  assert.equal(shots.screenDensityOf(1179, 393), 3);
+  assert.equal(shots.screenDensityOf(4322, 1440), 3);
+  for (const [image, screen] of [[3840, 1440], [1280, 1440], [390 * 5, 390], [390, 0], [null, 390], [390, undefined]]) {
+    assert.equal(shots.screenDensityOf(image, screen), null, `${image}/${screen}`);
+  }
+});
+
+test('a screen shot taken at another screen size is refused with the size to retake at', () => {
+  const intent = twoScreenIntent();
+  const story = intent.stories[0];
+  const target = (screen, kind = 'screen', side = 'after') => shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen, side, kind });
+  const wide = { name: 'desktop', width: 1440, height: 1300 };
+  // A browser left at its default window: 3840 wide for a 1440 screen.
+  assert.throws(() => shots.checkScreenSize({ viewports: [wide] }, target('desktop'), { width: 3840, height: 2160 }),
+    (error) => error.code === 'screen_size_mismatch' && error.status === 400
+      && /This shot is 3840 px wide; the desktop screen is 1440 px wide/.test(error.message)
+      && /browser_resize on this browser to 1440×1300/.test(error.message)
+      && /open the start path again/.test(error.message));
+  assert.doesNotThrow(() => shots.checkScreenSize({ viewports: [wide] }, target('desktop'), { width: 4320, height: 3900 }));
+  assert.doesNotThrow(() => shots.checkScreenSize({ viewports: [wide] }, target('desktop'), { width: 1440, height: 1300 }));
+  // A full-page still is taller than the screen but just as wide.
+  assert.doesNotThrow(() => shots.checkScreenSize({ viewports: [wide] }, target('desktop'), { width: 1440, height: 4000 }));
+  // Element shots keep their own check, and a clip has no size to check.
+  assert.doesNotThrow(() => shots.checkScreenSize({ viewports: [wide] }, target('desktop', 'element'), { width: 9, height: 9 }));
+  assert.doesNotThrow(() => shots.checkScreenSize({ viewports: [wide] }, { viewport: 'desktop', variant: 'animation' },
+    { width: null, height: null }));
+});
+
 test('an element shot\'s recorded box is kept only when it lies inside its screen shot', () => {
   const desktop = { name: 'desktop', width: 1280, height: 800 };
   const screen = { width: 1280, height: 800, media: 'png' };

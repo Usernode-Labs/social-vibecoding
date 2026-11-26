@@ -157,13 +157,13 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   );
   const still = { change: 'invite-suggestions', screen: 'desktop' };
 
-  const image = fixtures.png({ width: 5, height: 4 });
+  const image = fixtures.screenPng();
   const accepted = await json(await post({ ...still, side: 'after' }, image));
   assert.equal(accepted.status, 200);
   assert.equal(accepted.body.ok, true);
   assert.deepEqual({ ...accepted.body.result, progress: undefined }, {
     saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen',
-    bytes: image.length, width: 5, height: 4, progress: undefined,
+    bytes: image.length, width: 1280, height: 800, progress: undefined,
   });
   const [stored] = (await registration.control()).saved.values();
   assert.equal(stored.side, 'head');
@@ -234,8 +234,8 @@ test('the shot route takes a theme: dark is stored beside light, whole screens o
   const midnight = await json(await post({ ...still, side: 'after', theme: 'midnight' }, fixtures.png()));
   assert.deepEqual([midnight.status, midnight.body.code], [400, 'invalid_theme']);
 
-  const light = await json(await post({ ...still, side: 'after' }, fixtures.png({ shade: 3 })));
-  const dark = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 40 })));
+  const light = await json(await post({ ...still, side: 'after' }, fixtures.screenPng({ shade: 3 })));
+  const dark = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.screenPng({ shade: 40 })));
   assert.deepEqual([light.status, dark.status], [200, 200]);
   const control = await registration.control();
   assert.deepEqual([...control.saved.values()].map((file) => [file.theme, controlPlane.dbSlot(file).endsWith('/dark')]), [
@@ -250,7 +250,7 @@ test('the shot route takes a theme: dark is stored beside light, whole screens o
   assert.deepEqual([clipDark.status, clipDark.body.code], [400, 'dark_screen_only']);
 
   // A dark shot identical to its light one stores nothing and says so.
-  const same = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 3 })));
+  const same = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.screenPng({ shade: 3 })));
   assert.equal(same.body.result.sameAsLight, true);
   assert.equal(same.body.result.saved, false);
   assert.equal((await registration.control()).saved.size, 2, 'still light and dark only');

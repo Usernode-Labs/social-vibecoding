@@ -120,6 +120,8 @@ function cleanScreens(screens, claims) {
       shot: screen.shot,
       stories: (Array.isArray(screen.stories) ? screen.stories : []).filter((id) => ids.has(id)).slice(0, 3),
       width: int(screen.width) ? screen.width : null,
+      widthBefore: int(screen.widthBefore) ? screen.widthBefore : null,
+      widthAfter: int(screen.widthAfter) ? screen.widthAfter : null,
       heightBefore: int(screen.heightBefore) ? screen.heightBefore : null,
       heightAfter: int(screen.heightAfter) ? screen.heightAfter : null,
       regions: (Array.isArray(screen.regions) ? screen.regions : []).slice(0, 12)

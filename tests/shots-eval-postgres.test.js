@@ -164,7 +164,7 @@ function fakeOutsideWorld({ dispatched, costUsd = 0.5, hold = null }) {
           for (const viewport of story.viewports) {
             for (const [side, shade] of [['before', 10], ['after', 200]]) {
               await controlPlane.withControl(options.pool, { runId: options.runId, sessionId: options.session.id },
-                (control) => control.saveShot({ change: story.id, screen: viewport.name, side, kind: 'screen' }, fixtures.png({ shade })));
+                (control) => control.saveShot({ change: story.id, screen: viewport.name, side, kind: 'screen' }, fixtures.screenPng(viewport, { shade })));
             }
           }
         }

@@ -676,6 +676,10 @@ async function screensFor(stories, files) {
           .filter((story) => group.heads.get(story.id).sha256 !== group.head.sha256)
           .map((story) => story.id),
         width: before.w,
+        // Each side's own CSS width, so a still taken at another size than
+        // the screen is drawn at its own proportions (public/js/app-view.js).
+        widthBefore: before.w,
+        widthAfter: after.w,
         heightBefore: before.h,
         heightAfter: after.h,
         // Device pixels per CSS pixel in the stills shown: how far a card
@@ -766,6 +770,8 @@ function fallbackScreens(stories, files) {
         // Grouped only on the very same after shot: nothing is folded.
         foldedAfter: [],
         width: before.w,
+        widthBefore: before.w,
+        widthAfter: after.w,
         heightBefore: before.h,
         heightAfter: after.h,
         density,

@@ -338,6 +338,31 @@ function densityFor(imageWidth, screenWidth) {
   return DENSITIES.find((factor) => Math.abs(ratio - factor) < 0.02) || 1;
 }
 
+// The density of a screen shot whose width is the declared screen's at one
+// of DENSITIES, or null when it was taken at another screen size (a browser
+// left at its default window, say). `densityFor` reads that same picture as
+// 1x, which is what a screen shot saved at the declared size is.
+function screenDensityOf(imageWidth, screenWidth) {
+  const ratio = Number(imageWidth) / Number(screenWidth);
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  return DENSITIES.find((factor) => Math.abs(ratio - factor) < 0.02) || null;
+}
+
+// A screen shot must be taken at the screen size the change declared: its
+// width is the declared width at 1x or more (screenDensityOf). Only the
+// width says the layout size, so a full-page still, taller than the screen
+// but just as wide, passes. One at another size is refused, and the agent
+// takes it again in the same browser, at the declared size.
+function checkScreenSize(story, target, info) {
+  if (target.variant !== 'context' || !info?.width) return;
+  const viewport = (story.viewports || []).find((candidate) => candidate.name === target.viewport);
+  if (!viewport || screenDensityOf(info.width, viewport.width)) return;
+  throw new ShotError('screen_size_mismatch',
+    `This shot is ${info.width} px wide; the ${target.viewport} screen is ${viewport.width} px wide. `
+    + `Call browser_resize on this browser to ${viewport.width}×${viewport.height}, open the start path again `
+    + '(the app may choose its layout at load), and take it again.');
+}
+
 // An element shot must fit the screen it was taken on. One wider than the
 // screen means the page was laid out at another size (it was loaded before
 // browser_resize, and the app chose its layout once, at load) or the element
@@ -601,6 +626,8 @@ module.exports = {
   PHONE_DENSITY,
   DESKTOP_DENSITY,
   densityFor,
+  screenDensityOf,
+  checkScreenSize,
   checkElementSize,
   elementFrame,
   identicalStories,

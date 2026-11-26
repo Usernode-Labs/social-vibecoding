@@ -68,11 +68,14 @@ test('when nothing can be compared, each change and screen size still gets a scr
   ];
   const screens = diff.fallbackScreens(stories, files);
   assert.deepEqual(screens, [
-    { viewport: 'mobile', stories: ['badge'], shot: 'badge', foldedAfter: [], width: 384, heightBefore: 1500, heightAfter: 1620,
+    { viewport: 'mobile', stories: ['badge'], shot: 'badge', foldedAfter: [], width: 384, widthBefore: 384, widthAfter: 384,
+      heightBefore: 1500, heightAfter: 1620,
       density: 3, regions: [], frames: [{ story: 'badge', b: null, a: [300, 40, 60, 24] }] },
-    { viewport: 'mobile', stories: ['sheet'], shot: 'sheet', foldedAfter: [], width: 384, heightBefore: 900, heightAfter: 900,
+    { viewport: 'mobile', stories: ['sheet'], shot: 'sheet', foldedAfter: [], width: 384, widthBefore: 384, widthAfter: 384,
+      heightBefore: 900, heightAfter: 900,
       density: 3, regions: [], frames: [] },
-    { viewport: 'desktop', stories: ['badge'], shot: 'badge', foldedAfter: [], width: 1280, heightBefore: 800, heightAfter: 800,
+    { viewport: 'desktop', stories: ['badge'], shot: 'badge', foldedAfter: [], width: 1280, widthBefore: 1280, widthAfter: 1280,
+      heightBefore: 800, heightAfter: 800,
       density: 1, regions: [], frames: [] },
   ]);
   // Nothing outlined means nothing known: a change is never "unchanged" here.
