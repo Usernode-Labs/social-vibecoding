@@ -1636,10 +1636,18 @@ const Notifications = {
   // older than the page the discussion loads cannot be shown, and the
   // thread opens at the newest as before. The Messages controller is the
   // one door, with the address as the fallback for a shell still starting.
+  //
+  // #general IS THE DISCUSSION (26 Nov 2026): the project's Discussion, its
+  // messages as posts with replies, and no chat. A row that names one
+  // message goes to its address, `#messages/app/<slug>/m/<id>`, which the
+  // router takes to the Discussion with the message as its target
+  // (AppView._landOnDiscussion): the post it is in opens and it is marked.
   _openAppDiscussion(slug, messageId) {
     if (!slug) return;
-    if (messageId && typeof GroupChat !== 'undefined' && GroupChat.revealMessage) {
-      GroupChat.revealMessage(slug, messageId);
+    const id = Number(messageId);
+    if (Number.isSafeInteger(id) && id > 0) {
+      window.location.hash = `#messages/app/${encodeURIComponent(slug)}/m/${id}`;
+      return;
     }
     const messages = window.UsernodeReact?.messages;
     if (messages?.openDiscussion) messages.openDiscussion(slug);
@@ -1857,6 +1865,13 @@ const Notifications = {
     // was posted outside a topic.
     if (saved.conversationId) {
       Notifications._dismissSheetForNav();
+      // The message's own address when the row names it: Homeroom's #general
+      // is its Discussion now, which opens on that post (the router).
+      const savedId = Number(saved.messageId);
+      if (Number.isSafeInteger(savedId) && savedId > 0) {
+        window.location.hash = `#messages/${saved.conversationId}/m/${savedId}`;
+        return;
+      }
       const messages = window.UsernodeReact?.messages;
       if (messages?.open) messages.open(saved.conversationId);
       else window.location.hash = `#messages/${saved.conversationId}`;

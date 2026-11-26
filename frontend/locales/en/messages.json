@@ -3555,6 +3555,18 @@
     "text": "Loading messages…",
     "description": "Shown in a conversation while its messages load."
   },
+  "thread.channelIsDiscussion": {
+    "text": "This is Homeroom’s Discussion now: posts and replies, on Homeroom’s page.",
+    "description": "Shown in Messages in place of a conversation when a link opened Homeroom's #general, which is now Homeroom's Discussion (posts with replies on the Homeroom project's page) and no longer a chat here. The page usually opens on its own a moment later."
+  },
+  "thread.channelIsDiscussionOpen": {
+    "text": "Open the Discussion",
+    "description": "Button under that note: opens Homeroom's Discussion on the Homeroom project's page, at the post the link pointed to."
+  },
+  "thread.channelIsDiscussionClosed": {
+    "text": "This is Homeroom’s Discussion now, on Homeroom’s page, which isn’t open to you yet.",
+    "description": "Shown in Messages in place of Homeroom's #general for someone who may not open the Homeroom project's page: the room is now that page's Discussion."
+  },
   "thread.left": {
     "text": "You left this group.",
     "description": "Shown in place of a group chat's messages after you left it."

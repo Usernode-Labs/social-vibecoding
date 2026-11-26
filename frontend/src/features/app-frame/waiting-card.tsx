@@ -53,7 +53,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { type BuildLineState, BuildLine } from '../first-session/build-line';
 import { reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import { PlanLines, decidesLine, type MemberPlan } from '../dev-board/workshop/plan-page';
-import { ProjectDiscussion } from '../dev-board/workshop/project-discussion';
+import { DiscussionCard } from '../dev-board/workshop/hub-discussion';
 import { Improve } from '../improve/improve-controller.js';
 
 /** What the card is drawn from (AppView._firstVersionWaiting). */
@@ -188,7 +188,9 @@ function DiscussionBody({ slug, name }: { slug: string; name: string }): ReactNo
       </p>
     );
   }
-  return <ProjectDiscussion slug={slug} name={name} data={data} />;
+  // #general is the project's Discussion (26 Nov 2026): its posts, as the
+  // project's page draws them, in a host the card's styles follow.
+  return <div data-discussion-host="" data-waiting-discussion=""><DiscussionCard slug={slug} name={name} data={data} mode="page" /></div>;
 }
 
 /**
