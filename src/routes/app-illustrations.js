@@ -7,6 +7,7 @@ const { sendRange } = require('./byte-range');
 const log = require('../services/logger');
 const { attachmentUploadLimiter } = require('../middleware/rate-limits');
 const proposals = require('../services/illustration-proposals');
+const pictureSizes = require('../services/picture-sizes');
 
 // The card colours an illustration may carry, kept in step with
 // frontend/src/features/home/panels/ui.tsx (asserted by
@@ -59,22 +60,39 @@ function validatePreview(data) {
 function illustrationImageRoutes(config) {
   const router = express.Router();
   const pool = getPool(config);
+  // `?w=` asks for a smaller copy (services/picture-sizes.js): a WebP no
+  // wider than one of its few widths, made once and kept. With no `w`, or
+  // when no smaller copy can be made, the stored file is sent as before.
   router.get('/app-illustrations/:id', async (req, res) => {
-    if (!/^[a-f0-9]{32}$/.test(req.params.id)) return res.status(404).end();
+    const id = req.params.id;
+    if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
     try {
       // An id names either a published image or one a proposal is still
       // carrying (#2086): the card previews the proposed image from the same
       // URL it will keep once the vote applies it.
-      const { rows } = await pool.query(`SELECT content_type, data FROM app_illustrations WHERE id = $1
+      let stored;
+      const read = async () => {
+        const { rows } = await pool.query(`SELECT content_type, data FROM app_illustrations WHERE id = $1
         UNION ALL SELECT dark_content_type AS content_type, dark_data AS data FROM app_illustrations WHERE dark_id = $1
         UNION ALL SELECT content_type, data FROM app_illustration_proposals WHERE id = $1
         UNION ALL SELECT dark_content_type AS content_type, dark_data AS data FROM app_illustration_proposals WHERE dark_id = $1`,
-      [req.params.id]);
-      if (!rows.length) return res.status(404).end();
-      res.set('Content-Type', rows[0].content_type);
+        [id]);
+        stored = rows.length ? rows[0] : null;
+        return stored;
+      };
+      const width = pictureSizes.widthFor(req.query.w);
+      const copy = width
+        ? await pictureSizes.sized(`illustration:${id}`, width, async () => {
+          const row = await read();
+          return row && { contentType: row.content_type, data: row.data };
+        })
+        : null;
+      if (!copy && stored === undefined) await read();
+      if (!copy && !stored) return res.status(404).end();
+      res.set('Content-Type', copy ? copy.contentType : stored.content_type);
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
-      return res.send(rows[0].data);
+      return res.send(copy ? copy.data : stored.data);
     } catch (err) { log.error('illustrations', 'Image read failed', { err: err.message }); return res.status(500).end(); }
   });
   // A card's preview loop, published or still waiting on its vote, by the

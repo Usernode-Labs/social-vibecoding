@@ -46,12 +46,28 @@ function escapeHtml(str) {
 // hero) and the border box is what draws the hairline. The one exception is
 // the emoji's `text-3xl`, which is the launcher tile's size; the two browse
 // surfaces override it on the wrapper.
+// A picture's address at the size it is drawn (request #7165, point 5). The
+// server keeps a few smaller copies of an icon and of a community's picture
+// (src/services/picture-sizes.js) and sends one for `?w=`; without it the
+// whole file comes, 100 KB and more for a 56px tile. Only the two stored
+// kinds are sized, and only their plain address: a data: picture, an address
+// with a query already, or anything else is returned as it came. The data
+// keeps the plain address (`app.icon_url`), which is what a link preview, the
+// phone app and the colour read off an icon use.
+const SIZED_PICTURE_RE = /^\/app-(?:icons|illustrations)\/[a-f0-9]{32}$/;
+// An icon tile is 64px at its largest (the card band, the detail hero), so
+// 192 is sharp on a 3x phone.
+export const ICON_PICTURE_WIDTH = 192;
+export function sizedPicture(url, width) {
+  return typeof url === 'string' && SIZED_PICTURE_RE.test(url) ? `${url}?w=${width}` : url;
+}
+
 // The same decision as iconTileFor, as DATA rather than markup (#1191 slice 6
 // conversion 3). The browse screen renders its tiles in React now, so it needs
 // the choice without the string; iconTileFor below is built on top of this, so
 // the priority order has one source and the two renderers cannot drift.
 export function iconViewFor(app) {
-  if (app.icon_url) return { kind: 'image', src: app.icon_url };
+  if (app.icon_url) return { kind: 'image', src: sizedPicture(app.icon_url, ICON_PICTURE_WIDTH) };
   if (app.icon_emoji) return { kind: 'emoji', emoji: app.icon_emoji };
   return { kind: 'letter', letter: (app.name || '?').charAt(0).toUpperCase() };
 }
@@ -63,7 +79,7 @@ export function iconTileFor(app) {
       // w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border,
       // so the image fills the border box's *content* area and stays flush
       // inside the ring instead of being cropped.
-      html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
+      html: `<img src="${escapeHtml(sizedPicture(app.icon_url, ICON_PICTURE_WIDTH))}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
     };
   }
   if (app.icon_emoji) {
@@ -202,7 +218,7 @@ export function renderAppPillsHtml(app) {
 }
 
 export const AppCard = {
-  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, NEW_PILL_DAYS,
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, NEW_PILL_DAYS, sizedPicture,
 };
 
 // Published for the legacy half of the split. Both in-bundle consumers

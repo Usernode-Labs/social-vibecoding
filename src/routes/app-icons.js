@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const emojiTile = require('../services/emoji-tile');
 const { emojiTileLimiter } = require('../middleware/rate-limits');
+const pictureSizes = require('../services/picture-sizes');
 
 // emoji-tile.tilePath's names: code points joined by '_', then the colour.
 const EMOJI_TILE_RE = /^([0-9a-f]{1,6}(?:_[0-9a-f]{1,6}){0,9})(?:-([0-9a-f]{6}))?\.png$/;
@@ -34,22 +35,38 @@ function appIconRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // `?w=` asks for a smaller copy (services/picture-sizes.js): a WebP no
+  // wider than one of its few widths, made once and kept. With no `w`, or
+  // when no smaller copy can be made, the stored file is sent as before.
   router.get('/app-icons/:id', async (req, res) => {
     const id = String(req.params.id || '');
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
     try {
-      const { rows } = await pool.query(
-        'SELECT content_type, data FROM app_icons WHERE id = $1',
-        [id]
-      );
-      if (!rows.length || !rows[0].data) return res.status(404).end();
+      let stored;
+      const read = async () => {
+        const { rows } = await pool.query(
+          'SELECT content_type, data FROM app_icons WHERE id = $1',
+          [id]
+        );
+        stored = rows.length && rows[0].data ? rows[0] : null;
+        return stored;
+      };
+      const width = pictureSizes.widthFor(req.query.w);
+      const copy = width
+        ? await pictureSizes.sized(`icon:${id}`, width, async () => {
+          const row = await read();
+          return row && { contentType: row.content_type, data: row.data };
+        })
+        : null;
+      if (!copy && stored === undefined) await read();
+      if (!copy && !stored) return res.status(404).end();
       // #2515: the type here is a STORED value, so a file whose recorded
       // content_type says image/* while its bytes are markup must not be
       // sniffed into HTML on the platform's own origin.
-      res.set('Content-Type', rows[0].content_type || 'application/octet-stream');
+      res.set('Content-Type', copy ? copy.contentType : stored.content_type || 'application/octet-stream');
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
-      res.send(rows[0].data);
+      res.send(copy ? copy.data : stored.data);
     } catch (err) {
       log.error('app-icons', 'Failed to serve icon', { id, err: err.message });
       res.status(500).end();

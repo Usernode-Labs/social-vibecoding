@@ -116,3 +116,210 @@ test('the tile path the install page offers is the one this serves', () => {
   const route = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'routes', 'app-icons.js'), 'utf8');
   assert.match(route, /router\.get\('\/app-icons\/emoji\/:file', emojiTileLimiter,/, 'rate limited: it draws on the server');
 });
+
+// ── A smaller copy for `?w=` (request #7165, point 5) ───────────────────
+//
+// Icons of 100 KB and more were sent for 48 to 64px tiles, and community
+// pictures of up to 936 KB for cards about 110px wide. Either address takes
+// `?w=` and answers with a WebP at one of a few widths, made once and kept;
+// with no `w` the stored file is sent exactly as before.
+
+const pictureSizes = require('../src/services/picture-sizes');
+
+// A picture that compresses like one: soft gradients with some grain.
+function picturePng(width, height) {
+  const { PNG } = require('pngjs');
+  const png = new PNG({ width, height });
+  let seed = 7;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const grain = seed % 24;
+      const i = (y * width + x) << 2;
+      png.data[i] = (x * 255 / width + grain) & 255;
+      png.data[i + 1] = (y * 255 / height + grain) & 255;
+      png.data[i + 2] = ((x + y) * 127 / width + grain) & 255;
+      png.data[i + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png);
+}
+const isWebp = (body) => body.subarray(0, 4).toString('latin1') === 'RIFF' && body.subarray(8, 12).toString('latin1') === 'WEBP';
+async function widthOf(body) {
+  return (await require('sharp')(body).metadata()).width;
+}
+
+test('only a few widths exist, and only a whole number asks for one', () => {
+  assert.deepEqual([...pictureSizes.WIDTHS], [96, 192, 512, 1024]);
+  assert.deepEqual(['96', '192', '512', '1024'].map(pictureSizes.widthFor), [96, 192, 512, 1024]);
+  // Between two widths: the next one up, so twice a tile's size is never softer.
+  assert.deepEqual(['1', '97', '128', '193', '600', '1025', '999999'].map(pictureSizes.widthFor),
+    [96, 192, 192, 512, 1024, 1024, 1024]);
+  for (const none of [undefined, null, '', '0', '-96', '96px', '1e2', '9.5', ' 96', '0096', '1234567', ['96', '192'], { a: '96' }, 96]) {
+    assert.equal(pictureSizes.widthFor(none), null, JSON.stringify(none));
+  }
+});
+
+test('an icon asked for with ?w= comes as a smaller WebP, made once; with no w it is the stored file', async () => {
+  const big = picturePng(640, 640);
+  const id = 'c'.repeat(32);
+  let reads = 0;
+  poolQueryHandler = async (sql, params) => {
+    reads += 1;
+    assert.deepEqual(params, [id]);
+    return { rows: [{ content_type: 'image/png', data: big }] };
+  };
+  const server = await startServer();
+  const at = `http://127.0.0.1:${server.address().port}/app-icons/${id}`;
+  try {
+    const sized = await fetch(`${at}?w=192`);
+    assert.equal(sized.status, 200);
+    assert.equal(sized.headers.get('content-type'), 'image/webp');
+    assert.equal(sized.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal(sized.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(sized.headers.get('vary'), null, 'nothing is negotiated');
+    const body = Buffer.from(await sized.arrayBuffer());
+    assert.ok(isWebp(body));
+    assert.equal(await widthOf(body), 192);
+    assert.ok(body.length * 4 < big.length, `${body.length} bytes against ${big.length}`);
+    assert.equal(reads, 1);
+
+    // Kept: the same copy again, and a width that rounds up to it, read nothing.
+    const again = Buffer.from(await (await fetch(`${at}?w=192`)).arrayBuffer());
+    const rounded = Buffer.from(await (await fetch(`${at}?w=130`)).arrayBuffer());
+    assert.ok(again.equals(body) && rounded.equals(body));
+    assert.equal(reads, 1, 'a kept copy asks the database nothing');
+
+    // No width, or one that is not a number: the stored file, as before.
+    for (const plain of ['', '?w=', '?w=big', '?w=192&w=96', '?size=192']) {
+      const res = await fetch(`${at}${plain}`);
+      assert.equal(res.headers.get('content-type'), 'image/png', plain);
+      assert.ok(Buffer.from(await res.arrayBuffer()).equals(big), plain);
+    }
+
+    // Never enlarged: a width past the picture's own sends the stored file.
+    const wide = await fetch(`${at}?w=1024`);
+    assert.equal(wide.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await wide.arrayBuffer()).equals(big));
+  } finally {
+    server.close();
+  }
+});
+
+test('a picture that cannot be sized is sent as stored, and a missing one is still a 404', async () => {
+  const server = await startServer();
+  const base = `http://127.0.0.1:${server.address().port}/app-icons`;
+  try {
+    // Bytes no image library reads (the existing fixture: a PNG signature and four bytes).
+    poolQueryHandler = async () => ({ rows: [{ content_type: 'image/png', data: PNG_BYTES }] });
+    const broken = await fetch(`${base}/${'d'.repeat(32)}?w=96`);
+    assert.equal(broken.status, 200);
+    assert.equal(broken.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await broken.arrayBuffer()).equals(PNG_BYTES));
+
+    // A type that is not sized at all.
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900"/>');
+    poolQueryHandler = async () => ({ rows: [{ content_type: 'image/svg+xml', data: svg }] });
+    const drawn = await fetch(`${base}/${'e'.repeat(32)}?w=96`);
+    assert.equal(drawn.headers.get('content-type'), 'image/svg+xml');
+    assert.ok(Buffer.from(await drawn.arrayBuffer()).equals(svg));
+
+    poolQueryHandler = async () => ({ rows: [] });
+    assert.equal((await fetch(`${base}/${'9'.repeat(32)}?w=96`)).status, 404);
+    // Not remembered: the picture is served once it exists.
+    const big = picturePng(400, 400);
+    poolQueryHandler = async () => ({ rows: [{ content_type: 'image/png', data: big }] });
+    assert.equal((await fetch(`${base}/${'9'.repeat(32)}?w=96`)).headers.get('content-type'), 'image/webp');
+    let queried = false;
+    poolQueryHandler = async () => { queried = true; return { rows: [] }; };
+    assert.equal((await fetch(`${base}/nope?w=96`)).status, 404);
+    assert.equal(queried, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('a community picture takes ?w= the same way', async () => {
+  const { illustrationImageRoutes } = require('../src/routes/app-illustrations');
+  const app = express();
+  app.use(illustrationImageRoutes({}));
+  const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  const big = picturePng(1400, 800);
+  const id = '1'.repeat(32);
+  let reads = 0;
+  poolQueryHandler = async (sql, params) => {
+    reads += 1;
+    assert.match(sql, /FROM app_illustrations WHERE id = \$1/);
+    assert.deepEqual(params, [id]);
+    return { rows: [{ content_type: 'image/png', data: big }] };
+  };
+  const at = `http://127.0.0.1:${server.address().port}/app-illustrations/${id}`;
+  try {
+    const whole = await fetch(at);
+    assert.equal(whole.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await whole.arrayBuffer()).equals(big), 'no width: the whole picture');
+    const sizes = {};
+    for (const width of [512, 1024]) {
+      const res = await fetch(`${at}?w=${width}`);
+      assert.equal(res.headers.get('content-type'), 'image/webp');
+      assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+      const body = Buffer.from(await res.arrayBuffer());
+      assert.equal(await widthOf(body), width);
+      sizes[width] = body.length;
+    }
+    assert.ok(sizes[512] < sizes[1024] && sizes[1024] < big.length);
+    assert.equal(reads, 3);
+    await fetch(`${at}?w=512`);
+    assert.equal(reads, 3, 'kept');
+    poolQueryHandler = async () => ({ rows: [] });
+    assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/app-illustrations/${'2'.repeat(32)}?w=512`)).status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('copies are kept within a bound, one resize is shared, and a full queue sends the stored file', async () => {
+  const big = picturePng(600, 600);
+  const source = { contentType: 'image/png', data: big };
+  // One resize for two askers at once.
+  let loads = 0;
+  const sizer = pictureSizes.createSizer();
+  const load = async () => { loads += 1; return source; };
+  const [a, b] = await Promise.all([sizer.sized('k', 96, load), sizer.sized('k', 96, load)]);
+  assert.ok(a && a === b);
+  assert.equal(loads, 1);
+
+  // A small bound drops the least recently used copy.
+  const small = pictureSizes.createSizer({ cacheBytes: a.data.length * 2 + 10 });
+  await small.sized('one', 96, load);
+  await small.sized('two', 96, load);
+  await small.sized('one', 96, load);
+  await small.sized('three', 96, load);
+  assert.equal(small.stats().entries, 2);
+  assert.ok(small.stats().bytes <= a.data.length * 2 + 10);
+  loads = 0;
+  await small.sized('one', 96, load);
+  assert.equal(loads, 0, 'the one just used was kept');
+  await small.sized('two', 96, load);
+  assert.equal(loads, 1, 'the oldest was dropped');
+
+  // One at a time and nobody waiting: the second asker gets the stored file.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const busy = pictureSizes.createSizer({ concurrent: 1, queue: 0 });
+  const first = busy.sized('slow', 96, async () => { await held; return source; });
+  await new Promise((resolve) => setImmediate(resolve));
+  let asked = false;
+  assert.equal(await busy.sized('other', 96, async () => { asked = true; return source; }), null);
+  assert.equal(asked, false);
+  release();
+  assert.ok(await first);
+  assert.ok(await busy.sized('other', 96, load), 'and is served once there is room');
+
+  // No library: the stored file, without reading it here.
+  const none = pictureSizes.createSizer({ sharp: null });
+  assert.equal(await none.sized('k', 96, async () => { throw new Error('not read'); }), null);
+  // A read that fails is the route's to report.
+  assert.equal(await sizer.sized('gone', 96, async () => { throw new Error('database down'); }), null);
+});
