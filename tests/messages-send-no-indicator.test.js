@@ -205,9 +205,13 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
   assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  assert.match(TRANSCRIPT, /label: translate\('chat:group\.menu\.report'\)[\s\S]*?label: msg\.usernameMissing \? translate\('chat:group\.menu\.blockUnknown'\) : translate\('chat:group\.menu\.block', \{ username: msg\.username \}\)/);
-  assert.equal(message('chat:group.menu.report'), 'Report message');
-  assert.equal(message('chat:group.menu.block', { username: 'ada' }), 'Block @ada');
+  // Both transcripts build it with the one message menu
+  // (message-actions/message-menu.ts): Report, then Block.
+  assert.match(TRANSCRIPT, /report: theirs \? onReportMessage : null,\s*block: theirs && senderId \? \{\s*who: msg\.usernameMissing \? \{ unknown: 'handle' \} : \{ name: `@\$\{msg\.username\}` \},/);
+  const MENU = read('frontend/src/features/message-actions/message-menu.ts');
+  assert.match(MENU, /if \(spec\.report\) items\.push\(\{ key: 'report', label: t\('messages:row\.menu\.report'\)[\s\S]*?key: 'block', label: blockLabel\(block\.who\)/);
+  assert.equal(message('messages:row.menu.report'), 'Report message');
+  assert.equal(message('messages:row.menu.block', { name: '@ada' }), 'Block @ada');
   assert.doesNotMatch(TRANSCRIPT, /report-user|onReportUser|targetType: 'user'/,
     'message menus offer one report action, targeting the message');
 

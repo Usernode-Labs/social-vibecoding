@@ -7,9 +7,15 @@ import { useEffect, useState } from 'react';
  * changes (public/js/group-chat.js, public/js/app-view.js) sent on Enter.
  * Messages, the chat with Homeroom bot and its New thread box made Enter a
  * new line and sent only on Cmd/Ctrl + Enter (#5361), with nothing on screen
- * saying so, and a tester's first message to the bot "felt stuck". This is
- * the channels' rule, written once for the React boxes
- * (features/messages/composer.tsx and new-thread.tsx):
+ * saying so, and a tester's first message to the bot "felt stuck". The
+ * inline editors and a board card's reply box each had a rule of their own
+ * again. This is the channels' rule, written once, and every box that sends
+ * or saves a message asks it: Messages' box and its New thread box
+ * (features/messages/composer.tsx and new-thread.tsx), a project channel's
+ * box and a thread's (public/js/app-view.js, public/js/group-chat.js, which
+ * reach it as `window.UsernodeEnterSends`), the inline editor in both chats
+ * (Enter saves the edit), and a board card's reply box
+ * (features/dev-board/card/feed-thread.tsx):
  *
  *   - on a device with a keyboard, Enter sends and Shift + Enter is a new
  *     line;
@@ -26,8 +32,8 @@ import { useEffect, useState } from 'react';
  * own check, the same one its button is disabled by. A list that is open
  * over the box (an emoji, a person, a channel) takes its keys first.
  *
- * Touch is `GroupChat._isTouch()`'s reading, `(hover: none)`, so a channel's
- * box and a conversation's agree on every device.
+ * Touch is `(hover: none)`, read here and nowhere else, so a channel's box
+ * and a conversation's agree on every device.
  */
 export const NO_HOVER_QUERY = '(hover: none)';
 
@@ -79,4 +85,11 @@ export function useEnterSends(): boolean {
     return () => watched.removeEventListener('change', read);
   }, []);
   return sends;
+}
+
+// A project channel's box, a thread's and the inline editor are wired by
+// classic scripts (public/js/app-view.js, public/js/group-chat.js): they reach
+// the rule as a global, as they do the auto-grow (./use-auto-grow.ts).
+if (typeof window !== 'undefined') {
+  (window as unknown as { UsernodeEnterSends?: { enterSends: typeof enterSends } }).UsernodeEnterSends = { enterSends };
 }

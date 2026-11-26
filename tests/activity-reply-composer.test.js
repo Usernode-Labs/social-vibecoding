@@ -37,14 +37,13 @@ test('the reply is a one-row textarea that grows with its controlled value', () 
     SOURCE.indexOf('export function FeedReplyComposer'),
     SOURCE.indexOf('\nexport function FeedThread')
   );
-  // #2145 gave the field a keydown handler — for ⌘/Ctrl+Enter and for the
-  // `@` list's keys while it is open — but plain Enter is still the
-  // textarea's own, so it still adds a line (tests/feed-reply-mentions.test.js
-  // covers the chord itself).
-  assert.match(component, /if \(!isSendChord\(e\)\) return;/,
-    'only the modifier chord submits from the keyboard');
+  // The field sends by the rule every message box keeps (lib/enter-sends.ts):
+  // Enter where there is a keyboard, Shift + Enter and a touch screen's Enter
+  // a new line (tests/qa-menus-keyboard.test.js covers the rule itself).
+  assert.match(component, /if \(!enterSends\(e\.nativeEvent\)\) return;/,
+    'the shared rule decides which keys send');
   assert.doesNotMatch(component, /key === 'Enter' && !e\.shiftKey/,
-    'plain Enter keeps the textarea default: insert a newline');
+    'no hand-written Enter rule of its own');
 
   const html = composerHtml('First line\nSecond line');
   assert.match(html, /<textarea[^>]*rows="1"[^>]*>First line\nSecond line<\/textarea>/,
