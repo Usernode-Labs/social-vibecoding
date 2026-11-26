@@ -148,4 +148,6 @@ test('on a computer the header carries Homeroom\'s name and the console\'s note,
   assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #platform-header #header-title \{ display: none !important; \}/,
     'only for an admin: public mode keeps its title');
   assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #admin-console-bar > div \{ display: none; \}/, 'the band is not said twice');
+  assert.match(rulesText, /#admin-console-bar:not\(\.hidden\)\) #platform-header #back-btn \{ display: none !important; \}/, 'no back arrow beside the name');
+  assert.match(rulesText, /\.admin-header-note \{ display: flex; flex: 0 1 auto;/, 'the note is as wide as its words, no wider');
 });
