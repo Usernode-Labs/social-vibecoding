@@ -34680,38 +34680,19 @@ html:root .one-chip:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--on
 /* The page's main action as an icon (New chat's +, New message's +): the sun disc with the sticker edge. */
 html:root .one-fab { display: inline-grid; place-items: center; flex: none; width: var(--one-fab); height: var(--one-fab); padding: 0; border: 0; border-radius: 9999px; background: var(--one-sun); box-shadow: var(--one-edge-sun); color: #121a0e; }
 html:root .one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
-/* With its words beside the icon (one-fab-label: "+ New project"), a pill of the same height; one-fab-sm is the 36px
-   disc at every width (the fab is 36px from 768px on its own). */
-html:root .one-fab.one-fab-label { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; padding: 0 16px 0 12px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; white-space: nowrap; }
-html:root .one-fab.one-fab-sm { width: 36px; height: 36px; }
-html:root .one-fab.one-fab-label.one-fab-sm { width: auto; font-size: var(--one-btn-sm-size); }
 @media (hover: hover) { html:root .one-fab:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); } }
-/* Every other icon button on a page: a flat disc with one hairline. */
-html:root .one-disc { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 9999px; background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); color: var(--one-ink); }
-html:root .one-disc:active:not(:disabled) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
-/* The three button levels, for markup that is new in this look (the class-matching layer in BUTTONS covers the rest):
-   the main action (one-btn-1) the sun with the sticker edge, pressed onto it; a secondary (one-btn-2) and a destructive
-   one (one-btn-d) flat, a press shrinking them a little. 44px on a phone, 36px from 768px (the small one 30 and 28). */
+/* The main action's recipe (one-btn-1): the sun with the sticker edge, pressed onto it, 44px on a phone and 36px from
+   768px. The Button primitive's `sun` variant writes it (frontend/@/components/ui/button.tsx); the class-matching layer
+   in BUTTONS draws every other button, the flat secondary and destructive ones included. */
 html:root .one-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: var(--one-btn-h); padding: 0 var(--one-btn-pad); border: 0; border-radius: 9999px; font-family: var(--wip-btn-font, inherit); font-size: var(--one-btn-size); font-weight: 600; line-height: 1; letter-spacing: 0; white-space: nowrap; text-decoration: none; transition: transform .12s ease, filter .12s ease; }
 html:root .one-btn > svg { width: 18px; height: 18px; flex: none; }
-html:root .one-btn.one-btn-sm { height: var(--one-btn-sm-h); padding: 0 var(--one-btn-sm-pad); font-size: var(--one-btn-sm-size); }
 html:root .one-btn.one-btn-1 { background: var(--one-sun); color: #121a0e; box-shadow: var(--one-edge-sun); }
-html:root .one-btn.one-btn-1.one-btn-sm { box-shadow: var(--one-edge-sun-sm); }
 html:root .one-btn.one-btn-1:active:not(:disabled, [aria-disabled="true"]) { box-shadow: inset 0 0 0 1px var(--one-edge-sun-line); transform: var(--one-press); }
-html:root .one-btn.one-btn-2 { background: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none; }
-html:root .one-btn.one-btn-d { background: var(--one-red-tint); color: var(--one-red); box-shadow: none; }
-html:root .one-btn:is(.one-btn-2, .one-btn-d):active:not(:disabled, [aria-disabled="true"]) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
 @media (hover: hover) {
   html:root .one-btn.one-btn-1:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sun-hover); }
-  html:root .one-btn.one-btn-2:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-sky-tint-hover); }
-  html:root .one-btn.one-btn-d:hover:not(:disabled, [aria-disabled="true"]) { background: var(--one-red-tint-hover); }
 }
-html:root :is(.one-btn, .one-chip, .one-fab, .one-disc, .one-link):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
-html:root :is(.one-btn, .one-chip, .one-fab, .one-disc):is(:disabled, [aria-disabled="true"]) { opacity: .45; box-shadow: none; transform: none; filter: none; cursor: not-allowed; }
-/* A text action ("Change", "See all", "Edit"): the ink, underlined in blue, so it does not rest on colour alone. */
-html:root .one-link { display: inline; padding: 0; border: 0; background: none; box-shadow: none; color: var(--one-ink); font: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: pointer; }
-@media (hover: hover) { html:root .one-link:hover:not(:disabled, [aria-disabled="true"]) { text-decoration-color: currentColor; } }
-html:root .one-link:is(:disabled, [aria-disabled="true"]) { color: var(--one-ink-3); text-decoration: none; cursor: default; }
+html:root :is(.one-btn, .one-chip, .one-fab):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
+html:root :is(.one-btn, .one-chip, .one-fab):is(:disabled, [aria-disabled="true"]) { opacity: .45; box-shadow: none; transform: none; filter: none; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   html:root .one-seg[style*="--one-seg-i"]::before,
   html:root .one-seg > :is(button, a, [role="tab"], [role="radio"]),
@@ -34843,8 +34824,8 @@ html:root #platform-header #notifications-btn > svg { stroke-width: 1.8; }
 /* A SECTION'S OWN ACTION (design review, 25 Nov 2026). The words after a section's label (Edit and Done, See all,
    Show all, All in Workshop, View all activity) are the label row's own ink at 14/600, with no underline and no
    chevron: the label beside them already says what they act on, so they need no more than their weight. An action
-   inside a card's words (Translate, Read the request, Change, Cancel) keeps the blue underline (.one-link and the
-   BUTTONS block's level 4). */
+   inside a card's words (Translate, Read the request, Change, Cancel) keeps the blue underline (the BUTTONS block's
+   level 4). */
 html:root :is(.home-edit-start, #communities-edit, .wip-fold-pill, #profile-recent-activity .profile-recent-heading > a):is(button, a, span) {
   color: var(--one-ink);
   font-size: 14px;
