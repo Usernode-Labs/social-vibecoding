@@ -113,6 +113,8 @@ export interface Said {
   cards: SharedObjectCard[];
   /** A plan it shares (a project's chat). */
   spec: SharedSpec | null;
+  /** #4238: Homeroom bot's first-version post, the button that opens the app it made. */
+  openApp?: { label: string; target: string } | null;
   /** A reply: the message its thread hangs off. Null for a main-stream message. */
   rootId: number | null;
   /** A main-stream message: how many replies its thread holds, and when the last came. */
@@ -388,6 +390,19 @@ function appSpec(m: Json): SharedSpec | null {
   return { title: str(share.title), prNumber: num(share.prNumber ?? share.pr_number) };
 }
 
+/**
+ * Pure: #4238, Homeroom bot's first-version post (`metadata.kind`
+ * 'first_version'): its Open action, a label and an address in the app, or
+ * null. The chat drew it as a button (group-chat.js _openAppView).
+ */
+export function appOpenApp(m: Json): { label: string; target: string } | null {
+  const meta = (m.metadata || {}) as Json;
+  if (m.deleted || m.thread_type != null || meta.kind !== 'first_version' || !Array.isArray(meta.actions)) return null;
+  const open = (meta.actions as Json[]).find((a) => a && a.type === 'open' && typeof a.target === 'string'
+    && String(a.target).startsWith('#app/') && typeof a.label === 'string' && !!a.label);
+  return open ? { label: str(open.label), target: str(open.target) } : null;
+}
+
 export function fromAppRow(row: unknown, me: string | null, fileBase: string | null = null): Said | null {
   const m = (row || {}) as Json;
   const id = num(m.id);
@@ -408,6 +423,7 @@ export function fromAppRow(row: unknown, me: string | null, fileBase: string | n
     attachments: appAttachments(m.metadata, fileBase),
     cards: [],
     spec: appSpec(m),
+    openApp: appOpenApp(m),
     rootId: threadType === 'message' ? num(m.thread_ref) : null,
     replyCount: thread ? Number(thread.reply_count) || 0 : 0,
     lastReplyAt: thread ? str(thread.last_reply_at) || null : null,
@@ -853,7 +869,9 @@ export function conversationSource(conversationId: number, slug: string): Discus
     async thread(rootId) {
       const page = await messagesApi.listThread(conversationId, rootId);
       const root = page.root ? fromConversationMessage(page.root) : null;
-      return { root, replies: shape(page.messages).map((m) => ({ ...m, rootId })) };
+      // Under the root the server read: a demo address names it by an alias.
+      const under = root?.id ?? rootId;
+      return { root, replies: shape(page.messages).map((m) => ({ ...m, rootId: under })) };
     },
     async upload(file) {
       try {

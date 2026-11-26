@@ -2563,7 +2563,8 @@ async function seedStagingDiscussion(pool) {
     // the Discussion marker decides whether it is a post or part of the
     // Earlier post, and a staging copy takes that marker from production, so
     // the times are held to their side of it (seedDiscussionClock).
-    const at = await seedDiscussionClock(tx);
+    // The oldest post is the library's, 26 hours back.
+    const at = await seedDiscussionClock(tx, 26 * 60);
     const say = async (appId, who, content, ago, rootId = null, earlier = false) => (await tx.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
        VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
@@ -2600,7 +2601,8 @@ async function seedStagingDiscussion(pool) {
       await react(host, '🎉', ['ana']);
       const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
       await react(chairs, '🙌', ['priya', 'ana']);
-      await say(club, 'ana', 'In, and I will bring dessert.', 40, host);
+      // #2783: `#1` reads as the project's request.
+      await say(club, 'ana', 'In, and I will bring dessert. The list is in #1.', 40, host);
       // The follow-up's states: formatting, files, a deleted post with its
       // replies, and a run of shared plans the Discussion folds (#2884).
       await say(club, 'marcus', '**Reading for March:** _Klara and the Sun_. Bring one question each.', 120);
@@ -2618,7 +2620,7 @@ async function seedStagingDiscussion(pool) {
         await tx.query(
           `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
            VALUES ($1, $2, '', 'spec_share', $3::jsonb, $4::timestamptz)`,
-          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), at(30 * 60 - i)]);
+          [club, people.priya, JSON.stringify({ specShare: { title: `Staging demo: plan ${i + 1} for the reading shelf`, prNumber: null } }), at(100 - i)]);
       }
     }
     const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
@@ -2666,25 +2668,29 @@ const SEED_TEXT_FILE = Object.freeze({ kind: 'text', filename: 'staging-demo-sch
  * The Discussion seeds' clock. A message before the Discussion marker
  * (platform_settings.discussion_posts_since, services/discussion.js) is part
  * of the Earlier post once there are enough of them; one after it is a post.
- * A staging copy carries production's marker, so a time "N minutes ago"
- * could land on either side of it. `at(ago)` is that time held after the
- * marker (a post), each one a second later than the one before so their
- * order holds; `at(ago, true)` is held before it (the Earlier post's).
+ * A staging copy's marker may be minutes old (a fresh database's) or
+ * production's, so a time "N minutes ago" could land on either side of it.
+ * `at(ago)` is a post's time: as asked when the marker is older than the
+ * seed's oldest post (`span` minutes ago), else the seed's span pressed in
+ * between the marker and now, in the same order. `at(ago, true)` is held
+ * before the marker, in the order asked (the Earlier post's).
  */
-async function seedDiscussionClock(db) {
+async function seedDiscussionClock(db, span) {
   const row = (await db.query("SELECT value FROM platform_settings WHERE key = 'discussion_posts_since'")).rows[0];
   const since = row ? Date.parse(String(row.value).replace(/^"|"$/g, '')) : NaN;
-  let after = 0;
+  const now = Date.now();
+  const oldest = now - span * 60000;
   let before = 0;
   return (ago, earlier = false) => {
-    const t = Date.now() - (Number(ago) || 0) * 60000;
+    const t = now - (Number(ago) || 0) * 60000;
     if (!Number.isFinite(since)) return new Date(t).toISOString();
     if (earlier) {
       before += 1;
       return new Date(Math.min(t, since - (400 - before) * 3600000)).toISOString();
     }
-    after += 1;
-    return new Date(Math.max(t, since + after * 1000)).toISOString();
+    if (since < oldest) return new Date(t).toISOString();
+    const start = Math.min(since + 1000, now);
+    return new Date(start + ((Math.max(t, oldest) - oldest) * (now - start)) / (now - oldest || 1)).toISOString();
   };
 }
 
@@ -2734,7 +2740,7 @@ async function seedStagingGuestDiscussion(pool) {
       `SELECT c.user_id FROM app_collaborators c WHERE c.app_id = $1 ORDER BY c.user_id LIMIT 4`, [app.id])).rows.map((r) => r.user_id);
     const [a, b, c, d] = [app.created_by, ...people].filter(Boolean);
     if (!a || !b) { await tx.query('ROLLBACK'); return seedSkipped('staging-guest-page-busy has too few people'); }
-    const at = await seedDiscussionClock(tx);
+    const at = await seedDiscussionClock(tx, 600);
     const say = async (who, content, ago, rootId = null) => (await tx.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
        VALUES ($1, $2, $3, $4, $5, $6::timestamptz) RETURNING id`,

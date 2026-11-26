@@ -76,6 +76,7 @@ import {
   type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject,
 } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ReactionPill } from '@/components/ui/feed';
 import {
   ArrowUpIcon, BoldIcon, ChatsIcon, ChevronRightIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, QuoteIcon,
@@ -102,9 +103,11 @@ import { useDismiss } from '../../message-actions/use-dismiss';
 import { Attachments } from '../../group-chat/transcript';
 import type { Attachment } from '../../group-chat/transcript-store';
 import { attachmentBadge } from '../../messages/attachment-views';
+import { openAppTarget } from '../../messages/bot-shared';
 import { CardHomeContext, MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
 import { applyFormat, type FormatKind } from '../../messages/composer-format';
-import { setUserBlocked } from '../../messages/store';
+import { LinkEmbeds } from '../../messages/link-cards';
+import { channelHandles, setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
 import { ChannelMute } from './channel-head';
@@ -692,7 +695,8 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, visitor = n
   const signIn = useRef(visitor?.onSignIn);
   signIn.current = visitor?.onSignIn;
   const isVisitor = !!visitor;
-  const room = useMemo<Room>(() => ({ slug, visitor: isVisitor, signIn: () => signIn.current?.() }), [slug, isVisitor]);
+  const homeroom = !!Number((channel as { conversation_id?: unknown } | null)?.conversation_id);
+  const room = useMemo<Room>(() => ({ slug, visitor: isVisitor, signIn: () => signIn.current?.(), homeroom }), [slug, isVisitor, homeroom]);
 
   // Read once the viewer is known, so their own reactions read as theirs.
   useEffect(() => (feed && known ? feed.hold() : undefined), [feed, known]);
@@ -1063,7 +1067,7 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
                   </button>
                 ) : null}
               </ReplyRow>
-              {item.kind === 'earlier' && reply.rootId == null && opened.has(reply.id) ? (
+              {item.kind === 'earlier' && reply.rootId == null && opened.has(reply.id) && oldThreadCount(item, reply) > 0 ? (
                 <div className="dh-old-replies" data-ws-discussion-old-replies={String(reply.id)}>
                   {feed.repliesOf(reply.id).filter((r) => !item.replies.includes(r)).map((old) => (
                     <Message key={old.id} said={old} feed={feed} me={me} className="dh-reply" marked={marked === old.id} onReply={startReply}>
@@ -1263,7 +1267,13 @@ export function isCardPost(item: DiscussionItem): boolean {
 }
 
 /** Which project the room is, and whether its reader may only read (a visitor): for what the rows draw. */
-interface Room { slug: string; visitor: boolean; signIn?: () => void }
+interface Room {
+  slug: string;
+  visitor: boolean;
+  signIn?: () => void;
+  /** Homeroom's own room (#general, a Messages channel): `#name` in a post links to that channel, as in Messages. */
+  homeroom?: boolean;
+}
 const RoomContext = createContext<Room>({ slug: '', visitor: false });
 
 /**
@@ -1319,8 +1329,23 @@ function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean
   }));
   return (
     <div className={className}>
-      {words ? <MessageMarkdown content={said.content} appSlug={room.slug || null} /> : null}
+      {words ? <MessageMarkdown content={said.content} channels={room.homeroom ? channelHandles() : undefined} appSlug={room.slug || null} /> : null}
       {said.spec ? <SpecCard spec={said.spec} slug={room.slug} /> : null}
+      {/* #4238: Homeroom bot's first-version post opens the app it made. */}
+      {said.openApp && !clamp ? (
+        <Button
+          type="button"
+          data-ws-discussion-open-app=""
+          variant="pillAccent"
+          size="sm"
+          className="mt-2 font-semibold"
+          onClick={() => openAppTarget(said.openApp?.target)}
+        >
+          {said.openApp.label}
+        </Button>
+      ) : null}
+      {/* A Homeroom link in the words: its card, as every room draws it (a visitor reads the words alone). */}
+      {words && !clamp && !room.visitor ? <LinkEmbeds text={said.content} exclude={said.cards} inboxOnly /> : null}
       {said.cards.length ? (
         <div className="messages-object-list dh-cards" data-ws-discussion-cards={String(said.cards.length)}>
           {/* #5303: a card from another project says which one it is from. */}

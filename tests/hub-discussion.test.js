@@ -140,6 +140,12 @@ test('an app channel\'s rows and a Messages room\'s messages are read into one s
   assert.equal(feed.fromAppRow({ ...row, thread_type: 'issue', thread_ref: 3 }, null), null, 'a request\'s thread is not #general');
   assert.equal(feed.fromAppRow({ ...row, thread_type: 'category', thread_ref: 3 }, null), null, 'nor is a topic\'s');
   assert.equal(feed.fromAppRow({ ...row, msg_type: 'system' }, null), null, 'nor a platform line');
+  // #4238: Homeroom bot's first-version post keeps its Open button, as the chat drew it.
+  const first = { ...row, metadata: { kind: 'first_version', actions: [{ type: 'open', label: 'Open Plant Pal', target: '#app/plant-pal' }] } };
+  assert.deepEqual({ ...feed.fromAppRow(first, null).openApp }, { label: 'Open Plant Pal', target: '#app/plant-pal' });
+  assert.equal(feed.appOpenApp({ ...first, deleted: true }), null, 'a deleted post has none');
+  assert.equal(feed.appOpenApp({ ...first, metadata: { kind: 'first_version', actions: [{ type: 'open', label: 'x', target: 'https://elsewhere' }] } }), null, 'only an address in the app');
+  assert.equal(feed.appOpenApp(row), null);
   const conv = feed.fromConversationMessage({
     id: 8, conversationId: 1, sender: { id: 4, username: 'jo' }, content: 'yo', createdAt: SINCE,
     reactions: [], attachments: [], objects: [], threadRootId: null,
