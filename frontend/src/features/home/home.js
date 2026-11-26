@@ -1083,9 +1083,9 @@ const Home = {
       // three apps and New project. Nothing is re-placed: the app keeps its
       // cell and is there again once the grid is expanded or edited.
       //
-      // Not under Standard (WIP) (`inCard`, Home.hasSideCard): New project is
-      // a button on its search row, and the grid draws no tile at all: four
-      // apps to the last row.
+      // Not from 768px (`inCard`, Home.hasSideCard): New project is a button
+      // on its search row there, and the grid draws no tile at all: four apps
+      // to the last row.
       const inCard = Home.hasSideCard();
       Home._sideCard = inCard;
       const createTakesLast = !inCard && !editing && !Home._appsExpanded

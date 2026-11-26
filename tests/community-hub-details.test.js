@@ -26,10 +26,6 @@ const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
-// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
-const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
-const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const CARD_SRC = read(CARD);
@@ -54,7 +50,7 @@ const community = (over = {}) => ({
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
 test('#3268: the hub\'s head is what it is and who is around this week', async () => {
-  const { HeroPeople, HeroActive, HERO_FACES, CommunityCard, reloadCommunity } = loadTsx(CARD, LEGACY_HUB);
+  const { HeroPeople, HeroActive, HERO_FACES, CommunityCard, reloadCommunity } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
     createElement('span', { className: 'dev-ws-hero-actions' }, 'Invite')));
@@ -149,7 +145,7 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   // Open app gives way to the First version card while that is being built,
   // and is the hero's again once it is live (phone review #53).
   assert.match(CARD_SRC, /const appLive = hubAppLive\(data\);\s*const appButton = appLive \? openApp : null;/);
-  const { hubAppLive } = loadTsx(CARD, LEGACY_HUB);
+  const { hubAppLive } = loadTsx(CARD);
   assert.equal(hubAppLive({ first_version: null }), true);
   assert.equal(hubAppLive({ first_version: { line: 'building' } }), false);
   assert.equal(hubAppLive({ first_version: { line: 'live' } }), true);
@@ -163,7 +159,7 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
 });
 
 test('the hub draws no charts: who is around is faces, a count and names, and nothing on the hub is a dashboard', () => {
-  const { HeroActive } = loadTsx(CARD, LEGACY_HUB);
+  const { HeroActive } = loadTsx(CARD);
   const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
   const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u }));
   const active = (activity) => renderToHtml(createElement(HeroActive, { activity }));
@@ -203,7 +199,7 @@ test('one hub from the first day: a new project leads with its tile and name, an
   // which the First version card was to draw, so a ready-made app's hub had
   // no name at all, and a link out read "Private community" between open
   // seats. Now every hub leads the same way, from its first day.
-  const { CommunityCard, reloadCommunity } = loadTsx(CARD, LEGACY_HUB);
+  const { CommunityCard, reloadCommunity } = loadTsx(CARD);
   const record = (over = {}) => community({
     slug: 'garden-new', audience: 'solo', audience_label: 'Just you', member_count: 1,
     description: 'Seeds, swaps and Sunday digs.', is_creator: true, members: [{ id: 1, username: 'ada' }],
@@ -287,7 +283,7 @@ test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () 
 });
 
 test('For you: Needs you counts the votes you owe, not the requests nobody has claimed', () => {
-  const { ForYouCard, NothingToVote, owesVote } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard, NothingToVote, owesVote } = loadTsx(HUB);
   const row = (key, title, kind) => ({ t: 'card', key, card: { title: { text: title } }, who: 'ada', kind });
   const card = (queue, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue, mine: null, alone: false,
@@ -318,7 +314,7 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
 });
 
 test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, opening the project\'s Workshop, and no Your work row', () => {
-  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard } = loadTsx(HUB);
   const card = (mine, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine, alone: false,
     data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
@@ -379,7 +375,7 @@ test('the hub\'s channel record names each room\'s own write route, which the Di
 });
 
 test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, and who says yes, by name where there are names', () => {
-  const { approvalStep, ruleSentence, RuleWords, ApprovalLine } = loadTsx(CARD, LEGACY_HUB);
+  const { approvalStep, ruleSentence, RuleWords, ApprovalLine } = loadTsx(CARD);
   const member = { audience: 'invited', is_member: true };
   // Each regime is one whole sentence, in two wordings: the wide card's, and
   // the narrow card's without "A change".
@@ -442,7 +438,7 @@ test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, a
 });
 
 test('#4527: the approval rule\'s line carries Rules, for exactly whom the rule lets propose', async () => {
-  const { ApprovalLine, reloadCommunity } = loadTsx(CARD, LEGACY_HUB);
+  const { ApprovalLine, reloadCommunity } = loadTsx(CARD);
   const payload = (over = {}) => ({
     slug: 'rules-card', name: 'Rules', member_count: 11, is_member: true, is_creator: true,
     audience: 'open', audience_label: 'Public community',
@@ -494,7 +490,7 @@ test('a person who has not joined reads the same What happened, its rows and Mar
 });
 
 test('Make it public stays on Share it; who can see a project otherwise is the Who can see & change it sheet, from the ⋯ (#4666)', () => {
-  const { audienceChangeLine, canLeave, MAKE_PUBLIC_LINE } = loadTsx(CARD, LEGACY_HUB);
+  const { audienceChangeLine, canLeave, MAKE_PUBLIC_LINE } = loadTsx(CARD);
   assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is waiting for approval');
@@ -591,7 +587,7 @@ test('Home\'s See all links carry the accent, not the header\'s periwinkle', () 
 // ── Still deciding: the project card (the hand-off of 11 Nov 2026) ───────
 
 test('signed in but not in it: the hub leads with the project card, Open app, Join and the ⋯, and the people card under it', async () => {
-  const { CommunityCard, reloadCommunity } = loadTsx(CARD, LEGACY_HUB);
+  const { CommunityCard, reloadCommunity } = loadTsx(CARD);
   const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u, display_name: null }));
   const record = (slug, member) => community({
     slug, name: 'Garden', is_member: member, member_count: 91, audience: 'open', audience_label: 'Public community',
@@ -647,7 +643,7 @@ test('signed in but not in it: the hub leads with the project card, Open app, Jo
 });
 
 test('For you for somebody not in it: "Up for a vote · Join to vote on these." with a light count, and no unread pill', () => {
-  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard } = loadTsx(HUB);
   const queue = Array.from({ length: 13 }, (_, i) => ({ kind: 'vote', t: 'card', key: `v${i}`, card: { title: { text: `Vote ${i}` } } }));
   const data = (member) => community({
     is_member: member, member_count: 91,
@@ -673,7 +669,7 @@ test('For you for somebody not in it: "Up for a vote · Join to vote on these." 
 });
 
 test('every hub\'s Recently live ends with how many more went live this month, opening the Workshop, and nothing at zero', () => {
-  const { RecentlyLive } = loadTsx(HUB, LEGACY_HUB);
+  const { RecentlyLive } = loadTsx(HUB);
   const rows = [1, 2, 3].map((n) => ({ key: `r${n}`, sessionId: n, prNumber: n, title: `Change ${n}`, who: 'ada', at: new Date().toISOString(), going: false, picture: null }));
   let opened = 0;
   const live = (props) => renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows, onAll() { opened++; }, ...props }));

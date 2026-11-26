@@ -1,7 +1,6 @@
 /**
  * The pieces a thread's card is drawn from on a request's and a change's
- * page, under the standard look and the brand look (the frame's looks keep
- * their own page, ./frame/topic-frame.tsx):
+ * page:
  *
  *   - `ThreadKicker`: the project's icon and name, then "Request #N" or
  *     "Change #N", over the title. It replaces the author row and the number
@@ -33,7 +32,7 @@ import type { RequestSpecCard } from './request-model';
 import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 
 /**
- * Whether the page draws the card (the standard look and the brand look), and
+ * Whether the page draws the card (a request's and a change's page do), and
  * which page's layer a step opens (./step-store.ts). A request's page gives
  * it to the change sections under it (./thread-changes.tsx).
  */

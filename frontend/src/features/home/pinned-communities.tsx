@@ -11,7 +11,7 @@
  * a ring of the community's colour (lib/community-color.ts) so it never
  * reads as an app. A community's tile opens its hub; an app's tile (Home's
  * Pinned apps) opens the app. Where the page draws a community as a card
- * (the standard look from 768px, the brand look from 1280px), the card is
+ * (from 768px), the card is
  * ../communities/card.tsx, which takes this module's votes number, its edit
  * discs and its door (`openHub`). Beside the tiles, the page's own:
  *

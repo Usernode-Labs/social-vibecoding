@@ -138,25 +138,17 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   for (const s of ['Step 3 of 7', 'My plan for', 'Change something']) assert.doesNotMatch(s, /—|!/);
 });
 
-test('#7044: the plan card\'s Build it wears the look\'s sun pill', () => {
+test('#7044: the plan card\'s Build it wears the sun pill', () => {
   const css = read('public/css/app.css');
-  // Standard and Standard (WIP) draw it with the brand kit's sun-pill tokens.
-  assert.match(css, /--wip-top-cta-bg:\s*#ffee6f;/, 'the standard look\'s sun');
-  assert.match(css, /--bl-sun:\s*#ffee6f;/, 'the brand look\'s sun');
+  // Drawn with the sun-pill tokens the bar's own button uses.
+  assert.match(css, /--wip-top-cta-bg:\s*#ffee6f;/, 'the sun');
   assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]\s*\{[^}]*background:\s*var\(--wip-top-cta-bg\)[^}]*color:\s*var\(--wip-top-cta-ink\)[^}]*box-shadow:\s*var\(--wip-top-cta-edge\)/s,
     'yellow words and ink, with the ink outline and hard edge');
   assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]:hover\s*\{\s*background:\s*var\(--wip-top-cta-bg\);\s*\}/,
     'pointing at it keeps the same sun, as that look has no lighter yellow');
-  assert.match(css, /html\[data-skin="brand"\] \[data-bot-plan\] \[data-bot-plan-build\]\s*\{[^}]*background:\s*var\(--bl-sun\)[^}]*color:\s*var\(--bl-on-sun\)[^}]*box-shadow:\s*var\(--bl-pill-edge\)/s,
-    'the brand look\'s own sun pill');
-  assert.match(css, /html\[data-skin="brand"\] \[data-bot-plan\] \[data-bot-plan-build\]:hover\s*\{\s*background:\s*var\(--bl-sun-lit\);\s*\}/,
-    'and its lighter sun under the pointer');
   // A press takes up the edge and moves the pill down; reduced motion stays still.
   assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{[^}]*box-shadow:\s*var\(--wip-top-cta-edge-down\)[^}]*transform:\s*var\(--wip-top-cta-press\)/s);
-  assert.match(css, /html\[data-skin="brand"\] \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{[^}]*box-shadow:\s*var\(--bl-pill-edge-down\)[^}]*transform:\s*translateY\(2px\)/s);
   assert.match(css, /html\[data-motion="reduce"\] \[data-bot-plan\] button\[data-bot-plan-build\]:active\s*\{\s*transform:\s*none;\s*\}/,
     'a reader who asked for less motion keeps it still');
-  // The frame looks keep the accent-filled button: no frame rule touches it.
-  const frames = css.match(/html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\)[^{]*\[data-bot-plan-build\][^{]*\{[^}]*\}/g) || [];
-  assert.deepEqual(frames, [], 'only the yellow looks restyle Build it');
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /\[data-skin/, 'one look: nothing is drawn under another');
 });

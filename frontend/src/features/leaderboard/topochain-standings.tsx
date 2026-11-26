@@ -47,8 +47,6 @@ type RowView = {
   /** No display name: `user` is the "Anonymous" stand-in. */
   anonymous?: boolean;
   points: string;
-  /** Your own row (under a look it is the lit one). */
-  viewer?: boolean;
 };
 
 /** #5275: the viewer's own place, pinned above the table. */

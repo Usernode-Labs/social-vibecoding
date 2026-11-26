@@ -938,11 +938,9 @@ function MakePublic({ slug, name, onOpened }: {
  * the button: the hero's Join question.
  */
 /**
- * Standard (WIP) only: "Make it public" in the hero, beside Open app, for
- * exactly whom the Share it card offers it under every other look (a just
- * yours project its viewer manages, with no such change already up). That
- * card is not drawn under this look, so this is its one place there.
- * Under Standard the hero has no such button (#4045, #4666).
+ * "Make it public" in the hero, beside Open app, for a just-yours project
+ * its viewer manages, with no such change already up (#4045, #4666). This
+ * is its one place on the hub.
  */
 function WipHeroPublic({ slug, name, data }: { slug: string; name: string; data: CommunityPayload }): ReactNode {
   if (data.audience !== 'solo' || !data.can_manage || data.audience_change) return null;

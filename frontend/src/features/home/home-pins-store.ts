@@ -210,12 +210,11 @@ export async function refreshHomePins({ force = false }: { force?: boolean } = {
 
 /**
  * WHAT IS GOING ON IN EACH OF YOUR COMMUNITIES (Drea's review of #6699), for
- * the cards the Communities page draws: the ones you pinned (the standard
- * look from 768px, the brand look from 1280px) and the compact cards of the
- * ones you joined (the standard look at every width, the brand look from
- * 1280px; ../communities/card.tsx): GET /api/me/home-pins/activity
+ * the cards the Communities page draws: the ones you pinned (from 768px)
+ * and the compact cards of the ones you joined (at every width;
+ * ../communities/card.tsx): GET /api/me/home-pins/activity
  * (services/home-pins.js `activity`), keyed by slug, for the ones you pinned
- * and the others you are in. Read only where the cards are drawn, so a look
+ * and the others you are in. Read only where the cards are drawn, so a page
  * that draws tiles asks for nothing it does not show; quiet on failure, when
  * each card draws its name (and a joined one its members) alone.
  */

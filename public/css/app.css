@@ -6463,12 +6463,9 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
    block in from the heading's edge. The spacing is utilities in
    frontend/src/features/home/panels/challenges.tsx; nothing here draws it.
 
-   The cards carry no rules of their own. Each is the Challenges
-   tab's shared card (features/leaderboard/challenge-card.tsx), drawn entirely
-   in utilities; `.home-challenge-card` survives only as the root class the
-   declared checks and tests select on. The tinted card, the white pill, the
-   count capsule and the category well that lived here are retired with the
-   design they drew. */
+   The cards are posters (WipChallengePosters in that file), drawn by the
+   `.wip-poster` rules. The tinted card, the white pill, the count capsule and
+   the category well that lived here are retired with the design they drew. */
 
 /* ── The Create tile: the launcher grid's last cell ─────────────
    "Create an app" is the grid's trailing tile (the prototype's scrHome), drawn
@@ -6496,7 +6493,7 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
   opacity: 0.4;
 }
 /* Keyboard focus draws the ring the challenge cards draw
-   (`.home-challenge-card[role="button"]:focus-visible`). */
+   (`.tc-se-card[role="button"]:focus-visible`). */
 .home-create-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -27532,13 +27529,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
-/* #1918: the challenge cards (the Challenges tab's grid and Home's
-   Challenges block) are role="button" now, so the kit's scale + dim press
-   reaches them. They sit in scrolled lists too, so on touch they take the
+/* #1918: the challenge cards (the Challenges tab's grid) are role="button"
+   now, so the kit's scale + dim press reaches them. They sit in scrolled lists too, so on touch they take the
    same 120ms hold-back as the Dev board above. */
 @media (hover: none) {
-  .tc-se-card[role="button"]:active,
-  .home-challenge-card[role="button"]:active {
+  .tc-se-card[role="button"]:active {
     transition: transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
@@ -27552,8 +27547,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     transition: transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
-.tc-se-card[role="button"]:focus-visible,
-.home-challenge-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tc-se-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
@@ -33625,7 +33619,6 @@ html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-section-card,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-empty,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-strip,
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .home-challenge-card,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .home-discover-card { box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-strip { background-color: var(--bl-card); backdrop-filter: none; -webkit-backdrop-filter: none; }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .app-icon-tile,
