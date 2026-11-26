@@ -37,17 +37,22 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # old package.
 # The four krb5 libraries are named for the same reason (audit of 23 Nov 2026:
 # 1.21.3-5+deb13u2 or later). The check below fails the build if the mirror
-# still ships anything older.
-ARG BASE_PACKAGES_REFRESHED=2026-11-23
+# still ships anything older. libexpat1 is named for the same reason (audit of
+# 26 Nov 2026: trixie's 2.7.1-2 or later).
+ARG BASE_PACKAGES_REFRESHED=2026-11-26
 RUN echo "base packages refreshed: ${BASE_PACKAGES_REFRESHED}" \
   && apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
     librsvg2-bin \
     libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
+    libexpat1 \
   && v="$(dpkg-query -W -f='${Version}' linux-libc-dev)" \
   && { dpkg --compare-versions "$v" ge 6.12.118-1 \
        || { echo "linux-libc-dev $v is older than 6.12.118-1" >&2; exit 1; }; } \
+  && v="$(dpkg-query -W -f='${Version}' libexpat1)" \
+  && { dpkg --compare-versions "$v" ge 2.7.1-2 \
+       || { echo "libexpat1 $v is older than 2.7.1-2" >&2; exit 1; }; } \
   && for p in libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0; do \
        v="$(dpkg-query -W -f='${Version}' "$p")"; \
        dpkg --compare-versions "$v" ge 1.21.3-5+deb13u2 \
