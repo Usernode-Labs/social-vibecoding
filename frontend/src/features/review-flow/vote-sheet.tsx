@@ -36,6 +36,7 @@ import { CheckIcon, ChevronLeftIcon, SparklesIcon, StepBackIcon, XIcon } from '@
 import { useMessages } from '../../lib/i18n/react';
 import { radioGroupKeys } from '../../lib/radio-group';
 import { changeHref } from '../../lib/change-href';
+import { capCount } from '../../lib/count-cap';
 import { callAppView } from '../dev-board/card/fold';
 import { FeedThread } from '../dev-board/card/feed-thread';
 import { openBot } from '../messages/store';
@@ -392,7 +393,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
             <span className="rf-morph-in rf-morph-skip" aria-hidden="true">{t('communities:review.vote.skip')}</span>
             <span className="rf-morph-in rf-morph-next" aria-hidden="true">
               <span>{hasNext ? t('communities:review.said.nextShort') : t('communities:review.said.done')}</span>
-              {hasNext && left > 0 ? <span className="rf-count" data-rf-count="" aria-hidden="true">{left > 99 ? '99+' : left}</span> : null}
+              {hasNext && left > 0 ? <span className="rf-count" data-rf-count="" aria-hidden="true">{capCount(left)}</span> : null}
             </span>
           </button>
         </div>

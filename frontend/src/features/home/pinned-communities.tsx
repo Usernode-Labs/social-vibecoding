@@ -45,6 +45,7 @@ import { PlusIcon } from '@/components/ui/icons';
 import { bandWash, useCommunityColor, useIconMainColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { capCount } from '../../lib/count-cap';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SectionHeading } from './panels/ui';
 import {
@@ -199,7 +200,7 @@ export function PinTile({ pin, votes, editing, faded = false, community = false,
         {community
           ? <CommunityTileIcon slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} />
           : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
-        {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
+        {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{capCount(votes)}</span> : null}
         {editing && onUnpin ? (
           <button
             type="button"

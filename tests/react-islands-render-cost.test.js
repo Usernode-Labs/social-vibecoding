@@ -117,7 +117,7 @@ test('the inbox rows are memo()\'d and the list filters on the deferred query', 
   const list = src.slice(src.indexOf('function ConversationList('));
   const body = list.slice(0, list.indexOf('\n}\n'));
   assert.match(body, /const deferredQuery = useDeferredValue\(query\);/);
-  assert.match(body, /const q = deferredQuery\.trim\(\)\.toLowerCase\(\);/, 'rows are matched against the deferred query');
+  assert.match(body, /const q = deferredQuery\.trim\(\);/, 'rows are matched against the deferred query');
   assert.match(body, /value=\{query\}/, 'while the field shows every keystroke at once');
   assert.match(body, /const inbox = useMemo\(\(\) => buildInbox\(/, 'the inbox is built once per change to its inputs');
 });

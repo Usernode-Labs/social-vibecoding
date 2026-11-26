@@ -51,6 +51,7 @@ import { bandWash, useIconMainColor } from '../../lib/community-color';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMinWidth } from '../../lib/use-min-width';
+import { capCount } from '../../lib/count-cap';
 import { sizedPicture } from '../apps/app-card.js';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
@@ -324,7 +325,7 @@ export function CommunityPageCard({ community, votes, editing, compact = false, 
   ) : undefined;
   const face = (
     <>
-      {votes > 0 && !editing && !voteTag ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
+      {votes > 0 && !editing && !voteTag ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{capCount(votes)}</span> : null}
       {editing && onUnpin ? (
         <button
           type="button"

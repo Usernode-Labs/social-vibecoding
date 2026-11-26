@@ -42,9 +42,14 @@ function englishRuntime() {
 function englishPlatformI18n(overrides = {}) {
   const { t, htmlText, htmlRich, listText, languageName, getLanguage, getDateLocale, getPreference } = englishRuntime();
   const { errorText } = loadTsx('frontend/src/lib/i18n/server-error.ts');
+  // The time formatter the bundle publishes for the classic scripts:
+  // lib/timestamp.ts's own, as lib/i18n/runtime.ts hands it on.
+  const { agoStamp, messageStamp, shortDate } = loadTsx('frontend/src/lib/timestamp.ts');
+  // And the one count cap, as it hands that on too (lib/count-cap.ts).
+  const { capCount } = loadTsx('frontend/src/lib/count-cap.ts');
   return {
     t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, errorText,
-    dateLocale: getDateLocale, ...overrides,
+    dateLocale: getDateLocale, agoStamp, messageStamp, shortDate, capCount, ...overrides,
   };
 }
 

@@ -618,41 +618,5 @@
   "buildLog.retryFailed": {
     "text": "Retry failed (HTTP {{status}})",
     "description": "Toast shown when the request to deploy an app again was refused and the server gave no message. {{status}} is the HTTP status number, such as 500."
-  },
-  "buildLog.ago.justNow": {
-    "text": "just now",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel, when it was under a minute ago. Lower case."
-  },
-  "buildLog.ago.minutes_one": {
-    "text": "{{count}}m ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of minutes; \"m\" abbreviates minutes."
-  },
-  "buildLog.ago.minutes_other": {
-    "text": "{{count}}m ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of minutes; \"m\" abbreviates minutes."
-  },
-  "buildLog.ago.hours_one": {
-    "text": "{{count}}h ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "buildLog.ago.hours_other": {
-    "text": "{{count}}h ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "buildLog.ago.days_one": {
-    "text": "{{count}}d ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "buildLog.ago.days_other": {
-    "text": "{{count}}d ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "buildLog.ago.months_one": {
-    "text": "{{count}}mo ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of months; \"mo\" abbreviates months."
-  },
-  "buildLog.ago.months_other": {
-    "text": "{{count}}mo ago",
-    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of months; \"mo\" abbreviates months."
   }
 }

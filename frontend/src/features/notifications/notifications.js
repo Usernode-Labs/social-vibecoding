@@ -1664,8 +1664,10 @@ const Notifications = {
   // invites pinned at the top of the sheet, and all three print it through
   // this one cap. The tab used to sum the rows it had paged in, which is a
   // count of the LIST, not of what is waiting; it is now the bell's number.
+  // The cap is the shell's one (lib/count-cap.ts), read through the global
+  // the language runtime publishes, as this file reads its words.
   _badgeText(count) {
-    return count > 99 ? '99+' : String(count);
+    return PlatformI18n.capCount(count);
   },
 
   // Of the loaded items, the ones that are a finished dev session
@@ -2401,24 +2403,13 @@ function parsePlatformRefusalDetail(detail) {
 
 // #6901: the clock time a run of refusals began, in the reader's own zone and
 // language: "9:00 AM", with the day in front when it was not today ("13 Nov,
-// 9:00 AM"), the shape lib/timestamp.ts's messageStamp prints. Spelled here
-// rather than importing that second helper: the bell's suites evaluate this
-// file as a classic script in a vm and strip its one import, so a second one
-// would be left in the source they run. The zone is the account's pick,
-// published on PlatformI18n (#6479); the vm harness has none, which is the
-// device's zone, the same fallback as Auto.
+// 9:00 AM"). It is lib/timestamp.ts's messageStamp, the shell's one stamp,
+// read through the global the language runtime publishes rather than a second
+// import: the bell's suites evaluate this file as a classic script in a vm
+// and strip its one import, so a second one would be left in the source they
+// run.
 function clockStamp(at) {
-  if (!at || Number.isNaN(at.getTime())) return '';
-  const zone = typeof PlatformI18n.timeZone === 'function' ? PlatformI18n.timeZone() : undefined;
-  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
-  const inZone = (options) => (zone ? { ...options, timeZone: zone } : options);
-  const time = new Intl.DateTimeFormat(locale, inZone({ hour: 'numeric', minute: '2-digit' })).format(at);
-  const day = (date) => new Intl.DateTimeFormat(locale,
-    inZone({ year: 'numeric', month: 'numeric', day: 'numeric' })).format(date);
-  if (day(at) === day(new Date())) return time;
-  const date = new Intl.DateTimeFormat(locale,
-    inZone({ month: 'short', day: 'numeric' })).format(at);
-  return `${date}, ${time}`;
+  return PlatformI18n.messageStamp(at).text;
 }
 
 // The day Homeroom bot's budget week turns, by name, for a notice sent at
