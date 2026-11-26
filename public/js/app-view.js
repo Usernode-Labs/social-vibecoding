@@ -14485,7 +14485,6 @@ const AppView = {
       focusMessageId: id(t.focusMessageId),
       conversationId: id(t.conversationId),
       topicRef: id(t.topicRef),
-      asChat: t.asChat === true,
       from: typeof t.from === 'string' && t.from ? t.from : null,
       at: Date.now(),
     };
@@ -14514,25 +14513,15 @@ const AppView = {
   // A door to the Discussion tab with a place in it: the target first, so
   // the page the tab door turns (or mounts) finds it waiting.
   //
-  // #general IS THE DISCUSSION (26 Nov 2026): a door that names a message or
-  // a reply thread in #general (a notification, a message link) lands on
-  // the Discussion, #general as posts (`posts`, dev-board/workshop/
-  // hub-discussion.tsx), which opens the post it is in and marks it. What
-  // the posts do not show (an old message's own thread, a message too far
-  // back) the page hands on to #general's chat, the same room drawn as one
-  // stream, with the target. A door to the room itself, a topic's, or one
-  // that asks for the chat (`asChat`: the Discussion's own "in #general"
-  // links) opens the chat as before.
+  // #general IS THE DISCUSSION (26 Nov 2026): the tab is the project's
+  // Discussion, #general's messages as posts with replies
+  // (dev-board/workshop/hub-discussion.tsx), which takes the target: it
+  // opens the post a message or a reply thread is in and marks it. There is
+  // no chat view of #general left to hand anything on to.
   _landOnDiscussion(slug, target) {
     if (!slug) return;
     AppView._stashDiscussionTarget(slug, target);
-    AppView._landOnTab(slug, AppView._discussionPlaceFor(AppView._peekDiscussionTarget(slug)));
-  },
-  // Which of the two a waiting target opens: the Discussion's posts for a
-  // message or a thread in #general, #general's chat for anything else.
-  _discussionPlaceFor(target) {
-    const t = target || null;
-    return t && !t.topicRef && !t.asChat && (t.threadRootId || t.focusMessageId) ? 'posts' : 'discussion';
+    AppView._landOnTab(slug, 'discussion');
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,

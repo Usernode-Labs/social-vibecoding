@@ -40,10 +40,9 @@ export const PAGE_PLACES: ReadonlyArray<{ key: 'status' | 'needs' | 'workshop'; 
 ];
 
 // `bot`: Homeroom bot's slots, a page under the Workshop (./bot-slots.tsx).
-// `posts`: the Discussion, #general as posts with replies
-// (./hub-discussion.tsx): the place the list's Discussion row opens, where
-// links to a #general message land. `discussion` is the same room as a chat
-// ("Open as chat"), and lights the Discussion row.
+// `discussion` is the project's Discussion (#general's messages as posts with
+// replies, ./hub-discussion.tsx); `posts`, the address its phone page had
+// first, is the same place.
 const PAGE_KEYS = new Set(['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'posts', 'bot']);
 /** A topic channel's handle, as dapp.json allows it (a letter first). */
 const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
@@ -53,6 +52,15 @@ export function channelPlace(handle: string | null | undefined): PlaceKey {
   const h = String(handle || '').trim().replace(/^#/, '').toLowerCase();
   if (!h || h === 'general') return 'discussion';
   return HANDLE_RE.test(h) ? `c:${h}` : 'discussion';
+}
+
+/**
+ * The handle a place's NAME shows after a `#` (the header, the page title,
+ * the place bar): a topic's. The Discussion is #general underneath, and is
+ * named in words, "Discussion" (26 Nov 2026), as placeName says.
+ */
+export function placeTitleHandle(key: string | null | undefined): string | null {
+  return key === 'discussion' || key === 'posts' ? null : placeHandle(key);
 }
 
 /** The channel handle a place key names, or null for a page. */
@@ -79,13 +87,13 @@ export function isChannelPlace(key: string | null | undefined): boolean {
 
 /**
  * The place an entry in the list lights for `key`: All items and the bot's
- * slots light the Workshop, the plan the Hub, #general's chat the
- * Discussion (the same room, drawn as a chat), anything else itself.
+ * slots light the Workshop, the plan the Hub, `posts` (the Discussion's
+ * first address) the Discussion, anything else itself.
  */
 export function litPlace(key: PlaceKey): PlaceKey {
   if (key === 'all' || key === 'bot') return 'workshop';
   if (key === 'plan') return 'status';
-  if (key === 'discussion') return 'posts';
+  if (key === 'posts') return 'discussion';
   return key;
 }
 
@@ -125,7 +133,7 @@ export function mergedInto(places: PlacesPayload | null | undefined, topic: Plac
 /** What a place is called on its own bar: the page's name, or the channel's handle. */
 export function placeName(key: PlaceKey): string {
   if (key === 'status' || key === 'plan') return translate('project:places.bar.hub');
-  if (key === 'posts') return translate('project:places.bar.discussion');
+  if (key === 'posts' || key === 'discussion') return translate('project:places.bar.discussion');
   if (key === 'needs') return translate('project:places.bar.needsYou');
   if (key === 'workshop' || key === 'all' || key === 'bot') return translate('project:places.bar.workshop');
   return placeHandle(key) || 'general';

@@ -1105,6 +1105,49 @@ function chatRoutes(config) {
     }
   });
 
+  // ── Editing your own message, over REST (the Discussion, 26 Nov 2026) ──
+  //
+  //   PATCH /api/apps/:slug/messages/:id  { content }
+  //   → 200 { ok: true, id, content, edited_at }
+  //     400 { error: 'empty' } | 403 { error: 'not_author' }
+  //     404 { error: 'Message not found' } | 409 { error: 'message_deleted' }
+  //
+  // The REST twin of the socket's `{ type: 'edit', messageId, content }`,
+  // run by the same handler (ws.handleMessage), which checks the author,
+  // trims and caps the words, and broadcasts `chat_edit` to the room. The
+  // project's Discussion edits a post or a reply through it; the socket is
+  // the chat's. Collab-gated by the handler, as every write is.
+  router.patch('/api/apps/:slug/messages/:id', groupChatWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const messageId = parseThreadRef(req.params.id);
+    if (messageId == null) return res.status(404).json({ error: 'Message not found' });
+    const content = req.body && typeof req.body.content === 'string' ? req.body.content : '';
+    if (!content.trim()) return res.status(400).json({ error: 'empty' });
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { handleMessage } = require('../services/ws');
+      const result = await handleMessage(
+        pool,
+        { user: req.user, appId: app.id, appSlug: app.slug },
+        { type: 'edit', messageId, content }
+      );
+      if (!result?.ok) {
+        if (result?.code === 'not_author') return res.status(403).json({ error: 'not_author' });
+        if (result?.code === 'message_deleted') return res.status(409).json({ error: 'message_deleted' });
+        if (result?.code === 'empty') return res.status(400).json({ error: 'empty' });
+        if (result?.code === 'write_access_failed') return res.status(503).json({ error: 'Try again' });
+        return res.status(404).json({ error: 'Message not found' });
+      }
+      return res.json({ ok: true, id: messageId, content: result.content, edited_at: result.editedAt });
+    } catch (err) {
+      log.error('chat', 'Failed to edit message', { slug: req.params.slug, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── A reaction, over REST (the hub's Discussion, 26 Nov 2026) ─────
   //
   //   POST /api/apps/:slug/messages/:id/reactions  { emoji, on? }

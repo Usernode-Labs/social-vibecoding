@@ -411,7 +411,10 @@ test('a topic\'s chip names where its press goes: a step Back to the place left,
   assert.deepEqual({ ...chipFor(board, 'workshop', true) }, { to: 'workshop' });
   assert.deepEqual({ ...chipFor(board, 'all', true) }, { to: 'allItems' });
   assert.deepEqual({ ...chipFor(board, 'needs', true) }, { to: 'needs' });
-  assert.deepEqual({ ...chipFor(board, 'discussion', true) }, { to: 'channel', handle: 'general' });
+  // #general is the Discussion, named in words (26 Nov 2026).
+  assert.deepEqual({ ...chipFor(board, 'discussion', true) }, { to: 'discussion' });
+  assert.deepEqual({ ...placeChip('posts') }, { to: 'discussion' });
+  assert.equal(message('project:topic.back.discussion'), 'Discussion');
   assert.deepEqual({ ...chipFor(board, 'c:onboarding', true) }, { to: 'channel', handle: 'onboarding' });
   assert.deepEqual({ ...placeChip('bot') }, { to: 'workshop' }, 'the bot\'s slots are under the Workshop');
   // Otherwise the press follows the link, and a link to /workshop opens the Workshop.

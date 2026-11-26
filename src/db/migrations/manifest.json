@@ -615,6 +615,11 @@
       "id": "feedback-reports-about-app",
       "sha256": "79216d2cb49a5a05a5c868fba5a54d15eb4814f7bedb92819afff2a27be8d2d3",
       "schemaSha256": "fb68d288d2d8240f82f6cf35770098df65100c01212498ff0bbee2edffd2017d"
+    },
+    {
+      "id": "discussion-earlier-reactions",
+      "sha256": "70f7dbccef79279ead502b636451ab4579140be18e478f6622fa7f6200224ef2",
+      "schemaSha256": "4184d1750d8519e2c5337b446ffd026f17fe7f4ae8442f666a34cee136b55cbb"
     }
   ]
 }

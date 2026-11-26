@@ -543,13 +543,14 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
   assert.match(visual.expectSelector, /^#gc-thread-messages\[data-language="change"\] \.dev-request-event\[data-change-event="submitted"\]\[data-msg-id="900118"\] > \.dev-request-event-text > b \+ \.dev-request-event-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
   assert.equal(visual.expectText, 'staging-demo-quiet-builder asked for approval');
-  // The channel, in the project and in Messages: the quiet card and nothing
-  // else — no event row and no message row beside it.
-  const quiet = checks.filter((t) => /gc-quiet\[data-quiet-chat\]/.test(t.expectSelector));
+  // The channel is the Discussion (26 Nov 2026), in the project and by its
+  // old Messages address: it says nothing was posted, and nothing else, no
+  // event row and no message beside it.
+  const quiet = checks.filter((t) => /staging-demo-quiet/.test(t.path) && /\[data-ws-discussion-empty\]$/.test(t.expectSelector));
   assert.deepEqual(quiet.map((t) => t.path), ['/app/staging-demo-quiet/dev/chat', '/#messages/app/staging-demo-quiet']);
   for (const t of quiet) {
-    assert.equal(t.expectText, 'Nobody has said anything here yet');
-    assert.match(t.expectSelector, /#gc-messages:not\(:has\(\.gc-event, \.gc-msg\)\) > \.gc-quiet\[data-quiet-chat\]:only-child$/);
+    assert.equal(t.expectText, 'Nothing posted yet');
+    assert.match(t.expectSelector, /\[data-ws-hub-discussion="page"\]:not\(:has\(\[data-ws-discussion-message\], \.gc-event\)\) \[data-ws-discussion-empty\]$/);
   }
 });
 

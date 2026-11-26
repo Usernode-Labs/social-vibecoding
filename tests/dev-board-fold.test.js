@@ -1842,7 +1842,21 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // route, which no check opens, so nothing could take it in a :has(). The
   // hub's own Discussion card rides the rewritten "#852 review, B8" check on
   // the hub's route. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 704: −5 (#general is the Discussion, no chat view, 26 Nov 2026).
+  // The 23 checks that read #general or an app channel as a chat move to the
+  // Discussion: grouping and the room in place fold into one address check,
+  // the formatting row into the Discussion place's, a plain post before a
+  // card run into the run's, the ⋯ disc into the hover bar's, a thread's
+  // replies where they landed into a post's replies with its reply field,
+  // and the Communities tab lit into the app address's. Two are new: the
+  // Earlier post's own reactions and a visitor's read-only Discussion on a
+  // public project's signed-out page. 704 leaves 176 slots.
+  checkCap.assertPinned(DAPP.tests.length, 704);
+  // Every selector fits the runner's cap (app-manifest.js
+  // MAX_TEST_SELECTOR_LEN): a longer one is cut mid-token and fails on every
+  // build with "was not found".
+  const { MAX_TEST_SELECTOR_LEN } = require('../src/services/app-manifest');
+  assert.deepEqual(DAPP.tests.filter((t) => (t.expectSelector || '').length > (MAX_TEST_SELECTOR_LEN || 512)).map((t) => t.name), []);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

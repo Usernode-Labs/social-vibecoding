@@ -232,7 +232,9 @@ test('the pages say what is below their tabs: All items on the project page, a r
   // depth 1, so a reply thread beside a channel (depth 2) goes first.
   assert.match(workshop, /registerLevel\(\{\s*slug: v\.slug,(?:\s*\/\/[^\n]*)*\s*below: \(\) => tabRef\.current !== 'status',\s*up: \(\) => climbRef\.current\(\),\s*host: \(\) => hostRef\.current,\s*depth: 1,\s*\}\)/);
   const discussion = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
-  assert.match(discussion, /below: \(\) => \(room \? embeddedThreadOpen\(room\) : !!threadRef\.current\),\s*up: \(\) => \{ if \(room\) closeThread\(\); else setThread\(null\); \},\s*\/\/[^\n]*\s*depth: 2,/);
+  // A topic's reply thread is the level below its channel (#general is the
+  // Discussion now, whose threads open in place, 26 Nov 2026).
+  assert.match(discussion, /registerLevel\(\{\s*slug,\s*below: \(\) => !!threadRef\.current,\s*up: \(\) => setThread\(null\),\s*depth: 2,\s*\}\)/);
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /export function embeddedThreadOpen\(conversationId: number\): boolean \{\s*return !!state\.route\.embedded && state\.route\.conversationId === conversationId && !!state\.route\.threadRootId;/);
   // The switcher's notes say where it opens from now.

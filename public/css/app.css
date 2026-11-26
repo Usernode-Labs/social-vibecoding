@@ -22594,12 +22594,12 @@ p.dev-change-issue-pointer {
    composer 910px below the fold, in the NATIVE layout — the one whose
    definite scroller was supposed to bound it — and at a 34px inset as well
    as at none.
-   ONLY THAT TAB. The other two are meant to grow: #dev-forum-scroll is the
+   ONLY THAT TAB, and a topic's channel. The Discussion (#general's posts,
+   26 Nov 2026) is a page that grows like the Hub. The other two are meant to grow: #dev-forum-scroll is the
    scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
 #dev-workshop > .dev-ws[data-ws-tab="needs"],
-#dev-workshop > .dev-ws[data-ws-tab="discussion"],
 #dev-workshop > .dev-ws[data-ws-tab^="c:"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
@@ -22612,8 +22612,8 @@ p.dev-change-issue-pointer {
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
    "Unable to over scroll down on hub page (but can on workshop)", in the
@@ -22663,10 +22663,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
    you or Discussion either: those are fitted on purpose and scroll inside. */
 @media (max-width: 699.98px) and (pointer: coarse) {
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"])) {
     position: relative;
   }
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"]))::after {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab^="c:"]))::after {
     content: '';
     position: absolute; inset-inline-start: 0; bottom: -1px;
     width: 1px; height: 1px;
@@ -25895,7 +25895,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 /* A channel's count is new to read, not waiting on you (#18): the grey the
    tab bar's unread count wears. Needs you keeps the accent. */
-.dev-ws-place:is([data-place="posts"], [data-place="discussion"], [data-place^="c:"]) .dev-ws-place-count {
+.dev-ws-place:is([data-place="discussion"], [data-place^="c:"]) .dev-ws-place-count {
   background: var(--text-faint, #8e8e93);
 }
 .dev-ws-place .dev-ws-filter-dot { position: static; flex-shrink: 0; background: var(--accent); }
@@ -26321,7 +26321,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    bottom as it does in Messages, so on a phone it spans the band's width:
    the screen's, by cancelling the same 4px of `#dev-body` the band does
    (#3499), not 12. */
-html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"],
 html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
@@ -26605,26 +26604,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     grid-template-rows: auto minmax(0, 1fr);
   }
   .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-head { grid-column: 1 / -1; }
-}
-/* #5303: #general's LINE (channel-head.tsx). The topic's line, for #general:
-   what the channel is for and how many members it reaches, with Mute at its
-   end. Over a reply thread it does what a topic's line does: over both on a
-   desktop, gone with the room on a phone. */
-.dev-ws-channel-head {
-  display: flex; align-items: center; gap: 12px;
-  margin: 0 0 8px; padding: 0 4px;
-}
-.dev-ws-channel-head > .dev-ws-channel-head-line { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; }
-@media (max-width: 767.98px) {
-  .dev-ws-general-channel.dev-ws-discussion-threaded > .dev-ws-channel-head { display: none; }
-}
-@media (min-width: 768px) {
-  .dev-ws-general-channel.dev-ws-discussion-threaded {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) min(420px, 42%);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .dev-ws-general-channel.dev-ws-discussion-threaded > .dev-ws-channel-head { grid-column: 1 / -1; }
 }
 /* A TOPIC'S FIGURES (topic-figures.tsx; services/topic-figures.js): between
    the topic's line and its room, the numbers its dapp.json entry names. The
@@ -31156,7 +31135,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   }
   /* A conversation's and a channel's count is new to read (#18): grey, as
      the Messages tab's is. Needs you's votes keep the accent. */
-  .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="posts"], [data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
+  .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
     background: var(--text-faint, #8e8e93);
   }
   .platform-rail-nest :is(.dev-ws-places-head, .platform-rail-subhead),
@@ -36445,7 +36424,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws
    "Sort by: Newest · Most replies", then the posts. Each post is its own outlined box (a 1px outline at 18% ink, 8px
    corners, white); its replies hang in a second box joined under it, the same outline on a faint off-white, stepped
    in 14px from the left, so the two read as one wide box with a narrower one hanging off it. */
-html:root #dev-workshop .dev-ws-hub-discussion {
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion {
   --dh-outline: rgb(18 26 14 / 0.18);
   --dh-reply-ground: #fafaf7;
   display: flex;
@@ -36457,9 +36436,9 @@ html:root #dev-workshop .dev-ws-hub-discussion {
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--one-hair);
 }
-html:root.dark #dev-workshop .dev-ws-hub-discussion { --dh-outline: rgb(255 254 234 / 0.22); --dh-reply-ground: rgb(255 254 234 / 0.04); }
-html:root #dev-workshop .dev-ws-hub-discussion-head { padding: 12px 16px 4px; }
-html:root #dev-workshop .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .dev-ws-hub-discussion-title {
+html:root.dark :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion { --dh-outline: rgb(255 254 234 / 0.22); --dh-reply-ground: rgb(255 254 234 / 0.04); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head { padding: 12px 16px 4px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .dev-ws-hub-discussion-title {
   margin: 0;
   font-family: inherit;
   font-size: 17px;
@@ -36470,9 +36449,18 @@ html:root #dev-workshop .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .de
   text-decoration: none;
   color: var(--one-ink);
 }
-html:root #dev-workshop .dev-ws-hub-discussion-about { margin: 0; font-size: 12px; line-height: 16px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-about { margin: 0; font-size: 12px; line-height: 16px; color: var(--one-ink-2); }
+/* #5303: Mute at the end of the Discussion page's head (channel-head.tsx),
+   beside the title and the line under it. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head:has(> .dev-ws-channel-mute) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-hub-discussion-head > .dev-ws-channel-mute { grid-column: 2; grid-row: 1 / span 2; }
 /* The box: a white field on a hairline, the face at its start and the round send at its end. */
-html:root #dev-workshop .dh-composer {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer {
   position: relative;
   display: flex;
   flex-wrap: wrap;
@@ -36487,11 +36475,11 @@ html:root #dev-workshop .dh-composer {
   color: var(--one-ink);
   text-align: start;
 }
-html:root #dev-workshop .dh-composer-post,
-html:root #dev-workshop .dh-composer-door { margin: 12px 12px 6px; padding-inline-start: 6px; }
-html:root #dev-workshop .dh-composer > :is(img, span[aria-hidden="true"]:not(.dh-send)) { flex: none; width: 32px; height: 32px; }
-html:root #dev-workshop .dh-face-blank { display: block; width: 32px; height: 32px; border-radius: 9999px; background: var(--one-quiet); }
-html:root #dev-workshop .dh-box {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-post,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door { margin: 12px 12px 6px; padding-inline-start: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer > :is(img, span[aria-hidden="true"]:not(.dh-send)) { flex: none; width: 32px; height: 32px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-face-blank { display: block; width: 32px; height: 32px; border-radius: 9999px; background: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-box {
   flex: 1 1 0;
   min-width: 0;
   min-height: 32px;
@@ -36506,10 +36494,10 @@ html:root #dev-workshop .dh-box {
   font-size: 15px;
   line-height: 20px;
 }
-html:root #dev-workshop .dh-box::placeholder { color: var(--one-ink-3); }
-html:root #dev-workshop .dh-composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--one-link-line); }
-html:root #dev-workshop .dh-composer-hint { flex: 1 1 auto; align-self: center; font-size: 15px; color: var(--one-ink-3); }
-html:root #dev-workshop .dh-send {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-box::placeholder { color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--one-link-line); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-hint { flex: 1 1 auto; align-self: center; font-size: 15px; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send {
   flex: none;
   display: grid;
   place-items: center;
@@ -36520,51 +36508,142 @@ html:root #dev-workshop .dh-send {
   background-color: var(--one-sky-ink);
   color: #ffffff;
 }
-html:root #dev-workshop .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
-html:root #dev-workshop .dh-send svg { width: 16px; height: 16px; }
-html:root #dev-workshop .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
-html:root #dev-workshop .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
-html:root #dev-workshop .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
-html:root #dev-workshop .dh-composer-reply .dh-send { width: 30px; height: 30px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send svg { width: 16px; height: 16px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
+/* A post's box wears the chat's formatting row along its top, so it is a
+   rounded card rather than a pill; files are attached with the paperclip
+   beside the send, and wait in the chat's strip under the words. */
+html:root :is(#dev-workshop, [data-discussion-host]) form.dh-composer-post { border-radius: 16px; padding-block-start: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-format-bar.messages-format-bar {
+  display: flex;
+  flex-basis: 100%;
+  gap: 2px;
+  margin-inline: -6px 0;
+  padding: 4px 0;
+  border-block-end: 1px solid var(--one-hair);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9999px;
+  background: none;
+  color: var(--one-ink-2);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:hover:not(:disabled) { background-color: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:disabled { opacity: 0.45; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach svg { width: 18px; height: 18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-staged { flex-basis: 100%; padding-block-end: 4px; }
+/* #2884, as the chat drew it: a run of card-only posts is its first card,
+   then "… N more" under it until opened. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run { display: flex; flex-direction: column; gap: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-card-run-more {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--one-quiet);
+  color: var(--one-ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+/* A visitor's "Start a post…": the box as a member sees it, "Sign in to
+   post" at its far end; the whole of it asks them to sign in. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in-door { width: auto; align-items: center; cursor: pointer; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background-color: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* Editing your own post or reply in place: the same field, Save and Cancel under it. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit > .dh-box {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts { display: flex; gap: 8px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: var(--one-quiet);
+  color: var(--one-ink);
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > .dh-edit-save { background-color: var(--accent); color: #fff; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit-acts > .dh-edit-save:disabled { opacity: 0.5; }
+/* What rides on a message: its files, the cards it shares, a plan it shares. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-files,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-cards { margin-top: 8px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--dh-outline);
+  color: var(--one-ink);
+  text-decoration: none;
+}
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec-label { font-size: 12px; font-weight: 600; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-spec-title { font-size: 15px; font-weight: 600; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply .dh-send { width: 30px; height: 30px; }
 /* Sort by: Newest · Most replies. */
-html:root #dev-workshop .dh-sort { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; font-size: 13px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-sort > button { padding: 2px 0; border: 0; background: none; color: var(--one-ink-2); font: inherit; font-weight: 500; }
-html:root #dev-workshop .dh-sort > button[aria-pressed="true"] { font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-sort > button + button::before { content: "\00B7"; content: "\00B7" / ""; margin-inline-end: 12px; font-weight: 400; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; font-size: 13px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button { padding: 2px 0; border: 0; background: none; color: var(--one-ink-2); font: inherit; font-weight: 500; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button[aria-pressed="true"] { font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sort > button + button::before { content: "\00B7"; content: "\00B7" / ""; margin-inline-end: 12px; font-weight: 400; color: var(--one-ink-3); }
 /* The posts. */
-html:root #dev-workshop .dh-list { display: flex; flex-direction: column; gap: 16px; padding: 0 12px; min-width: 0; }
-html:root #dev-workshop .dh-thread { display: flex; flex-direction: column; min-width: 0; }
-html:root #dev-workshop .dh-post {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-list { display: flex; flex-direction: column; gap: 16px; padding: 0 12px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-thread { display: flex; flex-direction: column; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post {
   position: relative;
   padding: 12px 14px 14px;
   border-radius: 8px;
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--dh-outline);
 }
-html:root #dev-workshop .dh-thread > .dh-post:not(:last-child) { border-end-end-radius: 0; }
-html:root #dev-workshop .dh-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-html:root #dev-workshop .dh-head > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 40px; height: 40px; font-size: 15px; }
-html:root #dev-workshop .dh-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-time { flex: none; font-size: 13px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-new { flex: none; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-tail { flex: none; margin-inline-start: auto; padding: 0; border: 0; background: none; font: inherit; }
-html:root #dev-workshop .dh-count { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); white-space: nowrap; }
-html:root #dev-workshop .dh-count > svg { width: 16px; height: 16px; stroke-width: 1.6; }
-html:root #dev-workshop .dh-count-none { color: var(--one-ink-3); }
-html:root #dev-workshop button.dh-tail:hover .dh-count-none { color: var(--one-ink-2); }
-html:root #dev-workshop .dh-words { display: block; margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--one-ink); overflow-wrap: anywhere; }
-html:root #dev-workshop .dh-words .messages-markdown > :first-child { margin-top: 0; }
-html:root #dev-workshop .dh-words .messages-markdown > :last-child { margin-bottom: 0; }
-html:root #dev-workshop :is(.dh-deleted, .dh-quiet) { font-style: italic; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
-html:root #dev-workshop .dh-pills .dh-pill { height: 26px; padding: 0 10px; gap: 6px; font-size: 14px; }
-html:root #dev-workshop .dh-pills-small { margin-top: 4px; gap: 4px; }
-html:root #dev-workshop .dh-pills-small .dh-pill { height: 22px; padding: 0 8px; gap: 4px; font-size: 12px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-thread > .dh-post:not(:last-child) { border-end-end-radius: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-head > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 40px; height: 40px; font-size: 15px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-time { flex: none; font-size: 13px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-new { flex: none; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-tail { flex: none; margin-inline-start: auto; padding: 0; border: 0; background: none; font: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); white-space: nowrap; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count > svg { width: 16px; height: 16px; stroke-width: 1.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-count-none { color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) button.dh-tail:hover .dh-count-none { color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words { display: block; margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words .messages-markdown > :first-child { margin-top: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) :is(.dh-deleted, .dh-quiet) { font-style: italic; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills .dh-pill { height: 26px; padding: 0 10px; gap: 6px; font-size: 14px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills-small { margin-top: 4px; gap: 4px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-pills-small .dh-pill { height: 22px; padding: 0 8px; gap: 4px; font-size: 12px; }
 /* "Earlier in #general": the channel's mark where a face would be. */
-html:root #dev-workshop .dh-earlier-mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9999px; background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
-html:root #dev-workshop .dh-earlier-mark > svg { width: 20px; height: 20px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier-mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9999px; background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier-mark > svg { width: 20px; height: 20px; }
 /* The replies' box, joined under the post's and stepped in from its start. */
-html:root #dev-workshop .dh-replies {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-replies {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -36575,86 +36654,72 @@ html:root #dev-workshop .dh-replies {
   background-color: var(--dh-reply-ground);
   box-shadow: inset 0 0 0 1px var(--dh-outline);
 }
-html:root #dev-workshop .dh-earlier { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-earlier:disabled { opacity: 0.6; }
-html:root #dev-workshop .dh-reply { position: relative; display: flex; gap: 10px; min-width: 0; }
-html:root #dev-workshop .dh-reply > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 28px; height: 28px; font-size: 11px; }
-html:root #dev-workshop .dh-reply-body { flex: 1 1 auto; min-width: 0; }
-html:root #dev-workshop .dh-reply-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-html:root #dev-workshop .dh-reply-who > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; color: var(--one-ink); }
-html:root #dev-workshop .dh-reply-who > span { flex: none; font-size: 12px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-reply-words { font-size: 15px; line-height: 1.4; color: var(--one-ink); overflow-wrap: anywhere; }
-html:root #dev-workshop .dh-reply-words .messages-markdown > :first-child { margin-top: 0; }
-html:root #dev-workshop .dh-reply-words .messages-markdown > :last-child { margin-bottom: 0; }
-html:root #dev-workshop .dh-old-thread { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; width: max-content; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-old-thread > svg { width: 14px; height: 14px; stroke-width: 1.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-earlier:disabled { opacity: 0.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply { position: relative; display: flex; gap: 10px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 28px; height: 28px; font-size: 11px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-body { flex: 1 1 auto; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; color: var(--one-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-who > span { flex: none; font-size: 12px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words { font-size: 15px; line-height: 1.4; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words .messages-markdown > :first-child { margin-top: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-thread { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; width: max-content; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-thread > svg { width: 14px; height: 14px; stroke-width: 1.6; }
 /* The hover bar on a post or a reply: the platform's own pill, at the box's top edge, on a pointer only. */
-html:root #dev-workshop .dh-msg { position: relative; }
-html:root #dev-workshop .dh-actions { position: absolute; z-index: 6; top: calc(-1 * var(--msgx-bar-lift, 16px)); inset-inline-end: 10px; display: none; }
-html:root #dev-workshop .dh-actions::after { content: ""; position: absolute; inset-inline: 0; top: 100%; height: 6px; }
-html:root #dev-workshop .dh-actions.msgx-bar-below { top: calc(100% + 4px); }
-html:root #dev-workshop .dh-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
-html:root #dev-workshop .dh-msg:hover > .dh-actions,
-html:root #dev-workshop .dh-msg:focus-within > .dh-actions,
-html:root #dev-workshop .dh-actions.msgx-bar-open { display: flex; }
-html:root #dev-workshop .dh-reply > .dh-actions { inset-inline-end: 0; top: -18px; }
-html:root #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.3); }
-html:root.dark #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(255 254 234 / 0.34); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg { position: relative; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions { position: absolute; z-index: 6; top: calc(-1 * var(--msgx-bar-lift, 16px)); inset-inline-end: 10px; display: none; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions::after { content: ""; position: absolute; inset-inline: 0; top: 100%; height: 6px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-below { top: calc(100% + 4px); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg:hover > .dh-actions,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg:focus-within > .dh-actions,
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-actions.msgx-bar-open { display: flex; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply > .dh-actions { inset-inline-end: 0; top: -18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.3); }
+html:root.dark :is(#dev-workshop, [data-discussion-host]) .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(255 254 234 / 0.34); }
 html:root #dev-workshop [data-press-armed] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 /* Show more, the empty card, a read that failed, and the rows while it reads. */
-html:root #dev-workshop .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
-html:root #dev-workshop .dh-more-posts:disabled { opacity: 0.6; }
-html:root #dev-workshop :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
-html:root #dev-workshop .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
-html:root #dev-workshop .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
-html:root #dev-workshop .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
-html:root #dev-workshop .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }
-html:root #dev-workshop .dh-bone-head { width: 40%; height: 18px; }
-html:root #dev-workshop .dh-bone-line { width: 85%; height: 14px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-more-posts:disabled { opacity: 0.6; }
+html:root :is(#dev-workshop, [data-discussion-host]) :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone-head { width: 40%; height: 18px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-bone-line { width: 85%; height: 14px; }
 /* THE PHONE'S CARD: its head is a door to the page, then the newest posts a line each with their reply counts, and
    the box to start a post, which opens the page ready to write. */
-html:root #dev-workshop .dh-preview-head { display: flex; align-items: center; gap: 8px; width: 100%; padding-block: 0; padding-inline: 0 12px; border: 0; background: none; text-align: start; color: inherit; }
-html:root #dev-workshop .dh-preview-head > .dev-ws-hub-discussion-head { flex: 1 1 auto; min-width: 0; }
-html:root #dev-workshop .dh-preview-go { flex: none; width: 17px; height: 17px; color: var(--one-ink-3); }
-html:root #dev-workshop .dh-preview-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0 12px; list-style: none; }
-html:root #dev-workshop .dh-preview-list > li + li { border-top: 1px solid var(--one-line); }
-html:root #dev-workshop .dh-preview-row { display: block; width: 100%; padding: 10px 2px; border: 0; background: none; text-align: start; color: inherit; }
-html:root #dev-workshop .dh-preview-row .dh-head > :is(img, span[aria-hidden="true"]:first-child) { width: 30px; height: 30px; font-size: 12px; }
-html:root #dev-workshop .dh-preview-row .dh-name { font-size: 15px; }
-html:root #dev-workshop .dh-preview-row .dh-words { margin-top: 4px; font-size: 15px; line-height: 1.4; }
-html:root #dev-workshop .dh-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-html:root #dev-workshop .dh-composer-door { margin-top: 8px; border: 0; }
-html:root #dev-workshop .dh-composer-door > .dh-send { background-color: var(--one-quiet); color: var(--one-ink-3); }
-/* THE PAGE: the Discussion place, the card the whole width. Its head's far
-   end shows the same room as #general's chat. */
-html:root #dev-workshop .dev-ws-discussion-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-html:root #dev-workshop .dev-ws-discussion-page .dev-ws-hub-discussion-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 12px;
-  align-items: center;
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-head { display: flex; align-items: center; gap: 8px; width: 100%; padding-block: 0; padding-inline: 0 12px; border: 0; background: none; text-align: start; color: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-head > .dev-ws-hub-discussion-head { flex: 1 1 auto; min-width: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-go { flex: none; width: 17px; height: 17px; color: var(--one-ink-3); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0 12px; list-style: none; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-list > li + li { border-top: 1px solid var(--one-line); }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row { display: block; width: 100%; padding: 10px 2px; border: 0; background: none; text-align: start; color: inherit; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-head > :is(img, span[aria-hidden="true"]:first-child) { width: 30px; height: 30px; font-size: 12px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-name { font-size: 15px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-preview-row .dh-words { margin-top: 4px; font-size: 15px; line-height: 1.4; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door { margin-top: 8px; border: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-door > .dh-send { background-color: var(--one-quiet); color: var(--one-ink-3); }
+/* THE PAGE: the Discussion place, the card the whole width. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dev-ws-discussion-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* An older message's own replies, shown under it inside the Earlier post:
+   stepped in once more, on a hairline down their start edge. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-old-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block: 8px 2px;
+  margin-inline-start: 38px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--dh-outline);
 }
-html:root #dev-workshop .dev-ws-discussion-page .dev-ws-hub-discussion-head > :not(.dh-as-chat) { grid-column: 1; }
-html:root #dev-workshop .dh-as-chat {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background-color: var(--one-quiet);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--one-ink-2);
-}
-html:root #dev-workshop .dh-as-chat > svg { width: 14px; height: 14px; stroke-width: 1.8; }
 /* A message a link pointed at is marked once, as Messages marks one (#2387):
    a ring and a wash that fade back to the post's own ground. */
-html:root #dev-workshop .dh-msg[data-ws-discussion-marked] {
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] {
   border-radius: 8px;
   outline: 2px solid transparent;
   outline-offset: 3px;
@@ -36665,13 +36730,13 @@ html:root #dev-workshop .dh-msg[data-ws-discussion-marked] {
   100% { outline-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) {
-  html:root #dev-workshop .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
 }
-html:root:where([data-motion="reduce"]) #dev-workshop .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
+html:root:where([data-motion="reduce"]) :is(#dev-workshop, [data-discussion-host]) .dh-msg[data-ws-discussion-marked] { animation: none; outline-color: var(--accent); }
 @media (max-width: 767.98px) {
-  html:root #dev-workshop .dh-list { padding: 0 10px; gap: 14px; }
-  html:root #dev-workshop .dh-post { padding: 12px; }
-  html:root #dev-workshop .dh-replies { padding: 12px; margin-inline-start: 10px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-list { padding: 0 10px; gap: 14px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-post { padding: 12px; }
+  html:root :is(#dev-workshop, [data-discussion-host]) .dh-replies { padding: 12px; margin-inline-start: 10px; }
 }
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 

@@ -71,6 +71,8 @@ stub(ids.rateLimits, {
   githubLookupLimiter: (_req, _res, next) => next(),
   feedbackTitleLimiter: (_req, _res, next) => next(),
   firstSessionMomentLimiter: (_req, _res, next) => next(),
+  // The Discussion's "Earlier discussion" reactions (26 Nov 2026).
+  groupChatWriteLimiter: (_req, _res, next) => next(),
 });
 
 const pool = {

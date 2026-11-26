@@ -36,7 +36,7 @@ const SRC = path.join(ROOT, 'frontend', 'src');
 const ADMIN = path.join(SRC, 'features', 'admin');
 
 /** The most hand-written buttons frontend/src may hold. Lower it; never raise it. */
-const MAX_HAND_WRITTEN_BUTTONS = 866;
+const MAX_HAND_WRITTEN_BUTTONS = 865;
 
 /** A `<button` element's opening, in JSX or in markup a string builds. */
 const OPENING = /<button(?=[\s>/]|$)/gm;

@@ -3835,9 +3835,10 @@ test('Needs you is a fitted screen on a phone, in the page-scrolling layout too'
   // the fold — because `.dev-ws` is a flex ITEM whose automatic minimum size
   // is its content, and it was the one link in the chain without
   // `min-height: 0`.
-  // Discussion is the second fitted tab (#852 review): the channel's pane
-  // rests its composer on the foot of the reading area the same way.
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
+  // A topic's channel is the other fitted tab (#852 review): its pane rests
+  // its composer on the foot of the reading area the same way. The
+  // Discussion is posts now (26 Nov 2026), a page that grows like the Hub.
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
   // ONLY those tabs: the others are meant to grow and scroll inside
   // #dev-forum-scroll, and `.dev-ws-tabbody` is not a scroller itself, so
   // shrinking them would clip what they hold rather than make it reachable.
@@ -3993,8 +3994,9 @@ test('the growing tabs keep the tab-bar clearance at the foot of the scroller (#
   // the last item's foot ended under the fixed tab bar. Measured with the real
   // app.css at 390x844: the last card 13px past the bar's top edge before,
   // 51px clear of it after.
-  // Not the fitted tabs, Needs you and Discussion (#852 review).
-  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\) \{ flex-shrink: 0; \}/;
+  // Not the fitted tabs, Needs you and a topic's channel (#852 review); the
+  // Discussion grows now, as posts (26 Nov 2026).
+  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab\^="c:"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab\^="c:"\]\)\) \{ flex-shrink: 0; \}/;
   assert.match(CSS, rule, 'the two links above a growing tab do not shrink');
   // It lands AFTER the chain it overrides, so equal-or-higher specificity and
   // source order both favour it.

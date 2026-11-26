@@ -286,13 +286,15 @@ test('touch: a non-routing item leaves the sheet presented', () => {
 });
 
 test('touch: clicking a saved message dismisses the sheet before routing', () => {
-  const { N, calls } = load({ touch: true });
+  const { N, calls, sandbox } = load({ touch: true });
   N.saved = [{ messageId: 3, appSlug: 'demo-app' }];
   N.show();
   N._onSavedClick(3);
 
-  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
+  // #general IS THE DISCUSSION (26 Nov 2026): the message's own address,
+  // which the router takes to its post; the sheet is dismissed first.
+  assert.deepEqual(navAndDismiss(calls), ['dismiss']);
+  assert.equal(sandbox.location.hash, '#messages/app/demo-app/m/3');
 });
 
 test('touch: a saved row without an appSlug routes nowhere and keeps the drawer', () => {
