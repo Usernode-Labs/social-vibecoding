@@ -36781,11 +36781,16 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-compare-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
 .dev-thread-tiles-said > li + li { margin-top: 4px; }
-.dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
+/* #7180: the row wraps, so the caption is never squeezed to a few letters by
+   a row of six tiles. The room that matters is the card's, not the viewport's:
+   a desktop side panel is about 540px wide, so the 520px media query below
+   never applied there. The caption asks for 12rem of its own; less than that
+   left beside the tiles and it takes the next line, at the row's full width. */
+.dev-thread-tiles { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
 .dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
-.dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
+.dev-thread-tiles-cap { flex: 1 1 12rem; min-width: min(12rem, 100%); }
 .dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-tiles-legend { display: block; }
 @media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }

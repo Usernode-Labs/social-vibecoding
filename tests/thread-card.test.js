@@ -123,6 +123,12 @@ test('in a side panel the thread is the same three cards, and the picture is one
   assert.match(css, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.shots-seg-size, \.shots-theme-flip\) \{ display: none; \}/);
   assert.match(css, /\.dev-thread-tiles-legend \.shots-change strong \{[^}]*font-weight: 400;/);
   assert.match(css, /\.dev-thread-tiles-legend \.shots-key \{ display: none; \}/);
+  // 26 Nov 2026 (#7180): the caption is never squeezed to a column of single
+  // letters by a row of tiles. The row wraps and the caption asks for 12rem
+  // of its own, so in a side panel it takes the line under the tiles.
+  assert.match(css, /\.dev-thread-tiles \{ display: flex; flex-wrap: wrap;/, 'the tile row wraps');
+  assert.match(css, /\.dev-thread-tiles-cap \{ flex: 1 1 12rem; min-width: min\(12rem, 100%\); \}/, 'the caption keeps a readable width');
+  assert.doesNotMatch(css, /\.dev-thread-tiles-cap \{ flex: 1 1 auto; min-width: 0; \}/, 'the caption no longer absorbs all the shrinkage');
   // Under the card look the plan is the timeline's Planned step, not a line over the picture.
   assert.match(read(CHANGES), /\{plan && !thread\.card \? <PlanLine plan=\{plan\} builtFrom=\{item\.builtFrom\} \/> : null\}/);
 });
