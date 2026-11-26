@@ -248,6 +248,24 @@ test('the bot tab\'s waiting rows and an approved change still checking are read
   }
 });
 
+// 22 Nov 2026 (#6989): a change to a request's own vote to close it could not
+// be shot, because no copy held an open one. It is ready-made for the member
+// now, and the words an author uses for it are pointed at that state.
+test('an open vote to close a request is ready-made for the member', () => {
+  const held = declare(story('close-tally', 'The vote to close a request shows its tally and who still owes a vote.'));
+  assert.deepEqual(warned(held, true), [], 'the state holds it for the member');
+  const [child] = warned(held, false);
+  assert.match(child, /^close-tally seems to need an open vote to close a request, and this app's copies have no ready-made states\./);
+  // The read-only admin is not who it is for.
+  const [asAdmin] = warned(declare(story('close-tally', held.stories[0].claim, { persona: 'read_only_admin' })), true);
+  assert.match(asAdmin, /is for member \(see availableStates\)/);
+  const state = readyStates.READY_STATES.find((each) => each.id === 'shots-demo-member-close-vote-v1');
+  assert.ok(state, 'the state is listed');
+  assert.deepEqual([...state.personas], ['member']);
+  assert.ok(readyStates.declarationAdvice(held, { selfApp: true }).availableStates
+    .some((each) => each.name === state.name), 'its name is in availableStates');
+});
+
 // 18 Nov 2026 (#6822): PR #6819's change (an update on its way takes a
 // change out of Needs you) could not be shot: no copy held a change being
 // updated. Its family is ready-made for the member now.

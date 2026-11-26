@@ -90,6 +90,10 @@ const IDS = Object.freeze({
   // proposed as. The draft row itself takes its own serial id.
   liveDraftSession: 990887,
   liveDraftProposal: 990888,
+  // 22 Nov 2026 (#6989): a request's own open vote to close it. 990889 is
+  // #7137's guest project app, which took the next id while this was being
+  // reviewed.
+  closeVote: 990890,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -147,6 +151,15 @@ const GUEST_PROJECT_NAME = '[shots fixture] Puzzle club';
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
+// The open vote to close that request, on the same mock: the staging seeds'
+// #general demo accounts propose it and vote against it, so the member's own
+// vote is still owed. The reason is what the card draws under the proposer's
+// name.
+const CLOSE_VOTE = Object.freeze({
+  reason: 'Dark mode stays on after a refresh now, so this looks done.',
+  proposer: 'staging-demo-general-lin',
+  other: 'staging-demo-general-ada',
+});
 // #6251: the picture the seeded request draft carries, so the shots show the
 // thumbnail the real draft copies from the person's message. An obviously
 // fake screenshot (240x144, grey bars on a card), its own 32-hex id.
@@ -235,6 +248,7 @@ const TAKEN_SQL = Object.freeze({
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
   apps: 'SELECT COUNT(*)::int AS taken FROM apps WHERE id = ANY($1::bigint[])',
   conversations: 'SELECT COUNT(*)::int AS taken FROM conversations WHERE id = ANY($1::bigint[])',
+  issues: 'SELECT COUNT(*)::int AS taken FROM issues WHERE id = ANY($1::bigint[])',
 });
 async function idsFree(client, table, ids) {
   const { rows } = await client.query(TAKEN_SQL[table], [ids]);
@@ -2427,6 +2441,80 @@ const STATES = [
           { state: 'Homeroom bot\'s tab: the same change under its vote group, saying Vote.',
             path: '/#homeroom-bot' },
         ],
+      };
+    },
+  },
+  {
+    // A request with an open vote to close it (#6989): the staging mock
+    // request the close-offer state also names, so no GitHub is needed. A
+    // fake member proposes closing it and votes yes, another votes no, and
+    // the member has not voted, so the Votes card shows its tally and still
+    // offers Yes and No. The rows are the create route's own
+    // (src/routes/issues.js): an open close_issue row (its trigger joins the
+    // request's thread), the two votes, and the two system lines
+    // (sendSystemMessage). Left out of the governance workflow, as no
+    // ready-made row can be filed, and Homeroom's rule counts active members
+    // a copy never reaches, so one yes cannot close it.
+    id: 'shots-demo-member-close-vote-v1',
+    persona: 'member',
+    needs: {
+      issues: ['id', 'app_id', 'title', 'description', 'kind', 'created_by', 'status', 'payload', 'thread_id',
+        'created_at'],
+      issue_votes: ['issue_id', 'user_id', 'vote', 'created_at'],
+      chat_messages: ['app_id', 'user_id', 'content', 'msg_type', 'thread_type', 'thread_ref', 'created_at'],
+    },
+    free: async (client, ctx) => {
+      const people = await client.query(
+        'SELECT COUNT(*)::int AS n FROM users WHERE username IN ($1, $2)',
+        [CLOSE_VOTE.proposer, CLOSE_VOTE.other]
+      );
+      const taken = await client.query(
+        `SELECT 1 FROM issues
+          WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
+            AND (payload->>'issueNumber')::int = $2`,
+        [ctx.appId, CLOSE_OFFER_REQUEST.number]
+      );
+      return people.rows[0].n === 2 && taken.rowCount === 0
+        && await idsFree(client, 'issues', [IDS.closeVote]);
+    },
+    async install(client, ctx) {
+      const people = (await client.query(
+        'SELECT id, username FROM users WHERE username IN ($1, $2)',
+        [CLOSE_VOTE.proposer, CLOSE_VOTE.other]
+      )).rows;
+      const proposer = people.find((row) => row.username === CLOSE_VOTE.proposer);
+      const other = people.find((row) => row.username === CLOSE_VOTE.other);
+      if (!proposer || !other) throw new Error('The close vote lost its fake people.');
+      const { number, title } = CLOSE_OFFER_REQUEST;
+      const { reason } = CLOSE_VOTE;
+      await client.query(
+        `INSERT INTO issues (id, app_id, title, description, kind, created_by, status, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'close_issue', $5, 'open', $6::jsonb, NOW() - INTERVAL '40 minutes')`,
+        [IDS.closeVote, ctx.appId, `Close issue #${number}: "${title}"`.slice(0, 512), reason, proposer.id,
+          JSON.stringify({ issueNumber: number, issueTitle: title, reason })]
+      );
+      await client.query(
+        `INSERT INTO issue_votes (issue_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'up', NOW() - INTERVAL '35 minutes'),
+                ($1, $3, 'down', NOW() - INTERVAL '20 minutes')`,
+        [IDS.closeVote, proposer.id, other.id]
+      );
+      // As sendSystemMessage posts it: the governance line under the vote,
+      // and the request's own thread so the request's followers see it.
+      const content = `${proposer.username} proposed closing issue #${number}: "${title}"`;
+      await client.query(
+        `INSERT INTO chat_messages (app_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, 'system', 'governance', $3, NOW() - INTERVAL '40 minutes'),
+                ($1, $2, 'system', 'issue', $4, NOW() - INTERVAL '40 minutes')`,
+        [ctx.appId, content, IDS.closeVote, number]
+      );
+      return {
+        shows: [{
+          state: `Request #${number} ("${title}") open on its page: staging-demo-general-lin proposed closing it, `
+            + `with its reason, and the Votes card counts one yes and one no, so it still needs yours: Yes and `
+            + 'No are both offered. A tap on either would record your vote, so do not tap.',
+          path: `/#app/${ctx.selfAppSlug}/dev/issues/${number}`,
+        }],
       };
     },
   },

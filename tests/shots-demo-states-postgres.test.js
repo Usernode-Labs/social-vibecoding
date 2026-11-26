@@ -133,6 +133,7 @@ async function seedCopy(pool) {
        ('usernode-capture', 'x', FALSE, FALSE),
        ('usernode-capture-admin', 'x', TRUE, TRUE),
        ('staging-demo-general-lin', 'x', FALSE, FALSE),
+       ('staging-demo-general-ada', 'x', FALSE, FALSE),
        ('staging-demo-user', 'staging-demo-not-a-login', FALSE, FALSE)`
   );
   await pool.query(`INSERT INTO apps (name, slug, status) VALUES ('Homeroom', $1, 'running')`, [SLUG]);
@@ -679,7 +680,8 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(after.length, messages.length, 'no message under the card');
   const settled = after.find((m) => m.id === offered.id).metadata.homeroomBot.outcome;
   assert.deepEqual([settled.state, settled.text], ['failed', 'I couldn\'t propose closing it just now. Try again in a minute.']);
-  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\' AND id <> $1',
+    [demoStates.IDS.closeVote])).rows[0].n, 0);
 
   // Second to last of the older pairs in the same chat, the bot's drafted
   // request (#4605): quoting the member's message that asked for one, with
@@ -1055,6 +1057,43 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(await stateOf(demoStates.IDS.approvedSyncingProposal), ['checking', 'syncing', false]);
   assert.deepEqual(await stateOf(demoStates.IDS.voteAfterUpdateProposal), ['up_for_vote', null, true],
     'its update landed: the vote is open again');
+
+  // 22 Nov 2026 (#6989): a request with an open vote to close it, on the
+  // staging mock request the close offer also names. lin proposed it and
+  // voted yes, ada voted no, and the member has not voted, so the page shows
+  // a tally and still owes them a vote. The table's trigger joined the
+  // request's thread, and the two system lines are the create route's own.
+  const { rows: [closeVote] } = await pool.query(
+    `SELECT i.kind, i.status, i.payload, i.created_by, i.thread_id,
+            i.thread_id = (SELECT t.id FROM threads t WHERE t.app_id = i.app_id AND t.number = $3) AS on_request,
+            (SELECT COUNT(*)::int FROM issue_votes v WHERE v.issue_id = i.id AND v.vote = 'up') AS yes,
+            (SELECT COUNT(*)::int FROM issue_votes v WHERE v.issue_id = i.id AND v.vote = 'down') AS no,
+            (SELECT COUNT(*)::int FROM issue_votes v WHERE v.issue_id = i.id AND v.user_id = $2) AS mine
+       FROM issues i WHERE i.id = $1`,
+    [demoStates.IDS.closeVote, member, 900001]
+  );
+  assert.deepEqual([closeVote.kind, closeVote.status, closeVote.payload, Number(closeVote.created_by)],
+    ['close_issue', 'open', {
+      issueNumber: 900001,
+      issueTitle: '[Mock] Dark mode toggle resets after refresh',
+      reason: 'Dark mode stays on after a refresh now, so this looks done.',
+    }, ids['staging-demo-general-lin']]);
+  assert.ok(closeVote.thread_id, 'the trigger joined the request\'s thread');
+  assert.equal(closeVote.on_request, true);
+  assert.deepEqual([closeVote.yes, closeVote.no, closeVote.mine], [1, 1, 0]);
+  const { rows: closeLines } = await pool.query(
+    `SELECT thread_type, thread_ref, msg_type, content FROM chat_messages
+      WHERE (thread_type = 'governance' AND thread_ref = $1)
+         OR (thread_type = 'issue' AND thread_ref = $2 AND content LIKE 'staging-demo-general-lin proposed closing issue%')
+      ORDER BY thread_type`,
+    [demoStates.IDS.closeVote, 900001]
+  );
+  assert.deepEqual(closeLines.map((row) => [row.thread_type, Number(row.thread_ref), row.msg_type]), [
+    ['governance', demoStates.IDS.closeVote, 'system'],
+    ['issue', 900001, 'system'],
+  ]);
+  assert.ok(closeLines.every((row) => row.content
+    === 'staging-demo-general-lin proposed closing issue #900001: "[Mock] Dark mode toggle resets after refresh"'));
 });
 
 // 18 Nov 2026 (#6822): a declared change about a screen both copies already
