@@ -14,8 +14,13 @@
 //                                     everybody there is a guest.
 //   GET /robots.txt                   the crawl rules: everything, and the
 //                                     sitemap; nothing on a staging copy.
-//   GET /sitemap.xml                  the front page and the page of every
-//                                     public project worth finding.
+//   GET /sitemap.xml                  the front page, the page about
+//                                     private communities, and the page of
+//                                     every public project worth finding.
+//   GET /communities                  the signed-out page about private
+//                                     communities, with its own title,
+//                                     description and canonical in its head
+//                                     (services/communities-page.js).
 //
 // Share copies `/app/<slug>` for a public project (features/dialogs/
 // share.tsx), which a member's shell opens as the app and anybody else's as
@@ -34,6 +39,8 @@ const embed = require('../services/project-embed');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
 const { publicProjectReadLimiter } = require('../middleware/rate-limits');
 const { requestOrigin } = require('./community-invites');
+const communitiesPage = require('../services/communities-page');
+const { platformOrigin } = require('../services/app-identity-env');
 
 const INDEX_PATH = path.join(__dirname, '..', '..', 'public', 'index.html');
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -78,14 +85,30 @@ function lastModified(app) {
   return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
 }
 
-/** The sitemap: the front page, then each listed project's clean address. */
-function sitemapXml(origin, apps) {
-  const urls = [`  <url><loc>${escapeXml(`${origin}/`)}</loc></url>`];
+/**
+ * The sitemap: the front page, the page about private communities, then
+ * each listed project's clean address. The front page lists those projects,
+ * so its date is the newest of theirs. `pageDay` is the day the shell
+ * document was built (communities-page.js documentDay), the last day the
+ * page about private communities changed; without it that entry has no
+ * date. Neither is ever "now": a date that moves on every read tells a
+ * search engine nothing.
+ */
+function sitemapXml(origin, apps, { pageDay = null } = {}) {
+  const projects = [];
+  let newest = null;
   for (const app of apps) {
     if (!worthListing(app) || !SLUG_RE.test(String(app.slug || ''))) continue;
     const lastmod = lastModified(app);
-    urls.push(`  <url><loc>${escapeXml(preview.pageUrl(origin, app.slug))}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}</url>`);
+    if (lastmod && (!newest || lastmod > newest)) newest = lastmod;
+    projects.push(`  <url><loc>${escapeXml(preview.pageUrl(origin, app.slug))}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}</url>`);
   }
+  const dated = (loc, day) => `  <url><loc>${escapeXml(loc)}</loc>${day ? `<lastmod>${day}</lastmod>` : ''}</url>`;
+  const urls = [
+    dated(`${origin}/`, newest),
+    dated(`${origin}${communitiesPage.COMMUNITIES_PATH}`, /^\d{4}-\d{2}-\d{2}$/.test(String(pageDay || '')) ? pageDay : null),
+    ...projects,
+  ];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
 }
 
@@ -213,13 +236,36 @@ function projectPreviewRoutes(config) {
     try {
       if (!sitemap || sitemap.origin !== origin || sitemap.expiresAt <= Date.now()) {
         const apps = await listPublicApps(pool, { includeWallets: false });
-        sitemap = { origin, xml: sitemapXml(origin, apps), expiresAt: Date.now() + SITEMAP_TTL_MS };
+        // The day this build's document was made; no date when it is not built.
+        const built = await fs.promises.stat(INDEX_PATH).catch(() => null);
+        const pageDay = built ? communitiesPage.documentDay(built.mtimeMs) : null;
+        sitemap = { origin, xml: sitemapXml(origin, apps, { pageDay }), expiresAt: Date.now() + SITEMAP_TTL_MS };
       }
       res.set('Cache-Control', 'public, max-age=600');
       return res.type('application/xml').send(sitemap.xml);
     } catch (err) {
       log.error('project-preview', 'Building the sitemap failed', { err: err.message });
       return res.status(500).end();
+    }
+  });
+
+  // The page about private communities, for a visitor with no session (a
+  // crawler, a link preview): the shell with the page's own title and
+  // description in its head, and no `X-Robots-Tag`, so it can be listed.
+  // A signed-in load goes to the catch-all, as a project page's does. Its
+  // canonical names the platform's CONFIGURED address and only on
+  // production; nothing here reads the request's Host.
+  router.get(communitiesPage.COMMUNITIES_PATH, (req, res, next) => (req.user ? next('route') : next()), publicProjectReadLimiter, async (req, res, next) => {
+    if (!req.accepts('html')) return next();
+    try {
+      const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
+      const origin = isStagingCopy() ? null : platformOrigin();
+      res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+      applyShellDocumentHeaders(res, INDEX_PATH);
+      return res.type('html').send(communitiesPage.withCommunitiesHead(html, origin));
+    } catch (err) {
+      log.error('project-preview', 'Serving the page about private communities failed', { err: err.message });
+      return next();
     }
   });
 
