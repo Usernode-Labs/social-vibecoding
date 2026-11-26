@@ -627,3 +627,41 @@ test('leadRow: the request\'s row words its one change only while it is about th
   assert.equal(leadRow(null, own, 51), own, 'an older server: the change\'s row');
   assert.equal(leadRow(stopped, own, null), stopped, 'a change with no id yet');
 });
+
+// #7227: the highlighted step in "How it got here" hugged its content on a
+// request's page: the mark's ring touched the box's left edge and the date
+// touched its right, and the step's note was indented past the mark. The one
+// look now gives the current step's box the same room on every side, lines
+// its note up with the mark, and keeps the marks in one column aligned with
+// the card's heading. The base "THE THREAD'S RAIL" block is untouched.
+test("a request's page gives the current step even room", () => {
+  const css = read('public/css/app.css');
+  const at = css.indexOf('/* HOW IT GOT HERE: its own card');
+  const end = css.indexOf("/* THE REPLIES' CARD");
+  assert.ok(at > 0 && end > at, 'the one look\'s "How it got here" rules are its own slice');
+  const block = css.slice(at, end);
+
+  const rule = (selector) => {
+    const i = block.indexOf(` ${selector} {`);
+    assert.ok(i > 0, `the slice sets ${selector}`);
+    return block.slice(i, block.indexOf('}', i)).replace(/\s+/g, ' ');
+  };
+
+  assert.match(rule('.dev-rail-step[data-rail-now] .dev-rail-press'), /padding: 10px;/, 'the current step has even room inside its box');
+  assert.match(rule('.dev-rail-press'), /padding: 4px 10px;/, 'every step sits 10px inside the list');
+  assert.match(rule('.dev-rail-steps'), /margin-inline: -10px;/, 'the list reaches past the card\'s content edge so the box\'s tint does too');
+  assert.match(rule('.dev-rail-note'), /margin-inline-start: calc\(-30px - 12px\);/, 'a note starts under its mark');
+  assert.match(rule('.dev-rail-note[data-rail-note="plain"]'), /padding-inline: 0;/, 'a note that asks nobody reads as the step\'s own line');
+  assert.match(rule('.dev-rail-pile'), /margin-inline: -10px; width: calc\(100% \+ 20px\); padding: 4px 10px 8px;/, 'the pile shares the step\'s room');
+  assert.match(rule('.dev-rail-step::before'), /inset-inline-start: 24px;/, 'the line runs down the marks\' column');
+  assert.match(rule('.dev-rail-pile::before'), /inset-inline-start: 24px;/, 'the pile\'s line runs down the same column');
+
+  // Every colour is a token the block already had: the spacing rules add none.
+  for (const selector of ['.dev-rail-steps', '.dev-rail-step', '.dev-rail-step::before', '.dev-rail-press',
+    '.dev-rail-step[data-rail-now] .dev-rail-press', '.dev-rail-note', '.dev-rail-note[data-rail-note="plain"]',
+    '.dev-rail-pile', '.dev-rail-pile::before']) {
+    assert.doesNotMatch(rule(selector), /#[0-9a-f]{3,8}\b|rgba?\(|color:/i, `no new colour in ${selector}`);
+  }
+  // The note's tones keep their fill and their own padding.
+  assert.doesNotMatch(block, /\.dev-rail-note\[data-rail-note="act"\]|\.dev-rail-note\[data-rail-note="bad"\]/, 'the asking notes are left to the base block');
+});

@@ -36260,10 +36260,24 @@ html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) 
   text-transform: none;
   color: var(--one-ink);
 }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 12px; }
+/* Even room inside a step: the list reaches 10px past the card's content edge, so a step's press sits 10px
+   inside it and the current step's box has the same 10px on every side (its date no longer touches the
+   box's edge), while the marks stay one column lined up with the heading. A step's note starts under its
+   mark: it is pulled back by the mark and the press's gap, so its text runs to the box's content edges. */
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-steps { margin-inline: -10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 4px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step:last-child { padding-bottom: 0; }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 14px; top: 34px; }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 0; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 24px; top: 38px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 4px 10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-now] .dev-rail-press { padding: 10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note { margin-inline-start: calc(-30px - 12px); }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note[data-rail-note="plain"] { padding-inline: 0; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-pile {
+  margin-inline: -10px;
+  width: calc(100% + 20px);
+  padding: 4px 10px 8px;
+}
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-pile::before { inset-inline-start: 24px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark { width: 30px; height: 30px; border-radius: 8px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark .dev-rail-glyph { width: 18px; height: 18px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-step="asked"] .dev-rail-mark:not([data-rail-tone]) { background: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
