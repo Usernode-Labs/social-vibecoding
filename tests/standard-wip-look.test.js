@@ -373,7 +373,10 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   const STRIP = 'html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
   const FOLDED = 'html:root body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden))';
   // It is still drawn (the shell's own rule takes a folded rail away), at the strip's width, which the page keeps clear.
-  assert.ok(block.includes(`${STRIP} { display: flex; }`));
+  // …unless the route has taken the rail away: an id outranks Tailwind's `.hidden`, so without `:not(.hidden)` a hidden
+  // folded rail stayed laid out under the signed-out landing, and every view transition lifted it over the page.
+  assert.ok(block.includes(`${STRIP}:not(.hidden) { display: flex; }`));
+  assert.ok(!block.includes(`${STRIP} { display: flex; }`), 'the strip rule no longer draws a hidden rail');
   assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
   assert.ok(block.includes(`${FOLDED} #app-view {\n    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));`));
   // The fold button heads it, so no brand is drawn in the strip (20 Nov 2026; it was Homeroom's mark), and a hairline parts the places from the communities' logos.
@@ -393,6 +396,29 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.match(read('frontend', 'src', 'features', 'nav', 'tab-bar.tsx'), /useEffect\(\(\) => followDisplaySize\(\), \[\]\);/);
   // A phone's bar keeps the shell's height: the lit pill's inset comes out of the tab, so the resume strip is not covered.
   assert.match(css, /html:root #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
+});
+
+test('no rule draws a rail the route has hidden, but the side strip beside a running app', () => {
+  // The router hides the rail with Tailwind's `.hidden`, one class. A rule that draws the rail with more than that
+  // (an id, or two classes) outranks it, and a rail laid out under the page is not out of sight: a view transition
+  // lifts its `platform-tabs` group over everything, and the "rail is going away" rule holds it there (the folded
+  // strip flashed down the left of the signed-out landing for every card pressed, 26 Nov 2026).
+  const css = read('public', 'css', 'app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const offenders = [];
+  for (const { selector, body } of rules(css)) {
+    if (!/(?:^|[;\s])display:\s*(?!none\b)[a-z-]+/.test(body)) continue;
+    for (const sel of topLevel(selector)) {
+      const subject = sel.split(/\s+(?![^(]*\))/).pop();
+      if (!/(?:#platform-tabs|\.platform-tabs)(?![-\w])/.test(subject)) continue;
+      // One class ties with `.hidden`, and tailwind.css is the last stylesheet, so `.hidden` wins it.
+      if (subject === '.platform-tabs') continue;
+      if (subject.includes(':not(.hidden)')) continue;
+      // The iPhone Duo's strip draws the bar beside a running app on purpose (app.css "AND IN A RUNNING APP TOO").
+      if (sel.startsWith('html[data-side-strip]') && subject.includes('.platform-tabs-route-hidden')) continue;
+      offenders.push(sel);
+    }
+  }
+  assert.deepEqual(offenders, []);
 });
 
 test('folded, a count is pinned by its end so its figures stay whole inside the tab (asked 23 Nov 2026, #7055)', () => {
