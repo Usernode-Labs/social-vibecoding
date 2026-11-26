@@ -103,7 +103,7 @@ function harness({ improveAvailable = true, phone = false } = {}) {
     transition.fn();
     transition.options?.after?.();
   };
-  return { App, header, writes, transitions, visible, flush };
+  return { App, header, writes, transitions, visible, flush, window: sandbox, document: sandbox.document };
 }
 
 // The title label slot: a drawing on the platform's own screens, a word
@@ -279,4 +279,95 @@ test('Home is reachable from the bar, on every platform screen', () => {
   // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.doesNotMatch(menu, /id="switcher-row-/);
+});
+
+// ── The browser tab's title (request #7164, point 7) ────────────────────
+//
+// The tab's title was the header's text and nothing else. A project's page
+// and a request's page set no header text of their own, so the tab kept the
+// screen the person came from: "Communities" on every place of a project,
+// "Homeroom" on a request.
+
+const { message } = require('./lib/platform-i18n');
+const titleModel = loadTsx('frontend/src/features/header/document-title-model.ts');
+const titleWords = {
+  place: (project, place) => `${project} | ${place}`,
+  item: (title, project) => `${title} | ${project}`,
+};
+const onProject = (over = {}) => ({
+  screen: 'app-view', slug: 'plant-pal', name: 'Plant Pal', tab: 'dev', subTab: 'forum',
+  boardView: 'workshop', placeSlug: 'plant-pal', place: 'Workshop',
+  topicSlug: null, topicTitle: '', topicLoading: false, ...over,
+});
+
+test('a project page titles the tab with the project and the place on show', () => {
+  const { pageTitle } = titleModel;
+  assert.equal(pageTitle(onProject(), titleWords), 'Plant Pal | Workshop');
+  assert.equal(pageTitle(onProject({ place: '#general' }), titleWords), 'Plant Pal | #general',
+    'switching places changes the title');
+  assert.equal(pageTitle(onProject({ placeSlug: null, place: '' }), titleWords), 'Plant Pal',
+    'before the page has said its place, the project alone, never the last screen');
+  assert.equal(pageTitle(onProject({ placeSlug: 'other', place: 'Hub' }), titleWords), 'Plant Pal',
+    'a place another project published is not this one\'s');
+  assert.equal(pageTitle(onProject({ boardView: 'kanban' }), titleWords), 'Plant Pal',
+    'the Kanban board has no places');
+});
+
+test('a request page titles the tab with the request and the project', () => {
+  const { pageTitle, trimItemTitle, ITEM_TITLE_MAX } = titleModel;
+  const topic = (over = {}) => onProject({
+    subTab: 'topic', topicSlug: 'plant-pal', topicTitle: 'Add a watering reminder', ...over,
+  });
+  assert.equal(pageTitle(topic(), titleWords), 'Add a watering reminder | Plant Pal');
+  assert.equal(pageTitle(topic({ topicLoading: true }), titleWords), 'Plant Pal',
+    'while the next request loads, not the previous one\'s title');
+  assert.equal(pageTitle(topic({ topicSlug: 'other' }), titleWords), 'Plant Pal',
+    'nor a request painted for another project');
+  const long = 'word '.repeat(40);
+  const cut = trimItemTitle(long);
+  assert.ok(cut.length <= ITEM_TITLE_MAX && cut.endsWith('…'), 'a long title is cut short');
+  assert.equal(trimItemTitle('  Two\n lines  '), 'Two lines');
+});
+
+test('every other screen keeps the header\'s text as its title', () => {
+  const { pageTitle } = titleModel;
+  assert.equal(pageTitle(onProject({ screen: 'communities-screen' }), titleWords), null,
+    'a project page left mounted behind another screen names nothing');
+  assert.equal(pageTitle(onProject({ screen: 'messages-screen' }), titleWords), null);
+  assert.equal(pageTitle(onProject({ tab: 'app' }), titleWords), null,
+    'a running app is named by App.setHeaderTitle, as before');
+  assert.equal(pageTitle(onProject({ name: '' }), titleWords), null);
+});
+
+test('App.setHeaderTitle asks the page for its own title, and keeps the header\'s text', () => {
+  const h = harness();
+  h.App.setHeaderTitle('Communities');
+  assert.equal(h.document.title, 'Communities', 'with nothing named, the header\'s text is the title');
+  h.window.UsernodeReact.documentTitle = { named: () => 'Plant Pal · Workshop' };
+  h.window.Notifications = { _updateTitle() { h.document.title = `(3) ${h.document.title}`; } };
+  h.App.setHeaderTitle('Communities');
+  assert.equal(h.document.title, '(3) Plant Pal · Workshop',
+    'the page\'s own title wins, and the unread count is put back in front');
+  assert.deepEqual(h.writes.filter((w) => 'text' in w).map((w) => w.text), ['Communities', 'Communities'],
+    'the header\'s visible text is still what the caller set');
+  h.window.UsernodeReact.documentTitle = { named: () => null };
+  h.App.setHeaderTitle('Notes', 'Board');
+  assert.equal(h.document.title, '(3) Notes · Board');
+});
+
+test('the title module is wired: the stores it follows, the catalog words, the topic\'s title', () => {
+  const mod = read('frontend/src/features/header/document-title.ts');
+  for (const store of ['improveStore', 'navStore', 'placeStore', 'topicHeadStore']) {
+    assert.match(mod, new RegExp(`${store}\\.subscribe\\(sync\\)`), `${store} moving retitles the tab`);
+  }
+  assert.match(mod, /t\('shell:docTitle\.place', \{ project, place \}\)/);
+  assert.match(mod, /t\('shell:docTitle\.item', \{ title, project \}\)/);
+  assert.equal(message('shell:docTitle.place'), '{{project}} · {{place}}');
+  assert.equal(message('shell:docTitle.item'), '{{title}} · {{project}}');
+  assert.match(mod, /bridge\.documentTitle = \{ named \}/);
+  assert.match(mod, /Notifications\?\._updateTitle\?\.\(\)/, 'its own writes keep the unread count');
+  assert.match(read('frontend/src/features/header/mount.ts'), /import '\.\/document-title';/);
+  assert.match(read('public/js/app-view.js'),
+    /const title = String\(item\.title \|\| item\.session_title \|\| item\.pr_title \|\| ''\);/);
+  assert.match(read('public/js/app-view.js'), /slug,\s*route,\s*title,\s*loading: false,/);
 });

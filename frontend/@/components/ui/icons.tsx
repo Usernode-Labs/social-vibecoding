@@ -1060,6 +1060,14 @@ export const ListBulletIcon = stroked(
   'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
 );
 
+// Request #7164: the one button a phone's channel composer shows in the
+// row's place, which opens it. A capital and a small letter, "Aa", the
+// usual sign for text formatting, drawn as lines like the marks above.
+export const FormatTextIcon = stroked(
+  'FormatTextIcon',
+  'M3.5 18.5 8 5.5l4.5 13M5.2 14h5.6M20.5 12.25v6.25M20.5 15.4a3.1 3.1 0 1 1-6.2 0 3.1 3.1 0 0 1 6.2 0Z',
+);
+
 // ── The ⋯ menu's line icons (overnight UI audit D08, 2 Nov 2026) ─────────
 //
 // A card's or a request's ⋯ menu drew a text glyph or a colour emoji per

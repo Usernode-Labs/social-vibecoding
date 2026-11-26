@@ -411,7 +411,8 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   const members = read('frontend/src/features/messages/members-dialog.tsx');
   assert.match(members, /active\?\.untitled \? t\('messages:members\.leave\.titleUntitled'\)\s*: active\?\.title \? t\('messages:members\.leave\.title', \{ group: active\.title \}\)/);
   assert.match(read('frontend/src/features/messages/share-to-dialog.tsx'), /choice\.unnamed === 'conversation' \? t\('messages:shareTo\.sharedToUntitled'\)/);
-  assert.match(read('frontend/src/features/messages/message-row.tsx'), /message\.sender\.unnamed \? \(message\.sender\.id \? t\('messages:row\.block\.titleUnknownHandle'\)/);
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /who: message\.sender\.unnamed \? \{ unknown: 'handle' \} : \{ name: senderName\(message\.sender, \{ bare \}\) \}/);
+  assert.match(read('frontend/src/features/message-actions/message-menu.ts'), /who\.unknown === 'handle' \? t\('messages:row\.block\.titleUnknownHandle'\) : t\('messages:row\.block\.titleUnknown'\)/);
   assert.doesNotMatch(read('frontend/src/features/messages/api.ts'), /'A project'|'unknown'\)/);
 });
 
@@ -427,8 +428,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['chat:group.attachment.download', 'chat:group.attachment.downloadUnnamed', { file: 'file' }],
     ['chat:group.attachment.view', 'chat:group.attachment.viewUnnamed', { file: 'file' }],
     ['chat:group.attachment.previewTitle', 'chat:group.attachment.previewTitleUnnamed', { file: 'file' }],
-    ['chat:group.menu.block', 'chat:group.menu.blockUnknown', { username: 'System' }],
-    ['chat:group.blockConfirm.title', 'chat:group.blockConfirm.titleUnknown', { username: 'System' }],
     ['chat:group.report.label', 'chat:group.report.labelUnknown', { username: 'System' }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR 12', number: 12 }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR' }],

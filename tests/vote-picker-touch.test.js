@@ -202,6 +202,26 @@ test('on touch the kit sheet comes first; the action sheet and the prompt card a
     'focus with the desktop popover only — the answers come first now, and a phone keyboard would cover them');
 });
 
+// #7101: a Yes on a row whose yes is already recorded says so and sends
+// nothing, so nobody votes twice or thinks the first press failed. The same
+// guard covers the desktop picker, the touch sheet's Yes row and the action
+// sheet's approval row; No and a change of side are untouched.
+test('#7101: pressing Yes where the yes is recorded shows the note and sends nothing', () => {
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /const recordedYes = isVote && yes\.act\?\.fn === 'castVote' && mine === 'yes';/,
+    'a recorded yes is a castVote on the row, not a governance vote');
+  assert.match(fn, /t\('project:card\.vote\.alreadyYes'\)/, 'the note the app shows');
+  assert.match(fn, /const submit = \(\) => \{\s*if \(!isVote\) \{ send\(spec, null\); return; \}\s*if \(side === 'yes' && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'the picker\'s Vote yes takes the guard before it sends');
+  assert.match(fn, /const send = \(a: ActionSpec, reason: string \| null\) => \{\s*if \(a === yes && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'the action sheet\'s approval row does too');
+  assert.match(fn, /const pickTouch = \(a: ActionSpec\) => \{\s*if \(a === yes && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'and the touch sheet\'s Yes row');
+  // No and a change of side still send, the branch unchanged.
+  assert.match(fn, /if \(side === 'no'\) \{\s*if \(!noChoice\) return;\s*send\(no, composeNoReason\(/);
+  assert.equal(message('project:card.vote.alreadyYes'), 'Your yes is already recorded.');
+});
+
 // ── 3. The styles ─────────────────────────────────────────────────────
 
 test('the switch has two filled states, the popover one even inset, and the sheet variant tap-target rows', () => {

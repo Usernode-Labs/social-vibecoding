@@ -57,23 +57,18 @@ import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, 
 import { Button } from '@/components/ui/button';
 import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
-import {
-  BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
-} from '@/components/ui/icons';
+import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
-import { confirmAction } from '../../lib/confirm';
 import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { Icon as KitIcon } from '@/components/ui/kit';
-import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
 import { BotRequestCardView } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
-import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
+import { useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
 import { VoteCard, VoteLine } from './vote-card';
 import { Body } from './long-body';
@@ -88,8 +83,9 @@ import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
 import { changeLine, changeReplyCount, changeStream, keptOnRequest } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
+import { messageMenu, messageSheet } from '../message-actions/message-menu';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
-import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
+import { toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
@@ -820,8 +816,9 @@ function MessageActions({ msg, surface, onReportMessage }: {
   surface: 'main' | 'thread';
   onReportMessage: () => void;
 }) {
-  // Subscribed: the menu's labels are read in the language on screen.
-  useMessages('chat');
+  // Subscribed: the menu's labels (../message-actions/message-menu.ts) are
+  // read in the language on screen.
+  useMessages('messages');
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -863,9 +860,9 @@ function MessageActions({ msg, surface, onReportMessage }: {
 }
 
 /**
- * The ⋯ menu of an app chat row — the same acts, in the same order, as a
- * Messages conversation's (#2387). What differs is only where each one goes:
- * the module, over the app's own socket and routes.
+ * The ⋯ menu of an app chat row: the one list every chat's rows open
+ * (../message-actions/message-menu.ts), fed with what this place can do.
+ * Its acts go to the module, over the app's own socket and routes.
  */
 export function messageMenuItems(
   msg: TranscriptMessage,
@@ -875,63 +872,26 @@ export function messageMenuItems(
   const chat = controller();
   const id = msg.id;
   if (!id) return [];
-  const items: MenuItem[] = [];
-  // B9: hand one of your own messages to Homeroom bot, in your words.
-  if (surface === 'main' && msg.canAskBot) {
-    items.push({ key: 'ask-bot', label: translate('chat:group.menu.makeRequest'), icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
-  }
-  if (surface === 'main' && msg.canThread) {
-    items.push({ key: 'thread', label: msg.thread ? translate('chat:group.menu.viewThread') : translate('chat:group.menu.replyInThread'), icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
-  }
-  if (msg.showEdit) items.push({ key: 'edit', label: translate('chat:group.menu.edit'), icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
-  if (msg.text) items.push({ key: 'copy', label: translate('chat:group.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', translate('chat:group.menu.textCopied')); } });
-  // #4055: its pictures onto the device, whoever posted them.
-  const pictures = downloadableImages((msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })));
-  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
-  const link = chat?.messageAddress?.(id);
-  if (link) items.push({ key: 'link', label: translate('chat:group.menu.copyLink'), icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), translate('chat:group.menu.linkCopied')); } });
-  if (!msg.mine && surface === 'main') {
-    items.push({
-      key: 'unread', label: translate('chat:group.menu.markUnread'), icon: EnvelopeIcon,
-      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast(translate('chat:group.menu.markedUnread'))).catch(() => toast(translate('chat:group.menu.markUnreadFailed'))); },
-    });
-  }
-  if (msg.mine && msg.kind === 'message') {
-    items.push({
-      key: 'delete', label: translate('chat:group.menu.delete'), icon: DraftTrashIcon, danger: true, separated: true,
-      // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-      onSelect: () => {
-        void confirmAction({
-          title: translate('chat:group.deleteConfirm.title'),
-          message: translate('chat:group.deleteConfirm.message'),
-          confirmLabel: translate('chat:group.deleteConfirm.confirm'),
-          danger: true,
-        }).then((ok) => {
-          if (!ok) return;
-          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast(translate('chat:group.menu.deleteFailed')));
-        });
-      },
-    });
-  } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
-    items.push({ key: 'report', label: translate('chat:group.menu.report'), icon: FlagIcon, separated: true, onSelect: onReportMessage });
-    items.push({
-      key: 'block', label: msg.usernameMissing ? translate('chat:group.menu.blockUnknown') : translate('chat:group.menu.block', { username: msg.username }), icon: NoSymbolIcon, danger: true,
-      onSelect: () => {
-        const senderId = msg.senderId;
-        if (!senderId) return;
-        void confirmAction({
-          title: msg.usernameMissing ? translate('chat:group.blockConfirm.titleUnknown') : translate('chat:group.blockConfirm.title', { username: msg.username }),
-          message: translate('chat:group.blockConfirm.message'),
-          confirmLabel: translate('chat:group.blockConfirm.confirm'),
-          danger: true,
-        }).then((ok) => {
-          if (!ok) return;
-          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : translate('chat:group.menu.blockFailed')));
-        });
-      },
-    });
-  }
-  return items;
+  const theirs = !msg.mine && !!msg.senderId && msg.kind === 'message';
+  const senderId = msg.senderId;
+  return messageMenu({
+    makeRequest: surface === 'main' && msg.canAskBot ? () => { void chat?.makeBotRequest?.(id); } : null,
+    thread: surface === 'main' && msg.canThread ? { started: !!msg.thread, open: () => chat?.openReplyThread?.(id) } : null,
+    edit: msg.showEdit ? () => chat?._startEdit?.(id) : null,
+    text: msg.text,
+    // #4055: its pictures onto the device, whoever posted them.
+    pictures: (msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })),
+    link: chat?.messageAddress?.(id) || null,
+    markUnread: !msg.mine && surface === 'main' ? () => Promise.resolve(chat?.markUnread?.(id)) : null,
+    remove: msg.mine && msg.kind === 'message' ? () => Promise.resolve(chat?.deleteMessage?.(id)) : null,
+    report: theirs ? onReportMessage : null,
+    block: theirs && senderId ? {
+      who: msg.usernameMissing ? { unknown: 'handle' } : { name: `@${msg.username}` },
+      run: () => setUserBlocked(senderId, true),
+    } : null,
+    // The module's errors are for developers; the menu's sentence is the one to show.
+    failed: (_error, fallback) => toast(fallback),
+  });
 }
 
 /**
@@ -959,6 +919,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   latest?: boolean;
 }) {
   const t = useMessages('chat');
+  // The long-press sheet's words are the shared menu's.
+  useMessages('messages');
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
@@ -974,11 +936,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: msg.usernameMissing ? t('chat:group.report.labelUnknown') : t('chat:group.report.label', { username: msg.username }), userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
-  const sheetItems: MenuItem[] = live ? [
-    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: t('chat:group.sheet.reply'), icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
-    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? t('chat:group.sheet.unsave') : t('chat:group.sheet.save'), icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
-    ...items,
-  ] : [];
+  const sheetItems: MenuItem[] = live ? messageSheet({
+    reply: !chat?._readOnly?.() ? () => chat?.replyToMessage?.(msg.id, surface) : null,
+    save: msg.showBookmark ? { saved: !!msg.bookmarked, toggle: () => chat?.toggleBookmark?.(msg.id) } : null,
+  }, items) : [];
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${right ? ' gc-msg-end' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}

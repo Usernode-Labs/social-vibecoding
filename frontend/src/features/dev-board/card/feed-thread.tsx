@@ -35,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
+import { enterSends } from '../../../lib/enter-sends';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
@@ -161,10 +162,10 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
  *
  * It stays separate from FeedThread's loading/posting state so the two pieces
  * that make #1584 visible are executable in isolation: the controlled value
- * grows a textarea, and an always-present arrow sends it. Plain Enter is not
- * intercepted — it adds a line; submission belongs to the adjacent arrow and,
- * since #2145, to ⌘/Ctrl+Enter, the chord Close issue and Send feedback
- * already answer to.
+ * grows a textarea, and an always-present arrow sends it. The keyboard sends
+ * by the rule every message box keeps (lib/enter-sends.ts): Enter where there
+ * is a keyboard, Shift+Enter a new line, Enter a new line on a touch screen,
+ * and ⌘/Ctrl+Enter anywhere (#2145).
  *
  * Typing `@` opens the people list (./mention-typeahead.tsx), and `PR#` or a
  * bare `#` the pull-request and issue list (./ref-typeahead.tsx): the group
@@ -227,8 +228,8 @@ export function FeedReplyComposer({
           // An open suggestion list owns the arrows, Enter, Tab and Escape.
           if (mention.onKeyDown(e)) return;
           if (refs.onKeyDown(e)) return;
-          if (!isSendChord(e)) return;
-          // preventDefault is unconditional for the chord, including the
+          if (!enterSends(e.nativeEvent)) return;
+          // preventDefault is unconditional for a send key, including the
           // nothing-to-do case (#920): the keystroke must never leave a stray
           // newline in the box as its only visible effect.
           e.preventDefault();
@@ -271,11 +272,6 @@ export function FeedReplyComposer({
       />
     </form>
   );
-}
-
-/** ⌘/Ctrl+Enter sends; any other Enter is the textarea's (it adds a line). */
-export function isSendChord(e: { key: string; metaKey: boolean; ctrlKey: boolean }): boolean {
-  return e.key === 'Enter' && (e.metaKey || e.ctrlKey);
 }
 
 export function FeedThread({

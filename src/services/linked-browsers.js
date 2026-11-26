@@ -122,10 +122,99 @@ async function signOutBrowser(db, userId, sessionId, { currentToken = null } = {
   return { signedOut: rows.length, current: rows.some((row) => row.current === true) };
 }
 
+// #7159: one row per device. A session row keeps no machine or browser id,
+// only its short class, so every sign-in from one browser on one system
+// ('chrome-mac') is one device, and a class this build cannot read (or none,
+// on a row from before the column) falls into 'other'. Two Macs running
+// Chrome are therefore one row too, which the page's note says.
+function browserDeviceKey(browser) {
+  return `${(browser && browser.browser) || 'other'}-${(browser && browser.os) || 'other'}`;
+}
+
+function isBrowserDeviceKey(value) {
+  if (typeof value !== 'string') return false;
+  const cut = value.indexOf('-');
+  return cut > 0 && BROWSERS.has(value.slice(0, cut)) && SYSTEMS.has(value.slice(cut + 1));
+}
+
+function newest(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+// The devices of a listLinkedBrowsers result: `count` is how many sign-ins
+// the device holds, the dates are the newest among them, and `current` is
+// true when any of them is the browser the page is open in. The device in
+// hand first, then by last use, then by key.
+function groupLinkedBrowsers(browsers) {
+  const byKey = new Map();
+  for (const browser of browsers || []) {
+    const key = browserDeviceKey(browser);
+    const device = byKey.get(key);
+    if (!device) {
+      byKey.set(key, {
+        key,
+        browser: browser.browser || null,
+        os: browser.os || null,
+        count: 1,
+        signedInAt: browser.signedInAt || null,
+        lastUsedAt: browser.lastUsedAt || null,
+        current: browser.current === true,
+      });
+    } else {
+      device.count += 1;
+      device.signedInAt = newest(device.signedInAt, browser.signedInAt);
+      device.lastUsedAt = newest(device.lastUsedAt, browser.lastUsedAt);
+      device.current = device.current || browser.current === true;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => (
+    Number(b.current) - Number(a.current)
+    || (Date.parse(b.lastUsedAt) || 0) - (Date.parse(a.lastUsedAt) || 0)
+    || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+  ));
+}
+
+// Sign every sign-in of one device of the account out. The account's web
+// sessions are read with their class, the ones of that device are kept, and
+// those rows go, so a sign-in made after the page loaded goes too. A row
+// already past its expiry goes with them: it is the same device's. Answers
+// as signOutBrowser does: how many rows went (0 for an unknown key or a
+// device with none, the route's 404) and whether the caller's own session
+// was among them.
+async function signOutBrowserDevice(db, userId, key, { currentToken = null } = {}) {
+  if (!isBrowserDeviceKey(key)) return { signedOut: 0, current: false };
+  const { rows: sessions } = await db.query(
+    `SELECT ${ID_SQL} AS id, user_agent_class
+       FROM sessions
+      WHERE user_id = $1
+        AND native_session_incarnation_id IS NULL`,
+    [userId]
+  );
+  const ids = sessions
+    .filter((row) => browserDeviceKey(parseUserAgentClass(row.user_agent_class)) === key)
+    .map((row) => row.id);
+  if (!ids.length) return { signedOut: 0, current: false };
+  const { rows } = await db.query(
+    `DELETE FROM sessions
+      WHERE user_id = $1
+        AND native_session_incarnation_id IS NULL
+        AND ${ID_SQL} = ANY($2::text[])
+      RETURNING (token = $3) IS TRUE AS current`,
+    [userId, ids, currentToken]
+  );
+  return { signedOut: rows.length, current: rows.some((row) => row.current === true) };
+}
+
 module.exports = {
   classifyUserAgent,
   parseUserAgentClass,
   isBrowserSessionId,
   listLinkedBrowsers,
   signOutBrowser,
+  browserDeviceKey,
+  isBrowserDeviceKey,
+  groupLinkedBrowsers,
+  signOutBrowserDevice,
 };
