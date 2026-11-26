@@ -328,6 +328,9 @@ test('a challenge is its picture, then its words beside it, in a row that pages 
 // #7210: under the kit the row unfolds in place too, and the fold pill sits
 // under the cards. Folded (`expanded` absent), the markup is the one the test
 // below pins, byte for byte: `data-expanded` is written only while unfolded.
+// The pill is the Button primitive (its whole box is the `.wip-fold-pill`
+// recipe), so its attributes come in the primitive's order: the spread's
+// `type` and `aria-expanded` first, then `class`.
 test('the kit unfolds every open challenge in place, behind a fold pill under the row', () => {
   const row = (id, goal) => ({
     id, eventId: 3, icon: null, illustration: null, illustrationTone: null, goal, done: false,
@@ -345,7 +348,7 @@ test('the kit unfolds every open challenge in place, behind a fold pill under th
   assert.doesNotMatch(folded, /data-expanded/, 'the row does not wrap yet');
   assert.equal((folded.match(/wip-poster"/g) || []).length, 3, 'three cards');
   assert.match(folded,
-    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="false">Show all 5 challenges<svg[^>]*class="wip-head-chevron-glyph"/,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" aria-expanded="false" class="wip-fold-pill">Show all 5 challenges<svg[^>]*class="wip-head-chevron-glyph"/,
     'the fold pill is under the row while folded too, counting every open challenge, with the down chevron');
 
   const open = renderComponent(src, 'ChallengesPanel', { view, expanded: true });
@@ -353,7 +356,7 @@ test('the kit unfolds every open challenge in place, behind a fold pill under th
   assert.equal((open.match(/wip-poster"/g) || []).length, 5, 'every open challenge');
   assert.match(open, /data-rows="5"/);
   assert.match(open,
-    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="true">Show less<svg[^>]*class="wip-head-chevron-glyph"/,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" aria-expanded="true" class="wip-fold-pill">Show less<svg[^>]*class="wip-head-chevron-glyph"/,
     'the look\'s own fold pill, with the up chevron');
   const css = read('public/css/app.css');
   assert.match(css, /\.wip-posters\[data-expanded\] \{\s*flex-wrap: wrap;\s*overflow-x: visible;\s*scroll-snap-type: none;\s*\}/);

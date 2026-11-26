@@ -58,6 +58,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from '@/components/ui/icons';
 
 import { resolveIllustration } from '../../../lib/challenge-illustrations';
@@ -175,11 +176,17 @@ function WipChallengePosters({ view, shown, expanded, hasMore }: {
       {/* The rest of them, in place: the look's own fold pill, as Pinned
           projects' "Show all" uses. Only when there is more than the three
           the folded row draws: the row is what tells, not what is drawn
-          (`shown` is the three while folded, so it never says so itself). */}
+          (`shown` is the three while folded, so it never says so itself).
+          Drawn with the Button primitive (variant `unstyled`: its whole box
+          is the `.wip-fold-pill` recipe), like every other action outside
+          the admin console. */}
       {hasMore ? (
         <div className="home-challenges-more wip-posters-more">
-          <button
+          <Button
             type="button"
+            variant="unstyled"
+            size="none"
+            ink="none"
             className="wip-fold-pill"
             aria-expanded={expanded}
             onClick={() => setChallengesExpanded(!expanded)}
@@ -192,7 +199,7 @@ function WipChallengePosters({ view, shown, expanded, hasMore }: {
             {expanded
               ? <ChevronUpIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />
               : <ChevronDownIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />}
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>

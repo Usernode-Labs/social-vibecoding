@@ -910,7 +910,7 @@ test('render: Next challenges folds the rest behind "Show all N challenges" and 
   assert.match(html, /data-rows="3"/, 'data-rows reports what is DRAWN');
   assert.equal((html.match(/wip-head-more"/g) || []).length, 1, 'one way out, in the heading');
   assert.match(html,
-    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="false">Show all 5 challenges/,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" aria-expanded="false" class="wip-fold-pill">Show all 5 challenges/,
     'the toggle sits under the cards, closed, counting every open challenge');
   assert.doesNotMatch(html, /home-panel-lb-browse|Open challenges/, '"Open challenges" is gone');
   assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded/,
@@ -927,7 +927,7 @@ test('render: Next challenges folds the rest behind "Show all N challenges" and 
   assert.match(after, /data-rows="5"/);
   assert.match(after, /<div class="wip-posters" data-expanded="">/, 'the row wraps, not the sideways one');
   assert.doesNotMatch(after, /snap-x snap-mandatory|overflow-x-auto/, 'nothing left to scroll sideways');
-  assert.match(after, /aria-expanded="true">Show less<svg/, 'and the toggle now folds it back');
+  assert.match(after, /aria-expanded="true" class="wip-fold-pill">Show less<svg/, 'and the toggle now folds it back');
   const ids = [...after.matchAll(/wip-poster"[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
   assert.deepEqual(ids, ['1', '2', '3', '4', '5']);
 
