@@ -149,7 +149,7 @@ const CHALLENGES_SKELETON = (
 // label keeps its box (so nothing moves) and shows no words until the view
 // says which. (The counter that once rode here was dropped with the season
 // progress; see ./challenges.tsx.)
-export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
+export function ChallengesSectionView({ painted, challenges, challengesExpanded }: HomePanelsState) {
   const t = useMessages('home');
   // Standard (WIP) (lib/skin.ts): the label itself, with a chevron after it, is the way to all of them.
   const wip = isKitHome(useLiveSkin());
@@ -167,7 +167,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       holdLabel
       skeleton={CHALLENGES_SKELETON}
     >
-      {challenges ? <ChallengesPanel view={challenges} /> : null}
+      {challenges ? <ChallengesPanel view={challenges} expanded={challengesExpanded === true} /> : null}
     </Section>
   );
 }

@@ -4,9 +4,10 @@
 // one is left:
 //
 //   challenges — what the viewer can do next: their First challenges while
-//                any is unfinished, then up to three open ones, in the
-//                Challenges tab's order, or one line when nothing is open. "See all"
-//                in its heading goes to the Challenges tab.
+//                any is unfinished, then three open ones with the rest a
+//                "Show all N challenges" toggle below them (request #7210),
+//                in the Challenges tab's order, or one line when nothing is
+//                open. "See all" in its heading goes to the Challenges tab.
 //
 // CREATE APP WAS THE THIRD. It is the launcher grid's trailing tile now
 // (features/home/create-tile.tsx, placed by Home.render() — the prototype's
@@ -49,9 +50,11 @@
 // concessions to a fixed rectangle of the launcher canvas and went with the
 // placement. Challenges draws a short pick (challengesView) and leaves the
 // rest to the Challenges tab behind "See all" — never an inner scroller (a
-// nested scroll region inside the page scroller is a touch trap), never a
+// nested scroll region inside the page scroller is a touch trap) and never a
 // horizontal pager (invisible to the screenshot capture and to dapp.json
-// checks, which can only navigate), and no longer an in-place expansion.
+// checks, which can only navigate). The one in-place expansion is the
+// "Show all N challenges" toggle back from request #7210: it grows the row
+// into a wrapping grid of the same cards, and it needs no fetch.
 //
 // THE LEADERBOARD FILL IS GONE. A standings preview used to sit under the
 // challenge rows — first as something to spend the fixed 2x2 rectangle on,
@@ -90,13 +93,14 @@ const HomePanels = {
 
   // ── The pick ───────────────────────────────────────────────────────
   //
-  // How many open challenges "Next challenges" draws. The server sends the
-  // whole open scope (up to its 40-row ceiling, CHALLENGE_EXPANDED_LIMIT in
-  // src/routes/home-panels.js) and this module picks from it
-  // (challengesView): a short look at what to do next, with the whole list one
-  // tap away behind "See all". The four-row preview, its "See all N
-  // challenges" / "Show less" toggle and the in-place expansion it fetched
-  // (`?expand=challenges`) went with the Semi design, 2026-10-16.
+  // How many open challenges "Next challenges" draws before it is unfolded.
+  // The server sends the whole open scope (up to its 40-row ceiling,
+  // CHALLENGE_EXPANDED_LIMIT in src/routes/home-panels.js) and this module
+  // picks from it (challengesView): a short look at what to do next, then a
+  // "Show all N challenges" toggle under the cards that unfolds every open
+  // one in place (request #7210). The refetch-and-grow preview of the Semi
+  // design (2026-10-16, `?expand=challenges`) is not back: the rows are
+  // already in the payload.
   NEXT_SLOTS: 3,
 
   // `esc()` and `safeHref()` lived here. Both existed for the string
@@ -191,11 +195,11 @@ const HomePanels = {
       .map((x) => x.c);
   },
 
-  // "Next challenges": the open challenges the viewer has not finished, in
-  // the Challenges tab's own order (orderRows), cut to NEXT_SLOTS. A
-  // challenge carried while not open (organiser-closed, or outside its
-  // window) is not something to do next. Stable, and the input is not
-  // mutated.
+  // "Next challenges": every open challenge the viewer has not finished, in
+  // the Challenges tab's own order (orderRows). A challenge carried while
+  // not open (organiser-closed, or outside its window) is not something to
+  // do next. challengesView draws the first NEXT_SLOTS and keeps the rest
+  // behind its toggle. Stable, and the input is not mutated.
   //
   // NOT BY PROGRESS (polish N11). It was furthest along first, and progress
   // is what moves: the boot copy and the fresh read a moment later
@@ -205,8 +209,7 @@ const HomePanels = {
   nextRows(rows, onboarding) {
     return HomePanels.orderRows(rows, onboarding)
       .filter((c) => c && HomePanels.groupOf(c).key !== 'setup'
-        && !HomePanels.orderDone(c) && c.open !== false)
-      .slice(0, HomePanels.NEXT_SLOTS);
+        && !HomePanels.orderDone(c) && c.open !== false);
   },
 
   // ── Data ───────────────────────────────────────────────────────────
@@ -404,7 +407,10 @@ const HomePanels = {
       if (typeof warmIllustrations !== 'function') return Promise.resolve();
       const panel = HomePanels.panelFor('challenges');
       const view = panel ? HomePanels.challengesView(panel) : null;
-      const rows = view && Array.isArray(view.rows) ? view.rows : [];
+      const rows = [
+        ...(view && Array.isArray(view.rows) ? view.rows : []),
+        ...(view && Array.isArray(view.more) ? view.more : []),
+      ];
       return warmIllustrations(
         rows.map((row) => ({ slug: row.illustration, tone: row.illustrationTone })),
         HomePanels.ART_WAIT_MS,
@@ -530,12 +536,16 @@ const HomePanels = {
     const rowsOf = (list) => list.map((c) => HomePanels.challengeRowView(c));
     const setup = all.filter((c) => HomePanels.groupOf(c).key === 'setup');
     if (setup.length && !HomePanels.setupFinished(all, panel.onboarding)) {
+      const rows = rowsOf(HomePanels.inAdminOrder(setup));
       return {
         ...base,
         mode: 'first',
         heading: message('home:challenges.headingFirst'),
         seeAll: true,
-        rows: rowsOf(HomePanels.inAdminOrder(setup)),
+        rows,
+        // First challenges is already every one of them; nothing to unfold.
+        more: [],
+        total: rows.length,
         note: null,
       };
     }
@@ -546,7 +556,11 @@ const HomePanels = {
         mode: 'next',
         heading: message('home:challenges.headingNext'),
         seeAll: true,
-        rows: rowsOf(next),
+        rows: rowsOf(next.slice(0, HomePanels.NEXT_SLOTS)),
+        more: rowsOf(next.slice(HomePanels.NEXT_SLOTS)),
+        // Every open challenge, the ones drawn included, as "Show all N
+        // apps" counts.
+        total: next.length,
         note: null,
       };
     }
@@ -558,6 +572,8 @@ const HomePanels = {
         heading: message('home:challenges.heading'),
         seeAll: true,
         rows: [],
+        more: [],
+        total: 0,
         note: {
           title: message('home:challenges.allDone.title'),
           text: message('home:challenges.allDone.text', { count: weekly.length }),
@@ -570,6 +586,8 @@ const HomePanels = {
       heading: message('home:challenges.heading'),
       seeAll: false,
       rows: [],
+      more: [],
+      total: 0,
       note: {
         title: message('home:challenges.none.title'),
         text: message('home:challenges.none.text'),

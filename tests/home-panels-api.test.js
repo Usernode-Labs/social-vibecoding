@@ -1026,6 +1026,32 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 5);
 });
 
+// #7210: the unfoldable state, which the before/after shots and the dapp.json
+// check navigate to. Five open unfinished rows, so the client's folded three
+// leave two behind "Show all 5 challenges".
+test('GET ?demo=1&challenges=many in staging: five open, unfinished rows to unfold', async () => {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  let body;
+  try {
+    const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+    ({ body } = await get(app, '/api/home-panels?demo=1&challenges=many'));
+  } finally {
+    process.env.USERNODE_ENV = prev;
+  }
+  const p = body.panels[0];
+  const open = p.challenges.filter((c) => c.open !== false && !(c.progress && c.progress.done));
+  assert.equal(open.length, 5, 'five open, none finished');
+  assert.ok(open.every((c) => /^Staging demo challenge/.test(c.goal)), 'obviously fake');
+  const view = loadHomePanels().challengesView({ key: 'challenges', ...p });
+  assert.equal(view.mode, 'next');
+  assert.equal(view.rows.length, 3, 'the folded row');
+  assert.equal(view.more.length, 2, 'and the two the toggle reveals');
+  assert.equal(view.total, 5, 'the number it says');
+  assert.deepEqual([...view.rows, ...view.more].map((r) => r.id),
+    ['900512', '900517', '900518', '900510', '900513'], 'every open one, in the tab\'s order');
+});
+
 // /?demo=1 is where the card artwork is reviewed (and dapp.json's check looks
 // for it), so the demo rows carry slugs the client registry actually draws.
 test('demoChallengesPanel: registry artwork on the rows, and on every card drawn', () => {

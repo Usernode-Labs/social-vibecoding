@@ -479,8 +479,10 @@ test('First challenges: every one of them while any is unfinished, done ones in 
     challenges: [first(1), challenge({ id: 5, label: 'WEEKLY' })],
   }));
   assert.equal(gated.mode, 'next', 'unlocked: past the First challenges');
+  // `total` is the block's own count now (#7210): the number the unfold
+  // button says ("Show all 5 challenges"), not the season's.
   for (const gone of ['locked', 'lockedCount', 'lockedNames', 'onboardingNote', 'groups', 'season',
-    'summary', 'total', 'allTotal', 'expandable', 'expanded']) {
+    'summary', 'allTotal', 'expandable', 'expanded']) {
     assert.equal(gone in view, false, `no ${gone} on the view`);
   }
   for (const gone of ['gettingStartedOnHome', 'lockedOnboarding']) {
@@ -543,6 +545,18 @@ test('Next challenges: at most three open ones, in the Challenges tab\'s order w
 
   const two = HP.challengesView(panel({ challenges: [challenge({ id: 1 }), challenge({ id: 2 })] }));
   assert.deepEqual(ids(two), ['1', '2'], 'fewer than three: all of them, no filler');
+  assert.deepEqual(two.more, [], 'nothing past the row');
+  assert.equal(two.total, 2);
+
+  // #7210: the rest of the open list rides on the view, in the same order,
+  // and the toggle counts every open challenge, the three drawn included.
+  assert.deepEqual(view.more.map((r) => r.id), ['4', '5'],
+    'the two past the folded three, still in the tab\'s order');
+  assert.equal(view.total, 5, 'three drawn and two folded');
+  const unfolded = [...view.rows, ...view.more].map((r) => r.id);
+  assert.deepEqual(unfolded, ['2', '6', '3', '4', '5'], 'unfolded: every open one, in order');
+  // The other modes have nothing to unfold.
+  assert.deepEqual(view.more.length > 0, true);
 });
 
 // #2490 still holds: a finished card never takes the place of one to do.
@@ -886,9 +900,10 @@ test("Home draws the Challenges tab's card, not a card of its own", () => {
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
   // One Home (#6361): one row that scrolls sideways, each card a fixed width
   // so the next one peeks in, snapped to the section's gutter, and still the
-  // row's own child, which the declared checks select.
-  assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start"/);
-  assert.match(src, /<div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 [^"]*">/);
+  // row's own child, which the declared checks select. Unfolded (#7210) the
+  // cards share the grid's columns instead (`min-w-0`, no fixed width).
+  assert.match(src, /<ChallengeCard[\s\S]*?className=\{expanded\s*\?\s*'home-challenge-card min-w-0'\s*:\s*'home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start'\}/);
+  assert.match(src, /: 'home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 \[-ms-overflow-style:none\] \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden'\}/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
   // S8: the card's corners are 24px and the tile's 11px, concentric inside
   // the card's 12px padding and 1px border.
@@ -1002,18 +1017,44 @@ test('render: the heading says First, Next or Challenges, with See all beside it
   assert.doesNotMatch(none, /home-panel-see-all|See all/, 'No challenges right now: no See all');
 });
 
-test('render: See all replaces "Open challenges" and the in-place toggle', () => {
+// #7210: the three cards stay, and "Show all N challenges" under them opens
+// every open one in place. "See all" in the heading is still the way to the
+// tab; the old footer toggle it replaced (the Semi design) is not back.
+test('render: Next challenges folds the rest behind "Show all N challenges" and unfolds it in place', () => {
   const five = Array.from({ length: 5 }, (_, i) => challenge({ id: i + 1 }));
-  const { html } = renderWith({ registry: [], hidden: [], panels: [panel({ total: 8, all_total: 9, challenges: five })] });
+  const out = renderWith({ registry: [], hidden: [], panels: [panel({ total: 8, all_total: 9, challenges: five })] });
+  const { html } = out;
   assert.equal((html.match(/data-challenge-id/g) || []).length, 3, 'three Next challenges, whatever the season holds');
   assert.match(html, /data-rows="3"/, 'data-rows reports what is DRAWN');
-  assert.equal((html.match(/home-panel-see-all/g) || []).length, 1, 'one way out, in the heading');
+  assert.equal((html.match(/home-panel-see-all/g) || []).length, 1, 'one way in to the tab, in the heading');
+  assert.match(html,
+    /<div class="home-challenges-more flex items-center justify-end pt-2"><button type="button" class="[^"]*" aria-expanded="false">Show all 5 challenges<\/button><\/div>/,
+    'the toggle sits under the cards, closed, counting every open challenge');
   assert.doesNotMatch(html, /home-panel-lb-browse|Open challenges/, '"Open challenges" is gone');
-  assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded|See all \d|Show less|aria-expanded/,
-    'and so is the footer with its expand toggle');
+  assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded/,
+    'the Semi design\'s footer is not back');
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
   assert.doesNotMatch(ui, /export function (LeaderboardLink|PanelFooter)\b/);
-  assert.doesNotMatch(ui, /ChevronDownIcon/, 'the toggle\'s chevron went with it');
+  assert.doesNotMatch(ui, /ChevronDownIcon/, 'the fold control lives in the block, not in the panel shell');
+
+  // Unfolded: every open one, wrapped on the columns above, and Show less.
+  out.sandbox.panelsStore.set({ challengesExpanded: true });
+  const after = out.rerender();
+  assert.equal((after.match(/data-challenge-id/g) || []).length, 5, 'every open challenge, drawn');
+  assert.match(after, /data-rows="5"/);
+  assert.match(after, /class="home-panel-rows grid grid-cols-1 gap-2\.5 pb-1 sm:grid-cols-2 lg:grid-cols-3"/,
+    'a wrapping grid, not the sideways row');
+  assert.doesNotMatch(after, /snap-x snap-mandatory|overflow-x-auto/, 'nothing left to scroll sideways');
+  assert.match(after, /aria-expanded="true">Show less<\/button>/, 'and the toggle now folds it back');
+  const ids = [...after.matchAll(/home-challenge-card[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['1', '2', '3', '4', '5']);
+
+  // Three or fewer: nothing to unfold, so no toggle at all.
+  const three = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ challenges: [challenge({ id: 1 }), challenge({ id: 2 }), challenge({ id: 3 })] })],
+  });
+  assert.doesNotMatch(three.html, /home-challenges-more/);
 });
 
 // Prerender safety: the section is prerendered with no view, and the first

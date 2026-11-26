@@ -671,6 +671,55 @@ function demoChallengesPanel(opts) {
     };
   }
 
+  // The UNFOLDABLE variant (request #7210): the default rows plus two more
+  // open, unfinished ones, so five are open and the client's folded three
+  // leave a "Show all 5 challenges" under them. This is the state the
+  // before/after shots and the dapp.json check navigate to.
+  if (variant === 'many') {
+    const extra = [
+      {
+        id: 900517,
+        label: 'WEEKLY',
+        goal: 'Staging demo challenge: review a proposal',
+        icon: '🧭',
+        illustration: 'make-a-proposal',
+        task: 'Leave a review on one proposal from another builder.',
+        reward: '100 points',
+        cta: null,
+        metric: null,
+        progress: { done: false, current: null, target: null },
+        earned_points: 0,
+      },
+      {
+        id: 900518,
+        label: 'WEEKLY',
+        goal: 'Staging demo challenge: post in #general',
+        icon: '💬',
+        illustration: 'proposal-accepted',
+        task: 'Say hello in the community channel.',
+        reward: '50 points',
+        cta: null,
+        metric: null,
+        progress: { done: false, current: 1, target: 1 },
+        earned_points: 0,
+      },
+    ];
+    const all = [...rows, ...seasonChallenges, ...extra];
+    return {
+      season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
+      total: all.length,
+      all_total: all.length,
+      done: 0,
+      all_done: 0,
+      points_remaining: null,
+      points_total: 5800,
+      points_earned: 800,
+      challenges: all,
+      expanded,
+      demo: true,
+    };
+  }
+
   // Collapsed returns every open row, as the real builder does now that the
   // client picks the four (the three unfinished rows and one finished one).
   // `total` deliberately exceeds them so the footer reads "See all 7

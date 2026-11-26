@@ -136,8 +136,19 @@ export interface ChallengesView {
   heading: string;
   /** Whether the heading carries "See all": every mode but `none`. */
   seeAll: boolean;
-  /** The cards, in the order drawn; empty under a one-line note. */
+  /**
+   * The cards drawn folded, in the order drawn; empty under a one-line note.
+   * In `next` mode these are the first NEXT_SLOTS open challenges.
+   */
   rows: ChallengeRowView[];
+  /**
+   * The open challenges past the folded row, drawn when the viewer unfolds
+   * it ("Show all N challenges"): empty in every mode but `next`, and empty
+   * there when three or fewer are open.
+   */
+  more: ChallengeRowView[];
+  /** Every open challenge the block holds, `rows` and `more` together. */
+  total: number;
   /** The one line drawn when nothing is open, as a title and a sentence. */
   note: { title: string; text: string } | null;
 }
@@ -145,14 +156,32 @@ export interface ChallengesView {
 export interface HomePanelsState {
   painted: boolean;
   challenges: ChallengesView | null;
+  /**
+   * Whether Next challenges is unfolded: every open challenge instead of the
+   * first three. A view fact, not a server one — nothing saves it, and it
+   * survives a repaint because `HomePanels.render` never writes this key
+   * (plain-store merges its patch). It resets on reload.
+   */
+  challengesExpanded: boolean;
 }
 
 export const INITIAL_PANELS: HomePanelsState = {
   painted: false,
   challenges: null,
+  challengesExpanded: false,
 };
 
 export const panelsStore = createStore<HomePanelsState>(INITIAL_PANELS);
+
+/**
+ * Unfold or fold Next challenges. The only writer of `challengesExpanded`:
+ * the panel's own toggle calls it, and HomePanels.render never touches the
+ * key, so a repaint (a live re-read, a language change) leaves the list as
+ * the viewer left it.
+ */
+export function setChallengesExpanded(on: boolean) {
+  panelsStore.set({ challengesExpanded: on });
+}
 
 if (typeof window !== 'undefined') {
   (window as unknown as { HomePanelsStore?: unknown }).HomePanelsStore = panelsStore;

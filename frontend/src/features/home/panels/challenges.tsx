@@ -23,9 +23,14 @@
  * line and bar (`.home-panel-season`), the points total, "N of M done", the
  * group headers (This week, Always open, Season challenges, and the Done
  * header `home-challenge-done-head`), the clocks on them and on the cards,
- * the footer's "See all N challenges" / "Show less" toggle, and the "Open
- * challenges" link. The Challenges tab, one tap away behind "See all", has
- * the whole list.
+ * and the "Open challenges" link. The Challenges tab, one tap away behind
+ * "See all", has the whole list.
+ *
+ * THE ONE THING THAT CAME BACK (request #7210) is a fold, not that footer:
+ * when Home holds more open challenges than the folded row draws, a "Show all
+ * N challenges" button under the cards grows the row in place until every
+ * open one is on screen, and "Show less" folds it back. The open or folded
+ * choice is the store's (`challengesExpanded`), not the server's.
  *
  * ── A ROW OF CARDS (One Home, #6361; a column until then), and the card
  *    is the Challenges tab's ─────────────────────────────────────────
@@ -64,13 +69,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from '@/components/ui/icons';
 
 import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
 import { useLiveSkin, isKitHome } from '../../../lib/skin';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
-import type { ChallengeRowView, ChallengesView } from '../panels-store';
+import { setChallengesExpanded, type ChallengeRowView, type ChallengesView } from '../panels-store';
 import { WIP_CARD } from '../wip-kit';
 import { PanelShell, panels } from './ui';
 
@@ -101,7 +106,9 @@ function WipChallengeArt({ row }: { row: ChallengeRowView }) {
  * when it is done. The whole card is the one thing to press: it has no arrow
  * of its own, and its progress is the meter, not a pill.
  */
-function WipChallengePosters({ view }: { view: ChallengesView }) {
+function WipChallengePosters({ view, shown, expanded }: {
+  view: ChallengesView; shown: ChallengeRowView[]; expanded: boolean;
+}) {
   const t = useMessages('home');
   const rail = useRef<HTMLDivElement | null>(null);
   // Which way there is more of the row: an arrow is drawn at that end only.
@@ -124,7 +131,7 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
     ro?.observe(el);
     return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
-  }, [view.rows.length]);
+  }, [shown.length, expanded]);
   // One screen of the row at a time, toward its end or back to its start.
   const page = (dir: 1 | -1) => {
     const el = rail.current;
@@ -134,8 +141,11 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
   };
   return (
     <div className="wip-posters-box" data-wip-challenges="">
-      <div ref={rail} className="wip-posters">
-        {view.rows.map((row) => {
+      {/* `data-expanded` only while it is: the folded markup is pinned by
+          tests/home-needs-you-card.test.js. Expanded, app.css wraps the row
+          into as many columns as the look draws, instead of scrolling it. */}
+      <div ref={rail} className="wip-posters" {...(expanded ? { 'data-expanded': '' } : null)}>
+        {shown.map((row) => {
           const pct = row.state === 'done' ? 100
             : row.fill != null ? Math.round(Math.max(0, Math.min(row.fill, 1)) * 100)
             : row.state === 'progress' ? 8 : 0;
@@ -176,12 +186,36 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
           <ChevronRightIcon className="wip-rail-arrow-glyph" strokeWidth="2.4" aria-hidden="true" />
         </button>
       ) : null}
+      {/* The rest of them, in place: the look's own fold pill, as Pinned
+          projects' "Show all" uses. Only when there is more than the three
+          the folded row draws. */}
+      {shown.length > view.rows.length ? (
+        <div className="home-challenges-more wip-posters-more">
+          <button
+            type="button"
+            className="wip-fold-pill"
+            aria-expanded={expanded}
+            onClick={() => setChallengesExpanded(!expanded)}
+          >
+            {expanded
+              ? t('home:challenges.showLess')
+              : t('home:challenges.showAll', { count: view.total != null ? view.total : shown.length })}
+            {expanded
+              ? <ChevronUpIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />
+              : <ChevronDownIcon className="wip-head-chevron-glyph" strokeWidth="2.4" aria-hidden="true" />}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-export function ChallengesPanel({ view }: { view: ChallengesView }) {
+export function ChallengesPanel({ view, expanded = false }: { view: ChallengesView; expanded?: boolean }) {
+  const t = useMessages('home');
   const wip = isKitHome(useLiveSkin());
+  const more = view.more || [];
+  // Folded, the three cards the block draws; unfolded, every open one.
+  const shown = expanded ? [...view.rows, ...more] : view.rows;
   if (view.note) {
     return (
       <PanelShell panelKey={view.key} plate="none" stamps={{ rows: 0 }}>
@@ -207,33 +241,59 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
 
   if (wip) {
     return (
-      <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
-        <WipChallengePosters view={view} />
+      <PanelShell panelKey={view.key} plate="none" stamps={{ rows: shown.length }}>
+        <WipChallengePosters view={view} shown={shown} expanded={expanded} />
       </PanelShell>
     );
   }
 
   return (
-    <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
+    <PanelShell panelKey={view.key} plate="none" stamps={{ rows: shown.length }}>
       {/* ONE HOME (#6361): ONE ROW THAT SCROLLS SIDEWAYS, under Pinned
           communities. The cards are the same; each is a fixed width so the
           next one peeks in from the edge and says the row goes on. The row
           runs to the screen's edges on a phone (`-mx-3 px-3`, the section's
-          own gutter given back) and snaps a card to the gutter. */}
+          own gutter given back) and snaps a card to the gutter.
+
+          UNFOLDED (request #7210), it is a wrapping grid at the columns the
+          cards above use, so every open challenge is visible without
+          swiping: no sideways scroll, no snap, and the cards share the
+          column lines instead of their own fixed width. */}
       <div className="home-panel-body pt-2">
-        <div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className={expanded
+          ? 'home-panel-rows grid grid-cols-1 gap-2.5 pb-1 sm:grid-cols-2 lg:grid-cols-3'
+          : 'home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+        >
           {/* Each card is the row's own child, as the declared checks
               select it (`.home-panel-rows > .home-challenge-card`). */}
-          {view.rows.map((row) => (
+          {shown.map((row) => (
             <ChallengeCard
               key={row.id}
               view={row}
-              className="home-challenge-card w-[min(19rem,82vw)] shrink-0 snap-start"
+              className={expanded
+                ? 'home-challenge-card min-w-0'
+                : 'home-challenge-card w-[min(19rem,82vw)] shrink-0 snap-start'}
               data-challenge-id={row.id}
               onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
             />
           ))}
         </div>
+        {/* The rest of them, in place. It is the apps grid's "Show all N
+            apps" line, under the cards instead of a grid. */}
+        {more.length ? (
+          <div className="home-challenges-more flex items-center justify-end pt-2">
+            <button
+              type="button"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              aria-expanded={expanded}
+              onClick={() => setChallengesExpanded(!expanded)}
+            >
+              {expanded
+                ? t('home:challenges.showLess')
+                : t('home:challenges.showAll', { count: view.total != null ? view.total : shown.length })}
+            </button>
+          </div>
+        ) : null}
       </div>
     </PanelShell>
   );

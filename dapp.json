@@ -1076,6 +1076,12 @@
       "expectText": "4/8 Apps tested this week"
     },
     {
+      "name": "Challenges: with more than three open, Next challenges folds the rest behind Show all (#7210)",
+      "path": "/?demo=1&challenges=many&skin=brand",
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"] .home-challenges-more button[aria-expanded=false]",
+      "expectText": "Show all 5 challenges"
+    },
+    {
       "name": "Challenges: a Home poster with an illustration draws its artwork (the standard look's Home is the kit's, 20 Nov 2026)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-challenges-section [data-wip-challenges] .wip-poster img[src^=\"/illustrations/challenges/\"]"

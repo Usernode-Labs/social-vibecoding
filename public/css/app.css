@@ -7671,6 +7671,23 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
   scrollbar-width: none;
 }
 .wip-posters::-webkit-scrollbar { width: 0; height: 0; }
+/* Unfolded (request #7210): every open challenge, wrapped into rows on the
+   look's own column lines. The poster's flex-basis above is what keeps a
+   wrapped card on those lines; no sideways scroll is left to snap or page. */
+.wip-posters[data-expanded] {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  scroll-snap-type: none;
+}
+/* The fold-back toggle under the row, at its end: the heading's pill, under
+   the cards instead of beside the words. */
+.wip-posters-more {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--wip-card-gap);
+}
+@media (hover: hover) { .wip-posters-more > .wip-fold-pill:hover { background-color: var(--wip-fold-bg-on); } }
+.wip-posters-more > .wip-fold-pill:active { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
 /* Inside, the card's own padding, and 4px more at its end: the row's arrow
    is drawn over that edge when there is more that way (below), and this
    keeps what the challenge is worth clear of it. */

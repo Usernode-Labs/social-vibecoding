@@ -325,6 +325,39 @@ test('a challenge is its picture, then its words beside it, in a row that pages 
   assert.doesNotMatch(css, /#home-needs-card \.wip-row\b/);
 });
 
+// #7210: under the kit the row unfolds in place too, and the fold pill sits
+// under the cards. Folded (`expanded` absent), the markup is the one the test
+// below pins, byte for byte: `data-expanded` is written only while unfolded.
+test('the kit unfolds every open challenge in place, behind a fold pill under the row', () => {
+  const row = (id, goal) => ({
+    id, eventId: 3, icon: null, illustration: null, illustrationTone: null, goal, done: false,
+    reward: '500 pts', state: 'new', stateLabel: 'Not started', fill: null, counted: false, earned: null,
+  });
+  const view = {
+    key: 'challenges', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null,
+    rows: [row('11', 'Use apps for 10 minutes'), row('12', 'Invite someone to Homeroom'), row('13', 'Vote once')],
+    more: [row('14', 'Review a proposal'), row('15', 'Post in #general')],
+    total: 5,
+  };
+  const src = 'frontend/src/features/home/panels/challenges.tsx';
+  const folded = renderComponent(src, 'ChallengesPanel', { view });
+  assert.match(folded, /<div class="wip-posters">/, 'folded: the plain row, unchanged');
+  assert.doesNotMatch(folded, /data-expanded/, 'and no fold-back pill');
+  assert.equal((folded.match(/wip-poster"/g) || []).length, 3, 'three cards');
+
+  const open = renderComponent(src, 'ChallengesPanel', { view, expanded: true });
+  assert.match(open, /<div class="wip-posters" data-expanded="">/, 'unfolded: the row wraps (app.css)');
+  assert.equal((open.match(/wip-poster"/g) || []).length, 5, 'every open challenge');
+  assert.match(open, /data-rows="5"/);
+  assert.match(open,
+    /<div class="home-challenges-more wip-posters-more"><button type="button" class="wip-fold-pill" aria-expanded="true">Show less<svg[^>]*class="wip-head-chevron-glyph"/,
+    'the look\'s own fold pill, with the up chevron');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.wip-posters\[data-expanded\] \{\s*flex-wrap: wrap;\s*overflow-x: visible;\s*scroll-snap-type: none;\s*\}/);
+  assert.match(css, /\.wip-posters-more \{\s*display: flex;\s*justify-content: flex-end;\s*margin-top: var\(--wip-card-gap\);\s*\}/);
+  assert.match(css, /\.wip-posters-more > \.wip-fold-pill:active \{ box-shadow: var\(--wip-fold-edge-down\); transform: var\(--wip-fold-press\); \}/);
+});
+
 test('each challenge is a card of its own, and the row around them draws none', () => {
   // 20 Nov 2026 (asked by the product owner): the posters were things in one
   // wide card; now each is the kit's card, and the row is no card at all.
