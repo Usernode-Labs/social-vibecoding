@@ -552,8 +552,12 @@ test('while a reply box is drawn the strip is not, and its band is not reserved'
   // The reply boxes at the foot say so; the boxed row in a board card does not.
   const composer = read('frontend/src/features/group-chat/composer.tsx');
   assert.match(composer, /useBottomBox\(ids\.form, messages \|\| !!fill\);/);
-  // No observer, nothing reported: the strip stays, which is the safe side.
-  assert.match(read('frontend/src/lib/bottom-box.ts'), /typeof IntersectionObserver === 'undefined'\) return undefined;/);
+  // Messages' composer draws #general, topic channels, conversations and
+  // Homeroom bot's threads: its card is looked for after every render,
+  // since it is drawn on some renders and a notice on others.
+  const messages = read('frontend/src/features/messages/composer.tsx');
+  assert.match(messages, /useBottomBoxOf\(\(\) => inputRef\.current\?\.closest\('\.messages-composer-card'\) \|\| null\);/);
+  assert.ok(messages.indexOf('useBottomBoxOf(') < messages.indexOf('messages-composer-awaiting'), 'before the early returns, as a hook must be');
 });
 
 test('boxes are counted, so one going away does not clear another', () => {
@@ -569,4 +573,48 @@ test('boxes are counted, so one going away does not clear another', () => {
   assert.equal(count(), 1, 'the other box is still drawn');
   b.set(false); b.clear();
   assert.equal(count(), 0);
+});
+
+test('a box counts only while it is drawn, and no observer means the strip stays', () => {
+  const count = () => ui.bottomBoxStore.get().count;
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'IntersectionObserver');
+  const made = [];
+  class FakeObserver {
+    constructor(cb, options) { this.cb = cb; this.options = options; this.live = true; made.push(this); }
+    observe(el) { this.el = el; }
+    disconnect() { this.live = false; }
+  }
+  try {
+    delete globalThis.IntersectionObserver;
+    ui.watchBottomBox({})();
+    assert.equal(count(), 0, 'nothing reported without an observer');
+
+    globalThis.IntersectionObserver = FakeObserver;
+    // A channel's composer card: in its own pane, above a fixed bar.
+    let shown = true;
+    const card = { checkVisibility: () => shown };
+    const undo = ui.watchBottomBox(card);
+    const io = made[0];
+    assert.equal(io.el, card);
+    assert.equal(io.options, undefined, 'the screen is the root and any part showing counts');
+    assert.equal(count(), 0, 'not before the observer says it is drawn');
+    io.cb([{ isIntersecting: true }]);
+    assert.equal(count(), 1);
+    io.cb([{ isIntersecting: false }]);
+    assert.equal(count(), 0, 'its screen hidden, or its drawer level slid away');
+    io.cb([{ isIntersecting: false }, { isIntersecting: true }]);
+    assert.equal(count(), 1, 'the newest entry is the one that holds');
+    shown = false;
+    io.cb([{ isIntersecting: true }]);
+    assert.equal(count(), 0, 'on screen but not visible is not drawn');
+    shown = true;
+    io.cb([{ isIntersecting: true }]);
+    undo();
+    assert.equal(count(), 0, 'gone with its box');
+    assert.equal(io.live, false);
+    assert.equal(ui.watchBottomBox(null)(), undefined);
+  } finally {
+    if (had) Object.defineProperty(globalThis, 'IntersectionObserver', had);
+    else delete globalThis.IntersectionObserver;
+  }
 });

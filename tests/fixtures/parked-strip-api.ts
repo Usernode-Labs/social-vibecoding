@@ -4,4 +4,4 @@
 // changes nothing the component can see.
 export { ParkedStrip, forgetParked } from '../../frontend/src/features/nav/parked-strip';
 export { parkedStore, readParked, setParked, PARKED_KEY } from '../../frontend/src/features/nav/parked-store.js';
-export { bottomBoxStore, reportBottomBox } from '../../frontend/src/lib/bottom-box';
+export { bottomBoxStore, reportBottomBox, watchBottomBox } from '../../frontend/src/lib/bottom-box';

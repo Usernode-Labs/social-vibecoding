@@ -16,6 +16,7 @@ import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
 import { MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
+import { useBottomBoxOf } from '../../lib/bottom-box';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { useComposerStack } from '../../lib/use-composer-stack';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
@@ -150,6 +151,11 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   const [addOpen, setAddOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // The card at the foot says it is drawn, and on a phone the Resume strip
+  // steps aside for it (lib/bottom-box.ts; request 7164).
+  // Found from the field, which only the card holds: a composer that is a
+  // notice (cannot send, waiting to be accepted) has no box to report.
+  useBottomBoxOf(() => inputRef.current?.closest('.messages-composer-card') || null);
   // #6653: selected words can be formatted from a right-click menu, and a
   // link asks for its address in the formatting row's place.
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null);
