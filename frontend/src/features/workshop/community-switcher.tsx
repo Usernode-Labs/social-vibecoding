@@ -31,9 +31,9 @@
  *
  * On a phone it is a sheet from the floor, presented by the Sheet
  * (lib/sheet.ts, as the staking sheet is): the native kit's when one is
- * there and a CSS sheet over a scrim when not. From 768px up it is a menu hung off
- * whatever opened it: under the header's name, or, from ⌘K, in the middle
- * of the window near its top.
+ * there and a CSS sheet over a scrim when not. From 768px up it is a menu
+ * (lib/menu.ts) hung off whatever opened it: under the header's name, or,
+ * from ⌘K, in the middle of the window near its top.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
