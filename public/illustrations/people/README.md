@@ -5,13 +5,11 @@ Two figures from the illustration on the Homeroom website's front page
 on the log with a laptop. Each is cut out of the site's own transparent
 hero image, cropped to one figure and sized for a 2x screen.
 
-The shell shows them only in the **brand look** ("Paper, simplified, with
-brand styling"), one of the looks of Settings › Experimental › Look, off by
-default (`data-skin="brand"` on `<html>`), as a
-picture above two empty states: Messages before the first conversation
-(`phone.png`), and Homeroom bot when nothing needs you (`log.png`). They are
-background images of rules scoped to that attribute, so a browser with the
-experiment off never downloads them.
+The shell shows them as a picture above two empty states inside a request's
+or a change's page (`#dev-topic-thread` in `public/css/app.css`): an empty
+list of messages (`phone.png`), and Homeroom bot's when nothing needs you
+(`log.png`). They are background images of those rules, so a browser that
+never draws those states never downloads them.
 
 | File | What it shows | Size (px) | sha384 (base64) |
 |---|---|---|---|

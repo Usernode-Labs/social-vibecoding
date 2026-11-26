@@ -115,17 +115,34 @@ test('a staging preview has a published run whose card lists what the shots agen
     assert.deepEqual(shotsState.brokenOnHead(row, row.reviewed_head_sha), [],
       'the notices never read as the change not working');
 
-    // The change page's Before and after card shows the screens and the notes.
-    const card = AppView.shotsHtml(shots, { sessionId: SESSION_ID, thread: true });
+    // The change page's Before and after card shows the screens and the
+    // notes: the one before & after viewer (review-flow/shots-viewer.tsx),
+    // drawing the screens Needs you shapes (AppView._workshopVisuals).
+    const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+    const { ShotsViewer } = loadTsx('frontend/src/features/review-flow/shots-viewer.tsx');
+    const { readShots } = loadTsx('frontend/src/features/review-flow/shots-model.ts');
+    const shape = (visuals, value, theme) => AppView._workshopVisuals(visuals, value, theme);
+    const card = renderToHtml(createElement(ShotsViewer, { source: { shots, sessionId: SESSION_ID }, shape }));
     assert.match(card, /<h3 class="shots-noticed-head">Also noticed<\/h3>/);
     assert.match(card, /Desktop · Also on the before build/);
     assert.match(card, /Phone · Not on the before build/);
-    assert.equal((card.match(/<img src="\/api\/apps\/staging-demo-gallery-app\/proposals\/900108\/shots\/[0-9a-f]{32}"/g) || []).length, 8);
-    // The theme switch renders because the run has dark shots, and the flip
-    // control carries both labels.
-    assert.match(card, /shots-theme-pick/);
-    assert.match(card, /Show in dark mode/);
-    assert.match(card, /Show in light mode/);
+    // A desktop and a phone screen, each a tile, in either mode; between the
+    // two modes every one of the eight stills is drawn.
+    const stills = new Set();
+    for (const theme of ['light', 'dark']) {
+      const model = readShots(shots, { sessionId: SESSION_ID, shape, theme });
+      assert.deepEqual(model.screens.map((screen) => screen.viewport), ['desktop', 'phone'], theme);
+      for (const screen of model.screens) {
+        for (const still of screen.screen ? [screen.screen.before.url, screen.screen.after.url] : [screen.pair.before, screen.pair.after]) {
+          assert.match(still, /^\/api\/apps\/staging-demo-gallery-app\/proposals\/900108\/shots\/[0-9a-f]{32}$/);
+          stills.add(still);
+        }
+      }
+    }
+    assert.equal(stills.size, 8);
+    assert.match(card, /data-thread-tiles="2"/);
+    // The flip to the other mode shows because the run has dark shots.
+    assert.match(card, /data-shots-theme="light" title="Show in dark mode"/);
 
     // Its images are served by the proposal's own route to any member.
     testPool = pool;

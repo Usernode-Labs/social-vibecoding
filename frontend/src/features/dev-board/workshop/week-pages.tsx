@@ -377,68 +377,6 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, act = null }
 export const THIS_WEEK_NEW_MAX = 10;
 export const THIS_WEEK_SEEN = 3;
 
-/**
- * This week, at the head of What happened: its name and dates, "5 new"
- * (what moved since your last visit), "496 live", then its rows newest
- * first, the new ones and a few you have seen, then "All of this week",
- * which opens the week's own page. A quiet visit has no new ones to draw;
- * a first visit has no rows at all, only the week and its figure.
- */
-export function ThisWeek({ week, slug, openKey, onOpen, onAll, act }: {
-  week: SinceWeek;
-  slug: string;
-  openKey: string | null;
-  onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-  onAll: () => void;
-  /** A new row's one thing to do (HappenedRow `act`): Build it, on a new request nobody has picked up. */
-  act?: (row: CardRow) => ReactNode;
-}): ReactNode {
-  const t = useMessages('project');
-  const live = weekLive(week);
-  const fresh = weekFresh(week);
-  const rows = [
-    ...fresh.slice(0, THIS_WEEK_NEW_MAX).map((row) => ({ row, fresh: true })),
-    ...weekSeen(week).slice(0, THIS_WEEK_SEEN).map((row) => ({ row, fresh: false })),
-  ];
-  const keyOf = (row: CardRow) => {
-    const ref = topicRef(row.card);
-    return ref ? `${ref.kind}:${ref.id}` : null;
-  };
-  return (
-    <div className="dev-ws-hweek" data-ws-this-week={week.key}>
-      <div className="dev-ws-hweek-head">
-        <span className="dev-ws-week-head">
-          <b>{weekName(week)}</b>
-          <span>{weekRange(week.startMs, week.endMs, week.live)}</span>
-          {fresh.length ? <span className="dev-ws-week-fresh">{t('project:weeks.row.fresh', { count: fresh.length })}</span> : null}
-        </span>
-        {live ? <WeekLive live={live} /> : null}
-      </div>
-      {rows.length ? (
-        <ul className="dev-ws-hlist">
-          {rows.map(({ row, fresh: isNew }) => (
-            <HappenedRow
-              key={row.key}
-              row={row}
-              fresh={isNew}
-              slug={slug}
-              on={!!openKey && keyOf(row) === openKey}
-              onOpen={onOpen}
-              act={isNew && act ? act(row) : null}
-            />
-          ))}
-        </ul>
-      ) : null}
-      {week.fresh.length || week.seen.length || week.line ? (
-        <button type="button" className="dev-ws-reveal touch-target-32" data-ws-week={week.key} data-ws-week-all="" onClick={onAll}>
-          {t('project:happened.allOfWeek')}
-          <ChevronRightIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
 /** How many weeks before this one What happened lists, and how many each "Earlier weeks" adds. */
 export const WEEKS_FIRST = 2;
 export const WEEKS_STEP = 4;

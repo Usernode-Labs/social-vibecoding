@@ -2861,6 +2861,10 @@ const App = {
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'refresh-intent' });
     } catch { /* no worker, or a browser that refuses the post */ }
+    // Nor an answer another reader was just given: the page's own shared
+    // reads (lib/api-cache-identity.ts, request 7165) are dropped too, so
+    // every read the pull starts asks the server.
+    try { window.UsernodeReact?.apiCache?.forget?.(); } catch { /* not installed */ }
   },
 
   // ── Late-arrival correction ─────────────────────────────────────────
@@ -3456,6 +3460,8 @@ const App = {
       // Whether this server answers a ping: its pong holds the socket to
       // the silence check (_checkEvents).
       App._pingEvents(socket);
+      // A reconnect may have missed news: the resync reads the server.
+      if (isReconnect) window.UsernodeReact?.apiCache?.forget?.();
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -3471,6 +3477,11 @@ const App = {
       // on a slow link is not taken for a dead one (lib/offline.ts answered).
       try { window.Offline?.answered?.(); } catch (_) { /* no probe */ }
       try {
+        // News from the server: whatever re-reads because of it asks the
+        // server, never an answer shared from before the news (the shared
+        // reads of lib/api-cache-identity.ts, request 7165). Any frame
+        // counts, before it is read: a `pong` only costs one shared answer.
+        window.UsernodeReact?.apiCache?.forget?.();
         const data = JSON.parse(event.data);
         // The Homeroom bot page keeps its lists current from these: it
         // picks the events that move a thread it lists (features/ai/live.ts).
@@ -9369,7 +9380,13 @@ const App = {
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
     window.UsernodeReact?.headerTitle?.set?.(text, subtitle);
-    document.title = subtitle ? `${text} · ${subtitle}` : text;
+    // Request #7164: a project's page and a request's page name themselves
+    // in the tab (features/header/document-title.ts), since the header's
+    // text is not theirs: it stayed "Communities" or "Homeroom" there. On
+    // every other screen that answers nothing and the header's text is it.
+    let named = null;
+    try { named = window.UsernodeReact?.documentTitle?.named?.() || null; } catch (_) { named = null; }
+    document.title = named || (subtitle ? `${text} · ${subtitle}` : text);
     // The plain title assignment above wiped Notifications' "(N) " unread
     // prefix: let it re-apply.
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {

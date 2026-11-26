@@ -10,19 +10,18 @@
  *
  * The same presentation as ./app-slots-sheet.tsx, for the same reasons:
  * rendered inside #profile-root while `weekShareOpen` is set, and handed to
- * the native kit's MODAL by lib/kit-surface.ts. With no kit the card simply
+ * the native kit's MODAL by lib/sheet.ts. With no kit the card simply
  * stays where React put it, at the top of the screen. The root and card class
- * strings are constants (the kit writes onto them), and the card is brought
- * home in the layout-effect cleanup, before React removes it.
+ * strings are constants (the kit writes onto them), and the Sheet brings the card
+ * home before React removes it, and owns Escape, Back and focus.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useMessages } from '../../lib/i18n/react';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import { Profile } from './profile.js';
 import { shareText } from './profile-store.js';
 
@@ -42,38 +41,13 @@ export interface WeekShareItem {
 
 export function WeekShareSheet({ items, link }: { items: WeekShareItem[]; link: string | null }): ReactNode {
   const t = useMessages('profile');
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
   // Every figure starts on; the choice is this card's alone and is not saved.
   const [selected, setSelected] = useState<string[]>(() => items.map((item) => item.key));
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
 
-  // Hand the card to the native kit, exactly once, and put it back before
-  // React ever tries to remove it. Same shape as ./app-slots-sheet.tsx.
-  useIsomorphicLayoutEffect(() => {
-    const contentEl = panelRef.current;
-    const flagEl = rootRef.current;
-    if (!contentEl || !flagEl) return;
-    let adoption: KitAdoption | null = null;
-    adoption = adoptKitSurface({
-      kind: 'modal',
-      contentEl,
-      adoptedOn: flagEl,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => {
-        if (!adoption) return;
-        adoption = null;
-        Profile._dismissWeekShare();
-      },
-    });
-    return () => {
-      if (!adoption) return;
-      const handle = adoption;
-      adoption = null;
-      handle.release();
-    };
-  }, []);
+  // Lifted into the kit's modal while it is mounted; Escape, Back, the
+  // backdrop and focus are the Sheet's (lib/sheet.ts).
+  const { rootRef, panelRef } = useSheet({ kind: 'modal', onClose: () => Profile._dismissWeekShare() });
 
   const chosen = items.filter((item) => selected.includes(item.key));
   const text = shareText(items, selected, link);

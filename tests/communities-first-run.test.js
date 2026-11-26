@@ -211,16 +211,15 @@ test('Home has no Getting started card, and the server no longer draws one', () 
 // The set keeps its one name everywhere else ("Add to My apps", the browse
 // badge, the tour card).
 test('the Home apps section opens with its "Pinned apps" heading, and the catalog entry is back', () => {
-  const section = HOME_SRC.slice(
-    HOME_SRC.indexOf('<section id="home-apps-section"'),
-    HOME_SRC.indexOf('<AppsMore />'));
+  const start = HOME_SRC.indexOf('<section id="home-apps-section"');
+  const section = HOME_SRC.slice(start, HOME_SRC.indexOf('</section>', start));
   const heading = section.indexOf('<SectionHeading');
   const grid = section.indexOf('<AppGrid />');
   assert.notEqual(heading, -1, 'a heading over the tiles');
   assert.notEqual(grid, -1, 'the grid is here');
   assert.ok(heading < grid, 'the heading sits above the grid');
-  assert.match(section, /\) : wip \? t\('home:grid\.headingProjects'\) : t\('home:grid\.heading'\)\}/,
-    'and the heading asks for its text (Standard (WIP) reads "Pinned projects", as the link that unfolds the grid when there is more)');
+  assert.match(section, /\) : t\('home:grid\.headingProjects'\)\}\s*<\/SectionHeading>/,
+    'and the heading asks for its text ("Pinned projects", as the link that unfolds the grid when there is more)');
   assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['grid.heading'].text, 'Pinned apps',
     'the catalog entry is back, in the set\'s one name (Pinned apps since One Home, #6361)');
 });

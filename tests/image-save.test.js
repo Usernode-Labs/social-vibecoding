@@ -263,8 +263,11 @@ test('a conversation message builds the same line from its picture attachments',
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /const images = \(message\.attachments \|\| \[\]\)\.filter\(\(att\) => att\.contentType\.startsWith\('image\/'\)\);/);
   assert.match(row, /useCanSaveImage\(images\[0\]\?\.url \|\| ''\);/);
-  assert.match(row, /const pictures = downloadableImages\(images\.map\(\(att\) => \(\{ src: att\.url, name: att\.name \}\)\)\);\n\s*if \(pictures\.length\) items\.push\(\{ key: 'download', label: downloadLabel\(pictures\.length\), icon: DownloadIcon, onSelect: \(\) => \{ void saveImages\(pictures\); \} \}\);/);
+  assert.match(row, /pictures: images\.map\(\(att\) => \(\{ src: att\.url, name: att\.name \}\)\),/);
+  // The line itself is the one message menu's (message-actions/message-menu.ts).
+  const menu = read('frontend/src/features/message-actions/message-menu.ts');
+  assert.match(menu, /const pictures = downloadableImages\(spec\.pictures \|\| \[\]\);\n\s*if \(pictures\.length\) items\.push\(\{ key: 'download', label: downloadLabel\(pictures\.length\), icon: DownloadIcon, onSelect: \(\) => \{ void saveImages\(pictures\); \} \}\);/);
   assert.equal(message('messages:row.menu.copyText'), 'Copy text');
-  const copyAt = row.indexOf("key: 'copy', label: t('messages:row.menu.copyText')");
-  assert.ok(copyAt > 0 && row.indexOf("key: 'download'") > copyAt, 'right after Copy text');
+  const copyAt = menu.indexOf("key: 'copy', label: t('messages:row.menu.copyText')");
+  assert.ok(copyAt > 0 && menu.indexOf("key: 'download'") > copyAt, 'right after Copy text');
 });

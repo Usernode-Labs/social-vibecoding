@@ -71,6 +71,7 @@ function IconImage({ src, letter, eager }: { src: string; letter: string; eager:
         src={src}
         alt=""
         loading={eager ? 'eager' : 'lazy'}
+        decoding={eager ? undefined : 'async'}
         draggable="false"
         className="relative w-full h-full rounded-xl object-cover"
         onLoad={() => setDrawn(true)}

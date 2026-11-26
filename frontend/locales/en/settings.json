@@ -1191,26 +1191,6 @@
     "text": "Early features we're still testing. They may change or disappear.",
     "description": "Explanation under the Experimental heading in Settings."
   },
-  "experimental.look.fold": {
-    "text": "Look and theme",
-    "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
-  },
-  "experimental.look.label": {
-    "text": "Look",
-    "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
-  },
-  "experimental.look.standard": {
-    "text": "Standard",
-    "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
-  },
-  "experimental.look.brand": {
-    "text": "Paper, simplified, with brand styling",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way a look named Paper did (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is a proper name here."
-  },
-  "experimental.look.description": {
-    "text": "Try another look for Homeroom, in light and dark: it draws every page in the website's colours. Admins see this menu, and the same one beside the bell, while the look is drawn. Kept for this device.",
-    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
-  },
   "theme.title": {
     "text": "Theme",
     "description": "Heading of the section in Settings where the person chooses a light or dark appearance."
@@ -1468,16 +1448,16 @@
     "description": "Heading of the second group on the Settings > Linked devices page: the browsers (on computers, phones or tablets) signed in to the account on the web."
   },
   "phones.phonesNote": {
-    "text": "Each row is one install of the Homeroom app. Reinstalling the app makes a new row; unlink any you no longer use.",
-    "description": "Explanation under the Phones heading in Settings > Linked devices, saying why one phone can appear more than once: every installation of the Homeroom mobile app is its own row."
+    "text": "Each row is one kind of phone with the Homeroom app, and counts its sign-ins. Unlink any you no longer use.",
+    "description": "Explanation under the Phones heading in Settings > Linked devices. Homeroom cannot tell two phones of the same kind apart, so every sign-in of the Homeroom mobile app from one kind of phone (iPhone, Android phone, or unknown) is one row that says how many sign-ins it holds. Homeroom is the product name."
   },
   "phones.detailStale": {
     "text": "Not used since {{lastUsed}} · Linked {{linked}}",
     "description": "Line under a phone in Settings > Linked devices when the Homeroom app has not used the account on that phone for more than 30 days. {{lastUsed}} is the date it was last used; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
   },
   "phones.browsers.note": {
-    "text": "Each row is one browser signed in to Homeroom on the web. Sign out of any you don't recognise.",
-    "description": "Explanation under the Browsers heading in Settings > Linked devices. Homeroom is the product name."
+    "text": "Each row is one browser on one system, and counts its sign-ins. Sign out of any you don't recognise.",
+    "description": "Explanation under the Browsers heading in Settings > Linked devices. Every sign-in from the same browser on the same system (such as Chrome on Mac) is one row that says how many sign-ins it holds."
   },
   "phones.browsers.empty": {
     "text": "No browsers are signed in to your account.",
@@ -1578,6 +1558,70 @@
   "phones.browsers.signOutFailed": {
     "text": "Couldn't sign that browser out. Try again in a moment.",
     "description": "Error on the Settings > Linked devices page when signing a browser out failed; the browser stays in the list."
+  },
+  "phones.detailGrouped_one": {
+    "text": "{{count}} sign-in · Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGrouped_other": {
+    "text": "{{count}} sign-ins · Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGroupedStale_one": {
+    "text": "{{count}} sign-in · Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGroupedStale_other": {
+    "text": "{{count}} sign-ins · Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.confirmGrouped_one": {
+    "text": "Press Unlink again to end the {{count}} sign-in of this phone.",
+    "description": "Replaces the dates under a phone in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.confirmGrouped_other": {
+    "text": "Press Unlink again to end all {{count}} sign-ins of this phone.",
+    "description": "Replaces the dates under a phone in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.confirmThisPhoneGrouped_one": {
+    "text": "This is the phone you are using. Press Unlink again to end the {{count}} sign-in and sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this phone included. {{count}} is how many sign-ins."
+  },
+  "phones.confirmThisPhoneGrouped_other": {
+    "text": "This is the phone you are using. Press Unlink again to end all {{count}} sign-ins and sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this phone included. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.detailGrouped_one": {
+    "text": "{{count}} sign-in · Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGrouped_other": {
+    "text": "{{count}} sign-ins · Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGroupedStale_one": {
+    "text": "{{count}} sign-in · Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGroupedStale_other": {
+    "text": "{{count}} sign-ins · Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.confirmGrouped_one": {
+    "text": "Press Sign out again to end the {{count}} sign-in of this browser.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmGrouped_other": {
+    "text": "Press Sign out again to end all {{count}} sign-ins of this browser.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmThisBrowserGrouped_one": {
+    "text": "This is the browser you are using. Press Sign out again to end the {{count}} sign-in and sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this browser included. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmThisBrowserGrouped_other": {
+    "text": "This is the browser you are using. Press Sign out again to end all {{count}} sign-ins and sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this browser included. {{count}} is how many sign-ins."
   },
   "devConsole.title": {
     "text": "Developer console",

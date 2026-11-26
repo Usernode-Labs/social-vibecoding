@@ -120,6 +120,12 @@ test('the bar swaps the wordmark for the open app\'s name, or a project page\'s,
   // and its name is the tab's title alone.
   assert.match(tsx, /const showBack = !!openApp \|\| appDiscover;/);
   assert.match(tsx, /const headerTitle = openApp \? openApp\.name \|\| openApp\.slug : guestProject \? guestProject\.name : LANDING_TITLE;/);
+  // With nothing open the tab keeps the sentence the server wrote for the
+  // front page (project-preview.js LANDING_TITLE), and the phone app the short name.
+  assert.match(tsx, /const plainLanding = !openApp && !guestProject;/);
+  assert.match(tsx, /if \(plainLanding\) document\.title = landingDocumentTitle\(\);/);
+  assert.match(tsx, /SERVED_TITLE\.startsWith\(`\$\{LANDING_TITLE\}: `\) && !isNative\(\) \? SERVED_TITLE : LANDING_TITLE;/);
+  assert.ok(require('../src/services/project-preview').LANDING_TITLE.startsWith('Homeroom: '));
   assert.match(tsx, /\{openApp \? headerTitle : <Wordmark/,
     'the mark gives way to the app name — it never draws over it');
   // The element's class string does NOT move with that swap: it is the same

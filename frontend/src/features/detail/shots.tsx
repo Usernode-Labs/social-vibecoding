@@ -1,10 +1,9 @@
 /**
  * A change's before and after viewer, inside the detail column (#6230).
  *
- * It used to be a popover (`popover` on `.dev-thread-shots-viewer`, opened by
- * thread-changes.tsx's Expand), which covered the thread it belonged to. The
- * markup is the same — `AppView.shotsHtml`'s thread reading, carried in the
- * store's payload — but it is drawn here, as the column's contents.
+ * It used to be a popover, which covered the thread it belonged to. It is
+ * the one viewer every surface draws (../review-flow/shots-viewer.tsx),
+ * larger here, from the change's shots carried in the store's payload.
  *
  * #6381: the viewer's own toolbar has no way out of the column, so a small
  * head above it closes the before and after, as the design preview beside it
@@ -13,19 +12,19 @@
  * closes the column: the before and after themselves are untouched.
  */
 
-import { useMemo, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { closeDetail, type DetailEntry, type DetailLayout } from '../ai/detail';
+import { ShotsViewer } from '../review-flow/shots-viewer';
 import { useDetailCard, useDetailLabel } from './detail-card';
 
 export function DetailPaneShots({ entry, layout = 'three' }: { entry: DetailEntry; layout?: DetailLayout }): ReactNode {
   const t = useMessages('chat');
   const c = useMessages('changes');
-  const html = String((entry.payload as { html?: string } | undefined)?.html || '');
-  const wrapper = useMemo(() => ({ __html: html }), [html]);
+  const shots = entry.payload?.shots || null;
   const back = layout === 'full';
   // Beside a thread on the bot tab (20 Nov 2026): the head card says it and closes it.
   const card = useDetailCard();
@@ -58,8 +57,8 @@ export function DetailPaneShots({ entry, layout = 'three' }: { entry: DetailEntr
       )}
     </div>
   );
-  if (!html) {
-    // A reload's restored entry has no HTML yet: the request page fills it
+  if (!shots) {
+    // A reload's restored entry has no shots yet: the request page fills it
     // when the change's ShotsPair renders. Say so rather than draw a blank.
     return (
       <>
@@ -73,10 +72,9 @@ export function DetailPaneShots({ entry, layout = 'three' }: { entry: DetailEntr
   return (
     <>
       {head}
-      <div
-        className="dev-thread-shots-viewer gc-detail-shots"
-        dangerouslySetInnerHTML={wrapper}
-      />
+      <div className="gc-detail-shots">
+        <ShotsViewer source={shots.source} captions={shots.captions || null} expanded />
+      </div>
     </>
   );
 }

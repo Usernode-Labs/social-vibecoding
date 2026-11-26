@@ -56,10 +56,10 @@ import { FoldMarkIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { t } from '../../../lib/i18n/runtime';
 
-import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
+import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton, useSavedVote } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow, StatusPillState } from './model';
-import { shownPill } from './model';
+import { pillWithSavedVote, shownPill, votedSide } from './model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -205,6 +205,18 @@ export function RowBand({ card, trailing, chips: withChips = true }: {
   chips?: boolean;
 }): ReactNode {
   const s = shownPill(card);
+  // #7101: a vote this page has just saved is newer than the read the row
+  // came from, so the approvals count is corrected in place until the next
+  // read carries it. An uncounted or advisory vote moves the face, not the
+  // count (dev-card.tsx VoteButton reads the same store for its face).
+  const specs = voteSpecs(card);
+  const savedSide = useSavedVote(specs ? specs.yes : null);
+  const afterVote = pillWithSavedVote(
+    s,
+    specs ? (votedSide(specs.yes) || votedSide(specs.no)) : null,
+    specs && (specs.yes.uncounted || specs.yes.advisory) ? null : savedSide,
+    t,
+  );
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
   // `meta` chips (the status tags) ride the row's META line, which is
@@ -213,10 +225,10 @@ export function RowBand({ card, trailing, chips: withChips = true }: {
   const chips = withChips ? (card.badges || [])
     .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
     .slice(0, ROW_BADGE_MAX) : [];
-  if (!s && !chips.length && !trailing) return null;
+  if (!afterVote && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
-      {s ? <StatePill s={s} /> : null}
+      {afterVote ? <StatePill s={afterVote} /> : null}
       {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
     </span>

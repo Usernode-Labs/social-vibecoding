@@ -441,8 +441,8 @@ test('#6764: Rename is the first item in a private thread\'s ⋯, and a name set
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /<ThreadDoneMenu rootId=\{privateRoot\} done=\{privateWhere\.state === 'done'\} name=\{aloneTitle\}/);
   assert.match(read('frontend/src/features/messages/index.tsx'), /onRenamed=\{\(title\) => setPrivateWhere\(\{ \.\.\.privateWhere, title, titled: 'person' \}\)\}/);
-  // Its row on the page and in the app frame offers the same menu with the row's name.
-  assert.match(read('frontend/src/features/ai/frame-list.tsx'), /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} name=\{line\.title\}/);
+  // Its row on the page offers the same menu with the row's name.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /<ThreadDoneMenu rootId=\{done\.rootId\} done=\{false\} name=\{line\.title\}/);
   // The PATCH is the owner's, behind the same limiter as the other doors.
   assert.match(read('src/routes/conversations.js'),
     /router\.patch\('\/api\/conversations\/homeroom-bot\/threads\/:rootId', conversationActionLimiter, sameOriginBrowserOnly,/);

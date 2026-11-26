@@ -63,7 +63,7 @@ import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { linkAttrs } from '../../../lib/repo-link.js';
 import { cardTintClass } from '../../home/panels/ui';
 import type { NoChoice } from '../../review-flow/vote-sheet';
-import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
+import { aiEnabledStore, cardNowStore, voteSavedStore, voteSendingStore } from './cards-store';
 import { liveTally } from './fold';
 import type {
   ActionRef,
@@ -81,7 +81,7 @@ import type {
   TitleEditTarget,
   TitleSpec,
 } from './model';
-import { shownPill } from './model';
+import { pillWithSavedVote, savedSideFor, shownPill, votedSide } from './model';
 
 /** Layout-timed on the client; a no-op under the server renderer, warning-free. */
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
@@ -611,6 +611,18 @@ export function composeNoReason(choiceText: string, line: string, join: (choice:
   return (detail ? join(choiceText, detail) : choiceText).slice(0, REASON_MAX);
 }
 
+/**
+ * #7101: the side a just-saved vote gives this change, read live from the
+ * board's own saved-vote store (cards-store.ts). The vote button and the
+ * approvals pill both draw it, so a row whose lists are still the pre-vote
+ * copy settles the moment the server saves the vote; `model.ts`
+ * `savedSideFor` is the whole match, epochs included.
+ */
+export function useSavedVote(yes: ActionSpec | null | undefined): 'yes' | 'no' | null {
+  const saved = useStoreState(voteSavedStore);
+  return savedSideFor(yes, saved);
+}
+
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
   const t = useMessages('project');
   const [open, setOpen] = useState(false);
@@ -635,9 +647,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
-  const mine: 'yes' | 'no' | null = /\bgc-vote-active\b/.test(yes.cls || '')
-    ? 'yes'
-    : (/\bgc-vote-active\b/.test(no.cls || '') ? 'no' : null);
+  // #7101: a vote the server has just saved is newer than this row's own
+  // spec, which can still be the pre-vote copy the board read. It wins the
+  // face, so the button changes the moment the vote lands rather than when
+  // the next read does. A retract deletes the entry and a change of side
+  // republishes it, so `mine` follows both.
+  const specMine = votedSide(yes) || votedSide(no);
+  const mine: 'yes' | 'no' | null = useSavedVote(yes) || specMine;
   // B7, #3977: a change on a project that is just the viewer's, whose Yes is
   // the one it needs. Nobody to vote with, so it is worded as approving it,
   // but the gesture is a group's: this button opens the same picker.
@@ -674,6 +690,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       sheet.dismiss();
     }
   };
+  // #7101: a Yes already on the row (or just saved) is not asked for twice.
+  // Pressing Yes again says it is recorded and sends nothing; No and a change
+  // of side go through as they always have.
+  const recordedYes = isVote && yes.act?.fn === 'castVote' && mine === 'yes';
+  const noteAlready = () => {
+    shut();
+    (window as any).PlatformUI?.toast?.(t('project:card.vote.alreadyYes'));
+  };
   // castVote(sessionId, vote, expectedEpoch, { reason }) and
   // castIssueVote(issueId, vote, { reason }): a string is the line to send,
   // null sends none without asking. Slots the model left out are filled in
@@ -682,6 +706,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   //
   // #3984: a vote already on its way is not sent again.
   const send = (a: ActionSpec, reason: string | null) => {
+    if (a === yes && recordedYes) { noteAlready(); return; }
     // #6098: a vote sent from the desktop picker puts focus back on the face
     // button, so the next Tab carries on from the vote just cast instead of
     // starting again at the top of the page. The popover is a portal: it
@@ -705,6 +730,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // path left where the box is not inline, and only where no sheet can be
   // presented at all.
   const pickTouch = (a: ActionSpec) => {
+    if (a === yes && recordedYes) { noteAlready(); return; }
     shut();
     call(a.act);
   };
@@ -849,6 +875,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // picked, and carries that answer (with the line, if one was written).
   const submit = () => {
     if (!isVote) { send(spec, null); return; }
+    if (side === 'yes' && recordedYes) { noteAlready(); return; }
     if (side === 'no') {
       if (!noChoice) return;
       send(no, composeNoReason(whyTexts(t)[noChoice], line,
@@ -893,7 +920,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const heading = approve ? t('project:card.vote.dialog.approval') : t('project:card.vote.dialog.vote');
   // The picker is portaled out of the page, so the page's scoped look cannot
   // reach it: mark it, and the page's own rules paint it. A button on the
-  // thread page marks it "thread" (the carried rules, scripts/thread-look.js);
+  // thread page marks it "thread" (app.css, THE THREAD PAGE);
   // a button on the All items board marks it "board" (app.css).
   // It renders only after the button that opens it has mounted, so the ref is
   // there to ask.
@@ -1708,7 +1735,18 @@ export function DevCard(
   // one uncapped row, the pill as an inline capsule among the chips.
   // The stored row's words while it is not up for a vote (model.ts shownPill).
   const shown = shownPill(m);
-  const pill = m.pill && shown ? <StatusPill s={shown} inline={m.pill.inline} /> : null;
+  // #7101: a vote this page has just saved is newer than the read the row
+  // came from, so the approvals count is corrected in place until the next
+  // read carries it. An uncounted or advisory vote moves the face, not the
+  // count.
+  const savedSide = useSavedVote(yesSpec || null);
+  const shownAfterVote = pillWithSavedVote(
+    shown,
+    votedSide(yesSpec) || votedSide(noSpec),
+    yesSpec && (yesSpec.uncounted || yesSpec.advisory) ? null : savedSide,
+    translate,
+  );
+  const pill = m.pill && shownAfterVote ? <StatusPill s={shownAfterVote} inline={m.pill.inline} /> : null;
   const factsShown = kept.length > 0;
   const statusRow = dense ? (
     <div className="dev-card-badges dev-card-status" data-empty={pill || voteBtn ? undefined : '1'}>{pill}{voteBtn}</div>

@@ -5,7 +5,7 @@
  *
  * The same presentation as ./profile-edit-sheet.tsx, on purpose: rendered
  * inside #profile-root while `feedbackOpen` is set, and handed to the native
- * kit's MODAL by lib/kit-surface.ts. The modal and not the bottom sheet for
+ * kit's MODAL by lib/sheet.ts. The modal and not the bottom sheet for
  * the reason #1285 moved the editor: `.un-modal` is a real scroller, while the
  * kit sheet takes every vertical drag as a drag of the sheet, so a list longer
  * than the screen could not be scrolled in it. With no kit the card simply
@@ -14,20 +14,18 @@
  * The constraints are the editor's, for the same reasons: the root and card
  * class strings are constants (the kit writes `platform-modal-adopted` and
  * `platform-modal-card` onto them), the root is the flagged node and the card
- * the lifted one, and the card is brought home in the layout-effect cleanup,
- * before React removes it.
+ * the lifted one, and the Sheet brings the card home before React removes it.
  *
  * Everything the list SAYS is ./profile-store.js's feedbackListView, where the
  * node suite can reach it; this file only turns it into elements.
  */
 
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { useMessages } from '../../lib/i18n/react';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import { Profile } from './profile.js';
 
 /** The no-kit card chrome, on the node the kit flags. Constant. */
@@ -148,38 +146,10 @@ function Rows({ view }: { view: FeedbackListView }): ReactNode {
 
 export function FeedbackSheet({ view }: { view: FeedbackListView }): ReactNode {
   const t = useMessages('profile');
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Hand the card to the native kit, exactly once, and put it back before
-  // React ever tries to remove it. Same shape as the editor's.
-  useIsomorphicLayoutEffect(() => {
-    const contentEl = panelRef.current;
-    const flagEl = rootRef.current;
-    if (!contentEl || !flagEl) return;
-    let adoption: KitAdoption | null = null;
-    adoption = adoptKitSurface({
-      kind: 'modal',
-      contentEl,
-      adoptedOn: flagEl,
-      home: 'placeholder',
-      gate: 'kit',
-      // The backdrop or Escape. The teardown below dismisses the kit too, and
-      // that callback lands here after the exit fade; `adoption` is already
-      // cleared by then, so it is ignored.
-      onDismiss: () => {
-        if (!adoption) return;
-        adoption = null;
-        Profile._dismissFeedback();
-      },
-    });
-    return () => {
-      if (!adoption) return;
-      const handle = adoption;
-      adoption = null;
-      handle.release();
-    };
-  }, []);
+  // Lifted into the kit's modal while it is mounted; Escape, Back, the
+  // backdrop and focus are the Sheet's (lib/sheet.ts).
+  const { rootRef, panelRef } = useSheet({ kind: 'modal', onClose: () => Profile._dismissFeedback() });
 
   return (
     <div id="profile-feedback-root" ref={rootRef} className={ROOT_CLASS}>

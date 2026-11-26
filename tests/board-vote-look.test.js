@@ -37,8 +37,8 @@ const bodyOf = (selector) => {
   return rule.body;
 };
 
-const P = 'html:not([data-skin])';
-const LIGHT = 'html:not([data-skin]):not(.dark):not([data-app-tone="dark"])';
+const P = 'html:root';
+const LIGHT = 'html:root:not(.dark):not([data-app-tone="dark"])';
 const H = ':is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"]';
 const MARK = '[data-vote-look="board"]';
 
@@ -65,7 +65,7 @@ test('the picked Yes and Vote yes are the page\'s sun pill', () => {
     /color: var\(--wip-top-cta-ink\)/, 'its tally takes the same ink');
   assert.match(bodyOf(`${LIGHT} ${H} .dev-vote-switch-yes[aria-pressed="true"]`),
     /box-shadow: inset 0 0 0 1px var\(--wip-top-cta-ink\)/, 'light gives Yes the ink outline');
-  assert.equal(ruleAt(`html:not([data-skin]).dark ${H} .dev-vote-switch-yes[aria-pressed="true"]`), undefined,
+  assert.equal(ruleAt(`html:root.dark ${H} .dev-vote-switch-yes[aria-pressed="true"]`), undefined,
     'no dark rule: the dark sun pill is flat');
   const send = bodyOf(`${P} ${H} .dev-vote-reason-send-yes`);
   assert.match(send, /background: var\(--wip-top-cta-bg\)/);
@@ -101,7 +101,7 @@ test('a No keeps the app\'s own red, both in the switch and the answers', () => 
 test('every rule is the standard look\'s and names the board\'s marker', () => {
   assert.ok(rules.length >= 14, 'the block is read whole');
   for (const rule of rules) {
-    assert.ok(rule.selector.startsWith('html:not([data-skin])'), `"${rule.selector}" is the standard look's`);
+    assert.ok(rule.selector.startsWith('html:root'), `"${rule.selector}" is the standard look's`);
     assert.ok(rule.selector.includes(MARK), `"${rule.selector}" reaches only the board's marked picker`);
   }
 });
@@ -116,13 +116,13 @@ test('no declaration writes a colour of its own, and none moves a size or type',
 });
 
 test('the dark look follows the same tokens, and the field drop is a token in both modes', () => {
-  const darkAt = css.indexOf('html:not([data-skin]).dark {');
+  const darkAt = css.indexOf('html:root.dark {');
   assert.ok(darkAt > 0, 'the dark token rule is there');
   const darkTokens = css.slice(darkAt, css.indexOf('\n}', darkAt));
   assert.match(darkTokens, /--wip-card-bg: #171715;/);
   assert.match(darkTokens, /--wip-top-cta-bg: #f3d920;/);
   assert.match(darkTokens, /--wip-field-drop:/);
-  const lightAt = css.indexOf("html:not([data-skin]) {\n  /* The kit's three colours");
+  const lightAt = css.indexOf("html:root {\n  /* The kit's three colours");
   assert.ok(lightAt > 0, 'the light token rule is there');
   const lightTokens = css.slice(lightAt, css.indexOf('\n}', lightAt));
   assert.match(lightTokens, /--wip-card-bg: #ffffff;/);

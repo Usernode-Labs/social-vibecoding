@@ -849,12 +849,11 @@ const Leaderboard = {
     return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
   },
 
+  // The day, in the shell's one short form (lib/timestamp.ts shortDate,
+  // published on PlatformI18n): "Nov 2", with the year once it is not this
+  // one, in the language and zone picked in Settings. '' when there is none.
   _fmtDate(ts) {
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return '';
-    // #6479: the day in the zone picked in Settings › Language, else the device's.
-    const timeZone = window.PlatformI18n?.timeZone?.();
-    return d.toLocaleDateString(undefined, { ...(timeZone ? { timeZone } : {}), year: 'numeric', month: 'short', day: 'numeric' });
+    return PlatformI18n.shortDate(ts);
   },
 
   // Rows that carry a slug route to that app's group chat — the PR card /

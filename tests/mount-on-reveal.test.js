@@ -187,8 +187,15 @@ test('the prerendered document is a fraction of what it was', () => {
   // "Nothing needs you" before anything had loaded. Main stood at 1097, so
   // those four tipped it to 1101; the rest of the headroom is for ordinary
   // edits.
+  //
+  // 1125 → 1150 with the Admin console's header (#7181, 26 Nov 2026): the
+  // platform header carries Homeroom's name as a link and the console's
+  // note (a box, a sentence with its bold lead, and Exit), five elements
+  // that are always in the bar and shown by app.css in the console alone,
+  // so they are no part of hydration. Main stood at 1124, one under the
+  // bound; the rest of the headroom is for ordinary edits.
   const html = read('public/index.html');
   const elements = (html.match(/<[a-zA-Z]/g) || []).length;
-  assert.ok(elements < 1125,
+  assert.ok(elements < 1150,
     `public/index.html carries ${elements} elements; the two mount-on-reveal interiors alone were 681`);
 });

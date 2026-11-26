@@ -309,10 +309,10 @@ test('it watches exactly what decides the tone', () => {
     filter: options.attributeFilter,
   }));
   assert.deepEqual(plain(targets), [
-    { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip', 'data-skin'] },
+    { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] },
     { target: 'staging-overlay', filter: ['class', 'data-placement'] },
     { target: 'visual-compare-overlay', filter: ['class', 'data-placement'] },
-    // Mobile 01: the phone's blue bar follows the route and the look.
+    // Mobile 01: the phone's blue bar follows the route.
     { target: 'platform-header', filter: ['class'] },
     ...SCREEN_IDS.map((id) => ({ target: id, filter: ['class'] })),
     { target: 'app-view', filter: ['class', 'data-app-surface'] },
@@ -338,7 +338,7 @@ test('statusBarToneFor: the phone\'s blue top bar is a dark ground', () => {
   assert.equal(tone({ phoneBar: true, communityTint: true }), 'dark');
 });
 
-test('the blue bar is read off the page: a phone, the standard look, a top-level screen', () => {
+test('the blue bar is read off the page: a phone, a top-level screen', () => {
   const h = boot({ phone: true });
   const read = () => h.NativeChrome._statusBarToneState().phoneBar;
   assert.equal(read(), false, 'no screen root on show yet');
@@ -358,9 +358,6 @@ test('the blue bar is read off the page: a phone, the standard look, a top-level
   assert.equal(read(), false, 'a running app: its own tone decides');
 
   h.showOnly('home-screen');
-  h.setAttr('data-skin', 'brand');
-  assert.equal(read(), false, 'a look draws its own bar');
-  h.setAttr('data-skin', null);
   h.screens['platform-header'].classes.add('hidden');
   assert.equal(read(), false, 'no header, no bar');
   h.screens['platform-header'].classes.delete('hidden');

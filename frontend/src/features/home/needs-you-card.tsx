@@ -1,7 +1,6 @@
 /**
  * Recent activity: Home's card in `#home-aside` (./index.tsx), a row of its
- * own under Pinned apps, or from 1280px under the brand look the column
- * beside them (`app.css`, "RECENT ACTIVITY BESIDE PINNED APPS").
+ * own under Pinned apps.
  *
  * It was the Needs you card (#6816), then Recent threads (#6785), the eight
  * threads the viewer last took part in. On a phone that was 530px of titles

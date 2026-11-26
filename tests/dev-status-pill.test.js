@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
 const { api, mergedCardHtml } = require('./lib/dev-card-html');
+const { message } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // ── Rendering the pill ──────────────────────────────────────────────────
@@ -557,6 +558,39 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   }));
   assert.equal(approvals.label, '2 of 3 approvals');
   assert.ok(approvals.fill, 'clock-free, but still a progress pill');
+});
+
+// #7101: a board row read before a vote kept "0 of 1 approval" until the
+// next read. The pure helper corrects the at-least-N approvals pill from the
+// saved vote; every other pill and a pill with nothing to change stay put.
+test('#7101: a saved yes corrects the approvals pill in place', () => {
+  const { pillWithSavedVote } = api();
+  const s = {
+    tier: 6, key: 'approvals', label: '0 of 1 approval', tone: 'progress', fill: true,
+    yes: 0, no: 0, majority: 1, advisory: 0, lock: false,
+  };
+  const after = pillWithSavedVote(s, null, 'yes', message);
+  assert.notEqual(after, s, 'a changed pill is a new object');
+  assert.equal(after.label, '1 of 1 approval');
+  assert.equal(after.yes, 1);
+  assert.equal(after.tone, 'ok');
+  // The row already showing the saved side needs no correction, so the SAME
+  // object comes back (the stores' no-op rule).
+  assert.equal(pillWithSavedVote(after, 'yes', 'yes', message), after, 'same object when nothing differs');
+  // Any other status is never re-worded or re-counted.
+  const merged = { ...s, key: 'merged', label: '✓ Live', tone: 'ok', yes: 2, majority: 2 };
+  assert.equal(pillWithSavedVote(merged, null, 'yes', message), merged);
+  // Leaving a counted yes lowers it, and it stops reading reached.
+  const left = pillWithSavedVote(after, 'yes', 'no', message);
+  assert.equal(left.label, '0 of 1 approval');
+  assert.equal(left.yes, 0);
+  assert.equal(left.tone, 'progress');
+  // A No saved on a row with no vote moves the No side beside the same words.
+  const two = { ...s, label: '0 of 2 approvals', majority: 2 };
+  const no = pillWithSavedVote(two, null, 'no', message);
+  assert.equal(no.no, 1);
+  assert.equal(no.label, '0 of 2 approvals');
+  assert.equal(no.tone, 'progress');
 });
 
 // #3826 — the member floor's wait gets words on the card, not a bare count.

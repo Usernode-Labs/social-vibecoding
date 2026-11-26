@@ -280,8 +280,6 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   // message of its own.
   for (const n of [1, 2, 21]) {
     assert.equal(message('project:workRow.replies', { count: n }), `${n} ${n === 1 ? 'comment' : 'comments'}`);
-    assert.equal(message('project:workshop.dash.onYou', { count: n }), `${n} on you`);
-    assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n} by this time last week`);
     for (const total of [2, 5, 21]) {
       assert.equal(message('project:communityCard.line.members.some', { count: n, total }),
         `A change goes live when its checks pass and ${n} of the ${total} active members ${n === 1 ? 'approves' : 'approve'} it.`);
@@ -295,11 +293,9 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
   assert.ok(!/function describe\(d: Dash\)/.test(src), 'the derived sentence is gone');
-  const tiles = src.slice(src.indexOf('function DashTiles('), src.indexOf(' * The three cards: what landed last week'));
-  assert.ok(tiles.length > 200);
-  assert.doesNotMatch(tiles, /=== 1/, 'no number is tested for "one" to choose a wording');
-  assert.match(tiles, /t\('project:workshop\.dash\.onYou', \{ count: owed \}\)/);
-  assert.match(tiles, /t\('project:workshop\.dash\.fromLastWeek', \{ count: d\.shippedPrevWeekToDate \}\)/);
+  // The brand look's dashboard tiles (DashTiles), which counted votes on you
+  // and the week's changes, went with that look (26 Nov 2026).
+  assert.ok(!/function DashTiles\(/.test(src));
   const card = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/community-card.tsx'), 'utf8');
   const rule = card.slice(card.indexOf('export function ruleSentence('), card.indexOf('export function RuleWords('));
   assert.doesNotMatch(rule, /count === 1|=== 1 \?/, 'nor in the rule\'s sentences: each regime is its own message');
@@ -411,7 +407,8 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   const members = read('frontend/src/features/messages/members-dialog.tsx');
   assert.match(members, /active\?\.untitled \? t\('messages:members\.leave\.titleUntitled'\)\s*: active\?\.title \? t\('messages:members\.leave\.title', \{ group: active\.title \}\)/);
   assert.match(read('frontend/src/features/messages/share-to-dialog.tsx'), /choice\.unnamed === 'conversation' \? t\('messages:shareTo\.sharedToUntitled'\)/);
-  assert.match(read('frontend/src/features/messages/message-row.tsx'), /message\.sender\.unnamed \? \(message\.sender\.id \? t\('messages:row\.block\.titleUnknownHandle'\)/);
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /who: message\.sender\.unnamed \? \{ unknown: 'handle' \} : \{ name: senderName\(message\.sender, \{ bare \}\) \}/);
+  assert.match(read('frontend/src/features/message-actions/message-menu.ts'), /who\.unknown === 'handle' \? t\('messages:row\.block\.titleUnknownHandle'\) : t\('messages:row\.block\.titleUnknown'\)/);
   assert.doesNotMatch(read('frontend/src/features/messages/api.ts'), /'A project'|'unknown'\)/);
 });
 
@@ -427,8 +424,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['chat:group.attachment.download', 'chat:group.attachment.downloadUnnamed', { file: 'file' }],
     ['chat:group.attachment.view', 'chat:group.attachment.viewUnnamed', { file: 'file' }],
     ['chat:group.attachment.previewTitle', 'chat:group.attachment.previewTitleUnnamed', { file: 'file' }],
-    ['chat:group.menu.block', 'chat:group.menu.blockUnknown', { username: 'System' }],
-    ['chat:group.blockConfirm.title', 'chat:group.blockConfirm.titleUnknown', { username: 'System' }],
     ['chat:group.report.label', 'chat:group.report.labelUnknown', { username: 'System' }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR 12', number: 12 }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR' }],

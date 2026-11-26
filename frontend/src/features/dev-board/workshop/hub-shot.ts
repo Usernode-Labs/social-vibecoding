@@ -18,8 +18,7 @@
  *   hub-first-week-question  as the person who started it, Homeroom bot
  *                            waiting on their answer to a question
  *   hub-first-week-link      as the person who started it, nobody else in
- *                            yet, an invite link out: "Just you so far",
- *                            and Share it saying the link is out
+ *                            yet, an invite link out: "Just you so far"
  *   hub-version              a version of Tier list (docs/plans/versions.md),
  *                            as its maker: "Made from Tier list · Gets its
  *                            updates" in the hero, and the Update card for
@@ -136,7 +135,7 @@ export function hubShotVersions(kind: HubShot | null, now: number = Date.now()):
 export function hubShotPayload(slug: string, kind: HubShot, now: number = Date.now()): CommunityPayload {
   if (kind === 'version' || kind === 'original') return versionsShotPayload(slug, kind, now);
   const maker = kind !== 'member';
-  // A link out and nobody in yet: Just you so far, Share it saying so.
+  // A link out and nobody in yet: Just you so far.
   const alone = kind === 'link';
   const ago = (min: number) => new Date(now - min * 60000).toISOString();
   return {

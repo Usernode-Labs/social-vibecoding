@@ -18,7 +18,6 @@
 
 import type { ReactNode } from 'react';
 
-import { useMessages } from '../../../lib/i18n/react';
 import { t as message } from '../../../lib/i18n/runtime';
 import type { PanelStamps } from '../panels-store';
 
@@ -284,39 +283,5 @@ export function PanelShell({
     >
       {children}
     </article>
-  );
-}
-
-/**
- * THE AREA'S WAY IN: "See all", at the right end of the Challenges heading,
- * to the Challenges tab of the Leaderboard screen. It replaced two controls
- * (the Semi design, 2026-10-16): the heading's "Open challenges" (#980,
- * #1916), and the footer's "See all N challenges" / "Show less", which grew
- * the block in place. The block now shows a short pick, and everything else
- * is on the tab.
- *
- * A REAL LINK, `<a href="#leaderboard/challenges">`: it goes somewhere, so
- * it is announced as a link, opens in a new tab on a modified click, and its
- * hash navigation gives the tab a history entry the device's back gesture
- * returns from. The visible "See all" leans on the heading beside it, so the
- * accessible name says what it is all of ("See all challenges") and starts
- * with the visible words, which keeps a voice command that reads them
- * working. Drawn as `BrowseLink` is, the other section heading's link on this
- * screen, with no glyph, so the two line up.
- *
- * ChallengesSectionView renders it only when the view says `seeAll`: never
- * while loading, and not under "No challenges right now", where there is
- * nothing behind it.
- */
-export function SeeAllLink() {
-  const t = useMessages('home');
-  return (
-    <a
-      href="#leaderboard/challenges"
-      className="home-panel-see-all shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      aria-label={t('home:challenges.seeAll.label')}
-    >
-      <span className="whitespace-nowrap">{t('home:challenges.seeAll.text')}</span>
-    </a>
   );
 }

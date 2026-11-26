@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useMenu } from '../../lib/menu';
 import {
   closeDetail, detailIdentity, detailLabel, noteDetailLabel, reopenDetail, seenDetails,
   type DetailEntry, type DetailKind, type DetailLayout,
@@ -211,29 +212,12 @@ export function DetailPicker({ entry, label, className, anchor, end = null, chil
     return () => window.removeEventListener('resize', place);
   }, [menu, anchor]);
 
-  // The list closes on a press outside it and its button, and on Escape
-  // (before the column's own Escape, which would close the column).
-  useEffect(() => {
-    if (!menu) return undefined;
-    const away = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (trigger.current?.contains(target) || list.current?.contains(target)) return;
-      setMenu(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      setMenu(false);
-      trigger.current?.focus();
-    };
-    document.addEventListener('pointerdown', away, true);
-    document.addEventListener('keydown', key, true);
-    return () => {
-      document.removeEventListener('pointerdown', away, true);
-      document.removeEventListener('keydown', key, true);
-    };
-  }, [menu]);
+  // The list closes on a press outside it and its button, on Escape (before
+  // the column's own Escape, which would close the column) and on Back; the
+  // arrows move between its rows, and focus comes back to the button
+  // (lib/menu.ts). It follows the window itself (above), so it does not
+  // close on a resize.
+  const { panelProps } = useMenu(menu, { trigger, panel: list, onClose: () => setMenu(false) });
 
   const choose = (open: () => void) => { setMenu(false); open(); };
   const title = label?.title || (entry ? t(KIND_WORD[entry.kind]) : '');
@@ -262,6 +246,7 @@ export function DetailPicker({ entry, label, className, anchor, end = null, chil
           aria-label={t('messages:detail.picker.section')}
           style={at.rtl ? { right: at.start, top: at.top, width: at.width } : { left: at.start, top: at.top, width: at.width }}
           data-detail-menu=""
+          {...panelProps}
         >
           {rows.length ? <div className="detail-card-menu-head">{t('messages:detail.picker.section')}</div> : null}
           {rows.map((row) => {

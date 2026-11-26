@@ -78,6 +78,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
+import { capCount } from '../../lib/count-cap';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import {
@@ -261,7 +262,7 @@ function VotesBadge({ count }: { count: number }) {
   if (!(count > 0)) return null;
   return (
     <span className="platform-tab-votes" aria-label={t('core:tabs.votesWaiting', { count })}>
-      {count > 99 ? '99+' : String(count)}
+      {capCount(count)}
     </span>
   );
 }
@@ -303,7 +304,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label, title }: {
       aria-label={label}
       title={count > 0 ? title : undefined}
     >
-      {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
+      {count > 0 ? capCount(count) : ''}
     </span>
   );
 }

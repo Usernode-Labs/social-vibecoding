@@ -15,19 +15,14 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const HOME = read('frontend/src/features/home/index.tsx');
 const CSS = read('public/css/app.css');
 
-function wrapperClasses() {
-  const m = HOME.match(/<div className=\{topRow \? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'\}>\s*<div className=\{topRow \? 'relative wip-search' : '([^']*)'\}>\s*<SearchIcon/);
-  // The kit's Home (Standard (WIP), and the standard look since 20 Nov 2026) draws a short
-  // field beside New project (tests/standard-wip-look.test.js); every other look's wrapper
-  // is the second literal.
-  assert.ok(m, 'the search field sits in a wrapper inside the bar\'s .home-column');
-  return m[1].split(/\s+/);
-}
-
-test('the search field has no width cap of its own', () => {
-  const classes = wrapperClasses();
-  assert.ok(!classes.some((c) => /^max-w-/.test(c)), `no max-w-*, got "${classes.join(' ')}"`);
-  assert.ok(classes.includes('w-full'), 'spans the column');
+test('the search field has no width cap of its own: it fills the bar\'s column up to the kit\'s field width', () => {
+  // The kit's Home (the standard look's since 20 Nov 2026, the only look since
+  // 26 Nov 2026) draws a short field beside New project
+  // (tests/standard-wip-look.test.js): no Tailwind cap on the wrapper, and the
+  // kit's own rule sizes it.
+  assert.match(HOME, /<div className="home-column wip-topbar">\s*<div className="relative wip-search">\s*<SearchIcon/,
+    'the search field sits in a wrapper inside the bar\'s .home-column');
+  assert.match(CSS, /\n\.wip-search \{ width: 100%; max-width: var\(--wip-search-w\); \}/, 'spans the column, up to the kit\'s field');
   assert.match(HOME, /id="home-search-input"[\s\S]{0,300}?className="w-full /, 'and the input fills it');
 });
 

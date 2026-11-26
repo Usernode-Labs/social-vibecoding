@@ -5,6 +5,8 @@ import { errorText } from './server-error';
 import {
   deviceTimeZone, getTimeZone, saveAccountTimeZone, setTimeZone, subscribeTimeZone, timeZoneLabel, zonedDay,
 } from '../time-zone';
+import { agoStamp, messageStamp, shortDate } from '../timestamp';
+import { capCount } from '../count-cap';
 
 export { errorText };
 
@@ -76,9 +78,20 @@ export function switchToEnglish(): Promise<boolean> {
   // #6103: the classic scripts' date formatters read the same rule.
   dateLocale: getDateLocale,
   // #6479: the zone the account picked (undefined for the device's), and the
-  // calendar day an instant falls on in it, for GroupChat._stamp and relStamp.
+  // calendar day an instant falls on in it, for GroupChat._stamp.
   timeZone: getTimeZone,
   zonedDay,
+  // The shell's one time formatter, lib/timestamp.ts, for the modules that
+  // read this global rather than import (app-view.js, build-log.js, the
+  // bell's notifications.js, leaderboard.js), so none keeps a copy: the age
+  // for a list ("3h ago", a date past a week), the stamp for a conversation
+  // ("Nov 24, 5:23 PM"), and the day alone. Read at call time, as `t` is.
+  // (timestamp.ts imports `t` from here; it reads it only inside its
+  // functions, so the import cycle settles at load.)
+  agoStamp, messageStamp, shortDate,
+  // A count as a badge shows it, "99+" past 99 (lib/count-cap.ts): the bell's
+  // number, its sheet's tab and the browser tab's title read it here.
+  capCount,
   // Settings › Language's Time zone list: its labels, Auto's zone, the save.
   timeZoneLabel, deviceTimeZone, saveAccountTimeZone,
   applySessionLanguage, saveAccountLocale, getLanguages,
