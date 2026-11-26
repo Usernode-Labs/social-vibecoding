@@ -36501,6 +36501,7 @@ html:root #dev-workshop [data-press-armed] { -webkit-user-select: none; user-sel
 html:root #dev-workshop .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 html:root #dev-workshop .dh-more-posts:disabled { opacity: 0.6; }
 html:root #dev-workshop :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
 html:root #dev-workshop .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
 html:root #dev-workshop .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
 html:root #dev-workshop .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }

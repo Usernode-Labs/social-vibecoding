@@ -573,7 +573,7 @@ function FeedLoading({ status, onRetry, rows }: { status: FeedState['status']; o
   if (status === 'error') {
     return (
       <p className="dh-failed" data-ws-discussion-failed="">
-        {t('project:hub.discussion.failed')}{' '}
+        <span>{t('project:hub.discussion.failed')}</span>
         <button type="button" className="dh-link" onClick={onRetry}>{t('project:hub.discussion.retry')}</button>
       </p>
     );
