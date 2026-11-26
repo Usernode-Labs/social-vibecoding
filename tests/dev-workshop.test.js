@@ -1762,6 +1762,11 @@ test('#4457, #4486, #4718: a change up for a vote keeps its vote on its own line
     tags: [{ label: 'Checks running…', tone: 'run' }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }], vote: { yes: 1, need: 3, ask: true } };
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
   assert.match(html, /<span class="dev-ws-tag" data-tone="run"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks running…<\/span>/);
+  // #7182: Homeroom bot's own tone spins too, and paints in the bot's colour.
+  const botBrief = { ...brief, tags: [{ label: 'Homeroom bot is building this', tone: 'bot' }] };
+  const botHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: botBrief }, slug: 'demo-app' }));
+  assert.match(botHtml, /<span class="dev-ws-tag" data-tone="bot"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Homeroom bot is building this<\/span>/);
+  assert.match(CSS, /\.dev-ws-tag\[data-tone="bot"\] \{ color: var\(--bot-ink\); background: var\(--bot-tint\); \}/);
   // #4499: once the run knows its total, the tag carries a bar instead of
   // "619/732", with the count as its tooltip and the bar's name.
   const runningBrief = { ...brief, tags: [{ label: 'Checks', tone: 'run', title: '619 of 732 checks done. Automated tests are still running.', progress: { done: 619, total: 732, text: '619 of 732 checks done' } }] };

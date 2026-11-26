@@ -214,7 +214,7 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
     return <img src={BOT_AVATAR} alt="" className={`${sizeClass} ${radius} object-cover shrink-0`} data-bot-avatar="" />;
   }
   if (user?.avatarUrl) {
-    return <img src={user.avatarUrl} alt="" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
+    return <img src={user.avatarUrl} alt="" loading="lazy" decoding="async" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
   }
   if (square) {
     return (
@@ -290,7 +290,7 @@ function ObjectIcon({ object }: { object: SharedObjectCard }) {
   if (app && object.iconUrl) {
     return (
       <span className="messages-object-icon overflow-hidden" data-object-icon="image">
-        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable="false" />
+        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" />
       </span>
     );
   }

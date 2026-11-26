@@ -141,8 +141,30 @@ test('image icon renders an <img> and wins over emoji', () => {
     baseApp({ icon_emoji: '🎮', icon_url: '/app-icons/' + 'a'.repeat(32) })
   );
   assert.match(html, /data-icon="image"/);
-  assert.match(html, /<img src="\/app-icons\/a{32}"/);
+  // Asked for at the tile's size, not the whole stored file (#7165).
+  assert.match(html, /<img src="\/app-icons\/a{32}\?w=192"/);
   assert.match(html, /object-cover/);
+});
+
+// Request #7165, point 5: an icon of 100 KB and more was loaded for a 56px
+// tile. The tile asks the server for a 192px copy; only the two stored kinds
+// of picture are sized, and only at their plain address.
+test('a stored picture is asked for at its drawn size, and nothing else is touched', () => {
+  const sandbox = { document: { createElement: fakeElement } };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const AppCard = installAppCard(sandbox);
+  const id = 'a'.repeat(32);
+  assert.equal(AppCard.sizedPicture(`/app-icons/${id}`, 192), `/app-icons/${id}?w=192`);
+  assert.equal(AppCard.sizedPicture(`/app-illustrations/${id}`, 512), `/app-illustrations/${id}?w=512`);
+  for (const other of [`/app-icons/${id}?v=2`, `https://example.com/app-icons/${id}`, 'data:image/png;base64,AAAA',
+    '/app-icons/emoji/1f4ca.png', `/avatars/${id}`, '/app-icons/short', '', null, undefined]) {
+    assert.equal(AppCard.sizedPicture(other, 192), other);
+  }
+  assert.deepEqual({ ...AppCard.iconViewFor({ icon_url: `/app-icons/${id}`, icon_emoji: '🎮' }) },
+    { kind: 'image', src: `/app-icons/${id}?w=192` });
+  const demo = 'data:image/png;base64,AAAA';
+  assert.equal(AppCard.iconViewFor({ icon_url: demo }).src, demo, 'a staging demo icon is drawn as it came');
 });
 
 // The tile treatment itself (app.css `.app-icon-tile`): a white face
@@ -614,4 +636,43 @@ test('the scheme is part of the canvas-tile marker only', () => {
     Home._desiredIconSrcFor(image), imageSrc,
     'image icons keep one scheme-independent marker'
   );
+});
+
+// ── Pictures below the first screenful wait (request #7165, point 5) ──
+// An app's icon is 100 to 140 KB and a community's picture up to 936 KB, and
+// Home asked for every one of them at once, the ones far down the page and in
+// screens not open yet included. A lazy picture is asked for when it is near
+// the screen, and decoded off the main thread. The first two rows of the
+// pinned grid stay as they were: they are on screen when Home first draws.
+test('the pinned grid\'s first two rows load at once and every later tile is lazy', () => {
+  const grid = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/home/app-grid.tsx'), 'utf8');
+  assert.match(grid, /export const EAGER_TILES = 8;/, 'two rows of four');
+  assert.match(grid, /state\.items\.map\(\(item, i\) => \(\s*<AppCardTile\s*key=\{`card:\$\{item\.app\.slug\}`\}\s*eager=\{i < EAGER_TILES\}/);
+  assert.match(grid, /<AppIcon icon=\{app\.icon\} eager=\{eager\} \/>/);
+  const icon = grid.slice(grid.indexOf('function AppIcon('), grid.indexOf("if (icon.kind === 'emoji')"));
+  assert.match(icon, /return eager\s*\? <img src=\{icon\.src\} alt="" draggable=\{false\} className="w-full h-full object-cover" \/>\s*: <img src=\{icon\.src\} alt="" loading="lazy" decoding="async" draggable=\{false\} className="w-full h-full object-cover" \/>;/,
+    'the eager picture is the markup it was; the lazy one fills the same fixed tile, so nothing moves when it arrives');
+});
+
+test('the other lists of icons and pictures are lazy and decode off the main thread', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  assert.match(read('frontend/src/features/home/add-apps-sheet.tsx'),
+    /<img src=\{icon\.src\} alt="" loading="lazy" decoding="async" draggable=\{false\} className="w-full h-full object-cover" \/>/, 'the Add apps sheet');
+  const discover = read('frontend/src/features/home/panels/discover.tsx');
+  assert.match(discover, /<img src=\{art\.url\} alt="" loading="lazy" decoding="async" draggable=\{false\}/, 'a card\'s illustration');
+  assert.match(discover, /<img src=\{art\.darkUrl!\} alt="" loading="lazy" decoding="async" draggable=\{false\}/, 'and its dark twin');
+  assert.match(discover, /loading="lazy"\s*decoding="async"\s*draggable=\{false\}\s*className="home-discover-art-img"/);
+  assert.match(read('frontend/src/features/home/widget-strip.tsx'), /loading="lazy"\s*decoding="async"\s*draggable=\{false\}\s*className="w-full h-full rounded-lg object-cover"/);
+  // The shared icon and the community picture keep their `eager` switch: an
+  // eager picture is decoded as it always was, with the frame that shows it.
+  assert.match(read('frontend/src/features/apps/app-card-view.tsx'), /loading=\{eager \? 'eager' : 'lazy'\}\s*decoding=\{eager \? undefined : 'async'\}/);
+  assert.equal(read('frontend/src/features/communities/card.tsx').split("loading={eager ? 'eager' : 'lazy'} decoding={eager ? undefined : 'async'}").length
+    + read('frontend/src/features/communities/card.tsx').split(/loading=\{eager \? 'eager' : 'lazy'\}\n\s*decoding=\{eager \? undefined : 'async'\}/).length, 4, 'the picture and its dark twin');
+  const format = read('frontend/src/features/messages/format.tsx');
+  assert.match(format, /<img src=\{user\.avatarUrl\} alt="" loading="lazy" decoding="async" className=/, 'a person\'s picture on a Messages row');
+  assert.match(format, /className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" \/>/, 'a shared project\'s icon in a message');
+  const tile = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) } });
+  assert.match(tile, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="lazy" decoding="async" draggable="false"/);
+  const first = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) }, eager: true });
+  assert.match(first, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="eager" draggable="false"/);
 });

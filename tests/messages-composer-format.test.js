@@ -184,6 +184,38 @@ test('the composer shows the row only for a channel, named from the catalog', ()
   }
 });
 
+test('on a phone the row waits behind Formatting in the "+" menu', () => {
+  // Request #7164 (phone audit): under 768px a channel's box stands alone:
+  // the "+", the field and Send, with no button of its own for formatting.
+  // The menu's row is a channel's alone, says whether the formatting row is
+  // open (a checked menu item, and a check drawn at its end), and is named
+  // from the catalog. Closed to begin with.
+  assert.match(COMPOSER, /const \[formatOpen, setFormatOpen\] = useState\(false\);/);
+  assert.doesNotMatch(COMPOSER, /messages-format-toggle/);
+  assert.match(COMPOSER, /\{isChannel \? \(\s*<button type="button" role="menuitemcheckbox" className="messages-composer-menu-format" aria-checked=\{formatOpen\} aria-controls=\{formatBarId\}/);
+  assert.match(COMPOSER, /<FormatTextIcon aria-hidden="true" \/>\s*<span>\{t\('messages:composer\.format\.toggle'\)\}<\/span>\s*\{formatOpen \? <CheckIcon aria-hidden="true" className="messages-composer-menu-check" \/> : null\}/);
+  assert.match(COMPOSER, /role="toolbar" id=\{formatBarId\} data-open=\{formatOpen \? '' : undefined\}/);
+  assert.equal(message('messages:composer.format.toggle'), 'Formatting');
+  // Choosing it closes the menu, and nothing else changes the row: a send
+  // leaves it as it was.
+  assert.match(COMPOSER, /onClick=\{\(\) => \{ setAddOpen\(false\); setFormatOpen\(\(open\) => !open\); \}\}/);
+  assert.equal(COMPOSER.match(/setFormatOpen\(/g).length, 1);
+  // It is a row of the "+" menu, after Attach files and Share item.
+  const menu = COMPOSER.slice(COMPOSER.indexOf('className="messages-composer-menu"'), COMPOSER.indexOf('<textarea ref={inputRef}'));
+  assert.ok(menu.indexOf('messages-composer-menu-format') > menu.indexOf('messages:composer.shareItem'));
+  // The shortcuts do not ask whether the row is open.
+  const keys = COMPOSER.slice(COMPOSER.indexOf('function onFormatKey('), COMPOSER.indexOf('function formatSelected('));
+  assert.doesNotMatch(keys, /formatOpen/);
+
+  // The fold is the stylesheet's, and a phone's alone: the formatting row is
+  // hidden under 768px until opened, and from 768px the menu has no such row.
+  const CSS = read('public/css/app.css');
+  const at = CSS.indexOf('.messages-composer-menu .messages-composer-menu-check');
+  const block = CSS.slice(at, CSS.indexOf('/* #6653', at));
+  assert.match(block, /@media \(max-width: 767px\) \{\s*\.messages-format-bar:not\(\[data-open\]\) \{ display: none; \}/);
+  assert.match(block, /@media \(min-width: 768px\) \{\s*\.messages-composer-menu > \.messages-composer-menu-format \{ display: none; \}/);
+});
+
 test('a press keeps the field focused and takes Ctrl/Cmd+B and I', () => {
   assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => \(kind === 'link' \? openLinkField\(\) : formatSelected\(kind\)\)\}/);
   assert.match(COMPOSER, /input\.focus\(\{ preventScroll: true \}\)/);

@@ -217,6 +217,9 @@ const STAGING_SEEDS = Object.freeze([
   stagingSeed('seedCaptureUser', async (pool, config) => { await seedCaptureUser(pool); }),
   stagingSeed('seedCaptureAdminUser', async (pool, config) => { await seedCaptureAdminUser(pool); }),
   stagingSeed('seedStagingLongInbox', async (pool, config) => { await seedStagingLongInbox(pool); }),
+  // #7159: three web sign-ins of the fixture member from one kind of browser,
+  // so Settings › Linked devices has a device that holds several.
+  stagingSeed('seedStagingLinkedBrowsers', async (pool, config) => { await seedStagingLinkedBrowsers(pool); }),
   // Must run BEFORE every staging fixture — a dozen of them own rows via a
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   stagingSeed('seedStagingDemoUser', async (pool, config) => { await seedStagingDemoUser(pool); }),
@@ -1903,6 +1906,28 @@ async function seedStagingLongInbox(pool) {
        SELECT id, $2, 'owner', 'member', NOW(), NOW() FROM conversations
         WHERE title = $1 AND created_by = $2
        ON CONFLICT (conversation_id, user_id) DO NOTHING`, [title, member.id]);
+  }
+}
+
+// #7159: Settings › Linked devices shows one row per device with how many
+// sign-ins it holds. A fresh copy holds only the sign-in the viewer just made,
+// so the fixture member gets three more, all "Chrome on Mac", made on fixed
+// fake dates. Each token is random and kept nowhere else: no browser holds
+// it, so the rows are only something for the list to count. The fixed
+// sign-in dates are how a second boot knows the rows are there.
+const STAGING_LINKED_BROWSER_DAYS = ['2026-11-03', '2026-11-10', '2026-11-19'];
+async function seedStagingLinkedBrowsers(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0];
+  if (!member) return seedSkipped('no user usernode-capture');
+  for (const dayOf of STAGING_LINKED_BROWSER_DAYS) {
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at, created_at, user_agent_class, last_seen_at)
+       SELECT $3, $1::int, NOW() + INTERVAL '30 days', $2::timestamptz, 'chrome/mac', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sessions
+           WHERE user_id = $1 AND created_at = $2::timestamptz AND user_agent_class = 'chrome/mac')`,
+      [member.id, `${dayOf}T09:00:00Z`, crypto.randomBytes(32).toString('hex')]);
   }
 }
 

@@ -97,7 +97,11 @@ whole first impression, which is why it is allowed that weight.
   drawn by `.site-clouds::before` in `public/css/app.css` in the light shell
   only, and the sky inside the window of the private page's walk-through
   (`.hx-main`, `.hx-banner`) in both. Under it is the flat `--site-sky`, which is what shows if the file
-  does not load.
+  does not load. It is also the picture a link to the front page shows when
+  it is pasted into a chat or a post (`og:image`, `LANDING_PICTURE` in
+  `src/services/project-preview.js`, which states its 1920 × 1080 size; a
+  test holds the two together). No brand picture is 1200 × 630 yet: when one
+  is made, point `LANDING_PICTURE` at it.
 - **landing-communities.webp** — the picture of the communities page beside
   the landing hero's words, from 1024px. Decorative, empty `alt`.
 - **landing-people.webp** — the people on the bottom edge of the landing

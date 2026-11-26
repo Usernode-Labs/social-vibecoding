@@ -197,7 +197,7 @@ export const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
     <span className="dev-ws-tag" data-tone={t.tone} title={t.title || (t.short ? t.label : undefined)}>
-      {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
+      {t.tone === 'run' || t.tone === 'bot' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}

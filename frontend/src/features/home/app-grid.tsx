@@ -87,12 +87,23 @@ function cellStyle(item: GridItem): string | undefined {
   return placementStyle(item.placement);
 }
 
-function AppIcon({ icon }: { icon: IconView }) {
+/**
+ * The tiles that are on screen when the grid first draws: its first two rows
+ * of four. Their pictures load at once, so the first screenful is not held
+ * back; every tile after them waits until it is near the screen (#7165).
+ */
+export const EAGER_TILES = 8;
+
+function AppIcon({ icon, eager }: { icon: IconView; eager: boolean }) {
   if (icon.kind === 'image') {
     // w-full/h-full, not a fixed size: the tile draws a 1px hairline border
     // and the image fills the CONTENT box so it stays flush inside the ring
     // rather than being cropped by it (same note as AppCard.iconTileFor).
-    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
+    // The tile is a fixed 56px box, so a picture that arrives late moves
+    // nothing.
+    return eager
+      ? <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />
+      : <img src={icon.src} alt="" loading="lazy" decoding="async" draggable={false} className="w-full h-full object-cover" />;
   }
   if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
   return <>{icon.letter}</>;
@@ -175,7 +186,9 @@ function openedAgo(at: number, t: (id: string, params?: Record<string, unknown>)
   return t('core:time.ago.days', { count: Math.floor(hours / 24) });
 }
 
-function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
+function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null, eager = false }: {
+  /** One of the first tiles, on screen when the grid draws: its picture is not lazy. */
+  eager?: boolean;
   /** Standard (WIP): under the name, the app's sentence and its contributors. */
   rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
@@ -358,7 +371,7 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
           className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
         >
-          <AppIcon icon={app.icon} />
+          <AppIcon icon={app.icon} eager={eager} />
         </div>
         {/*
             A VERSION OF ANOTHER APP (docs/plans/versions.md): "Made from
@@ -567,9 +580,10 @@ export function AppGrid() {
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}
-      {state.items.map((item) => (
+      {state.items.map((item, i) => (
         <AppCardTile
           key={`card:${item.app.slug}`}
+          eager={i < EAGER_TILES}
           app={item.app}
           style={cellStyle(item)}
           yours={state.view === 'grid'}

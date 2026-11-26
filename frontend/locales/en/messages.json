@@ -2167,6 +2167,10 @@
     "text": "Formatting",
     "description": "Accessible name of the row of formatting buttons above a community channel's message box; it groups the six buttons that format the message being written."
   },
+  "composer.format.toggle": {
+    "text": "Formatting",
+    "description": "A row in the menu the plus button opens beside a community channel's message box, on a phone only. Pressing it shows or hides the row of formatting buttons (bold, italic, link and so on) above the box; a check mark stands at its end while they are shown."
+  },
   "composer.format.bold": {
     "text": "Bold",
     "description": "Tooltip and accessible name of a formatting button above a channel's message box: makes the selected text bold, or starts bold text at the cursor. Pressing it again removes the bold."
@@ -2978,6 +2982,10 @@
   "row.markedUnread": {
     "text": "Marked unread",
     "description": "Brief confirmation after choosing \"Mark unread\" on a message."
+  },
+  "row.menu.makeRequest": {
+    "text": "Make this a request",
+    "description": "Item in a chat message's menu: asks Homeroom bot to treat the message as a request to build something for the project. 'Request' is a noun."
   },
   "row.menu.viewThread": {
     "text": "View thread",

@@ -58,13 +58,16 @@ test('an unread count is grey wherever it is, and said in words on a full row', 
   // The tab bar's grey, the one the rest match.
   assert.match(rule('\n.platform-tab-badge'), /background: var\(--text-faint, #8e8e93\);/);
   // Messages' rows: "2 new" in grey, no blue bubble, and the time in ink.
-  const unread = rule('\n.messages-unread');
-  assert.match(unread, /color: var\(--text-muted\);/);
-  assert.doesNotMatch(unread, /--accent|background/);
-  assert.match(rule('.messages-row-time-unread'), /color: var\(--text-primary\);/);
+  // The shared row's trailing pair (ListRowMeta) draws them now.
+  const row = read('frontend/@/components/ui/grouped-list.tsx');
+  const meta = row.slice(row.indexOf('const rowMetaTop = cva('));
+  assert.match(meta, /strong: 'font-semibold text-zinc-900 dark:text-zinc-100'/, 'an unread row\'s time in the ink');
+  assert.match(meta, /<span className="ui-lrow-mb [^"]*text-zinc-500[^"]*">\{bottom\}<\/span>/, 'its count in grey');
+  assert.doesNotMatch(meta.slice(0, meta.indexOf('\n}\n')), /violet|accent/, 'never the accent');
   const inbox = read('frontend/src/features/messages/index.tsx');
-  assert.equal((inbox.match(/<span className="messages-unread">\{t\('messages:inbox\.newCount', \{ count: /g) || []).length, 3,
-    'a conversation, #general and an app\'s channel say it the same way');
+  assert.match(inbox, /tone=\{unread \? 'strong' : 'quiet'\}/);
+  assert.match(inbox, /bottom=\{unread \? t\('messages:inbox\.newCount', \{ count: conversation\.unreadCount \}\) : null\}/,
+    'a conversation says it in words');
   assert.equal(message('messages:inbox.newCount', { count: 2 }), '2 new');
   // The sidebar's chats and a project's channels: grey; Needs you keeps the accent.
   assert.match(CSS, /\.platform-rail-nest :is\(\.platform-rail-sub-count, :is\(\[data-place="discussion"\], \[data-place\^="c:"\]\) > \.dev-ws-place-count\) \{\s*background: var\(--text-faint, #8e8e93\);/);

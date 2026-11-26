@@ -98,11 +98,9 @@ test('Messages\' words are sized in rem, so Text size reaches them, at the same 
   // Text size scales rem. These were fixed pixels, so at 150% the page's
   // headings grew and the messages themselves did not.
   const css = cssSrc();
+  // The inbox's rows are the shared row now (ListRow and its ListRowMeta,
+  // @/components/ui/grouped-list.tsx), which sizes them in rem itself.
   const sizes = {
-    '.messages-row-name': 15,
-    '.messages-row-preview': 13,
-    '.messages-row-time': 13,
-    '.messages-unread': 13,
     '.messages-message-head': 17,
     '.messages-markdown.gc-msg-content': 17,
     '.messages-bubble': 17,

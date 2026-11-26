@@ -45,7 +45,7 @@ test('the big card: its picture (and its dark twin), its icon, its name over the
     assert.ok(at > last, `${part} comes after what is before it`);
     last = at;
   }
-  assert.match(html, /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/dark" alt="" loading="lazy" draggable="false" class="cm-card-img hidden dark:block"\/><\/span>/,
+  assert.match(html, /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/dark" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img hidden dark:block"\/><\/span>/,
     'not shaded: the picture alone, decorative');
   assert.match(html, /<span class="cm-card-icon" data-icon="image" aria-hidden="true">/);
   assert.match(html, /<span class="cm-card-members" data-cm-members="">1,284 members<\/span>/);
@@ -54,7 +54,7 @@ test('the big card: its picture (and its dark twin), its icon, its name over the
   assert.doesNotMatch(html, /cm-week-glyph|cm-week-sr|<svg/, 'no glyphs, and no second copy for a screen reader');
   assert.doesNotMatch(html, /cm-band-|data-cm-band|data-cm-bare/, 'a card with a picture is as it was');
   // A picture with no dark twin is one picture.
-  assert.match(draw('CommunityCardContent', { community: { ...TIDE, pictureDarkUrl: null } }), /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" draggable="false" class="cm-card-img"\/><\/span>/);
+  assert.match(draw('CommunityCardContent', { community: { ...TIDE, pictureDarkUrl: null } }), /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img"\/><\/span>/);
 });
 
 test('no picture: the icon is the picture, large in the band on its wash, and nothing beside the name (23 Nov 2026)', () => {
@@ -252,4 +252,17 @@ test('every place draws the same card from its own tokens: the signed-in pages a
   }
   // Every big card says this week in words, wherever it is.
   assert.doesNotMatch(css, /cm-week-glyph/);
+});
+
+// Request #7165, point 5: a card loaded its community's whole picture, up to
+// 1 MB, for a slot about 110px wide on a phone. A stored picture is asked for
+// at the card's size; any other address is drawn as it came.
+test('a stored picture is asked for at the card\'s size', () => {
+  const light = `/app-illustrations/${'a'.repeat(32)}`;
+  const dark = `/app-illustrations/${'b'.repeat(32)}`;
+  const html = draw('CommunityCardContent', { community: { ...TIDE, pictureUrl: light, pictureDarkUrl: dark } });
+  assert.ok(html.includes(`<img src="${light}?w=512"`), 'the picture');
+  assert.ok(html.includes(`<img src="${dark}?w=512"`), 'and its dark twin');
+  const src = read(CARD);
+  assert.match(src, /window\.innerWidth >= 768 \? 1024 : 512/, 'a wide screen takes the next size up');
 });

@@ -49,6 +49,7 @@ import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
+import { AdminHeaderNote } from '../admin/admin-header-note';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
@@ -462,6 +463,16 @@ export function PlatformHeader() {
                 title can centre from the group's INNER EDGE, and a control
                 outside the group is 28px of room it would hand to the title.
             */}
+          {/*
+                THE ADMIN CONSOLE'S WAY HOME (#7181). The console has its own
+                menu and no sidebar to fold, so on a computer app.css hides
+                #sidebar-toggle there and shows this in its seat: Homeroom's
+                name, a real link to Home. Always rendered and hidden by
+                app.css everywhere else, so it is no part of hydration.
+                The name is the logotype's own file drawn as a mask in
+                app.css, in the bar's ink: no drawing is repeated here.
+            */}
+          <a href="#home" className="admin-header-home" aria-label={t('core:header.home')} />
           <SidebarToggle />
           {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
@@ -571,6 +582,9 @@ export function PlatformHeader() {
             ./header-title.tsx.
         */}
         <HeaderTitle titleRef={titleRef} />
+        {/* The Admin console's note, in the title's seat on a computer
+            (../admin/admin-header-note.tsx). app.css shows it there only. */}
+        <AdminHeaderNote />
         {/* `gap-2.5`, not `gap-1`. The bell and the mark are an ALERT and a
             MENU — one tells you something happened, the other opens the app's
             options — and at 4px they read as two halves of one segmented

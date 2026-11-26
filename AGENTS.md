@@ -702,7 +702,8 @@ carry most of them.
   15 over 13 at a desktop's reading distance (the design review of 25 Nov
   2026). The standard look's `--one-row-title` / `--one-row-sub` (app.css,
   ONE LOOK · SHARED PARTS) carry the same pair for a row drawn outside the
-  primitive, Messages' `.messages-row-name` / `-preview` among them. A 17px
+  primitive. Messages' inbox is the primitive itself (its time over its
+  unread count is `ListRowMeta`, the row's trailing pair). A 17px
   bold row title makes every row a heading. Write them in rem (1rem over
   0.875rem, then 0.9375rem over 0.8125rem), as the primitives do: Settings'
   Text size scales rem, and a size in px stays put when someone turns it up.
@@ -725,8 +726,8 @@ carry most of them.
   hero's name.
 - **Cards are the plane colour, 20px, one hairline.** `GroupedList` draws
   them: `--dc-sheet-solid` (tone `plane`) or white, `rounded-[20px]`, and an
-  inset `--app-sheet-line` hairline. A list drawn outside the primitive (for
-  example `.messages-section-card`) spells the same three values.
+  inset `--app-sheet-line` hairline. A list drawn outside the primitive
+  spells the same three values.
 - **One accent, with three jobs kept apart.**
   - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
     mark an action, or a number that asks for the viewer ("3 to vote").
@@ -795,6 +796,32 @@ Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
 a change to the rule.
 Make it here as well.
+
+**The Admin dashboard and the console's menu are one block of
+`public/css/app.css`** ("THE ADMIN DASHBOARD AND ITS MENU", #7181). Its
+colours are `--adm-*` tokens declared on `#admin-screen`, for light and
+again for dark; no rule after them names a colour or a typeface, and its
+base rules sit outside any width query, so a phone and dark mode draw the
+same page (the first version did neither). The dashboard
+(`admin-overview.tsx`) reads six admin endpoints in one `load()`, which
+Refresh runs again: a figure that has not arrived is a dash, a part that
+did not load is named in `#admin-dashboard-error`, and no control is drawn
+that changes nothing. Its icons are the menu's own (`AdminConsole.NAV_ICONS`),
+never a text glyph. `tests/admin-console-polish.test.js` holds it.
+
+**Every page of the console is drawn in option A, "Sticker" (#7181).** An
+action is a pill with a thin dark outline and a hard edge under it (the
+sun for the main one, white for the second, none for a quiet one, red for
+one that cannot be undone); a card is white with the same outline and
+edge; a field is white with the outline; a status is a solid pill; a
+heading is in the serif. The recipes carry the hooks (`adm-card`,
+`adm-title`, `adm-btn` with `adm-b1`, `adm-b2`, `adm-bd` and `adm-sm`,
+`adm-b3`, `adm-linkbtn`, `adm-field`, `adm-badge`, `adm-th`) in `AdminUI`
+and `topochain/tokens.ts`, and one block of `public/css/app.css` ("THE
+CONSOLE IN OPTION A") draws them from `--stk-*` tokens, in light and dark.
+A section that draws with the recipes is aligned for free; the block also
+reads what a section wrote by hand, by the utility it used, so prefer a
+recipe to a new hand-written button, card or badge.
 
 ### The console is React — add a section the same way
 

@@ -271,3 +271,69 @@ test('Q20: the app frame is titled with the app\'s name, and keeps it when kept 
   assert.match(read('public/js/app-view.js'),
     /frame\.mount\(\{ slug: appData\.slug, faded: false, title: appData\.name \|\| '' \}\)/);
 });
+
+// ── Phone audit, request 7164, points 2 and 5 ───────────────────────────
+// The header's controls reach 44px through .un-touch-target; a conversation's
+// discs on its title card get their own reach; and no text box named by the
+// audit is under 16px on a phone, so iOS does not zoom the page on focus.
+
+/** The phone block the audit's fixes live in, and the rule for `selector` in it. */
+const PHONE_AUDIT = (() => {
+  const i = CSS.indexOf("PHONE AUDIT (request 7164, points 2 and 5)");
+  assert.ok(i >= 0, 'expected the phone audit block in app.css');
+  const open = CSS.indexOf('@media (max-width: 767.98px) {', i);
+  assert.ok(open > i, 'the block is for phone widths only');
+  return CSS.slice(open, CSS.indexOf('\n}', open));
+})();
+
+test('7164: the bar\'s controls keep their 44px tap box, and neighbours do not overlap', () => {
+  const kit = read('public/usernode-native/v1/native.css');
+  assert.match(kit, /\.un-touch-target::after \{[^}]*width: max\(100%, 44px\);\s*height: max\(100%, 44px\);/,
+    'the kit grows a small control to 44px');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  const drawer = read('frontend/src/features/nav-drawer/header-drawer.tsx');
+  const mark = read('frontend/src/features/header/platform-mark.tsx');
+  assert.match(header, /const BACK_BTN_CLASS = [^;]*un-touch-target';/, 'Back');
+  assert.match(drawer, /const BACK_CLASS = [^;]*un-touch-target';/, 'a community page\'s Back');
+  assert.match(header, /id="notifications-btn"[\s\S]{0,120}className="relative w-7 h-7 [^"]*un-touch-target/, 'the bell');
+  assert.match(mark, /id="platform-mark-btn"[\s\S]{0,900}className="[^"]*un-touch-target/, 'the Homeroom menu');
+  // The bell is 28px, so its box reaches 8px to each side: the gap to the
+  // menu (which is wider than 44px and reaches nowhere) has to be more.
+  const gap = CSS.match(/html:not\(\[data-skin\]\) #platform-header > \.ms-auto \{ gap: (\d+)px; \}/);
+  assert.ok(gap, 'the standard look sets the bar\'s gap on a phone');
+  assert.ok(Number(gap[1]) >= 8, `a ${gap[1]}px gap holds the bell's 8px of reach`);
+});
+
+test('7164: a conversation\'s discs reach 44px on a phone without touching each other', () => {
+  const size = CSS.match(/html:not\(\[data-skin\]\) #messages-screen \.messages-thread-header \.messages-thread-action \{\s*width: (\d+)px;\s*height: (\d+)px;/);
+  assert.ok(size, 'the title card\'s discs have one size');
+  const reach = PHONE_AUDIT.match(/#messages-screen \.messages-thread-header \.messages-thread-action::after \{ content: ''; position: absolute; inset: -(\d+)px; \}/);
+  assert.ok(reach, 'each disc has a tap box beyond itself');
+  assert.match(PHONE_AUDIT, /#messages-screen \.messages-thread-header \.messages-thread-action \{ position: relative; \}/,
+    'the box is measured from the disc, not from the card');
+  assert.ok(Number(size[1]) + 2 * Number(reach[1]) >= 44, 'wide enough');
+  assert.ok(Number(size[2]) + 2 * Number(reach[1]) >= 44, 'tall enough');
+  const card = CSS.match(/> \.messages-thread-header \{\s*position: relative;\s*inset: auto;\s*z-index: auto;\s*justify-content: flex-start;\s*gap: (\d+)px;/);
+  assert.ok(card, 'the title card sets the gap between its parts');
+  assert.ok(2 * Number(reach[1]) <= Number(card[1]), 'two neighbours\' boxes do not overlap');
+});
+
+test('7164: the text boxes the audit named are 16px on a phone', () => {
+  const rule = PHONE_AUDIT.match(/([^{}]*)\{ font-size: max\(1rem, 16px\); \}/);
+  assert.ok(rule, 'one rule sets the size: rem so Text size scales it, never under 16px');
+  const selectors = rule[1];
+  for (const box of [
+    '#notifications-search-input',
+    '#settings-screen :is(input:not(',
+    ':is(#profile-root, #settings-root) .profile-details-card .profile-details-input',
+    '#dev-kanban-search',
+  ]) assert.ok(selectors.includes(`html:not([data-skin]) ${box}`), `${box} is in the rule`);
+  assert.match(selectors, /#settings-screen :is\(input:not\(\[type="checkbox"\], \[type="radio"\][^)]*\), textarea\)/,
+    'Settings: every field you type in, and no tick box');
+  assert.doesNotMatch(selectors, /admin/, 'the admin console keeps its own density');
+  // The ones One look already made 16px stay so under 768px.
+  assert.match(CSS, /html:not\(\[data-skin\]\) :is\(#home-search-input, #communities-search-input\) \{[^}]*font-size: 16px;/);
+  assert.match(CSS, /html:not\(\[data-skin\]\) #messages-screen \.messages-search-input \{[^}]*font-size: 16px;/);
+  // The zoom lock is a separate decision: this change leaves the viewport alone.
+  assert.match(read('frontend/src/head.html'), /<meta name="viewport"[^>]*user-scalable=no/);
+});

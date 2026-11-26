@@ -90,6 +90,15 @@ import { WelcomePage } from './welcome-page';
 import { useAccessLinkPreview } from './access-link';
 
 const LANDING_TITLE = 'Homeroom';
+// The title the server wrote into this document. For the front page signed
+// out it is a whole sentence (src/services/project-preview.js LANDING_TITLE,
+// request 7166), and the tab keeps it while the landing is what is shown: a
+// search engine that runs the page reads the title after this effect, and
+// the bare word would undo the served one. The phone app's bar reads the
+// title too and keeps the short name.
+const SERVED_TITLE = typeof document === 'undefined' ? '' : document.title;
+const landingDocumentTitle = (): string =>
+  SERVED_TITLE.startsWith(`${LANDING_TITLE}: `) && !isNative() ? SERVED_TITLE : LANDING_TITLE;
 
 /**
  * Apple and Google, as the sign-in sheet offers them: those the options say
@@ -1711,13 +1720,16 @@ export function LandingScreen() {
     }
     location.hash = to;
   }, [st, appDiscover, guestProject]);
+  const plainLanding = !openApp && !guestProject;
   useEffect(() => {
     try {
       document.title = headerTitle;
+      // With nothing open, the front page keeps the title it was served with.
+      if (plainLanding) document.title = landingDocumentTitle();
     } catch {
       /* ignore */
     }
-  }, [headerTitle]);
+  }, [headerTitle, plainLanding]);
 
   /**
    * Every anchor on this screen tears the viewer down first: they all leave
