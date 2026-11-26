@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
 const { A, B, deferred, json, ORIGIN, SCOPE_HEADER } = require('./lib/private-cache-worker');
-const { installApiCacheIdentity, readApiCacheScope } = loadTsx('frontend/src/lib/api-cache-identity.ts');
+const { installApiCacheIdentity, readApiCacheScope, SHARED_READS, SHARED_READ_KEEP_MS, sharedReadKeep } = loadTsx('frontend/src/lib/api-cache-identity.ts');
 
 function page({ initial = A, fetcher = async () => json({ fake: 'A' }), href = ORIGIN + '/', native = false } = {}) {
   const cookieName = new URL(href).protocol === 'http:' ? 'usernode_api_scope' : '__Host-usernode_api_scope';
@@ -414,4 +414,258 @@ test('plain HTTP development keeps its unprefixed cache partition', async () => 
   assert.equal(h.calls[0].headers.get(SCOPE_HEADER), A);
   assert.equal(readApiCacheScope(h.win.document, false), A);
   assert.equal(readApiCacheScope(h.win.document, true), null);
+});
+
+
+// ─── Shared reads (request 7165) ────────────────────────────────────
+// One load of Home read the project list eleven times. Readers of the same
+// address now share one request, and for a few seconds one answer. Each
+// test counts what reached the network (`h.calls`).
+
+const paths = h => h.calls.map(req => new URL(req.url).pathname + new URL(req.url).search);
+const fresh = () => json({ apps: [{ slug: 'plant-pal' }] });
+
+test('the shared reads are the startup reads Home repeated, and nothing else', () => {
+  assert.deepEqual(SHARED_READS.map(entry => entry.route), [
+    '/api/apps', '/api/me/home-pins', '/api/workshop/counts', '/api/me/app-allowance',
+    '/api/ai/tracks', '/api/auth/me', '/api/version',
+  ]);
+  assert.equal(sharedReadKeep('/api/apps'), SHARED_READ_KEEP_MS);
+  assert.equal(sharedReadKeep('/api/auth/me'), 0, 'the account check is shared in flight only');
+  assert.equal(sharedReadKeep('/api/version'), 0, 'the version check is shared in flight only');
+  assert.equal(sharedReadKeep('/api/ai/tracks'), 0);
+  assert.equal(sharedReadKeep('/api/apps/plant-pal'), null, 'one project is not the list');
+  assert.equal(sharedReadKeep('/api/me/home-pins/activity'), null);
+  assert.equal(sharedReadKeep('/api/private'), null);
+  assert.ok(SHARED_READ_KEEP_MS <= 3000, 'a kept answer is seconds old at most');
+});
+
+test('readers of one address at the same moment make one request, and each gets its own copy', async () => {
+  const held = deferred();
+  const h = page({ fetcher: () => held.promise });
+  const readers = Array.from({ length: 11 }, () => h.win.fetch('/api/apps'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.calls.length, 1, 'eleven readers, one request');
+  held.resolve(fresh());
+  const bodies = await Promise.all(readers.map(async read => (await read).json()));
+  for (const body of bodies) assert.deepEqual(body, { apps: [{ slug: 'plant-pal' }] });
+  assert.notEqual(bodies[0], bodies[1], 'no parsed object is shared');
+  bodies[0].apps.push('mine');
+  assert.equal(bodies[1].apps.length, 1, 'a reader that changes its answer changes nobody else\'s');
+  assert.equal(h.calls.length, 1);
+});
+
+test('one load of Home reads each repeated address once', async () => {
+  const h = page({ fetcher: async () => fresh() });
+  const home = ['/api/apps', '/api/me/home-pins', '/api/workshop/counts', '/api/me/app-allowance'];
+  // Each reader's own options, as the stores send them: the allowance
+  // store refuses a saved copy, the pins store revalidates the counts.
+  const init = path => path === '/api/me/app-allowance' ? { credentials: 'same-origin', cache: 'no-store' }
+    : path === '/api/workshop/counts' ? { credentials: 'same-origin', cache: 'no-cache' } : undefined;
+  // A burst, then the readers that come a moment after the first answer.
+  await Promise.all(home.flatMap(path => [h.win.fetch(path, init(path)), h.win.fetch(path, init(path)), h.win.fetch(path)])
+    .map(async read => (await read).json()));
+  for (let i = 0; i < 3; i++) {
+    for (const path of home) await (await h.win.fetch(path, init(path))).json();
+  }
+  assert.deepEqual(paths(h).sort(), [...home].sort());
+});
+
+test('a kept answer is a few seconds old at most, by the clock', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const h = page({ fetcher: async () => fresh() });
+  await (await h.win.fetch('/api/apps')).json();
+  t.mock.timers.tick(SHARED_READ_KEEP_MS - 1);
+  await (await h.win.fetch('/api/apps')).json();
+  assert.equal(h.calls.length, 1, 'still the kept answer');
+  t.mock.timers.tick(1);
+  await (await h.win.fetch('/api/apps')).json();
+  assert.equal(h.calls.length, 2, 'past its time the server is asked again');
+  // A frozen page runs no timer: the clock alone still ends the answer.
+  t.mock.timers.setTime(Date.now() + 60_000);
+  await (await h.win.fetch('/api/apps')).json();
+  assert.equal(h.calls.length, 3);
+});
+
+test('a different query, a single project and an unlisted read are never shared', async () => {
+  const h = page({ fetcher: async () => fresh() });
+  for (const path of ['/api/apps', '/api/apps?scope=joined', '/api/apps?demo=1', '/api/apps/plant-pal',
+    '/api/apps/plant-pal', '/api/private', '/api/private']) {
+    await (await h.win.fetch(path)).json();
+  }
+  assert.equal(h.calls.length, 7);
+});
+
+test('the app\'s own write drops every kept answer, when it starts and when it answers', async () => {
+  let n = 0;
+  const write = deferred();
+  const h = page({ fetcher: req => req.method === 'POST' ? write.promise : Promise.resolve(json({ n: ++n })) });
+  assert.deepEqual(await (await h.win.fetch('/api/me/home-pins')).json(), { n: 1 });
+  const pin = h.win.fetch('/api/me/home-pins/plant-pal', { method: 'POST' });
+  assert.deepEqual(await (await h.win.fetch('/api/me/home-pins')).json(), { n: 2 },
+    'a read after the write began is not answered from before it');
+  write.resolve(json({ ok: true }));
+  await pin;
+  assert.deepEqual(await (await h.win.fetch('/api/me/home-pins')).json(), { n: 3 },
+    'nor is one after it answered, from a read that raced it');
+  assert.deepEqual(await (await h.win.fetch('/api/me/home-pins')).json(), { n: 3 });
+});
+
+test('a read still on its way when a write lands is finished for its readers and not kept', async () => {
+  const slow = deferred();
+  let n = 0;
+  const h = page({ fetcher: req => req.method !== 'GET' ? Promise.resolve(json({ ok: true }))
+    : ++n === 1 ? slow.promise : Promise.resolve(json({ n })) });
+  const early = h.win.fetch('/api/workshop/counts');
+  await (await h.win.fetch('/api/apps/plant-pal/vote', { method: 'POST' })).json();
+  const late = h.win.fetch('/api/workshop/counts');
+  slow.resolve(json({ n: 'before the vote' }));
+  assert.deepEqual(await (await early).json(), { n: 'before the vote' });
+  assert.deepEqual(await (await late).json(), { n: 2 }, 'the reader after the vote asked the server');
+  assert.deepEqual(await (await h.win.fetch('/api/workshop/counts')).json(), { n: 2 });
+});
+
+test('the interface\'s own measurements are not a write that drops shared answers', async () => {
+  const h = page({ fetcher: async () => fresh() });
+  await (await h.win.fetch('/api/apps')).json();
+  await h.win.fetch('/api/ui-telemetry/batch', { method: 'POST', body: '{}' });
+  await (await h.win.fetch('/api/apps')).json();
+  assert.deepEqual(paths(h), ['/api/apps', '/api/ui-telemetry/batch']);
+});
+
+test('nothing is shared across accounts: a reset, a viewer change and a new partition each ask again', async () => {
+  let n = 0;
+  const h = page({ fetcher: async req => json({ n: ++n }, readApiCacheScope(h.win.document) || A) });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 1 });
+  h.win.UsernodeReact.apiCache.reset();
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 2 }, 'a session reset');
+  h.win.UsernodeReact.apiCache.setViewer(202);
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 3 }, 'another viewer');
+  h.setCookie(B);
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 4 }, 'another partition');
+  await h.win.fetch('/api/auth/logout', { method: 'POST' });
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 6 }, 'a sign-out');
+});
+
+test('a sign-out while a shared read is on its way fences every reader of it', async () => {
+  const held = deferred();
+  const h = page({ fetcher: () => held.promise });
+  const readers = [h.win.fetch('/api/apps'), h.win.fetch('/api/apps')];
+  h.setCookie(B);
+  held.resolve(json({ private: 'FAKE_OLD_A' }));
+  for (const read of readers) await assert.rejects(read, { name: 'AbortError' });
+});
+
+test('a failed answer reaches the readers waiting on it and is never kept', async () => {
+  let n = 0;
+  const first = deferred();
+  const h = page({ fetcher: () => ++n === 1 ? first.promise
+    : n === 2 ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(json({ n })) });
+  const readers = [h.win.fetch('/api/apps'), h.win.fetch('/api/apps')];
+  first.resolve(json({ error: 'down' }, A, { status: 503 }));
+  for (const read of readers) assert.equal((await read).status, 503);
+  await assert.rejects(h.win.fetch('/api/apps'), TypeError, 'a retry asks again, and a network failure is not kept either');
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 3 });
+  assert.equal(h.calls.length, 3);
+});
+
+test('the account check and the version check are shared in flight and never kept', async () => {
+  for (const path of ['/api/auth/me', '/api/version', '/api/ai/tracks']) {
+    const held = deferred();
+    let n = 0;
+    const h = page({ fetcher: () => ++n === 1 ? held.promise : Promise.resolve(json({ n })) });
+    const readers = [h.win.fetch(path), h.win.fetch(path)];
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.calls.length, 1, `${path}: one request for two readers`);
+    held.resolve(json({ n: 1 }));
+    for (const read of readers) assert.deepEqual(await (await read).json(), { n: 1 });
+    assert.deepEqual(await (await h.win.fetch(path)).json(), { n: 2 }, `${path}: the next reader asks the server`);
+  }
+});
+
+test('a token request and a request without credentials never share', async () => {
+  const h = page({ fetcher: async () => fresh() });
+  await (await h.win.fetch('/api/apps')).json();
+  await (await h.win.fetch('/api/apps', { headers: { authorization: 'Bearer fake' } })).json();
+  await (await h.win.fetch('/api/apps', { headers: { authorization: 'Bearer fake' } })).json();
+  await (await h.win.fetch('/api/apps', { credentials: 'omit' })).json();
+  await (await h.win.fetch('/api/apps', { credentials: 'omit' })).json();
+  await (await h.win.fetch('/api/apps')).json();
+  assert.equal(h.calls.length, 5, 'only the plain signed-in read was answered from the kept one');
+});
+
+test('a reload read sends its own request, and its answer is the one kept', async () => {
+  let n = 0;
+  const h = page({ fetcher: async () => json({ n: ++n }) });
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 1 });
+  assert.deepEqual(await (await h.win.fetch('/api/apps', { cache: 'reload' })).json(), { n: 2 });
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 2 });
+});
+
+test('a reader that refuses a saved copy never joins a request that may be answered from one', async () => {
+  const first = deferred(), second = deferred();
+  let n = 0;
+  const h = page({ fetcher: () => ++n === 1 ? first.promise : second.promise });
+  const lenient = h.win.fetch('/api/workshop/counts');
+  const strict = h.win.fetch('/api/workshop/counts', { cache: 'no-store' });
+  const after = h.win.fetch('/api/workshop/counts');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.calls.map(req => req.cache), ['no-cache', 'no-store']);
+  first.resolve(json({ from: 'maybe saved' }));
+  second.resolve(json({ from: 'the server' }));
+  assert.deepEqual(await (await lenient).json(), { from: 'maybe saved' });
+  assert.deepEqual(await (await strict).json(), { from: 'the server' });
+  assert.deepEqual(await (await after).json(), { from: 'the server' }, 'a lenient reader may join the strict one');
+});
+
+test('one reader giving up rejects that reader alone, and the request stops only when all have', async () => {
+  const held = deferred();
+  const h = page({ fetcher: () => held.promise });
+  const a = new AbortController(), b = new AbortController();
+  const first = h.win.fetch('/api/apps', { signal: a.signal });
+  const second = h.win.fetch('/api/apps', { signal: b.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  a.abort();
+  await assert.rejects(first, { name: 'AbortError' });
+  assert.equal(h.calls[0].signal.aborted, false, 'the other reader still waits on it');
+  held.resolve(fresh());
+  assert.deepEqual(await (await second).json(), { apps: [{ slug: 'plant-pal' }] });
+
+  const stuck = deferred();
+  const g = page({ fetcher: () => stuck.promise });
+  const c = new AbortController(), d = new AbortController();
+  const readers = [g.win.fetch('/api/apps', { signal: c.signal }), g.win.fetch('/api/apps', { signal: d.signal })];
+  await new Promise(resolve => setImmediate(resolve));
+  c.abort(); d.abort();
+  for (const read of readers) await assert.rejects(read, { name: 'AbortError' });
+  assert.equal(g.calls[0].signal.aborted, true, 'nobody is waiting: the request is stopped');
+  stuck.resolve(fresh());
+  const next = g.win.fetch('/api/apps');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(g.calls.length, 2, 'and the next reader starts a new one');
+  void next.catch(() => {});
+});
+
+test('forget() drops every shared answer: a pull to refresh and news from the server ask again', async () => {
+  let n = 0;
+  const h = page({ fetcher: async () => json({ n: ++n }) });
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 1 });
+  h.win.UsernodeReact.apiCache.forget();
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 2 });
+  assert.deepEqual(await (await h.win.fetch('/api/apps')).json(), { n: 2 });
+});
+
+test('app.js forgets the shared answers on a pull, on news from the events socket and on a reconnect', () => {
+  const appJs = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const pull = appJs.slice(appJs.indexOf('  _refreshOrReload(refresh) {'), appJs.indexOf('  _announceRefreshIntent() {'));
+  assert.match(pull, /App\._announceRefreshIntent\(\);\s*return Promise\.all\(\[\s*Promise\.resolve\(\)\.then\(refresh\)/,
+    'the announcement goes before the screen\'s own reads start');
+  const announce = appJs.slice(appJs.indexOf('  _announceRefreshIntent() {'), appJs.indexOf('  _apiUpdateTimer: null,'));
+  assert.match(announce, /try \{ window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\); \} catch/,
+    'and it drops the shared answers, so a pull always asks the server');
+  const socket = appJs.slice(appJs.indexOf('App.eventsWs.onmessage = (event) => {'), appJs.indexOf("case 'resync_hint':"));
+  assert.match(socket, /if \(data\.type !== 'pong'\) window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\);[\s\S]*switch \(data\.type\)/,
+    'before any handler re-reads because of the frame');
+  assert.match(appJs, /if \(isReconnect\) window\.UsernodeReact\?\.apiCache\?\.forget\?\.\(\);\s*if \(isReconnect\) App\.resyncCurrentView\(\);/);
 });
