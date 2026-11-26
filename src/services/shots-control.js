@@ -194,6 +194,13 @@ class RunControl {
       const deviceDensity = this.agent?.deviceDensity === true;
       const info = target.media === 'webm' ? shots.inspectClip(buffer)
         : shots.inspectImage(buffer, deviceDensity ? { maxBytes: shots.MAX_DENSE_IMAGE_BYTES } : {});
+      // A screen shot taken at a size the change did not declare (a browser
+      // left at its default window) is refused before anything is stored, so
+      // the agent retakes it at the declared size in the same run. A dark
+      // screen is held to it too. Full-page stills pass: only the width says
+      // the layout size.
+      const declared = this.declaredChange(target.storyId);
+      shots.checkScreenSize(declared, target, info);
       // Such a run's still is kept twice: its original, and the same still
       // averaged down to 1x, which is all anyone outside the experiment is
       // shown and what every comparison below and later reads.
@@ -234,7 +241,6 @@ class RunControl {
               + 'scrolled to the same place as the light shot, or leave it out.', 400);
         }
       }
-      const declared = this.declaredChange(target.storyId);
       const screenFile = this.saved.get(shots.slotKey({ ...target, variant: 'context' }));
       shots.checkElementSize(declared, target, info, screenFile, { deviceDensity, density });
       const slot = shots.slotKey(target);

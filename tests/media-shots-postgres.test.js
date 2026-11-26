@@ -133,7 +133,7 @@ test('shots object storage, publication, and retakes without byte columns agains
   await t.test('eval publication copies a key without downloading or reuploading its source', async () => {
     const attemptId = id();
     await control.create(pool, { runId: attemptId, sessionId: session.id, kind: 'trial', intent, context: {}, expiresAt: Date.now() + 60000 });
-    const data = fixtures.png({ shade: 130 });
+    const data = fixtures.screenPng({ shade: 130 });
     await control.withControl(pool, { runId: attemptId, sessionId: session.id },
       (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, data));
     const { rows: [evaluation] } = await pool.query("INSERT INTO shots_eval_runs (label, cap_cents) VALUES ('Media test', 100) RETURNING id");
@@ -151,7 +151,7 @@ test('shots object storage, publication, and retakes without byte columns agains
   await t.test('a retake waits for the source row before taking keys, so concurrent saves cannot deadlock', async () => {
     const attempt = id();
     await control.create(pool, { runId: attempt, sessionId: session.id, kind: 'trial', intent, context: {}, expiresAt: Date.now() + 60000 });
-    const data = fixtures.png({ shade: 47 });
+    const data = fixtures.screenPng({ shade: 47 });
     const save = () => control.withControl(pool, { runId: attempt, sessionId: session.id },
       (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, data));
     await save();

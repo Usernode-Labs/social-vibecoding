@@ -14026,6 +14026,21 @@ const AppView = {
       const numberOf = (id) => claims.findIndex((c) => c && c.id === id) + 1;
       const box = (value, size) => (Array.isArray(value) && value.length === size
         && value.every((x) => Number.isFinite(x) && x >= 0) ? value.slice() : null);
+      // A side's own CSS width (shots-diff.js widthBefore/widthAfter), when
+      // its still was taken at another size than the screen. Its drawn
+      // height then follows the still's own width-to-height ratio, so a
+      // mismatched still keeps its shape (letterboxed) instead of being
+      // stretched, and its boxes are scaled with it. A run saved before
+      // those widths existed reads the screen's own.
+      const sideWidth = (value, fallback) => (Number(value) > 0 ? Number(value) : fallback);
+      const reshaped = (own, width) => own > 0 && Math.abs(own - width) / width > 0.02;
+      const drawnHeight = (own, width, height) => (reshaped(own, width)
+        ? Math.round(width * height / own) : height);
+      const scaledBox = (value, size, factor) => {
+        const copy = box(value, size);
+        if (!copy) return null;
+        return Math.abs(factor - 1) < 1e-6 ? copy : copy.map((x) => Math.round(x * factor));
+      };
       const screens = (Array.isArray(shots.screens) ? shots.screens : []).map((screen) => {
         if (!screen || typeof screen.viewport !== 'string') return null;
         const base = context({ id: screen.shot }, screen.viewport, 'base');
@@ -14034,20 +14049,24 @@ const AppView = {
         const heightBefore = Number(screen.heightBefore);
         const heightAfter = Number(screen.heightAfter);
         if (!base || !head || !(width > 0 && heightBefore > 0 && heightAfter > 0)) return null;
+        const beforeWidth = sideWidth(screen.widthBefore, width);
+        const afterWidth = sideWidth(screen.widthAfter, width);
+        const beforeScale = width / beforeWidth;
+        const afterScale = width / afterWidth;
         const regions = (Array.isArray(screen.regions) ? screen.regions : []).map((r) => ({
           n: r && r.story ? Math.max(0, numberOf(r.story)) : 0,
-          b: box(r && r.b, 4),
-          a: box(r && r.a, 4),
-          bMark: box(r && r.bMark, 3),
-          aMark: box(r && r.aMark, 3),
+          b: scaledBox(r && r.b, 4, beforeScale),
+          a: scaledBox(r && r.a, 4, afterScale),
+          bMark: scaledBox(r && r.bMark, 3, beforeScale),
+          aMark: scaledBox(r && r.aMark, 3, afterScale),
         })).filter((r) => r.b || r.a);
         // What each change on the screen is about (the element its shots
         // agent shot, services/shots-diff.js): the card frames on these and
         // never outlines them.
         const frames = (Array.isArray(screen.frames) ? screen.frames : []).map((f) => ({
           n: f && f.story ? Math.max(0, numberOf(f.story)) : 0,
-          b: box(f && f.b, 4),
-          a: box(f && f.a, 4),
+          b: scaledBox(f && f.b, 4, beforeScale),
+          a: scaledBox(f && f.a, 4, afterScale),
         })).filter((f) => f.n > 0 && (f.b || f.a));
         const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
           .map(numberOf).filter((n) => n > 0);
@@ -14084,8 +14103,8 @@ const AppView = {
           width,
           density,
           closeups,
-          before: side(base, heightBefore),
-          after: side(head, heightAfter),
+          before: side(base, drawnHeight(beforeWidth, width, heightBefore)),
+          after: side(head, drawnHeight(afterWidth, width, heightAfter)),
           regions,
           ...(frames.length ? { frames } : {}),
           changes,

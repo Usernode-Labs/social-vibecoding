@@ -80,8 +80,10 @@ every step in the before twin too, in the same turn, when there is one:
    browser_resize with that width and height. Then open the start path
    again, even when the page is already open: some apps choose their layout
    once, when the page loads, so a page loaded at another size keeps the
-   wrong layout (a desktop page squeezed into a phone screen). Do the
-   changes that share a browser and a size one after another, so each
+   wrong layout (a desktop page squeezed into a phone screen). Resize the
+   after browser screenBrowsers names and its before twin, each to the
+   declared size, both in the same turn, before you open the start path. Do
+   the changes that share a browser and a size one after another, so each
    browser is resized once per size.
 2. On the after address, start at intent.startPath and follow intent.steps.
    When intent.hints is there, use hints.focusTarget to find the element and

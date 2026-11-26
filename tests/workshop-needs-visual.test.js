@@ -97,6 +97,29 @@ test('the feed picture carries the run\'s own screens, numbered as the changes a
   assert.equal(AppView._workshopVisuals(null, shots({ state: 'failed' })), null);
 });
 
+// #7228: a still saved at another size than its screen (a browser left at
+// its default window) keeps its own shape, and its outlines are scaled with
+// it, instead of being squeezed into the declared screen's box.
+test('a screen shot taken at another size is drawn at its own proportions', () => {
+  const raw = shots();
+  raw.screens[0] = {
+    ...raw.screens[0], width: 1440, widthBefore: 1440, widthAfter: 3840,
+    heightBefore: 1300, heightAfter: 2160,
+    regions: [{ story: 'well', b: [880, 83, 382, 48], a: [2400, 240, 1000, 100], bMark: null, aMark: [2400, 240, 1000] }],
+    frames: [{ story: 'well', b: [880, 83, 382, 48], a: [2400, 240, 1000, 100] }],
+  };
+  const [desktop] = AppView._workshopVisuals(null, raw).screens;
+  assert.equal(desktop.width, 1440);
+  // The before side is the declared screen; the after side is 3840×2160, so
+  // it is drawn 1440 wide and 810 tall, its own 16:9 shape.
+  assert.deepEqual([desktop.before.height, desktop.after.height], [1300, 810]);
+  // Its boxes are scaled with it, so they still sit on the picture.
+  assert.deepEqual(desktop.regions[0].a, [900, 90, 375, 38]);
+  assert.deepEqual(desktop.regions[0].aMark, [900, 90, 375]);
+  assert.deepEqual(desktop.regions[0].b, [880, 83, 382, 48], 'the declared side keeps its boxes');
+  assert.deepEqual(desktop.frames[0].a, [900, 90, 375, 38]);
+});
+
 /** Run `fn` with the page drawn in `mode` ('light' or 'dark'). */
 function asPage(mode, fn) {
   const had = Object.getOwnPropertyDescriptor(globalThis, 'document');

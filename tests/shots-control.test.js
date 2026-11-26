@@ -40,7 +40,7 @@ const statuses = (run) => run.progress().map((entry) => [entry.change, entry.sta
 
 // A before and an after that differ, as the shots of a real change do: the
 // same image on both sides is its own case (see the tests at the end).
-const sideShot = (side) => fixtures.png({ shade: side === 'after' ? 200 : 0 });
+const sideShot = (side) => fixtures.screenPng({ shade: side === 'after' ? 200 : 0 });
 
 function shootBothSides(run, change) {
   for (const side of ['before', 'after']) {
@@ -51,15 +51,15 @@ function shootBothSides(run, change) {
 test('a saved shot maps before/after to the stored sides and a retake replaces its slot', () => {
   const run = control();
   const first = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
-    fixtures.png({ shade: 1 }));
+    fixtures.screenPng({ shade: 1 }));
   assert.deepEqual({ ...first, progress: undefined }, {
     saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen',
-    bytes: fixtures.png({ shade: 1 }).length, width: 4, height: 3, progress: undefined,
+    bytes: fixtures.screenPng({ shade: 1 }).length, width: 1280, height: 800, progress: undefined,
   });
   assert.equal(run.saved.size, 1);
 
-  const retake = fixtures.png({ width: 6, height: 2, shade: 2 });
-  assert.equal(run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, retake).width, 6);
+  const retake = fixtures.screenPng({ shade: 2 });
+  assert.equal(run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, retake).width, 1280);
   assert.equal(run.saved.size, 1, 'the same change, screen, side and kind is one slot');
   const [stored] = run.saved.values();
   assert.equal(stored.side, 'base');
@@ -69,7 +69,7 @@ test('a saved shot maps before/after to the stored sides and a retake replaces i
   const element = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'element' },
     fixtures.png());
   assert.equal(element.kind, 'element');
-  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png());
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.screenPng());
   assert.equal(run.saved.size, 3);
   assert.deepEqual([...run.saved.values()].map((file) => [file.side, file.variant]),
     [['base', 'context'], ['base', 'focus'], ['head', 'context']]);
@@ -231,7 +231,7 @@ test('skipping a change withdraws the shots saved for it, and saving again takes
   assert.equal(summary.verdict.passed, true, 'the other ready change still is');
 
   // A retake is the agent changing its mind again: the latest action wins.
-  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png({ shade: 9 }));
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.screenPng({ shade: 9 }));
   assert.deepEqual(statuses(run)[0], ['invite-suggestions', 'ready']);
   summary = run.summary();
   assert.ok(summary.files.some((file) => file.storyId === 'invite-suggestions'));
@@ -488,9 +488,9 @@ test('a run\'s workspace is made only for a run id, and a lapsed one answers not
 
 test('saving the same image on both sides warns the agent while it can still retake them', () => {
   const run = control();
-  const before = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png());
+  const before = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.screenPng());
   assert.equal(Object.hasOwn(before, 'sameAsOtherSide'), false, 'nothing to compare with yet');
-  const after = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png());
+  const after = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.screenPng());
   assert.equal(after.sameAsOtherSide, true);
   assert.match(after.warning, /same image/);
   assert.deepEqual(after.progress.find((entry) => entry.change === 'invite-suggestions'),
@@ -517,11 +517,11 @@ test('an element shot wider than its screen is refused and saves nothing', () =>
 test('a dark shot that matches its light copy answers sameAsLight and stores nothing', () => {
   const run = control();
   const light = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' },
-    fixtures.png({ shade: 5 }));
+    fixtures.screenPng({ shade: 5 }));
   assert.equal(light.saved, true);
 
   const same = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
-    fixtures.png({ shade: 5 }));
+    fixtures.screenPng({ shade: 5 }));
   assert.equal(same.saved, false, 'nothing was stored for the dark shot');
   assert.equal(same.sameAsLight, true);
   assert.equal(same.kind, 'screen');
@@ -532,7 +532,7 @@ test('a dark shot that matches its light copy answers sameAsLight and stores not
   // The comparison is against this slot's own light shot, not another
   // change's, and a dark shot that differs is kept as its own slot.
   const different = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
-    fixtures.png({ shade: 9 }));
+    fixtures.screenPng({ shade: 9 }));
   assert.equal(different.saved, true);
   assert.equal(run.saved.size, 2);
   const [lightFile, darkFile] = [...run.saved.values()];
@@ -544,7 +544,7 @@ test('a dark shot that matches its light copy answers sameAsLight and stores not
   // the light one may come later, or never (the agent shoots light first,
   // but no rule here depends on that order).
   const beforeDark = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', theme: 'dark' },
-    fixtures.png());
+    fixtures.screenPng());
   assert.equal(beforeDark.saved, true);
 });
 
@@ -641,21 +641,21 @@ test('a ready change publishes its close-ups beside its stills; they are never w
 test('a dark shot framed unlike its light one is refused, and one that looks the same answers sameAsLight', () => {
   const run = control();
   const slot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
-  run.saveShot(slot, fixtures.png({ shade: 5 }));
-  assert.throws(() => run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }),
+  run.saveShot(slot, fixtures.screenPng({ shade: 5 }));
+  assert.throws(() => run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }),
     { check: { kind: 'dark', same: false, reason: 'scrolled', shift: -420, unchanged: false } }),
   (error) => error.code === 'dark_not_framed_like_light' && error.status === 400
     && /scrolled to another part of the page/.test(error.message));
-  assert.throws(() => run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }),
+  assert.throws(() => run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }),
     { check: { kind: 'dark', same: false, reason: 'size', shift: 0, unchanged: false } }),
   /not the size of its light one/);
   assert.equal(run.saved.size, 1, 'neither was kept');
-  const same = run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }),
+  const same = run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }),
     { check: { kind: 'dark', same: true, reason: 'aligned', shift: 0, unchanged: true } });
   assert.equal(same.sameAsLight, true);
   assert.equal(same.saved, false);
   // A check that could not tell, or none at all, keeps it as before.
-  assert.equal(run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }),
+  assert.equal(run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }),
     { check: { kind: 'dark', same: null, reason: 'plain', shift: 0, unchanged: false } }).saved, true);
   assert.equal(run.saved.size, 2);
 });
@@ -663,18 +663,18 @@ test('a dark shot framed unlike its light one is refused, and one that looks the
 test('retaking a light screen in another state drops its dark shot, which shows the old one', () => {
   const run = control();
   const slot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
-  run.saveShot(slot, fixtures.png({ shade: 5 }));
-  run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }));
+  run.saveShot(slot, fixtures.screenPng({ shade: 5 }));
+  run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }));
   run.dirty.clear();
   // The same picture again changes nothing.
-  assert.equal(Object.hasOwn(run.saveShot(slot, fixtures.png({ shade: 5 })), 'darkDropped'), false);
+  assert.equal(Object.hasOwn(run.saveShot(slot, fixtures.screenPng({ shade: 5 })), 'darkDropped'), false);
   assert.equal(run.saved.size, 2);
-  const retake = run.saveShot(slot, fixtures.png({ shade: 6 }));
+  const retake = run.saveShot(slot, fixtures.screenPng({ shade: 6 }));
   assert.equal(retake.darkDropped, true);
   assert.equal(run.saved.size, 1);
   assert.deepEqual([...run.dropped], ['invite-suggestions/desktop/head/context/dark']);
   // Saving the dark shot again takes it off the list to remove.
-  run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ shade: 10 }));
+  run.saveShot({ ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 10 }));
   assert.deepEqual([...run.dropped], []);
 });
 
@@ -698,7 +698,7 @@ test('an element shot not inside its screen shot is saved with a warning to reta
 test('saveChecksFor checks a dark screen against its light one and an element against its screen', async () => {
   const run = control();
   const slot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
-  const stored = { light: fixtures.png({ shade: 5 }) };
+  const stored = { light: fixtures.screenPng({ shade: 5 }) };
   const db = { query: async (sql, [, slots]) => ({ rows: slots.map((name) => ({
     slot: name, story_id: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: name.includes('/focus') ? 'focus' : 'context',
     media: 'png', theme: 'light', content_type: 'image/png', width: 1, height: 1, bytes: 1, sha256: 'x', density: 1,
@@ -707,13 +707,13 @@ test('saveChecksFor checks a dark screen against its light one and an element ag
   const jobs = [];
   const checker = async (job) => { jobs.push(job); return { kind: job.kind, same: true }; };
   // Nothing to compare with yet.
-  assert.equal(await controlPlane.saveChecksFor(db, run, { ...slot, theme: 'dark' }, fixtures.png({ shade: 9 }), { checker }), null);
+  assert.equal(await controlPlane.saveChecksFor(db, run, { ...slot, theme: 'dark' }, fixtures.screenPng({ shade: 9 }), { checker }), null);
   run.saveShot(slot, stored.light);
   const media = require('../src/services/media-store');
   const original = media.bytes;
   media.bytes = async (_store, row) => row.data;
   try {
-    const dark = fixtures.png({ shade: 9 });
+    const dark = fixtures.screenPng({ shade: 9 });
     assert.deepEqual(await controlPlane.saveChecksFor(db, run, { ...slot, theme: 'dark' }, dark, { checker }), { kind: 'dark', same: true });
     assert.deepEqual(jobs.at(-1), { kind: 'dark', light: stored.light, lightDensity: 1, dark, darkDensity: 1 });
     const element = fixtures.png({ width: 200, height: 40 });
@@ -723,7 +723,7 @@ test('saveChecksFor checks a dark screen against its light one and an element ag
     // that may be of the state the screen replaces.
     run.saveShot({ ...slot, kind: 'element' }, element);
     const count = jobs.length;
-    assert.equal(await controlPlane.saveChecksFor(db, run, slot, fixtures.png({ shade: 7 }), { checker }), null);
+    assert.equal(await controlPlane.saveChecksFor(db, run, slot, fixtures.screenPng({ shade: 7 }), { checker }), null);
     assert.equal(jobs.length, count);
     // A checker that fails leaves the still unchecked.
     assert.equal(await controlPlane.saveChecksFor(db, run, { ...slot, theme: 'dark' }, dark,
@@ -768,4 +768,49 @@ test('an element shot keeps the box its browser measured when it lies inside its
   ];
   const files = await controlPlane.filesFor({ query: async () => ({ rows }) }, 'a'.repeat(32), null, { withData: false });
   assert.deepEqual(files.map((file) => file.focusRect), [{ x: 0, y: 0, w: 1280, h: 52 }, null, null]);
+});
+
+// #7228: a browser left at its default window (1280×720 at 3x, 3840 wide)
+// saves a screen shot that is not the declared screen at any whole multiple.
+// It is refused rather than kept as a "1x" screen of that size, and the card
+// would have squeezed it into the declared screen's box.
+test('a screen shot taken at another screen size is refused, and one at 1x, 2x or 3x is kept', () => {
+  const wide = fixtures.intent();
+  wide.stories[0].viewports = [{ name: 'desktop', width: 1440, height: 1300 }];
+  const run = control({ intent: wide });
+  const slot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  assert.throws(() => run.saveShot(slot, fixtures.png({ width: 3840, height: 2160 })), (error) => {
+    assert.equal(error.code, 'screen_size_mismatch');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /3840 px wide/);
+    assert.match(error.message, /desktop screen is 1440 px wide/);
+    assert.match(error.message, /browser_resize on this browser to 1440×1300/);
+    assert.match(error.message, /open the start path again/);
+    return true;
+  });
+  assert.equal(run.saved.size, 0, 'a refused screen shot costs nothing');
+  assert.equal(run.lastToolFailure.code || run.lastToolFailure.error.code, 'screen_size_mismatch');
+
+  // 3x of the declared width is the same screen.
+  assert.equal(run.saveShot(slot, fixtures.png({ width: 4320, height: 3900 })).width, 4320);
+  // As is 1x.
+  assert.equal(run.saveShot(slot, fixtures.png({ width: 1440, height: 1300 })).width, 1440);
+  // A full-page still is taller than the screen but just as wide.
+  assert.equal(run.saveShot({ ...slot, side: 'before' }, fixtures.png({ width: 1440, height: 4000 })).height, 4000);
+  // A dark screen is held to the same size.
+  assert.throws(() => run.saveShot({ ...slot, theme: 'dark' }, fixtures.png({ width: 1280, height: 720 })),
+    { code: 'screen_size_mismatch', status: 400 });
+});
+
+// In a run taken at device density a 3x still is kept at 3x, as before.
+test('a dense run keeps a 3x screen shot at 3x when its width is the declared one', () => {
+  const wide = fixtures.intent();
+  wide.stories[0].viewports = [{ name: 'desktop', width: 1440, height: 1300 }];
+  const dense = control({ intent: wide });
+  dense.agent = { deviceDensity: true };
+  const saved = dense.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', density: '3' },
+    fixtures.png({ width: 4320, height: 3900, shade: 4 }));
+  assert.equal(saved.saved, true);
+  const file = [...dense.saved.values()].find((entry) => entry.variant === 'context');
+  assert.deepEqual([file.width, file.height, file.density], [1440, 1300, 3]);
 });

@@ -233,7 +233,7 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
   }
   // What the agent's tools do, through another process's pool.
   const save = (options, change, side, shade) => shotsControl.withControl(other, { runId: options.runId, sessionId: options.session.id },
-    (c) => c.saveShot({ change, screen: 'desktop', side, kind: 'screen' }, fixtures.png({ shade })));
+    (c) => c.saveShot({ change, screen: 'desktop', side, kind: 'screen' }, fixtures.screenPng({ shade })));
   const agent = (s, id, deps, extra = {}) => orchestrator.dispatchAgent({}, pool, { runId: id, sessionId: s.id, budgetMs: 60_000, ...extra }, deps);
 
   await t.test('the agent saves through any process; a complete set is a verdict to publish, its slots named', async () => {
@@ -395,7 +395,7 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const id = await prepared(s);
     await pool.query(`UPDATE chat_sessions SET shots_state = 'failed' WHERE id = $1`, [s.id]);
     await assert.rejects(shotsControl.withControl(other, { runId: id, sessionId: s.id },
-      (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' }, fixtures.png())),
+      (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' }, fixtures.screenPng())),
     { code: 'shots_control_not_found' });
     await assert.rejects(shotsControl.withControl(other, { runId: id, sessionId: s.id + 1000 }, (c) => c.getContext()),
       { code: 'shots_scope_mismatch' }, 'another proposal\'s token');
@@ -405,7 +405,7 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const s = await proposal();
     const id = await prepared(s);
     await assert.rejects(shotsControl.withControl(other, { runId: id, sessionId: s.id },
-      (c) => c.saveShot({ change: 'nope', screen: 'desktop', side: 'before', kind: 'screen' }, fixtures.png())));
+      (c) => c.saveShot({ change: 'nope', screen: 'desktop', side: 'before', kind: 'screen' }, fixtures.screenPng())));
     const { rows: [row] } = await pool.query('SELECT last_tool_failure FROM shot_run_control WHERE run_id = $1', [id]);
     assert.equal(row.last_tool_failure.operation, 'save-shot');
     assert.equal((await pool.query('SELECT 1 FROM shot_run_files WHERE run_id = $1', [id])).rowCount, 0);

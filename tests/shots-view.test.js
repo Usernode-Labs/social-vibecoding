@@ -734,3 +734,21 @@ test('a screen\'s frames reach the card: whole pixels, one a declared change, ne
   moving(), 'demo-app');
   assert.deepEqual(published.screens[0].frames, [{ story: 'dialog', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }]);
 });
+
+// #7228: each side's own pixel width rides with the screen, so the card can
+// draw a still taken at another size at its own proportions. Older runs have
+// none, and a bad value is dropped.
+test('a screen keeps each side\'s own width, and drops one that is not a size', () => {
+  const claims = [{ id: 'bar', claim: 'A line under the top bar.' }];
+  const [screen] = view.cleanScreens([{
+    viewport: 'desktop', shot: 'bar', stories: ['bar'], width: 1280, widthBefore: 1280, widthAfter: 3840,
+    heightBefore: 800, heightAfter: 2160, regions: [],
+  }], claims);
+  assert.deepEqual([screen.width, screen.widthBefore, screen.widthAfter], [1280, 1280, 3840]);
+  const [old] = view.cleanScreens([{ viewport: 'desktop', shot: 'bar', stories: ['bar'], width: 1280,
+    heightBefore: 800, heightAfter: 800, regions: [] }], claims);
+  assert.deepEqual([old.widthBefore, old.widthAfter], [null, null]);
+  const [bad] = view.cleanScreens([{ viewport: 'desktop', shot: 'bar', stories: ['bar'], width: 1280,
+    widthBefore: -1, widthAfter: 90000, heightBefore: 800, heightAfter: 800, regions: [] }], claims);
+  assert.deepEqual([bad.widthBefore, bad.widthAfter], [null, null]);
+});
