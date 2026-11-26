@@ -112,7 +112,6 @@ const OWNED = [
   // reasoning is at Home._showGridOverlay and the invariant is pinned by
   // tests/home-grid-placement.test.js.
   { sel: '#app-list' },                      // features/home/app-grid.tsx
-  { sel: '#home-apps-more' },                // features/home/apps-more.tsx
   // The strip's tiles are React's; the kit's reorder recognizer moves those
   // nodes DURING a drag (attachReorder is a displacement model, so the slot
   // travels through the DOM). This sweep never drags, so it would not see

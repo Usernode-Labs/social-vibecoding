@@ -299,13 +299,13 @@ test('7164: the bar\'s controls keep their 44px tap box, and neighbours do not o
   assert.match(mark, /id="platform-mark-btn"[\s\S]{0,900}className="[^"]*un-touch-target/, 'the Homeroom menu');
   // The bell is 28px, so its box reaches 8px to each side: the gap to the
   // menu (which is wider than 44px and reaches nowhere) has to be more.
-  const gap = CSS.match(/html:not\(\[data-skin\]\) #platform-header > \.ms-auto \{ gap: (\d+)px; \}/);
+  const gap = CSS.match(/html:root #platform-header > \.ms-auto \{ gap: (\d+)px; \}/);
   assert.ok(gap, 'the standard look sets the bar\'s gap on a phone');
   assert.ok(Number(gap[1]) >= 8, `a ${gap[1]}px gap holds the bell's 8px of reach`);
 });
 
 test('7164: a conversation\'s discs reach 44px on a phone without touching each other', () => {
-  const size = CSS.match(/html:not\(\[data-skin\]\) #messages-screen \.messages-thread-header \.messages-thread-action \{\s*width: (\d+)px;\s*height: (\d+)px;/);
+  const size = CSS.match(/html:root #messages-screen \.messages-thread-header \.messages-thread-action \{\s*width: (\d+)px;\s*height: (\d+)px;/);
   assert.ok(size, 'the title card\'s discs have one size');
   const reach = PHONE_AUDIT.match(/#messages-screen \.messages-thread-header \.messages-thread-action::after \{ content: ''; position: absolute; inset: -(\d+)px; \}/);
   assert.ok(reach, 'each disc has a tap box beyond itself');
@@ -327,13 +327,13 @@ test('7164: the text boxes the audit named are 16px on a phone', () => {
     '#settings-screen :is(input:not(',
     ':is(#profile-root, #settings-root) .profile-details-card .profile-details-input',
     '#dev-kanban-search',
-  ]) assert.ok(selectors.includes(`html:not([data-skin]) ${box}`), `${box} is in the rule`);
+  ]) assert.ok(selectors.includes(`html:root ${box}`), `${box} is in the rule`);
   assert.match(selectors, /#settings-screen :is\(input:not\(\[type="checkbox"\], \[type="radio"\][^)]*\), textarea\)/,
     'Settings: every field you type in, and no tick box');
   assert.doesNotMatch(selectors, /admin/, 'the admin console keeps its own density');
   // The ones One look already made 16px stay so under 768px.
-  assert.match(CSS, /html:not\(\[data-skin\]\) :is\(#home-search-input, #communities-search-input\) \{[^}]*font-size: 16px;/);
-  assert.match(CSS, /html:not\(\[data-skin\]\) #messages-screen \.messages-search-input \{[^}]*font-size: 16px;/);
+  assert.match(CSS, /html:root :is\(#home-search-input, #communities-search-input\) \{[^}]*font-size: 16px;/);
+  assert.match(CSS, /html:root #messages-screen \.messages-search-input \{[^}]*font-size: 16px;/);
   // The zoom lock is a separate decision: this change leaves the viewport alone.
   assert.match(read('frontend/src/head.html'), /<meta name="viewport"[^>]*user-scalable=no/);
 });

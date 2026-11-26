@@ -1,13 +1,12 @@
 /**
- * The Homeroom bot tab's rows, built once for both of its faces (11 Nov
- * 2026): the standard list (./lists.tsx) and the list the looks draw
- * (./frame-list.tsx). A row is a `Line`: what it is, its project, the name
+ * The Homeroom bot tab's rows (11 Nov 2026), for its list (./lists.tsx).
+ * A row is a `Line`: what it is, its project, the name
  * of its glyph, its number, its title, the one word on its right, its
  * tooltip, and its press. Which projects the chips offer, what is new, what
  * a search keeps, the counts over each list and the notes that stand in for
- * an empty one are decided here too, so the two faces cannot disagree.
+ * an empty one are decided here too.
  *
- * Nothing here draws: a glyph is a name (`Glyph`), and each face has its own
+ * Nothing here draws: a glyph is a name (`Glyph`), and ./lists.tsx has the
  * icon for it.
  */
 import { dayNumber, inZone, zonedDay } from '../../lib/time-zone';
@@ -90,8 +89,7 @@ export interface Line {
   /** When it started needing the viewer, for the day its row is grouped under. */
   at?: string | null;
   /*
-   * The three bands' row (24 Nov 2026, ./lists.tsx). The look's list
-   * (./frame-list.tsx) draws the fields above and never these.
+   * The three bands' row (24 Nov 2026, ./lists.tsx).
    */
   /** The project's name, or Only you for a private thread in no project. */
   project?: string;

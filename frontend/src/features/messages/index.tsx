@@ -105,7 +105,7 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
-import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery, type AppDiscussion } from './inbox';
+import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
 

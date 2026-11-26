@@ -35283,81 +35283,6 @@ html:root #messages-screen .messages-list-pane .messages-section-aside {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-/* The rows: one white card. */
-html:root #messages-screen .messages-list-pane .messages-section-card {
-  display: block;
-  margin: 0 0 16px;
-  overflow: hidden;
-  border-radius: 20px;
-  background: var(--one-surface);
-  box-shadow: inset 0 0 0 1px var(--one-hair);
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-row {
-  min-height: 64px;
-  gap: 12px;
-  padding: 11px 14px;
-  border-radius: 0;
-  color: var(--one-ink);
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-row::after {
-  display: block;
-  inset-inline-start: 66px;
-  background: var(--one-line);
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-row:last-child::after,
-html:root #messages-screen .messages-list-pane .messages-conversation-row:has(+ .messages-conversation-active)::after,
-html:root #messages-screen .messages-list-pane .messages-conversation-active::after { display: none; }
-/* The conversation open beside the list (from 768px) is lit in pale sun, as a lit row inside a page is. */
-html:root #messages-screen .messages-list-pane .messages-conversation-active { background: var(--one-sun-pale); color: var(--one-ink); }
-@media (hover: hover) {
-  html:root #messages-screen .messages-list-pane .messages-conversation-row:not(.messages-conversation-active):hover { background: var(--one-quiet); }
-}
-/* A 40px round face; a group's two faces are the first one's circle with the second as a small square badge on its
-   corner, ringed in the card's white. */
-html:root #messages-screen .messages-list-pane .messages-conversation-row > :first-child {
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
-  border-radius: 9999px;
-  font-size: 16px;
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces { border-radius: 0; }
-html:root #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
-  inset: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 9999px;
-  font-size: 16px;
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child:not(:first-child) {
-  inset: auto -3px -3px auto;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  font-size: 9px;
-  box-shadow: 0 0 0 2px var(--one-surface);
-}
-html:root #messages-screen .messages-list-pane .messages-conversation-active > .messages-group-faces > :last-child:not(:first-child) { box-shadow: 0 0 0 2px var(--one-sun-pale); }
-/* The two lines at the row ramp; the time trails the name. */
-html:root #messages-screen .messages-list-pane .messages-row-line { gap: 8px; align-items: baseline; }
-html:root #messages-screen .messages-list-pane .messages-row-name { font: var(--one-row-title); color: var(--one-ink); }
-html:root #messages-screen .messages-list-pane .messages-row-preview { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
-html:root #messages-screen .messages-list-pane .messages-row-preview-invited { color: var(--one-sky-ink); font-weight: 500; }
-html:root #messages-screen .messages-list-pane .messages-row-time { color: var(--one-ink-2); font-size: 13px; font-weight: 400; line-height: 1; }
-/* Unread: the preview in the ink, and "N new" in the sky ink, a column of its own at the row's end. */
-html:root #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) .messages-row-preview { color: var(--one-ink); font-weight: 500; }
-html:root #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) { padding-inline-end: 70px; }
-html:root #messages-screen .messages-list-pane .messages-unread {
-  position: absolute;
-  inset-inline-end: 14px;
-  top: 50%;
-  translate: 0 -50%;
-  margin: 0;
-  color: var(--one-sky-ink);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1;
-}
 /* The list's own states on the wash: an empty inbox is a white card whose Start is the page's main action (the sun
    sticker); a search that found nothing offers its way back as a secondary action, flat in sky tint. */
 html:root #messages-screen .messages-list-pane .messages-empty {
@@ -35381,8 +35306,6 @@ html:root #messages-screen .messages-state button {
   box-shadow: none;
 }
 html:root #messages-screen .messages-state button:active { transform: scale(.97); filter: brightness(.95); }
-/* A group's member count is the members dialog's to say; the row keeps its name and its line. */
-html:root #messages-screen .messages-list-pane .messages-group-tag { display: none; }
 
 /* ── A conversation: a title card, then the stream's card with the message bar inside it ── */
 /* The pane is a column on the wash: no sheet of its own. On a phone it slides in over the list, so it paints the
@@ -35629,8 +35552,6 @@ html:root .messages-message.messages-message-bubble.messages-message-saved .mess
   html:root #messages-screen .messages-new-btn.one-fab { width: 36px; height: 36px; }
   html:root #messages-screen .messages-new-btn.one-fab svg { width: 19px; height: 19px; }
   html:root #messages-screen .messages-list-pane .messages-section-head { padding: 16px 6px 8px; }
-  html:root #messages-screen .messages-list-pane .messages-conversation-row { min-height: 58px; padding-block: 9px; }
-  html:root #messages-screen .messages-list-pane .messages-conversation-row::after { inset-inline-start: 64px; }
   html:root #messages-screen .messages-layout > .messages-thread-pane:not(.messages-no-selection) { margin: 0; margin-inline-start: 18px; padding: 12px 0 24px; }
   html:root #messages-screen .messages-layout.messages-list-collapsed > .messages-thread-pane:not(.messages-no-selection) { margin-inline: auto; }
   html:root #messages-screen .messages-layout.messages-list-collapsed.messages-has-reply-thread > .messages-thread-pane:not(.messages-no-selection) { margin-inline: 0; }
@@ -36950,11 +36871,11 @@ html:root #leaderboard-screen .tc-se-card[data-challenge-state="done"] > span:la
    (its search and the profile card's fields 15px, the rest 14px), the profile card on You, and the board's filter
    (15px). max(1rem, 16px): the size follows Settings' Text size upward and never drops under what iOS asks for. */
 @media (max-width: 767.98px) {
-  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action { position: relative; }
-  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action::after { content: ''; position: absolute; inset: -5px; }
-  html:not([data-skin]) #notifications-search-input,
-  html:not([data-skin]) #settings-screen :is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"], [type="hidden"]), textarea),
-  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input,
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search,
-  html:not([data-skin]) #dev-kanban-search { font-size: max(1rem, 16px); }
+  html:root #messages-screen .messages-thread-header .messages-thread-action { position: relative; }
+  html:root #messages-screen .messages-thread-header .messages-thread-action::after { content: ''; position: absolute; inset: -5px; }
+  html:root #notifications-search-input,
+  html:root #settings-screen :is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"], [type="hidden"]), textarea),
+  html:root :is(#profile-root, #settings-root) .profile-details-card .profile-details-input,
+  html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search,
+  html:root #dev-kanban-search { font-size: max(1rem, 16px); }
 }

@@ -205,10 +205,9 @@ const Profile = {
     else if (Profile._takeFriendsRoute()) Profile._friendsRequested = true;
     else if (Profile._takeSheetAsk('edit')) Profile._editRequested = true;
     else if (Profile._takeSheetAsk('slots')) Profile._appSlotsRequested = true;
-    // Under a look You has tabs (./frame/you-frame.tsx), and the address
-    // names the one that is up (`#profile?tab=changes`): read on every entry,
-    // so a plain `#profile` is the Overview again. The standard page's
-    // section row reads the same field (#7134): its words are real tabs.
+    // The address names the tab that is up (`#profile?tab=changes`): read on
+    // every entry, so a plain `#profile` is the Overview again. The page's
+    // section row reads the field (#7134): its words are real tabs.
     Profile._readTab(targetUsername);
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and

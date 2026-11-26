@@ -3,8 +3,7 @@
  * drawn on a canvas): every project in any list, to pick the ones whose work
  * the lists show. 24 Nov 2026 (the three bands): the standard list opens it
  * from its one project filter, "All projects", on the head card's tools line
- * (./lists.tsx `data-ai-project-more`); the look's list from its rail's last
- * chip (./frame-list.tsx).
+ * (./lists.tsx `data-ai-project-more`).
  *
  *   ( Find a project               )
  *   NEEDS YOU

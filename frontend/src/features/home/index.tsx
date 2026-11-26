@@ -52,8 +52,8 @@
  *   * `#app-list` (#1191): `Home.render()` computes a view model instead of an
  *     HTML string. The layout engine, the WS fan-out, the drag geometry and
  *     the kit attachment all stayed in home.js.
- *   * `#home-widget-strip-section` and `#home-apps-more`: the same split for
- *     the two hosts outside the canvas, on the same push.
+ *   * `#home-widget-strip-section`: the same split for the host outside the
+ *     canvas, on the same push.
  *   * the panel sections: `HomePanels.render()` computes their view models
  *     where it used to build ~800 lines of HTML string and then re-attach
  *     eight families of listener over the result.

@@ -61,7 +61,6 @@ import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';

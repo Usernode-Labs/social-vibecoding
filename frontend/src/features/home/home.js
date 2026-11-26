@@ -1868,9 +1868,8 @@ const Home = {
   // stays outside the grid for the reason it always did: the grid's
   // re-render must not take it away mid-click.
   //
-  // Kept its name and its caller. It no longer touches the DOM, and the
-  // listener it used to re-attach on every paint is now attached once by
-  // ./apps-more.tsx to an element React keeps.
+  // Kept its name and its caller. It no longer touches the DOM: it publishes
+  // the count Home's heading offers ("Show all N", ./index.tsx).
   _renderAppsMore(count, canFold) {
     chromeStore.set({
       moreCount: count || 0,

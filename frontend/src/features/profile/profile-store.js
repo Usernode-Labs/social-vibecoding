@@ -276,9 +276,8 @@ export function identityView(state) {
     initial: initialOf(u),
     name: displayNameOf(u),
     handle,
-    // The kit's You page (./frame/you-frame.tsx) leads with the @handle and
-    // says the facts under it, so it reads the two apart: the handle whether
-    // or not a display name is set, and the facts without it.
+    // The handle whether or not a display name is set, and the facts
+    // without it, read apart (./profile-view.tsx).
     username: u.username ? `@${u.username}` : null,
     displayName: handle ? displayNameOf(u) : null,
     about: factLine(facts.filter((fact) => fact !== handle)),
