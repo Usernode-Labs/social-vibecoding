@@ -320,8 +320,9 @@ test('the label constant is the survey scale, not the sign-in card caption', () 
   const label = /export const SURVEY_LABEL = '([^']+)';/.exec(shared)[1];
   assert.match(label, /\btext-sm\b/, 'the question out-ranks its help line');
   assert.match(label, /\bfont-medium\b/);
-  const login = read('frontend/src/features/auth/login.tsx');
-  const authLabel = /const AUTH_LABEL = '([^']+)';/.exec(login)[1];
+  // The sign-in caption is the sign-in sheet's own field label now.
+  const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  const authLabel = /const LABEL = '([^']+)';/.exec(sheet)[1];
   assert.notEqual(label, authLabel, 'a deliberate difference, not an oversight');
   assert.match(authLabel, /text-\[13px\]/, 'and the sign-in caption is still the smaller one');
 });

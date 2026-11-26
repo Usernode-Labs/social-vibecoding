@@ -4,14 +4,15 @@
 // ── What this is guarding ──────────────────────────────────────────────
 //
 // The sign-in sheet's emailed code drew six boxes over a single transparent
-// field (#5253); the waitlist, the phone codes and the sign-up screen each
-// asked for the same code in one long field. They all draw the shared
+// field (#5253); the waitlist and the phone codes each asked for the same
+// code in one long field (the sign-up screen did too, until the sheet became
+// the one sign-in). They all draw the shared
 // component now, and what has to stay true is exactly what made #5253 work:
 //
 //   * ONE real input, so a paste and the keyboard's one-time-code suggestion
 //     fill all six in one go, and the ids the checks and e2e steps select on
-//     (`#waitlist-code`, `#otp-code`, `#add-phone-code`,
-//     `#sign-in-sheet-code`, `#sign-in-sheet-phone-code`) are still on it;
+//     (`#waitlist-code`, `#add-phone-code`, `#sign-in-sheet-code`,
+//     `#sign-in-sheet-phone-code`) are still on it;
 //   * the six boxes drawn from the digits the screen holds, hidden from
 //     readers, because the field already says the whole code;
 //   * every screen still labels its field with `htmlFor`, including the two
@@ -34,7 +35,6 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const BOXES = 'frontend/src/features/auth/code-boxes.tsx';
 const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
 const WAITLIST = 'frontend/src/features/auth/waitlist.tsx';
-const LOGIN = 'frontend/src/features/auth/login.tsx';
 const ADD_PHONE = 'frontend/src/features/auth/add-phone.tsx';
 
 /** The component rendered with `props`, as static markup. */
@@ -100,7 +100,6 @@ test('every code step in the sign-in and sign-up flow draws the boxes', () => {
     [SHEET, 'sign-in-sheet-code'],
     [SHEET, 'sign-in-sheet-phone-code'],
     [WAITLIST, 'waitlist-code'],
-    [LOGIN, 'otp-code'],
     [ADD_PHONE, 'add-phone-code'],
   ]) {
     const text = read(src);
@@ -110,7 +109,7 @@ test('every code step in the sign-in and sign-up flow draws the boxes', () => {
   }
 });
 
-test('the waitlist renders its code field, and the sign-up screen its own', () => {
+test('the waitlist renders its code field, and the sign-in sheet its own', () => {
   // A rendered interior, not only the source: both screens mount the boxes
   // inside the flow, and the field a declared check selects is there.
   // Attribute names are read case-insensitively, as tests/waitlist-field-
@@ -123,13 +122,16 @@ test('the waitlist renders its code field, and the sign-up screen its own', () =
   assert.match(fieldAttrs, /maxlength="32"/);
   assert.match(waitlist.toLowerCase(), /<label[^>]*\bfor="waitlist-code"/);
 
-  const SHOWN = { '../../lib/mount-on-reveal': { useMountedOnReveal: () => true } };
-  const { LoginScreen } = loadTsx(LOGIN, { stubs: SHOWN });
-  const login = renderToHtml(createElement(LoginScreen));
-  const otp = /<input\b[^>]*\bid="otp-code"[^>]*>/i.exec(login);
-  assert.ok(otp, '#otp-code renders');
-  const otpAttrs = otp[0].toLowerCase();
-  assert.match(otpAttrs, /autocomplete="one-time-code"/);
-  assert.match(otpAttrs, /enterkeyhint="go"/);
-  assert.match(login.toLowerCase(), /<label[^>]*\bfor="otp-code"/);
+  // The code step a #signup/<address> link opens the sheet at.
+  const { SignInSheet } = loadTsx(SHEET);
+  const sheet = renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Continue to Homeroom', from: 'story', onClose() {}, primaryClass: 'pill',
+    route: { route: 'signup', step: 'code', email: 'ada@example.com', codeSent: true, token: null, code: null, resetSent: false, notice: null },
+  }));
+  const code = /<input\b[^>]*\bid="sign-in-sheet-code"[^>]*>/i.exec(sheet);
+  assert.ok(code, '#sign-in-sheet-code renders');
+  const codeAttrs = code[0].toLowerCase();
+  assert.match(codeAttrs, /autocomplete="one-time-code"/);
+  assert.match(codeAttrs, /enterkeyhint="go"/);
+  assert.match(sheet.toLowerCase(), /<label[^>]*\bfor="sign-in-sheet-code"/);
 });

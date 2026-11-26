@@ -918,9 +918,8 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   // that page; the gated frame is gone with looks v2).
   assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 2);
   assert.match(read(LANDING), /<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
-  assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(mounted\)\);/);
-  assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
-  assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
+  // The sign-in sheet's email step, the one sign-in, names no waitlist at all.
+  assert.doesNotMatch(message('auth:signInSheet.email.lead'), /waitlist/i);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
   // The looks' frame keeps the page it held when it was drawn (its own
   // headline, line and button; tests/landing-frame.test.js).
@@ -1003,9 +1002,10 @@ test('the ways in are the sheet\'s: Apple, Google and email, and a phone number 
   assert.match(sheet, /\{phoneLink && !phone \? \(/);
   assert.match(sheet, /className=\{QUIET\} onClick=\{\(\) => \{ setError\(null\); setStep\('phone'\); \}\}>\{t\('auth:signInSheet\.toPhoneLink'\)\}<\/button>/);
   const landing = read(LANDING);
-  // The story's sheet (Sign up, Sign in), a project page's and a shared
-  // link's: each offers it, and asks for a username after the code.
-  assert.equal((landing.match(/phoneLink=\{phoneSignIn\}\s+askName=\{false\}/g) || []).length, 3);
+  // The story's sheet (Sign up, Sign in), a project page's, a shared link's
+  // and a sign-in address's (#login, #signup, …): each offers it, and asks
+  // for a username after the code.
+  assert.equal((landing.match(/phoneLink=\{phoneSignIn\}\s+askName=\{false\}/g) || []).length, 4);
   // And the page no longer draws the four buttons itself.
   assert.doesNotMatch(landing, /SignUpButtons|signUpWith/);
 });

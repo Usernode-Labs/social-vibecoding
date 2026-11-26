@@ -127,10 +127,9 @@ test('a stand-alone page is the kit\'s one column: the product\'s own form, wear
   assert.ok(field && field.to.includes(':is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden input:not([type="checkbox"],[type="radio"])'), 'the kit\'s field');
   for (const id of ['#recovery-email-input', '#waitlist-confirm-email']) assert.ok(field.to.includes(id), id);
   assert.deepEqual(field.parts, { val: '', focus: ':focus' });
-  // The classes those selectors read are the forms' own.
-  for (const file of ['login.tsx', 'register.tsx']) {
-    assert.match(read('frontend/src/features/auth', file), /const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';/, file);
-  }
+  // The sign-in and register pages these rules also name are gone (the
+  // sign-in sheet is the one sign-in); their selectors stay with the frame's
+  // CSS until the looks are retired with it.
 });
 
 test('in a phone browser, where the document scrolls, the screen starts under the bar by a margin', () => {
@@ -207,11 +206,7 @@ test('version 2: a stand-alone page reads title, fields, the other ways as rows,
   const rules = hand.replace(/\/\*[\s\S]*?\*\//g, '');
   assert.deepEqual((rules.match(/[^{}]*\{ display: contents; \}/g) || []).map((r) => r.trim().replace('html[data-frame-chrome="guest"] ', '')),
     ['#otp-step-email:not(.hidden) { display: contents; }', '#recovery-email:not(.hidden) { display: contents; }']);
-  // The wrappers: the form's last child, neutral in the standard look (each
-  // takes back the one gap the form would put before it), with no id.
-  const loginSrc = read('frontend/src/features/auth/login.tsx');
-  assert.match(loginSrc, /<TermsNotice verb="signing in" \/>[\s\S]*?<div className="auth-ways -mt-4">\s*<p id="forgot-link-wrap" className=\{hiddenLast\(!base, 'mt-2\.5'\)\}>[\s\S]*?<p id="otp-link-wrap" className=\{hiddenLast\(!base, 'mt-2\.5'\)\}>[\s\S]*?<\/p>\s*<\/div>\s*<\/form>/);
-  assert.match(read('frontend/src/features/auth/register.tsx'), /<div className="auth-ways !mt-0">\s*<p className="mt-3">\s*<a href="#login" className=\{PILL_LINK\}>[\s\S]*?<\/p>\s*<\/div>\s*<\/form>/);
+  // The wrappers dressed nothing outside a look.
   for (const line of read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => l.includes('.auth-ways'))) {
     assert.ok(line.startsWith('html[data-frame-chrome="guest"] '), `nothing dresses the wrapper outside a look: ${line.slice(0, 80)}`);
   }
@@ -220,12 +215,8 @@ test('version 2: a stand-alone page reads title, fields, the other ways as rows,
   has('G #waitlist-confirm-address > #waitlist-request-code \\{ grid-row: 4;');
   has('G #waitlist-have-code \\{[^}]*background: var\\(--fr-sunk\\);', 'the quiet button under the primary one');
   assert.doesNotMatch(hand.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-fA-F]{3,8}\b|rgba?\(|margin-(left|right)|padding-(left|right)|border-(top|bottom)-(left|right)-radius/, 'the kit\'s tokens and logical sides only');
-  // The ids those rules read are the forms' own.
-  const login = read('frontend/src/features/auth/login.tsx');
-  for (const id of ['login-form', 'forgot-link-wrap', 'forgot-password-link', 'otp-link-wrap', 'otp-link', 'otp-view', 'otp-step-email', 'btn-otp-request', 'btn-otp-back', 'recovery-view', 'recovery-email', 'recovery-email-input', 'recovery-admin', 'btn-recovery-back', 'btn-email-reset']) {
-    assert.match(login, new RegExp(`id="${id}"`), id);
-  }
-  assert.match(read('frontend/src/features/auth/register.tsx'), /id="register-form"/);
+  // The ids those rules read are the forms' own (the sign-in and register
+  // pages' went with them).
   const waitlist = read('frontend/src/features/auth/waitlist.tsx');
   for (const id of ['waitlist-confirm-address', 'waitlist-confirm-email', 'waitlist-request-code', 'waitlist-have-code']) assert.match(waitlist, new RegExp(`id="${id}"`), id);
   // The reset view's heading is not the screen's h1: it wears the title as a further wearer.

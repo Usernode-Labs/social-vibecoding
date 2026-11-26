@@ -12,12 +12,10 @@
  * two suites read it by its `shared.ts` path, so renaming it to add a
  * component would be churn in the wrong file.
  *
- * One thing stays per-screen and is therefore a prop: `href` + `onClick`.
- * Sign-in and register ship an inert `href="#"` and route by assigning
- * `location.hash`, exactly as the hand-written shell did; the waitlist's
- * anchor navigates natively via `href="#landing"` and takes no handler.
- * `public/js/auth-screens.js` also delegates clicks on `[data-auth-back]` for
- * the screens it still owns, and both paths do the same thing.
+ * One thing stays per-screen and is therefore a prop: `href`. The waitlist's
+ * anchor navigates natively via `href="#landing"`. (Sign-in and register
+ * shipped an inert `href="#"` routed by a handler; both screens are gone,
+ * the sign-in sheet being the one sign-in, and the handler with them.)
  *
  * POSITIONING IS NOT A PROP ANY MORE (QA 2026-09-24 Q8). Sign-in and register
  * used to pin the disc to the VIEWPORT (`fixed`), and the waitlist scrolled it
@@ -37,8 +35,6 @@
  * is identical on every screen and is not configurable, which is the point.
  */
 
-import type { MouseEvent } from 'react';
-
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -55,12 +51,11 @@ export const AUTH_BACK_CLASS =
 const AUTH_BACK_STYLE = { top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' };
 
 export interface AuthBackButtonProps {
-  /** `'#'` for the handler-routed screens, `'#landing'` for a plain link. */
+  /** Where Back goes: `'#landing'`. */
   href: string;
-  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }
 
-export function AuthBackButton({ href, onClick }: AuthBackButtonProps) {
+export function AuthBackButton({ href }: AuthBackButtonProps) {
   const t = useMessages();
   return (
     <a
@@ -69,15 +64,8 @@ export function AuthBackButton({ href, onClick }: AuthBackButtonProps) {
       className={AUTH_BACK_CLASS}
       style={AUTH_BACK_STYLE}
       aria-label={t('core:common.back')}
-      onClick={onClick}
     >
       <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
     </a>
   );
-}
-
-/** The handler sign-in and register share: an inert href, routed by hash. */
-export function backToLanding(event: MouseEvent<HTMLAnchorElement>): void {
-  event.preventDefault();
-  location.hash = '#landing';
 }

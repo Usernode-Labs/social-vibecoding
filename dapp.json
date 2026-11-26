@@ -4111,7 +4111,7 @@
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
       "path": "/?shot=offline-signin#login",
-      "expectSelector": "body.is-offline #auth-login-screen:not(.hidden) .offline-only",
+      "expectSelector": "body.is-offline [data-sign-in-sheet=\"password\"] [data-sign-in-sheet-offline].offline-only",
       "expectText": "Signing in needs a connection"
     },
     {
@@ -4126,40 +4126,34 @@
       "expectText": "This app needs a connection"
     },
     {
-      "name": "Password recovery separates the admin fallback and spaces its copy correctly (#1158)",
+      "name": "#login/forgot opens the sign-in sheet's reset step, its address field and the way in with a code (#1158)",
       "path": "/?shot=password-recovery#login",
-      "expectSelector": "#recovery-view:not(.hidden) #recovery-admin:not(.hidden) hr",
-      "expectText": "issue you a temporary password"
+      "expectSelector": "[data-sign-in-sheet=\"forgot\"] form:has(#sign-in-sheet-reset-email) [data-sign-in-sheet-forgot-code]",
+      "expectText": "Reset your password"
     },
     {
-      "name": "Emailed-reset confirmation renders once, as a green success box",
+      "name": "Emailed-reset confirmation says the link is on its way, then the support note",
       "path": "/?shot=password-recovery-sent#login",
-      "expectSelector": "#recovery-view:not(.hidden) #recovery-email-status.bg-green-100:not(.hidden)",
+      "expectSelector": "[data-sign-in-sheet=\"forgot\"] [data-sign-in-sheet-reset-sent] ~ [data-sign-in-sheet-reset-support]",
       "expectText": "a reset link is on its way"
     },
     {
-      "name": "A completed password reset returns to login with a durable success notice (#2266)",
+      "name": "A completed password reset opens the sheet's password step with a durable success notice (#2266)",
       "path": "/?shot=password-reset-complete#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-reset-success.bg-green-100:not(.hidden)",
+      "expectSelector": "[data-sign-in-sheet=\"password\"] form:has(#sign-in-sheet-identifier) [data-sign-in-sheet-reset-done][role=\"status\"]",
       "expectText": "Password changed"
     },
     {
-      "name": "Email-code sign-in routes a password account to the password form (#1586)",
+      "name": "Email-code sign-in routes a password account to the sheet's password step (#1586)",
       "path": "/?shot=email-code-password-account#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-error:not(.hidden)",
-      "expectText": "signs in with a password"
+      "expectSelector": "[data-sign-in-sheet=\"password\"]:has(#sign-in-sheet-identifier) [role=\"alert\"]",
+      "expectText": "signs in with its password"
     },
     {
-      "name": "An invite link opens the code step with its own address, not an empty field (#1548)",
+      "name": "#signup/<address> opens the sheet's code step with its own address and the resend held (#1548)",
       "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
-      "expectSelector": "#auth-login-screen:not(.hidden) #otp-view:not(.hidden) #otp-step-code:not(.hidden) #otp-email-echo",
+      "expectSelector": "[data-sign-in-sheet=\"code\"]:has(button[disabled]) [data-sign-in-sheet-sent-to]",
       "expectText": "demo@example.invalid"
-    },
-    {
-      "name": "An invite link says the code is sent and holds the resend for its cooldown (#1548)",
-      "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
-      "expectSelector": "#otp-step-code:not(.hidden) #btn-otp-resend[disabled]",
-      "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
       "name": "#2916: back from a request is the chip above its sheet, named for where its press goes: on a cold load its link, which opens the Workshop (audit N03 follow-up), and the header draws no arrow beside it (#4453)",
@@ -4342,36 +4336,30 @@
       "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) [data-notif-id=\"990211\"] .text-xs + .text-sm.font-semibold"
     },
     {
-      "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
+      "name": "#login opens the sign-in sheet at its password step, with the Email code | Password switch",
       "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:has(.rounded-2xl #login-username) button[type=\"submit\"].bg-violet-600",
-      "expectText": "Sign in",
+      "expectSelector": "[data-sign-in-sheet=\"password\"] [data-sign-in-sheet-method-password][aria-checked=\"true\"]",
+      "expectText": "Forgot password?",
       "allowConsoleErrors": true
     },
     {
-      "name": "Forgot password and the email-code sign-in are pill buttons under the card, not links",
-      "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #forgot-link-wrap #forgot-password-link.rounded-full",
-      "expectText": "Forgot password",
+      "name": "#signup opens the sign-in sheet at its email step",
+      "path": "/?shot=anon#signup",
+      "expectSelector": "[data-sign-in-sheet=\"email\"] #sign-in-sheet-email",
+      "expectText": "Continue to Homeroom",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Log in button is the filled accent pill, and the email-code sign-in is a pill too",
-      "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #otp-link-wrap #otp-link.rounded-full",
-      "expectText": "Sign in with an email code",
+      "name": "#reset-password/<token> opens the sheet's new-password step, and a link that cannot be one says so",
+      "path": "/?shot=anon#reset-password/not-a-token",
+      "expectSelector": "[data-sign-in-sheet=\"reset\"]:has(#sign-in-sheet-new-password) [role=\"alert\"]",
+      "expectText": "invalid or has expired",
       "allowConsoleErrors": true
     },
     {
-      "name": "The sign-in Back disc moves with its screen, so the phone install strip cannot cover it (QA Q8)",
-      "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) > a[data-auth-back].absolute[aria-label=\"Back\"]",
-      "allowConsoleErrors": true
-    },
-    {
-      "name": "The register form says under the username field that it will be public, then states the username rule (QA Q11, #3575)",
+      "name": "#register opens the sheet's activation-code step: the username will be public, then the username rule (QA Q11, #3575)",
       "path": "/?shot=anon#register",
-      "expectSelector": "#auth-register-screen:not(.hidden) #reg-username[autocapitalize=\"none\"][aria-describedby~=\"reg-username-hint\"] + #reg-username-public + #reg-username-hint",
+      "expectSelector": "[data-sign-in-sheet=\"register\"] #sign-in-sheet-reg-username[autocapitalize=\"none\"][aria-describedby~=\"sign-in-sheet-reg-username-hint\"] + #sign-in-sheet-reg-username-public + #sign-in-sheet-reg-username-hint",
       "expectText": "Letters, numbers and underscores, 3 to 32 characters.",
       "allowConsoleErrors": true
     },

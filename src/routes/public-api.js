@@ -396,7 +396,7 @@ function publicApiRoutes(config) {
   //
   // `terms_link` is the current published terms' own address, for the
   // sign-in screens' "By continuing, you agree to Homeroom's terms"
-  // (frontend/src/features/auth/sign-in-sheet.tsx and login.tsx). "Current"
+  // (frontend/src/features/auth/sign-in-sheet.tsx). "Current"
   // is the terms gate's rule (routes/topochain/mobile.js): the latest
   // published version. null when none is published, it has no link, or the
   // read fails; the notice then names the terms without a link.

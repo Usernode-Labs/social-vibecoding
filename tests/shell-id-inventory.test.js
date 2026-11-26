@@ -452,6 +452,57 @@ const RETIRED_IDS = {
   // ever ADDED ones.
   'settings-guide-section': 'The User guide pane root, retired with the page (#7162).',
   'settings-guide-voting': 'The User guide card saying how a change gets voted in, retired with the page (#7162).',
+  // ── One sign-in: the sheet ─────────────────────────────────────────
+  // The full-page sign-in screen (features/auth/login.tsx) and the
+  // activation-code screen (features/auth/register.tsx) are gone. Their
+  // addresses open the landing's sign-in sheet at the matching step
+  // (features/auth/sign-in-routes.ts), and everything they did is a step of
+  // the sheet: each id below names where it went. #wallet-status stays: the
+  // Settings wallet row carries it, so the duplicate the baseline recorded is
+  // fixed rather than retired (KNOWN_DUPLICATE_IDS).
+  'auth-login-screen': 'The full-page sign-in screen\'s root (features/auth/login.tsx). Signing in is the landing\'s sign-in sheet now: #login, #login/forgot, #signup[/<address>] and #reset-password/<token> are the landing with the sheet open at their step (features/auth/sign-in-routes.ts), and App.REACT_SCREEN_IDS no longer lists it.',
+  'auth-register-screen': 'The activation-code screen\'s root (features/auth/register.tsx). #register[/<code>] opens the sign-in sheet\'s activation-code step over the landing instead ([data-sign-in-sheet="register"], #sign-in-sheet-reg-code).',
+  'wallet-auth': 'The sign-in screen\'s wallet block. Inside the Homeroom app the sheet\'s password step offers "Sign in with Wallet" ([data-sign-in-sheet-wallet]) for a linked genesis wallet.',
+  'wallet-error': 'The wallet block\'s error line; the sheet\'s one alert says it.',
+  'wallet-sign-in': 'The wallet block\'s button row, gone with it.',
+  'btn-wallet-sign-in': 'Sign in with Wallet: [data-sign-in-sheet-wallet] on the sheet\'s password step.',
+  'wallet-divider': 'The wallet block\'s "or": the sheet draws its own [data-sign-in-sheet-or].',
+  'login-form': 'The password form: the sheet\'s password step (#sign-in-sheet-identifier, #sign-in-sheet-current-password), which #login opens.',
+  'login-username': 'Username or email: #sign-in-sheet-identifier.',
+  'login-password': 'Password: #sign-in-sheet-current-password.',
+  'login-error': 'The password form\'s error line: the sheet\'s one [role=alert].',
+  'forgot-link-wrap': 'The wrapper of Forgot password?: the sheet\'s [data-sign-in-sheet-forgot].',
+  'forgot-password-link': 'Forgot password?: the sheet\'s [data-sign-in-sheet-forgot], which opens its reset step; #login/forgot opens that step too.',
+  'otp-link-wrap': 'The wrapper of Sign in with an email code: the sheet\'s Email code | Password switch.',
+  'otp-link': 'Sign in with an email code: the sheet\'s [data-sign-in-sheet-method-email].',
+  'otp-view': 'The #signup email-code view: the sheet\'s email and code steps, which #signup opens.',
+  'otp-step-email': 'Its address step: the sheet\'s email step (#sign-in-sheet-email).',
+  'otp-email': 'Its address field: #sign-in-sheet-email.',
+  'btn-otp-request': 'Email me a code: the sheet\'s email step\'s button.',
+  'otp-step-code': 'Its code step: the sheet\'s code step (#sign-in-sheet-code), where #signup/<address> lands once the code went.',
+  'otp-email-echo': 'The address the code went to: the sheet\'s [data-sign-in-sheet-sent-to].',
+  'otp-code': 'The code field: #sign-in-sheet-code, the same shared boxes.',
+  'btn-otp-verify': 'Verify code: the sheet\'s sixth digit sends it.',
+  'btn-otp-resend': 'Send a new code: the sheet\'s resend, held for the same minute.',
+  'otp-step-password': 'The set-password step (a username, no password since #4891): the sheet\'s account step.',
+  'btn-otp-set-password': 'Its button: the sheet\'s account step\'s Create my account.',
+  'otp-error': 'The email-code view\'s error line: the sheet\'s one [role=alert].',
+  'otp-status': 'Its status line: the sheet\'s buttons say what is under way.',
+  'btn-otp-back': 'Its way back to the password form: the sheet\'s Email code | Password switch.',
+  'recovery-view': 'The forgot-password view: the sheet\'s reset step ([data-sign-in-sheet="forgot"]), which #login/forgot opens.',
+  'recovery-wallet': 'Its wallet reset: the sheet\'s [data-sign-in-sheet-wallet-reset], inside the app for a linked wallet.',
+  'recovery-new-password': 'The wallet reset\'s new password: #sign-in-sheet-wallet-new-password.',
+  'recovery-confirm-password': 'The wallet reset\'s confirmation: #sign-in-sheet-wallet-confirm-password.',
+  'recovery-error': 'The wallet reset\'s error line: the sheet\'s one [role=alert].',
+  'recovery-status': 'The wallet reset\'s status line, gone with it.',
+  'btn-wallet-reset': 'Reset password with your wallet: the sheet\'s wallet reset button.',
+  'recovery-admin': 'The ask-support fallback under the emailed reset: the sheet\'s [data-sign-in-sheet-reset-support], shown once a link went.',
+  'btn-recovery-back': 'Back to login: the sheet\'s [data-sign-in-sheet-forgot-back].',
+  'register-form': 'The activation-code form: the sheet\'s register step, which #register opens.',
+  'reg-code': 'Activation Code: #sign-in-sheet-reg-code, filled from #register/<code>.',
+  'reg-username': 'Username: #sign-in-sheet-reg-username, with its public line and rule under it.',
+  'reg-password': 'Password: #sign-in-sheet-reg-password, with its rule under it.',
+  'reg-error': 'The register form\'s error line: the sheet\'s one [role=alert].',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -720,13 +771,12 @@ const ADDED_IDS = {
   'sidebar-toggle': '#2718 review: folds and unfolds the desktop rail, from the header\'s left group — the window\'s top-left corner, where VS Code, Slack, Linear and Notion all put this control. DESKTOP ONLY: app.css gives it `display` inside `@media (min-width: 768px)` and nothing else does, because a phone\'s bar is at the FOOT of the screen and is the only navigation there is, so folding must never reach it. It ships PRESSED, matching navStore\'s `railOpen: true` and the visible bar the prerender carries; a folded rail is always something the viewer did, and it is session-only for the same reason. It renders nothing at all where the route has no rail (inside an app, chromeless, signed out), which is also what makes the header\'s left group empty on those screens rather than holding a dead control. The way back from folded is #platform-rail-peek, the same hot zone an open app already uses.',
   // ── #2370: the social-account scope disclosure ───────────────────
   'github-link-scope': '#2370: the scope line under the provider rows — no repository access, no provider token, and that this is account control rather than proof of unique humanity. It used to sit in a 76-word section lead ahead of the rows, read before anyone could act. It is deliberately NOT a disclosure: dapp.json asserts these phrases with no interaction step, which is the product stating they must be readable without a tap.',
-  // ── #2266: password-reset completion ─────────────────────────────
-  'login-reset-success': '#2266: the durable success notice shown on the login form after a completed email password reset. The reset form is terminal now, so its old inline status has no successful state to render.',
-  // ── QA 2026-09-24 Q11: the register form states the account rules ──
-  'reg-username-hint': 'The line under the register form\'s username field: the handle rule (letters, numbers and underscores, 3 to 32 characters) while the field is fine, and the server\'s sentence about the name when POST /api/auth/register refuses it (`field: "username"`). Registration now applies the same rule a rename does; the input names it through aria-describedby.',
-  'reg-password-hint': 'The same line under the password field: "At least 8 characters", the rule Change password already enforced and registration now does too, or the server\'s refusal when it is `field: "password"`.',
-  // ── #3575: the person chooses the handle, and is told it is public ──
-  'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
+  // #login-reset-success (#2266), #reg-username-hint, #reg-password-hint
+  // (QA 2026-09-24 Q11) and #reg-username-public (#3575) left this map with
+  // the sign-in and register screens (one sign-in: the sheet). They were only
+  // ever ADDED ids; the sign-in sheet's password step says the password
+  // changed ([data-sign-in-sheet-reset-done]) and its activation-code step
+  // keeps the three lines under its own fields.
   // ── Communities, stage 5: the first run ─────────────────────────────
   // #home-getting-started left this map in #4635: every new account gets a
   // tour, so Home's Getting started card went, and a new account's
@@ -1391,9 +1441,10 @@ test('a retired id is really gone, and an added id is really there', () => {
 // has the problem in front of it.
 //
 //   wallet-status — one in the Settings screen's wallet-link row, one in the
-//   anonymous login screen's wallet sign-in block. Only one is ever mounted
-//   at a time in practice, which is why this has never bitten.
-const KNOWN_DUPLICATE_IDS = { 'wallet-status': 2 };
+//   anonymous login screen's wallet sign-in block. FIXED: the login screen
+//   went with the sign-in sheet becoming the one sign-in, and Settings keeps
+//   the only one. None is left.
+const KNOWN_DUPLICATE_IDS = {};
 
 test('no id is used twice beyond the duplicates that predate this migration', () => {
   const seen = new Map();
@@ -1409,14 +1460,18 @@ test('no id is used twice beyond the duplicates that predate this migration', ()
   );
 });
 
-test('the known duplicates are the ones the baseline recorded', () => {
+test('the known duplicates are ones the baseline recorded', () => {
   // Guards the allow-list: if a duplicate turns out to have been introduced by
-  // the conversion rather than inherited, it must not be excused here.
-  assert.deepEqual(
-    baseline.duplicateIds, KNOWN_DUPLICATE_IDS,
-    'KNOWN_DUPLICATE_IDS no longer matches the duplicates the frozen baseline recorded, so one of '
-    + 'them was introduced by the conversion and needs fixing rather than excusing.',
-  );
+  // the conversion rather than inherited, it must not be excused here. The
+  // count only goes DOWN, so a fixed one leaves the list (wallet-status did).
+  for (const [id, count] of Object.entries(KNOWN_DUPLICATE_IDS)) {
+    assert.ok(
+      baseline.duplicateIds[id] >= count,
+      `KNOWN_DUPLICATE_IDS excuses #${id} ×${count}, which the frozen baseline did not record, so it `
+      + 'was introduced by the conversion and needs fixing rather than excusing.',
+    );
+  }
+  assert.deepEqual(baseline.duplicateIds, { 'wallet-status': 2 }, 'the baseline is frozen');
 });
 
 test('the ids the dev-console and staging overlay bind are present', () => {

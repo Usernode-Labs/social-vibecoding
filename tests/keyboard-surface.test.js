@@ -480,8 +480,9 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
   // viewport; the keyboard rule above is more specific, so it still wins.
   const svh = APP_CSS.slice(APP_CSS.indexOf('/* THE SHEET\'S BUTTON CLEARS SAFARI\'S TOOLBAR WITH THE KEYS DOWN (#4593).'));
   assert.match(svh, /@media \(max-width: 767px\) \{\s*@supports \(height: 100svh\) \{\s*html \.platform-kb-sheet \{\s*bottom: max\(0px, calc\(100% - 100svh\)\);\s*max-height: 92svh;\s*\}/);
-  // And the sign-in screen's foot, with the story switched off.
-  assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-login-screen"\] #auth-login-screen > \.min-h-full \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
+  // The sign-in screen's foot had the same rule, with the story switched
+  // off; that screen is gone, and #signup is the sheet above.
+  assert.doesNotMatch(APP_CSS, /data-browser-scroller="auth-login-screen"/);
 });
 
 // ── 5. The two screens ──────────────────────────────────────────────────
@@ -584,7 +585,16 @@ test('the password step walks on Return, and each field says what its Return doe
   assert.match(SHEET, /id="sign-in-sheet-identifier"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(passwordStepFields, 0\)\}/);
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
   // The account step is one field since #4891 (no password), so it goes too.
-  assert.doesNotMatch(SHEET, /id="sign-in-sheet-password"|sign-in-sheet-confirm|Password again|accountStepFields/);
+  const accountStep = SHEET.slice(SHEET.indexOf("{step === 'account' ? ("), SHEET.indexOf('{error ? (', SHEET.indexOf("{step === 'account' ? (")));
+  assert.doesNotMatch(accountStep, /PasswordInput|sign-in-sheet-confirm|Password again/);
+  assert.doesNotMatch(SHEET, /id="sign-in-sheet-password"|accountStepFields/);
+  // The reset link's step and the activation code's walk theirs: "next" until
+  // the last field, which says "go" and submits.
+  assert.match(SHEET, /id="sign-in-sheet-new-password"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(resetStepFields, 0\)\}/);
+  assert.match(SHEET, /id="sign-in-sheet-confirm-password"[^>]*enterKeyHint="go"/);
+  assert.match(SHEET, /id="sign-in-sheet-reg-code"[^>]*enterKeyHint="next"[^>]*onKeyDown=\{returnWalks\(registerStepFields, 0\)\}/);
+  assert.match(SHEET, /id="sign-in-sheet-reg-username"[\s\S]{0,200}enterKeyHint="next"[\s\S]{0,400}onKeyDown=\{returnWalks\(registerStepFields, 1\)\}/);
+  assert.match(SHEET, /id="sign-in-sheet-reg-password"[\s\S]{0,200}enterKeyHint="go"/);
   for (const id of ['sign-in-sheet-email', 'sign-in-sheet-provider-username', 'sign-in-sheet-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }

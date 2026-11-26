@@ -5,7 +5,8 @@
 // public/index.html used to carry every screen's markup — 1,485 elements, of
 // which #settings-screen's sixteen panes (437) and the six anonymous-shell
 // screens (244) were hidden behind roots a signed-in visitor on the board
-// never reveals. Those interiors render only once their root is revealed or a
+// never reveals (the sign-in and register screens among them, until the
+// sign-in sheet replaced both). Those interiors render only once their root is revealed or a
 // legacy caller asks for them, so the prerendered document no longer holds
 // their ids — and tests/shell-id-inventory.test.js and
 // tests/dapp-selectors-resolve.test.js, which resolve the frozen baseline
@@ -46,8 +47,6 @@ const MOUNT_ON_REVEAL = [
     mark: false,
   },
   { id: 'auth-landing-screen', host: 'auth-landing-screen', entry: 'frontend/src/features/auth/landing.tsx', component: 'LandingScreen', mark: true },
-  { id: 'auth-login-screen', host: 'auth-login-screen', entry: 'frontend/src/features/auth/login.tsx', component: 'LoginScreen', mark: true },
-  { id: 'auth-register-screen', host: 'auth-register-screen', entry: 'frontend/src/features/auth/register.tsx', component: 'RegisterScreen', mark: true },
   { id: 'auth-waiting-screen', host: 'auth-waiting-screen', entry: 'frontend/src/features/auth/waiting.tsx', component: 'WaitingScreen', mark: true },
   { id: 'auth-waitlist-screen', host: 'auth-waitlist-screen', entry: 'frontend/src/features/auth/waitlist.tsx', component: 'WaitlistScreen', mark: true },
   { id: 'auth-more-screen', host: 'auth-more-screen', entry: 'frontend/src/features/auth/more.tsx', component: 'MoreScreen', mark: true },

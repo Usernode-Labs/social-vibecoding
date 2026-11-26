@@ -40,7 +40,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const LANDING = 'frontend/src/features/auth/landing.tsx';
 const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
-const LOGIN = 'frontend/src/features/auth/login.tsx';
+const ROUTES = 'frontend/src/features/auth/sign-in-routes.ts';
 const WELCOME = 'frontend/src/features/auth/welcome-page.tsx';
 const MAKE = 'frontend/src/features/first-session/make.tsx';
 
@@ -119,7 +119,7 @@ test('a spend on load leads to the Welcome, or back to the story, and never sign
 });
 
 test('the check is a GET that reads `new_account` strictly, and spends nothing', async () => {
-  const login = loadTsx(LOGIN);
+  const login = loadTsx(ROUTES);
   const fetch = fakeFetch({
     '/api/public/waitlist/more/New_token_0001': [200, { email: ' Ada@Example.com ', new_account: true }],
     '/api/public/waitlist/more/Set_token_0001': [200, { email: 'ben@example.com', new_account: false }],
@@ -133,7 +133,7 @@ test('the check is a GET that reads `new_account` strictly, and spends nothing',
     assert.equal((await login.releaseAccountFromToken('Odd_token_0001')).newAccount, false, 'anything but true is not new');
     assert.equal((await login.releaseAccountFromToken('Old_token_0001')).newAccount, false, 'a server without the field: the story');
     assert.equal(await login.releaseAccountFromToken('Gone_token_000'), null);
-    // The sign-in screen's own lookup is the same read.
+    // The sheet's own lookup for the address is the same read.
     assert.equal(await login.inviteEmailFromToken('New_token_0001'), 'ada@example.com');
   });
   for (const call of fetch.calls) {

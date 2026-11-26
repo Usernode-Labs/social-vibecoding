@@ -4,8 +4,11 @@
  * view behind it. "Made for you" opens it from its Join button
  * (./invite-card.tsx), titled for the project.
  *
- * It is the same exchange as the sign-in screen's email-code panel
- * (./login.tsx), against the same routes:
+ * It is the one sign-in: the full-page sign-in and register screens are
+ * gone, and their addresses (#login, #login/forgot, #signup[/<address>],
+ * #reset-password/<token>, #register[/<code>]) open this sheet over the
+ * landing at their own step (`route`, ./sign-in-routes.ts). The email code
+ * runs against these routes:
  *
  *   email    POST /api/auth/otp/request sends a six-digit code.
  *   code     POST /api/auth/otp/verify. An account that has a password, or
@@ -81,15 +84,27 @@
  *
  * "Use a password" is a step of its own here too:
  *
- *   password POST /api/auth/login with a username or an email, the sign-in
- *            screen's own exchange (passwordSignIn in ./shared.ts).
- *   forgot   "Forgot password?", inside the sheet (#5258): POST
- *            /api/auth/password-reset/request emails a link for choosing a
- *            new password, the sign-in screen's own reset (#login/forgot),
- *            without leaving for that screen and its own Back. One "‹ Sign
- *            in" above its title goes back (#5259); "Sign in with a code
- *            instead" beside the button skips the password altogether; and
- *            the note about mail that never comes shows once a link went.
+ *   password POST /api/auth/login with a username or an email
+ *            (passwordSignIn in ./shared.ts). Inside the Homeroom app, a
+ *            wallet linked to a genesis account adds "Sign in with Wallet"
+ *            above the fields (POST /api/auth/wallet-verify, issue #282).
+ *            After a reset link was redeemed it says the password changed.
+ *   forgot   "Forgot password?", inside the sheet (#5258), and #login/forgot:
+ *            POST /api/auth/password-reset/request emails a link for choosing
+ *            a new password. One "‹ Sign in" above its title goes back
+ *            (#5259); "Sign in with a code instead" beside the button skips
+ *            the password altogether; and the note about mail that never
+ *            comes shows once a link went. A wallet linked in the app can
+ *            choose the new password with a signature instead
+ *            (POST /api/auth/wallet-reset-verify).
+ *   reset    #reset-password/<token>, where the emailed link lands: the new
+ *            password twice, POST /api/auth/password-reset/confirm, then the
+ *            password step, the spent link gone from the address.
+ *   register #register[/<code>]: an activation code, a username and a
+ *            password, POST /api/auth/register, which mints the session.
+ *
+ * Offline, every step says so at the top (#1021): signing in is a round
+ * trip, and a bare "Network error" read like a wrong password.
  *
  * Where the sheet may be for an account somebody has (`firstStepLine`
  * 'password'), the email and password steps carry a switch at the top,
@@ -102,8 +117,8 @@
  *
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
- * sent, as the sign-in screen does for the same link (./login.tsx), with
- * the same once-per-tab record of the send. With such a link the account
+ * sent, with a once-per-tab record of the send (./sign-in-routes.ts), as
+ * #signup/<address> does for the address it names. With such a link the account
  * step is not the sheet's: it hands the account to the story (`onAccount`),
  * which shows the full-page Welcome (./welcome-page.tsx).
  *
@@ -185,8 +200,9 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { reducedMotion } from '../../lib/reduced-motion';
 
+import { alertVariants } from '@/components/ui/alert';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
+import { AppleIcon, ChevronLeftIcon, GoogleIcon, KeyIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { Icon as KitIcon, k } from '@/components/ui/kit';
 import { PasswordInput } from '@/components/ui/password-input';
 
@@ -197,7 +213,20 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { t as translate, errorText } from '../../lib/i18n/runtime';
 import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
-import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
+import {
+  confirmPasswordReset,
+  inviteEmailFromToken,
+  probeWallet,
+  readAutoSend,
+  registerWithCode,
+  RESET_TOKEN_RE,
+  type RegisterField,
+  type SheetOpening,
+  walletReset,
+  walletSignIn,
+  type WalletProbe,
+  writeAutoSend,
+} from './sign-in-routes';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
 import { phoneRecaptchaInUse, postPhoneCodeRequest, RECAPTCHA_LINE } from './recaptcha';
@@ -209,12 +238,13 @@ import {
   HANDLE_FIELD,
   legacy,
   type NativeLoginFailureDetails,
+  offlineSignInText,
   passwordSignIn,
   sessionMintFailureMessage,
 } from './shared';
 import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'forgot' | 'phone' | 'phone-code' | 'link';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'forgot' | 'phone' | 'phone-code' | 'link' | 'reset' | 'register';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -540,14 +570,13 @@ export function inviteWayTarget(way: InviteWay, openedOn: OpeningStep): { step: 
 
 /** Whether a step's foot says the terms: not the password or reset steps, which make no account (#5258). */
 export function stepSaysTerms(step: string): boolean {
-  return step !== 'password' && step !== 'forgot';
+  return step !== 'password' && step !== 'forgot' && step !== 'reset';
 }
 
 /**
- * The reset link, as the sign-in screen asks for it (./login.tsx
- * onEmailReset). The server answers the same whether or not the address
- * matched (anti-enumeration), and so does the sheet: 'sent', or what went
- * wrong in words.
+ * The reset link, emailed. The server answers the same whether or not the
+ * address matched (anti-enumeration), and so does the sheet: 'sent', or what
+ * went wrong in words.
  */
 export async function requestPasswordReset(address: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const email = address.trim();
@@ -653,24 +682,31 @@ export type ReleaseArrival =
   | { address: string; send: false; cooldownUntil: number };
 
 /**
- * The address a release link's token names, through the sign-in screen's
- * own lookup (inviteEmailFromToken, GET /api/public/waitlist/more/:token),
- * and whether its code still has to go. Once per tab, on the sign-in
- * screen's record (./login.tsx's AUTO_SEND_KEY), so a reload, or the screen
- * and the sheet both opening the link, sends one code: a code that already
- * went to this address starts at the code step with what is left of the
- * wait. Null when the token names nothing; the email step then stays empty.
+ * The address a release link's token names (inviteEmailFromToken, GET
+ * /api/public/waitlist/more/:token), and whether its code still has to go
+ * (`addressArrival`). Null when the token names nothing; the email step then
+ * stays empty.
  */
 export async function releaseArrival(token: string, now = Date.now()): Promise<ReleaseArrival | null> {
   const address = await inviteEmailFromToken(token);
   if (!address) return null;
+  return addressArrival(address, now);
+}
+
+/**
+ * Whether the code for an address a link names still has to go. Once per
+ * tab, on one record (./sign-in-routes.ts readAutoSend), so a reload, or the
+ * link opened twice, sends one code: a code that already went to this
+ * address starts at the code step with what is left of the wait. Used for a
+ * release link's token and for #signup/<address>.
+ */
+export function addressArrival(address: string, now = Date.now()): ReleaseArrival {
   const prior = readAutoSend();
   if (prior && prior.email === address) {
     const until = prior.sentAt + RESEND_COOLDOWN_MS;
     return { address, send: false, cooldownUntil: until > now ? until : 0 };
   }
-  // Written before the request, as the screen does, so a failed send is not
-  // retried on a loop.
+  // Written before the request, so a failed send is not retried on a loop.
   writeAutoSend(address);
   return { address, send: true };
 }
@@ -797,6 +833,16 @@ const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 d
 const SWITCH_ON = 'h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
 const SWITCH_OFF = 'h-11 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
+// The offline note: `.offline-only` first (app.css hides it unless the body
+// is offline, and the declared check finds it by it), then the shell's one
+// caution box, the Alert primitive's `notice` (the landing's own offline note
+// is the same box).
+const OFFLINE_NOTE = `offline-only mt-3 ${alertVariants({ variant: 'notice', density: 'compact' })}`;
+// The line under a register field: its rule, or the server's sentence about it.
+const FIELD_HINT = 'mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400';
+const FIELD_HINT_ERROR = 'mt-1 text-[13px] leading-snug text-red-600 dark:text-red-400';
+// The password step's notice after a reset, green and durable.
+const DONE_NOTE = 'rounded-2xl bg-green-50 px-4 py-3 text-[14px] leading-snug text-green-800 dark:bg-green-950/40 dark:text-green-300';
 
 /**
  * One of an invite's links (`inviteWays`). "Sign up with email instead" and
@@ -912,6 +958,12 @@ export type SignInSheetProps = {
    */
   onAccount?: (account: AccountStep) => void;
   /**
+   * Opened by one of the sign-in addresses (#login, #signup, #register,
+   * #reset-password, ./sign-in-routes.ts): the step it opens on, and what it
+   * carries there (an address, a reset token, an activation code, a notice).
+   */
+  route?: SheetOpening | null;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made). Answers
@@ -937,10 +989,24 @@ function rememberInviteJoin() {
   } catch { /* asked to join again, as before */ }
 }
 
+/**
+ * Off a reset link's address (#reset-password/<token>) onto #login, without
+ * a history entry: once the link is spent, or left, a reload or Back must
+ * not come round to it. The query is kept (App._rootUrl, through
+ * AuthScreens.deepLinkUrl).
+ */
+function leaveResetAddress() {
+  try {
+    if (!/^#reset-password(?:\/|$)/.test(location.hash)) return;
+    const screens = legacy().AuthScreens as { deepLinkUrl?: (target: string) => string } | undefined;
+    history.replaceState(null, '', screens?.deepLinkUrl?.('#login') || '/#login');
+  } catch { /* the step changes all the same */ }
+}
+
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, phoneLink = false, askName = true, from = 'signin',
   returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, linkUsed = false, onAccount,
-  beforeFinish, onClose, primaryClass,
+  route = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const t = useMessages('auth');
   // Under one of the frame's looks three steps are laid out as the kit's
@@ -949,7 +1015,7 @@ export function SignInSheet({
   const kit = isFrameSkin(useLiveSkin());
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
-  const [step, setStep] = useState<Step>(firstStep);
+  const [step, setStep] = useState<Step>(route ? route.step : firstStep);
   // The step it opened on (`opensOn`), decided as it opens; until then, and
   // in the prerender, `firstStep`.
   const [openedOn, setOpenedOn] = useState<OpeningStep | null>(null);
@@ -1044,12 +1110,38 @@ export function SignInSheet({
   // The account step's handle as typed, and what the live check says of it (#5255).
   const [handleDraft, setHandleDraft] = useState('');
   const [handleCheck, setHandleCheck] = useState<UsernameCheck>({ state: 'idle' });
+  // The password step's notice once a reset link was redeemed (`reset`), or
+  // an address's screenshot state said so.
+  const [passwordChanged, setPasswordChanged] = useState(false);
+  // The code made an account that will wait for a spot (the verify answer's
+  // `waitlisted`): the account step says so before the waiting room does.
+  const [waitlisted, setWaitlisted] = useState(false);
+  // The reset step's two fields, and the register step's three, in order for Return.
+  const newPasswordField = useRef<HTMLInputElement>(null);
+  const confirmPasswordField = useRef<HTMLInputElement>(null);
+  const resetStepFields = [newPasswordField, confirmPasswordField];
+  const regCodeField = useRef<HTMLInputElement>(null);
+  const regUsernameField = useRef<HTMLInputElement>(null);
+  const regPasswordField = useRef<HTMLInputElement>(null);
+  const registerStepFields = [regCodeField, regUsernameField, regPasswordField];
+  // A refusal the server pinned to one register field, said under it.
+  const [regFieldError, setRegFieldError] = useState<{ field: RegisterField; message: string } | null>(null);
+  // Inside the Homeroom app: the wallet, asked once the password or reset
+  // step first shows (`probeWallet`), and whether it may sign in.
+  const [wallet, setWallet] = useState<WalletProbe | null>(null);
+  const [walletFast, setWalletFast] = useState(false);
+  const walletAsked = useRef(false);
+  const walletNewPassword = useRef<HTMLInputElement>(null);
+  const walletConfirmPassword = useRef<HTMLInputElement>(null);
+  // Offline, as the shell's probe says (window.Offline): the note at the top.
+  const [offline, setOffline] = useState(false);
+  const routeSeen = useRef<SheetOpening | null>(null);
 
   useEffect(() => {
     // Closed, the link is not "seen" any more: opened again (Get started
     // again, Evan, 10 Oct 2026), it signs in from the email again rather
     // than falling back to a code.
-    if (!open) { setShown(false); setLeaving(false); setClosing(false); releaseSeen.current = null; return undefined; }
+    if (!open) { setShown(false); setLeaving(false); setClosing(false); releaseSeen.current = null; routeSeen.current = null; return undefined; }
     const raf = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(raf);
   }, [open]);
@@ -1076,19 +1168,28 @@ export function SignInSheet({
   // decided here, as it opens, and never in the first render: an invite's
   // Join opens on the phone on a touch screen and on the email elsewhere
   // (`opensOn`), and the prerendered document is the same on both.
+  // An address (`route`) opens it at its own step: the password step saying
+  // what the address's state says, or a reset link that cannot be one saying
+  // so before anything is typed.
   useEffect(() => {
     if (!open) return;
     const opening = opensOn({ ...firstStepRef.current, touch: touchScreen() });
     setOpenedOn(opening);
     setSignIn(false);
-    setStep(resume === 'username' ? 'username' : opening);
+    setStep(resume === 'username' ? 'username' : route ? route.step : opening);
     setWelcome(null);
     setLinkRefused(linkUsedRef.current);
     if (resume === 'username') setUsernameVia('oauth');
-    setError(resumeError(resume));
+    setPasswordChanged(route?.notice === 'password-changed');
+    setWaitlisted(false);
+    setResetSent(route?.resetSent === true);
+    setRegFieldError(null);
+    setError(resumeError(resume)
+      || (route?.notice === 'password-account' ? translate('auth:signInSheet.code.passwordAccount') : null)
+      || (route?.step === 'reset' && !RESET_TOKEN_RE.test(route.token || '') ? translate('auth:signInSheet.reset.expired') : null));
     setDetails(null);
     setBusy(false);
-  }, [open, resume]);
+  }, [open, resume, route]);
 
   // The step's first field, and the caret in it when that raises no keys
   // under a moving sheet (`mayFocusByCode`). In the commit, so a hop from a
@@ -1108,6 +1209,9 @@ export function SignInSheet({
     }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'forgot' ? resetField
+      : step === 'reset' ? newPasswordField
+      // An activation code the address carried: the username is next.
+      : step === 'register' ? (regCodeField.current?.value ? regUsernameField : regCodeField)
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
@@ -1123,6 +1227,57 @@ export function SignInSheet({
     if (!open || step !== 'choose') return;
     setHasAddress(!!firstField.current?.value.trim());
   }, [open, step]);
+
+  // #signup/<address> (`route.email`): the address filled in and its code
+  // sent, once per tab (`addressArrival`), or the code step for a code this
+  // tab already sent, with what is left of the wait. The `signup-code-sent`
+  // screenshot state (`codeSent`) paints that code step and sends nothing.
+  useEffect(() => {
+    if (!open || !route?.email || routeSeen.current === route) return;
+    routeSeen.current = route;
+    const address = route.email;
+    setEmail(address);
+    if (firstField.current) firstField.current.value = address;
+    const arrival: ReleaseArrival = route.codeSent
+      ? { address, send: false, cooldownUntil: Date.now() + RESEND_COOLDOWN_MS }
+      : addressArrival(address);
+    if (arrival.send) { void requestCode(address); return; }
+    setStep('code');
+    setCooldownUntil(arrival.cooldownUntil);
+    setNow(Date.now());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- requestCode is declared below, and never changes
+  }, [open, route]);
+
+  // Inside the Homeroom app, the wallet is asked once, when a step it can
+  // help with first shows: a linked genesis wallet signs in with a
+  // signature, and any linked wallet can choose a new password with one.
+  useEffect(() => {
+    if (!open || walletAsked.current || (step !== 'password' && step !== 'forgot')) return undefined;
+    walletAsked.current = true;
+    let live = true;
+    void probeWallet().then((found) => {
+      if (!live || !found) return;
+      setWallet(found);
+      setWalletFast(!!found.challenge);
+    });
+    return () => { live = false; };
+  }, [open, step]);
+
+  // Offline (#1021): the note at the top, and back online the "you're
+  // offline" error goes, while a real refusal stays.
+  useEffect(() => {
+    if (!open) return undefined;
+    const read = () => { try { return !!legacy().Offline?.isOffline(); } catch { return false; } };
+    setOffline(read());
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ offline?: boolean }>).detail;
+      const now = typeof detail?.offline === 'boolean' ? detail.offline : read();
+      setOffline(now);
+      if (!now) setError((current) => (current && current === offlineSignInText() ? null : current));
+    };
+    window.addEventListener('usernode:offline-change', onChange);
+    return () => window.removeEventListener('usernode:offline-change', onChange);
+  }, [open]);
 
   // The account step starts from the handle its field arrives holding.
   useEffect(() => {
@@ -1370,6 +1525,7 @@ export function SignInSheet({
       }
       setNeedsUsername(data.needsUsername === true);
       setSuggestedUsername(suggested);
+      setWaitlisted(data.waitlisted === true);
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -1558,6 +1714,93 @@ export function SignInSheet({
     }
   }, []);
 
+  // The reset step: the emailed link redeemed with the new password. The
+  // token is single-use and the reset signed the account out everywhere on
+  // purpose, so the fields are cleared, the spent link leaves the address
+  // (and its history entry), and the password step says what happened.
+  const chooseNewPassword = useCallback(async () => {
+    setError(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await confirmPasswordReset(
+        route?.token ?? null,
+        newPasswordField.current?.value || '',
+        confirmPasswordField.current?.value || '',
+      );
+      if (!result.ok) { setError(result.error); return; }
+      if (newPasswordField.current) newPasswordField.current.value = '';
+      if (confirmPasswordField.current) confirmPasswordField.current.value = '';
+      leaveResetAddress();
+      setStep('password');
+      setPasswordChanged(true);
+    } finally {
+      setBusy(false);
+    }
+  }, [route]);
+
+  // The register step: an activation code, a username and a password. A
+  // refusal the server pins to the username or the password is said under it.
+  const registerAccount = useCallback(async () => {
+    setError(null);
+    setDetails(null);
+    setRegFieldError(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await registerWithCode(
+        regCodeField.current?.value || '',
+        regUsernameField.current?.value || '',
+        regPasswordField.current?.value || '',
+      );
+      if (!result.ok) {
+        if (result.field) {
+          setRegFieldError({ field: result.field, message: result.error });
+          (result.field === 'username' ? regUsernameField : regPasswordField).current?.focus({ preventScroll: true });
+          return;
+        }
+        setError(result.error);
+        setDetails(result.details);
+        return;
+      }
+      await finish('new');
+    } finally {
+      setBusy(false);
+    }
+  }, [finish]);
+
+  // Inside the Homeroom app: in with the linked wallet's signature.
+  const signInWithWallet = useCallback(async () => {
+    if (!wallet) return;
+    setError(null);
+    setDetails(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await walletSignIn(wallet);
+      if (!result.ok) { setError(result.error); return; }
+      await finish('existing');
+    } finally {
+      setBusy(false);
+    }
+  }, [wallet, finish]);
+
+  // …and a new password chosen with it, which signs in too.
+  const resetWithWallet = useCallback(async () => {
+    if (!wallet) return;
+    setError(null);
+    setDetails(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await walletReset(wallet, walletNewPassword.current?.value || '', walletConfirmPassword.current?.value || '');
+      if (!result.ok) { setError(result.error); return; }
+      await finish('existing');
+    } finally {
+      setBusy(false);
+    }
+  }, [wallet, finish]);
+
   // Off to the provider. The page leaves, so busy stays on until it does.
   // Inside the app it stays: the app's own sheet answers in place.
   const continueWith = useCallback(async (provider: SignInProvider) => {
@@ -1641,7 +1884,7 @@ export function SignInSheet({
       const typed = (identifierField.current?.value || '').trim();
       if (typed.includes('@')) setEmail(typed);
     }
-    setError(null); setDetails(null); setResetSent(false); setStep(next);
+    setError(null); setDetails(null); setResetSent(false); setPasswordChanged(false); setRegFieldError(null); setStep(next);
   };
   // An invite's links (`inviteWays`), each to its step and to signing in or not.
   const takeWay = (way: InviteWay) => {
@@ -1675,6 +1918,31 @@ export function SignInSheet({
     </button>
   ));
 
+  // What the password step shows over its fields: the password changed (a
+  // reset link just redeemed), and inside the app the wallet's way in.
+  const passwordFirst = (
+    <>
+      {passwordChanged ? (
+        <div role="status" aria-live="polite" data-sign-in-sheet-reset-done="" className={DONE_NOTE}>
+          <strong className="block font-semibold">{t('auth:signInSheet.passwordChanged.title')}</strong>
+          <span className="mt-1 block">{t('auth:signInSheet.passwordChanged.body')}</span>
+        </div>
+      ) : null}
+      {walletFast ? (
+        <>
+          <button type="button" data-sign-in-sheet-wallet="" disabled={busy} className={`${primaryClass} flex items-center justify-center gap-2 disabled:opacity-60`} onClick={() => { void signInWithWallet(); }}>
+            <KeyIcon className="h-5 w-5" aria-hidden="true" />{t('auth:signInSheet.wallet.submit')}
+          </button>
+          <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+            <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            {t('auth:signInSheet.or')}
+            <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+          </div>
+        </>
+      ) : null}
+    </>
+  );
+
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'link' ? t('auth:signInSheet.link.title')
@@ -1682,6 +1950,8 @@ export function SignInSheet({
       : step === 'phone-code' ? t('auth:signInSheet.phoneCode.title')
         : step === 'password' ? (methodSwitch ? title : t('auth:signInSheet.password.title'))
           : step === 'forgot' ? t('auth:signInSheet.forgot.title')
+          : step === 'reset' ? t('auth:signInSheet.reset.title')
+          : step === 'register' ? t('auth:signInSheet.register.title')
           : step === 'username' ? t('auth:signInSheet.username.title')
             : needsUsername && !welcome ? t('auth:signInSheet.account.titleUsername')
               : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
@@ -1706,6 +1976,10 @@ export function SignInSheet({
           ? (methodSwitch ? '' : t('auth:signInSheet.password.lead'))
           : step === 'forgot'
           ? (resetSent ? '' : t('auth:signInSheet.forgot.lead'))
+          : step === 'reset'
+          ? t('auth:signInSheet.reset.lead')
+          : step === 'register'
+          ? t('auth:signInSheet.register.lead')
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
             : (needsUsername ? t('auth:signInSheet.account.leadPublic') : '');
@@ -1756,6 +2030,12 @@ export function SignInSheet({
             <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
           </button>
         ) : null}
+        {/* The reset link's way back: to the password step, the link left (`leaveResetAddress`). */}
+        {step === 'reset' ? (
+          <button type="button" data-sign-in-sheet-reset-back="" className={`${QUIET} mt-2 -ms-1 flex items-center gap-0.5`} onClick={() => { leaveResetAddress(); toStep('password'); }}>
+            <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.reset.back')}
+          </button>
+        ) : null}
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
@@ -1768,6 +2048,14 @@ export function SignInSheet({
           </button>
         </div>
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
+        {/* Offline (#1021): every step is a round trip, so say why none can work. Drawn only while the shell's probe says so, so nothing of it is in a first render. */}
+        {offline ? (
+          <div data-sign-in-sheet-offline="" className={OFFLINE_NOTE}>
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">{t('auth:signInSheet.offline.title')}</p>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{t('auth:signInSheet.offline.body')}</p>
+            <button type="button" data-offline-retry="" className="mt-2 text-sm font-medium text-amber-800 underline underline-offset-2 dark:text-amber-300">{t('auth:signInSheet.offline.retry')}</button>
+          </div>
+        ) : null}
         {/* Under a look four steps are laid out as the kit's sheet (kitSteps, after this render); any other step, and every step under the standard look, is what follows. */}
         {kitStep ? kitSteps() : (<>
         {methodSwitch ? (
@@ -1916,6 +2204,7 @@ export function SignInSheet({
 
         {step === 'password' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void signInWithPassword(); }}>
+            {passwordFirst}
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-identifier" className={LABEL}>{t('auth:signInSheet.password.identifierLabel')}</label>
@@ -1942,6 +2231,24 @@ export function SignInSheet({
           </form>
         ) : null}
 
+        {/* Inside the app, a linked wallet chooses the new password with a signature, ahead of the emailed link. */}
+        {step === 'forgot' && wallet?.linked ? (
+          <form data-sign-in-sheet-wallet-reset="" className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void resetWithWallet(); }}>
+            <p className="text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.wallet.resetLead')}</p>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-wallet-new-password" className={LABEL}>{t('auth:signInSheet.reset.passwordLabel')}</label>
+                <PasswordInput ref={walletNewPassword} id="sign-in-sheet-wallet-new-password" autoComplete="new-password" enterKeyHint="next" box="card" hint="dim" ring="bare" />
+              </div>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-wallet-confirm-password" className={LABEL}>{t('auth:signInSheet.reset.confirmLabel')}</label>
+                <PasswordInput ref={walletConfirmPassword} id="sign-in-sheet-wallet-confirm-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{t('auth:signInSheet.wallet.resetSubmit')}</button>
+          </form>
+        ) : null}
+
         {step === 'forgot' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void sendResetLink(); }}>
             <div className={FIELD_GROUP}>
@@ -1960,6 +2267,85 @@ export function SignInSheet({
             {resetSent ? (
               <p data-sign-in-sheet-reset-support="" className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.forgot.support')}</p>
             ) : null}
+          </form>
+        ) : null}
+
+        {/* Where an emailed reset link lands (#reset-password/<token>): the new password twice. */}
+        {step === 'reset' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void chooseNewPassword(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-new-password" className={LABEL}>{t('auth:signInSheet.reset.passwordLabel')}</label>
+                <PasswordInput ref={newPasswordField} id="sign-in-sheet-new-password" name="new-password" required autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(resetStepFields, 0)} box="card" hint="dim" ring="bare" />
+              </div>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-confirm-password" className={LABEL}>{t('auth:signInSheet.reset.confirmLabel')}</label>
+                <PasswordInput ref={confirmPasswordField} id="sign-in-sheet-confirm-password" name="confirm-password" required autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.reset.saving') : t('auth:signInSheet.reset.submit')}</button>
+          </form>
+        ) : null}
+
+        {/* An activation code (#register[/<code>]): the code, then the account's username and password, each with its rule under it. */}
+        {step === 'register' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void registerAccount(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-reg-code" className={LABEL}>{t('auth:signInSheet.register.codeLabel')}</label>
+                <input ref={regCodeField} id="sign-in-sheet-reg-code" name="code" type="text" required autoComplete="off" enterKeyHint="next" defaultValue={route?.code ?? ''} onKeyDown={returnWalks(registerStepFields, 0)} className={`${INPUT} font-mono`} {...HANDLE_FIELD} />
+              </div>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-reg-username" className={LABEL}>{t('auth:signInSheet.register.usernameLabel')}</label>
+                <input
+                  ref={regUsernameField}
+                  id="sign-in-sheet-reg-username"
+                  name="username"
+                  type="text"
+                  required
+                  autoComplete="username"
+                  enterKeyHint="next"
+                  maxLength={32}
+                  aria-describedby="sign-in-sheet-reg-username-public sign-in-sheet-reg-username-hint"
+                  aria-invalid={regFieldError?.field === 'username' ? true : undefined}
+                  onInput={() => setRegFieldError((f) => (f?.field === 'username' ? null : f))}
+                  onKeyDown={returnWalks(registerStepFields, 1)}
+                  className={INPUT}
+                  {...HANDLE_FIELD}
+                />
+                {/* Who sees the name, beside where it is chosen (#3575), then the rule, which the server's refusal takes the place of. */}
+                <p id="sign-in-sheet-reg-username-public" className={FIELD_HINT}>{t('auth:signInSheet.register.usernamePublic')}</p>
+                <p id="sign-in-sheet-reg-username-hint" className={regFieldError?.field === 'username' ? FIELD_HINT_ERROR : FIELD_HINT}>
+                  {regFieldError?.field === 'username' ? regFieldError.message : t('auth:signInSheet.register.usernameRule')}
+                </p>
+              </div>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-reg-password" className={LABEL}>{t('auth:signInSheet.register.passwordLabel')}</label>
+                <PasswordInput
+                  ref={regPasswordField}
+                  id="sign-in-sheet-reg-password"
+                  name="password"
+                  required
+                  autoComplete="new-password"
+                  enterKeyHint="go"
+                  aria-describedby="sign-in-sheet-reg-password-hint"
+                  aria-invalid={regFieldError?.field === 'password' ? true : undefined}
+                  onInput={() => setRegFieldError((f) => (f?.field === 'password' ? null : f))}
+                  box="card"
+                  hint="dim"
+                  ring="bare"
+                />
+                <p id="sign-in-sheet-reg-password-hint" className={regFieldError?.field === 'password' ? FIELD_HINT_ERROR : FIELD_HINT}>
+                  {regFieldError?.field === 'password' ? regFieldError.message : t('auth:signInSheet.register.passwordRule')}
+                </p>
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.register.registering') : t('auth:signInSheet.register.submit')}</button>
+            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+              <RichMessage id="auth:signInSheet.register.haveAccount" components={[
+              <button type="button" data-sign-in-sheet-to-password="" onClick={() => toStep('password')} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
+              ]} />
+            </p>
           </form>
         ) : null}
 
@@ -2007,6 +2393,10 @@ export function SignInSheet({
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : needsUsername ? t('auth:signInSheet.account.create') : t('auth:signInSheet.account.submit')}</button>
             {/* No password here (#4891): how they sign in, and where a password is added, under the button (#5255) so the field's own line is free for what is wrong with it. */}
             <p data-sign-in-sheet-code-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
+            {/* QA 2026-09-24 Q12: a new account that will wait hears it here, before the waiting room. */}
+            {waitlisted ? (
+              <p data-sign-in-sheet-waitlist-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.waitlistNote')}</p>
+            ) : null}
           </form>
         ) : null}
 
@@ -2195,6 +2585,7 @@ export function SignInSheet({
 
         {step === 'password' ? (
           <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void signInWithPassword(); }}>
+            {passwordFirst}
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-identifier" className={LABEL}>{t('auth:signInSheet.password.identifierLabel')}</label>

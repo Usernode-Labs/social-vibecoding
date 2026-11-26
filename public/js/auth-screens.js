@@ -11,10 +11,13 @@
 //     the old navigate-to-'/' round trip;
 //   - one document for the service worker's offline fallback.
 //
-// Hash routes: #landing, #login, #signup (login screen with the
-// email-code sub-view open — otp/verify is the account-creation path),
-// #register[/<code>], #waiting, #waitlist?confirm=1 (check your waitlist
-// status; a bare #waitlist opens Continue instead, #5261). app.js's
+// Hash routes: #landing, #waiting, #waitlist?confirm=1 (check your waitlist
+// status; a bare #waitlist opens Continue instead, #5261), #more/<token>,
+// and the sign-in addresses: #login[/forgot], #signup[/<address>],
+// #reset-password/<token> and #register[/<code>]. Signing in is the
+// landing's sign-in sheet, so those open the LANDING, which opens the sheet
+// at the step each is for (frontend/src/features/auth/sign-in-routes.ts);
+// the full-page sign-in and register screens are gone. app.js's
 // restoreFromHash owns the routing and calls AuthScreens.show(); this
 // module owns the screens.
 //
@@ -25,11 +28,12 @@
 
   const SCREEN_IDS = {
     landing: 'auth-landing-screen',
-    login: 'auth-login-screen',
-    // Sub-view of the login screen. #signup/<address> carries a url-encoded
-    // email address from the waitlist-release email.
-    signup: 'auth-login-screen',
-    register: 'auth-register-screen',
+    // The sign-in addresses are the landing's, with the sign-in sheet open
+    // at their step (SIGN_IN_ROUTES below). #signup/<address> carries a
+    // url-encoded email address, #register/<code> an activation code.
+    login: 'auth-landing-screen',
+    signup: 'auth-landing-screen',
+    register: 'auth-landing-screen',
     waiting: 'auth-waiting-screen',
     // Check your waitlist status, #waitlist?confirm=1: an address that
     // joined (on the marketing site, or before #5261 here) asks for a code
@@ -41,19 +45,23 @@
     // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
     // token is the signup's capability from the join response / email.
     more: 'auth-more-screen',
-    // Emailed password-reset magic link, #reset-password/<token> — a
-    // sub-view of the login screen, like signup. The view itself is
-    // mounted on demand rather than prerendered (frozen-markup contract;
-    // see features/auth/login.tsx).
-    'reset-password': 'auth-login-screen',
+    // Emailed password-reset magic link, #reset-password/<token>: the
+    // sheet's new-password step.
+    'reset-password': 'auth-landing-screen',
   };
+
+  // The routes the landing answers with its sign-in sheet. show() keeps the
+  // route and its segment for the landing to take as it shows
+  // (takeSignInRoute in features/auth/sign-in-routes.ts).
+  const SIGN_IN_ROUTES = ['login', 'signup', 'register', 'reset-password'];
 
   // Drives push (deeper) vs pop (back toward landing) transition types.
   // landing → waitlist → more is a real chain now, so `more` sits a level
-  // below the stage-1 screen it is offered from.
+  // below the stage-1 screen it is offered from. The sign-in addresses are
+  // the landing, under its sheet.
   const DEPTH = {
-    landing: 0, login: 1, signup: 1, register: 1, waiting: 1, waitlist: 1,
-    more: 2, 'reset-password': 1,
+    landing: 0, login: 0, signup: 0, register: 0, waiting: 1, waitlist: 1,
+    more: 2, 'reset-password': 0,
   };
 
   const ROUTES = Object.keys(SCREEN_IDS);
@@ -152,6 +160,10 @@
     // landing to take as it shows (features/auth/landing.tsx), which opens
     // the sign-in sheet titled for where it leads. Read once.
     _deepLinkSignIn: '',
+    // A sign-in address being shown, `{ route, seg }`: kept by show() for the
+    // landing to take as it shows, which opens the sign-in sheet at the step
+    // the address is for (features/auth/sign-in-routes.ts). Read once.
+    _signInRoute: null,
     // The token of an invite link an account still waiting opened, kept by
     // showWaiting for the waiting room (features/auth/waiting.tsx).
     _waitingInvite: '',
@@ -369,23 +381,25 @@
       const sameScreen = prev && SCREEN_IDS[prev] === id;
 
       // Per-route side effects run even when the screen element is
-      // already up (e.g. login ↔ signup share one screen).
-      if (route === 'landing') AuthScreens._landingOnShow();
-      // seg is `forgot` on #login/forgot, the recovery view's own address
-      // (QA 2026-09-24 Q16), so Back from it lands on Sign in.
-      if (route === 'login') AuthScreens._loginOnShow(false, seg);
-      // seg is the url-encoded email address from a waitlist-release link
-      // (#signup/<address>); the login island prefills it and asks for a code.
-      if (route === 'signup') AuthScreens._loginOnShow(true, seg);
-      if (route === 'reset-password') AuthScreens._resetOnShow(seg);
-      if (route === 'register') AuthScreens._registerOnShow(seg);
+      // already up (e.g. #landing ↔ #login share one screen). A sign-in
+      // address is the landing with its sheet: the route is kept for the
+      // landing's on-show hook, which opens the sheet at its step. seg is
+      // `forgot` on #login/forgot, the address on #signup/<address>, the
+      // token on #reset-password/<token>, the code on #register/<code>.
+      const signIn = SIGN_IN_ROUTES.includes(route);
+      if (route === 'landing' || signIn) {
+        AuthScreens._signInRoute = signIn ? { route, seg: seg || null } : null;
+        AuthScreens._landingOnShow();
+      }
       if (route === 'waiting') AuthScreens._waitingOnShow();
       if (route === 'waitlist') AuthScreens._waitlistOnShow();
       if (route === 'more') AuthScreens._moreOnShow(seg);
       if (prev === 'waiting' && route !== 'waiting') AuthScreens._stopWaitingPoll();
       // Leaving the landing screen with an app still open: stop the
       // iframe and put the directory back, un-animated.
-      if (prev === 'landing' && route !== 'landing') AuthScreens._resetLandingViewer();
+      if (prev && SCREEN_IDS[prev] === SCREEN_IDS.landing && id !== SCREEN_IDS.landing) {
+        AuthScreens._resetLandingViewer();
+      }
 
       if (sameScreen || prev === route) {
         AuthScreens._current = route;
@@ -444,8 +458,6 @@
       if (AuthScreens._wired[id]) return;
       AuthScreens._wired[id] = true;
       if (id === 'auth-landing-screen') AuthScreens._wireLanding();
-      if (id === 'auth-login-screen') AuthScreens._wireLogin();
-      if (id === 'auth-register-screen') AuthScreens._wireRegister();
       if (id === 'auth-waiting-screen') AuthScreens._wireWaiting();
       if (id === 'auth-waitlist-screen') AuthScreens._wireWaitlist();
       if (id === 'auth-more-screen') AuthScreens._wireMore();
@@ -453,8 +465,8 @@
 
     // ── Reload-free login completion ─────────────────────────────────
     //
-    // Called after ANY successful credential exchange (password form,
-    // OTP set-password, wallet verify, activation-code register).
+    // Called after ANY successful credential exchange in the sign-in sheet
+    // (password, email code, Apple or Google, phone, wallet, activation code).
     // Confirm the session before navigating. Failure stays on the form and
     // returns a fixed diagnostic result to its React owner; retrying this
     // method never sends credentials or mints another session.
@@ -634,29 +646,13 @@
     _wireMore() {},
     _moreOnShow() {},
 
-    // ── Login (+ signup / OTP + recovery + wallet fast path) ─────────
+    // ── Signing in ───────────────────────────────────────────────────
     //
-    // #1080 chunk C: the login screen is a React component now
-    // (frontend/src/features/auth/login.tsx), and it owns all four views on
-    // that screen element — the password form, the #signup email-code
-    // sub-view, the forgot-password recovery sub-view and the
-    // #reset-password/<token> redeem view — plus the wallet fast path and
-    // the two runtime-built blocks _ensureResetUi used to inject. It patches
-    // the entry points below onto this object at hydration, before
-    // DOMContentLoaded and therefore before show() can call any of them.
-    _wireLogin() {},
-    _loginOnShow() {},
-    _showLoginBaseView() {},
-    _showOtpView() {},
-    _resetOnShow() {},
-    _walletDetect() {},
-
-    // ── Register (activation-code flow) ──────────────────────────────
-    //
-    // #1080 chunk C: React (frontend/src/features/auth/register.tsx). It
-    // patches the entry points below at hydration, before DOMContentLoaded.
-    _wireRegister() {},
-    _registerOnShow() {},
+    // The full-page sign-in and register screens (login.tsx, register.tsx)
+    // are gone. Every sign-in is the landing's sign-in sheet
+    // (frontend/src/features/auth/sign-in-sheet.tsx), and the addresses
+    // those screens had open it at their step: show() keeps the route in
+    // _signInRoute and runs the landing's on-show hook above.
 
     // ── Waiting room (platform-access gate) ──────────────────────────
     //
@@ -671,7 +667,7 @@
     _stopWaitingPoll() {},
   };
 
-  // Corner back links on the login/register screens → landing.
+  // Corner back links on the anonymous screens → landing.
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-auth-back]').forEach((a) => {
       a.addEventListener('click', (e) => {

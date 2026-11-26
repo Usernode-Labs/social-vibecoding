@@ -1827,7 +1827,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check opens `#profile?tab=changes` and reads the history column in the
   // profile, the other opens `#profile?tab=activity` and reads the activity
   // column there. Two routes no existing check opens. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 707: −2 (one sign-in: the sheet) the full-page sign-in and
+  // register screens are gone, and their addresses open the sign-in sheet at
+  // their step. Their twelve checks became ten on the sheet: the two
+  // signup-code-sent checks are one (the address and the held resend), and
+  // the four that drew the sign-in page's card, its pills and its Back disc
+  // became three: #login's step, #signup's and the reset link's. 707 leaves
+  // 173 slots.
+  checkCap.assertPinned(DAPP.tests.length, 707);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

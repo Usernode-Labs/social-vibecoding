@@ -63,11 +63,6 @@ test('the sign-in screens read their options when first shown, not on every page
   assert.match(hook, /if \(!enabled\) return undefined;/);
   assert.match(hook, /\}, \[enabled\]\);/, 'the read starts when the screen is shown');
 
-  const login = read('frontend/src/features/auth/login.tsx');
-  assert.ok(login.indexOf('const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.login);')
-    < login.indexOf('newAccountsWait(useWaitlistOptions(mounted))'), 'the sign-in screen');
-  assert.ok(login.indexOf('newAccountsWait(useWaitlistOptions(mounted))') > 0);
-
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.ok(landing.indexOf('const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.landing);')
     < landing.indexOf('const waitlistPayload = useWaitlistOptions(mounted);'), 'the landing');

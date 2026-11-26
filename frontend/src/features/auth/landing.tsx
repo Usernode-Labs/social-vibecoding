@@ -46,7 +46,7 @@ import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { isFrameSkin, useSkin } from '../../lib/skin';
-import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
   AUTH_SCREEN_IDS,
@@ -68,7 +68,14 @@ import {
 } from './shared';
 import { DeepLinkBackdrop, type DeepLinkPlace, GatePlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, onInviteLink, useInvitePreview } from './invite-card';
-import { type ReleaseAccount, releaseAccountFromToken } from './login';
+import {
+  type ReleaseAccount,
+  releaseAccountFromToken,
+  releaseTokenFromQuery,
+  type SheetOpening,
+  sheetOpening,
+  takeSignInRoute,
+} from './sign-in-routes';
 import {
   type AccountStep,
   type ReleaseSpend,
@@ -171,8 +178,8 @@ export function takeProviderResult(
  * stays at the FRONT of the class attribute: the prerendered markup is probed
  * for the literal `class="offline-only` (tests/offline-session-boot.test.js,
  * tests/pwa-shell-wiring.test.js) and the component appends `className` after
- * its variants. Spelled as a module constant for the same reason login.tsx
- * does; see the longer note there.
+ * its variants. Spelled as a module constant so the class attribute is one
+ * literal the extractor and those tests both read.
  */
 // `mx-4` is this screen's gutter, which the block needs now that it sits
 // inside the scroller's own unpadded wrapper rather than a padded column.
@@ -897,6 +904,28 @@ export function LandingScreen() {
   // signs in from the email again, while the account it started is not set
   // up yet (src/services/release-links.js), rather than asking for a code.
   const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
+  // One of the sign-in addresses (#login, #login/forgot, #signup[/<address>],
+  // #reset-password/<token>, #register[/<code>], ./sign-in-routes.ts): the
+  // sign-in sheet, open at the step the address is for, over this screen.
+  // Set as the screen shows (landingOnShow), from what AuthScreens.show()
+  // kept, and taken down by any other way here (a Back to #landing). With
+  // the story switched off it is still the sheet: there is no other sign-in.
+  const [routeSheet, setRouteSheet] = useState<{ opening: SheetOpening; releaseToken: string | null } | null>(null);
+  // Closed: the landing itself, under its own address, without a history
+  // entry, so Back does not open the sheet again. Shown through the router,
+  // so it knows the address is the landing's.
+  // Down with the screen: signed in (or anywhere else the router goes), the
+  // sheet is not left mounted under the shell, where its Escape would still
+  // close it and send the address back to #landing.
+  const landingVisible = useVisibility(AUTH_SCREEN_IDS.landing, false);
+  useEffect(() => { if (!landingVisible) setRouteSheet(null); }, [landingVisible]);
+  const closeRouteSheet = useCallback(() => {
+    setRouteSheet(null);
+    try {
+      history.replaceState(history.state, '', legacy().App?._rootUrl?.('#landing') ?? '/#landing');
+    } catch { /* the address stays the sheet's */ }
+    (legacy().AuthScreens?.show as undefined | ((route: string) => void))?.('landing');
+  }, []);
   // A shared link opened while signed out (#5264, ./deep-link-sign-in.tsx):
   // the address it was for (remembered for after the sign-in by the router)
   // and the place it names. Set as the screen shows (landingOnShow), from
@@ -1179,9 +1208,9 @@ export function LandingScreen() {
     setResume(result);
     setSheet(inviteTokenFrom(location.pathname) ? 'join' : 'start');
   }, []);
-  // The story switched off while a release link waited for it: no sheet to
-  // open, so the link goes where it always went, the sign-in screen, which
-  // takes the token from here (./login.tsx).
+  // The story switched off while a release link waited for it: no story to
+  // open it over, so the link goes to #signup, whose sheet takes the token
+  // from here (landingOnShow below).
   // Nothing was spent on load for it (`spendsOnLoad`), and "Signing you in…"
   // goes with the story.
   useEffect(() => {
@@ -1548,7 +1577,19 @@ export function LandingScreen() {
     // already set up gets the story once the check says so, and its link
     // still waits for Get started (the 10 Oct rule): only the sheet spends
     // it. An existing account's `?login=1` link opens Sign in, as before.
-    const link = takeReleaseLink();
+    // One of the sign-in addresses: the sheet at its step (`routeSheet`). A
+    // release link the story could not take waits for #signup's (the effect
+    // above hands it on), so it is not the story's here.
+    const signInRoute = takeSignInRoute();
+    const routeLink = signInRoute?.route === 'signup' && !signInRoute.seg ? takeReleaseLink() : null;
+    flushSync(() => {
+      setRouteSheet(signInRoute ? {
+        opening: sheetOpening(signInRoute.route, signInRoute.seg),
+        releaseToken: signInRoute.route === 'signup' && !signInRoute.seg ? releaseTokenFromQuery() || routeLink?.token || null : null,
+      } : null);
+      if (signInRoute) setSheet(null);
+    });
+    const link = signInRoute ? null : takeReleaseLink();
     if (link) {
       noteSignInBegun();
       flushSync(() => {
@@ -1562,7 +1603,7 @@ export function LandingScreen() {
     // is what joins now, so the story opens with it up. With the story
     // switched off there is no sheet, and the landing's own waitlist pill
     // is the way to join.
-    if (takeStartSheet() && !link) {
+    if (takeStartSheet() && !link && !signInRoute) {
       flushSync(() => { setResume(null); setSheet('start'); });
     }
     // A shared link opened while signed out (#5264): the sheet for the place
@@ -2494,9 +2535,30 @@ export function LandingScreen() {
           primaryClass={PRIMARY_PILL}
         />
       ) : null}
+      {/*
+          A sign-in address's sheet (`routeSheet`): open at its step, story
+          or no story. Signing in finishes as the full pages did, where the
+          shell's sign-in sends it (a `?return_to=` page included).
+      */}
+      {routeSheet ? (
+        <SignInSheet
+          open
+          title={routeSheet.opening.route === 'signup' ? t('auth:landing.sheet.continue') : t('auth:landing.sheet.signIn')}
+          providers={providers}
+          native={nativeSignIn}
+          phoneLink={phoneSignIn}
+          askName={false}
+          from={routeSheet.opening.route === 'signup' ? 'story' : 'signin'}
+          returnTo="/"
+          route={routeSheet.opening}
+          releaseToken={routeSheet.releaseToken}
+          onClose={closeRouteSheet}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
       {storyOn ? (
         <SignInSheet
-          open={!gate && !intent && (sheet === 'start' || sheet === 'signin')}
+          open={!gate && !intent && !routeSheet && (sheet === 'start' || sheet === 'signin')}
           title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : accessTitle ?? t('auth:landing.sheet.continue')}
           providers={providers}
           native={nativeSignIn}
