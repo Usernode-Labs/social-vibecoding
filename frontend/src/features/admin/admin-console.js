@@ -1137,52 +1137,37 @@ const AdminConsole = {
     catch { return false; }
   },
 
-  // The bar. Home, then a menu button per group (the group of the section on
-  // screen marked aria-current), then the environment and Search. A group's
-  // menu lists its sections; Overview is Home and sits in no menu.
+  // The dedicated Admin rail. The six main destinations mirror the reviewed
+  // dashboard; the collapsible groups retain a route to every existing tool.
   _topBarHtml() {
     const active = AdminConsole._section;
     const visible = AdminConsole._visibleSections();
-    const activeSection = visible.find((s) => s.key === active);
-    const activeGroup = activeSection && active !== 'overview' ? (activeSection.group || 'Other') : null;
-    const item = 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ';
-    const lit = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100';
-    const quiet = 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 hover:text-zinc-900 dark:hover:text-zinc-100';
-    const chevron = '<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>';
-    const home = visible.some((s) => s.key === 'overview')
-      ? `<button type="button" data-admin-section="overview" data-admin-topnav-home=""${active === 'overview' ? ' aria-current="page"' : ''}
-          class="${item}${active === 'overview' ? lit : quiet}">${AdminConsole.NAV_ICONS.overview}<span>Home</span></button>`
-      : '';
+    const primary = [
+      ['overview', 'Dashboard'], ['users', 'Users'], ['apps', 'Content'],
+      ['reports', 'Moderation'], ['analytics', 'Analytics'], ['settings', 'Settings'],
+    ].filter(([key]) => visible.some((s) => s.key === key));
+    const row = (key, label) => `<button type="button" data-admin-section="${key}"${active === key ? ' aria-current="page"' : ''}
+      class="admin-sidebar-row${active === key ? ' is-active' : ''}">${AdminConsole.NAV_ICONS[key] || ''}<span>${label}</span>${key === 'reports' ? '<span class="admin-sidebar-count" data-admin-moderation-count hidden></span>' : ''}</button>`;
+    const primaryRows = primary.map(([key, label]) => row(key, label)).join('');
     const groups = AdminConsole._groupedSections().map((g) => {
-      const items = g.items.filter((s) => s.key !== 'overview');
+      const items = g.items.filter((s) => s.key !== 'overview' && !primary.some(([key]) => key === s.key));
       if (!items.length) return '';
-      const isCurrent = g.name === activeGroup;
-      const menuId = AdminConsole._groupDomId('admin-topnav-menu', g.name);
-      const rows = items.map((s) => {
-        const on = s.key === active;
-        return `<button type="button" role="menuitem" tabindex="-1" data-admin-section="${s.key}"${on ? ' aria-current="page"' : ''}
-          class="flex items-center gap-3 w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none ${on ? lit : 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 focus:bg-zinc-100 dark:focus:bg-zinc-800/60'}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
-      }).join('');
-      return `<div class="relative" data-admin-topnav-wrap="${AdminConsole.esc(g.name)}">
-        <button type="button" data-admin-topnav-group="${AdminConsole.esc(g.name)}"
-          aria-haspopup="menu" aria-expanded="false" aria-controls="${menuId}"${isCurrent ? ' aria-current="true"' : ''}
-          class="${item}${isCurrent ? lit : quiet}"><span>${AdminConsole.esc(g.name)}</span>${chevron}</button>
-        <div id="${menuId}" role="menu" aria-label="${AdminConsole.esc(g.name)}" data-admin-topnav-menu="${AdminConsole.esc(g.name)}"
-          class="hidden absolute start-0 top-full z-30 mt-2 w-72 max-h-[70vh] overflow-y-auto rounded-2xl bg-white dark:bg-zinc-900 p-2 shadow-xl ring-1 ring-zinc-200 dark:ring-zinc-800">${rows}</div>
-      </div>`;
+      const collapsed = AdminConsole._isGroupCollapsed(g.name);
+      const domId = AdminConsole._groupDomId('admin-sidebar-group', g.name);
+      return `<section class="admin-sidebar-group">${AdminConsole._groupToggleHtml(g.name, domId, collapsed, 'admin-sidebar-group-toggle')}
+        <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}" class="${collapsed ? 'hidden' : ''}">${items.map((s) => row(s.key, AdminConsole.esc(s.label))).join('')}</div></section>`;
     }).join('');
     const keys = AdminConsole._isMac() ? '⌘K' : 'Ctrl K';
-    return `<nav data-admin-topnav="" aria-label="Admin sections" class="${AdminUI.card} flex flex-wrap items-center gap-1 p-2">
-      ${home}${groups}
-      <div class="ms-auto flex items-center gap-3 ps-2">
-        ${AdminConsole._envLabelHtml()}
-        <button type="button" data-admin-search-open="" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K"
-          class="${item}${quiet}"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg><span>Search</span><kbd class="${AdminUI.kbd}">${keys}</kbd></button>
-      </div>
+    return `<nav data-admin-topnav="" aria-label="Admin sections" class="admin-sidebar ${AdminUI.card}">
+      <div class="admin-sidebar-heading"><h1>Admin</h1><p>Platform workspace</p></div>
+      <div class="admin-sidebar-primary">${primaryRows}</div>
+      <div class="admin-sidebar-all-label">All tools</div>${groups}
+      <div class="admin-sidebar-tools">${AdminConsole._envLabelHtml()}<button type="button" data-admin-search-open="" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K" class="admin-sidebar-search">Search tools <kbd class="${AdminUI.kbd}">${keys}</kbd></button>
+      <a href="#home" class="admin-sidebar-view-site">View site ↗</a></div>
     </nav>`;
   },
 
-  // The strip under the bar: Home, then a tab per opened section, oldest
+  // The strip above the content: Home, then a tab per opened section, oldest
   // first. Tabs WRAP onto another line rather than scroll sideways: nothing
   // in the console scrolls horizontally (#860), and a long label truncates.
   _tabStripHtml() {
@@ -1482,7 +1467,7 @@ const AdminConsole = {
     if (sideHost) {
       // A repaint replaces the bar, so a menu left open goes with it.
       AdminConsole._closeTopMenu(false);
-      sideHost.innerHTML = AdminConsole._topBarHtml() + AdminConsole._tabStripHtml();
+      sideHost.innerHTML = AdminConsole._topBarHtml();
       // Scoped to the bar, where the old whole-root wire was scoped to a
       // subtree this function had just emptied. It has to be: #admin-root is
       // no longer wiped here, so wiring the whole root would ALSO re-bind the
@@ -1491,7 +1476,14 @@ const AdminConsole = {
       // producers wire their own output — _renderMobileMenu right after its
       // innerHTML write, and each section module for its own controls.
       AdminConsole._wireSectionButtons(sideHost);
+      AdminConsole._wireGroupToggles(sideHost);
       AdminConsole._wireTopBar(sideHost);
+    }
+    const tabHost = document.getElementById('admin-open-tabs');
+    if (tabHost) {
+      tabHost.innerHTML = AdminConsole._tabStripHtml();
+      AdminConsole._wireSectionButtons(tabHost);
+      AdminConsole._wireTopBar(tabHost);
     }
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an

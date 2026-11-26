@@ -125,57 +125,37 @@ test('search offers only what it is given: the viewer\'s visible sections', () =
 
 // ── Home ────────────────────────────────────────────────────────────────
 
-test('the home sentence counts what needs a person', () => {
-  assert.equal(ws.needsYouSentence(null), null);
-  assert.equal(ws.needsYouSentence({ stuckApps: [], orphanWorkers: [] }), 'Nothing needs you right now');
-  assert.equal(ws.needsYouSentence({ stuckApps: [{}], orphanWorkers: [] }), '1 thing needs you');
-  assert.equal(ws.needsYouSentence({ stuckApps: [{}], orphanWorkers: [{}] }), '2 things need you');
-});
-
-test('Pinned is the six most used sections, only those the viewer can open', () => {
-  assert.deepEqual([...ws.PINNED_KEYS], ['support', 'users', 'reports', 'status', 'model-costs', 'mail']);
-  assert.deepEqual(ws.pinnedSections(SECTION_KEYS).map((s) => s.key), [...ws.PINNED_KEYS]);
-  const publicOnly = SECTION_KEYS.filter((s) => ['status', 'node'].includes(s.key));
-  assert.deepEqual(ws.pinnedSections(publicOnly).map((s) => s.key), ['status']);
-});
-
-test('the home page keeps the ids declared checks select, and goes through the chassis', () => {
+test('the dashboard uses live analytics and moderation data, and keeps the legacy operations IDs', () => {
   for (const id of ['admin-overview-stuck', 'admin-overview-llm', 'admin-overview-orphan', 'admin-refresh-overview']) {
     assert.ok(overviewTsx.includes(`id="${id}"`), `#${id} is still rendered`);
   }
-  assert.match(overviewTsx, />Admin home</);
-  assert.match(overviewTsx, /needsYouSentence\(data\)/, 'the sentence comes from /api/admin/overview');
-  assert.match(overviewTsx, /pinnedSections\(visible\)/);
-  assert.match(overviewTsx, /_visibleSections\?\.\(\)/, 'only the viewer\'s sections');
-  assert.match(overviewTsx, /_groupedSections\?\.\(\)/, 'All sections is grouped as the bar is');
-  assert.match(overviewTsx, /AdminConsole\?\.goTo\?\.\(section\.key\)/, 'a card navigates through the chassis');
-  assert.match(overviewTsx, /data-admin-section=\{section\.key\}/);
-  assert.match(overviewTsx, /NAV_ICONS\?\.\[section\.key\]/, 'the glyph is the chassis\'s own static icon');
-  assert.doesNotMatch(overviewTsx, /<a\s/, 'no anchors: nothing a server sent becomes a link');
+  assert.match(overviewTsx, /api\/admin\/analytics\/overview/);
+  assert.match(overviewTsx, /api\/admin\/moderation\?status=new/);
+  assert.match(overviewTsx, />Admin Dashboard</);
+  assert.match(overviewTsx, /admin-quick-actions/);
   // A phone's level 1 keeps the tiles alone above the chassis's own menu.
   assert.match(overviewTsx, /compact=\{el\.id === 'admin-mobile-overview'\}/);
-  assert.match(overviewTsx, /if \(compact\) return ops;/);
+  assert.match(overviewTsx, /if \(compact\) return <div className="admin-mobile-dashboard">/);
 });
 
 // ── The chassis ─────────────────────────────────────────────────────────
 
-test('the bar and the strip are drawn into the desktop host and wired from it', () => {
+test('the sidebar and tabs are drawn into their desktop hosts and wired from them', () => {
   const shell = method(consoleJs, '  _renderShell() {');
-  assert.match(shell, /sideHost\.innerHTML = AdminConsole\._topBarHtml\(\) \+ AdminConsole\._tabStripHtml\(\);/);
+  assert.match(shell, /sideHost\.innerHTML = AdminConsole\._topBarHtml\(\);/);
+  assert.match(shell, /tabHost\.innerHTML = AdminConsole\._tabStripHtml\(\);/);
   assert.match(shell, /_wireSectionButtons\(sideHost\)/, 'every section button routes through the chassis');
   assert.match(shell, /_wireTopBar\(sideHost\)/);
-  assert.match(islandTsx, /<div\s+id="admin-nav-desktop"\s+className="hidden md:block shrink-0"\s*>\s*<\/div>/,
+  assert.match(islandTsx, /<div\s+id="admin-nav-desktop"\s+className="hidden md:block min-w-0"\s*>\s*<\/div>/,
     'the host still ships empty, and only from md up');
-  assert.match(islandTsx, /md:flex md:flex-col md:gap-8/, 'stacked, not side by side');
+  assert.match(islandTsx, /md:grid md:grid-cols-\[236px_minmax\(0,1fr\)\]/, 'the console uses its own sidebar beside the content');
 });
 
-test('the bar: Home, a menu per group with the current one marked, Search and the environment', () => {
+test('the sidebar has the reference destinations, grouped tools, Search and environment', () => {
   const bar = method(consoleJs, '  _topBarHtml() {');
-  assert.match(bar, /data-admin-section="overview" data-admin-topnav-home=""/);
-  assert.match(bar, /data-admin-topnav-group="\$\{AdminConsole\.esc\(g\.name\)\}"/);
-  assert.match(bar, /aria-haspopup="menu" aria-expanded="false" aria-controls="\$\{menuId\}"/);
-  assert.match(bar, /isCurrent \? ' aria-current="true"' : ''/);
-  assert.match(bar, /role="menuitem" tabindex="-1" data-admin-section="\$\{s\.key\}"/);
+  for (const label of ['Dashboard', 'Users', 'Content', 'Moderation', 'Analytics', 'Settings']) assert.ok(bar.includes(label));
+  assert.match(bar, /admin-sidebar-group-toggle/);
+  assert.match(bar, /data-admin-section="\$\{key\}"/);
   assert.match(bar, /data-admin-search-open=""/);
   assert.match(bar, /_envLabelHtml\(\)/);
   assert.match(bar, /_groupedSections\(\)/, 'grouped by the helper the phone menu uses');
@@ -252,14 +232,12 @@ test('the environment label reads /api/version\'s env and hides when unknown', (
   assert.match(label, /class="hidden"/);
 });
 
-test('the declared checks pin the bar and the tabs instead of the sidebar', () => {
+test('the declared checks pin the dashboard and the new sidebar', () => {
   const tests = dapp.tests || [];
-  const home = tests.find((t) => t.path === '/#admin' && /data-admin-topnav-home/.test(t.expectSelector || ''));
-  assert.ok(home, 'a check on /#admin selects the bar with Home lit');
-  assert.match(home.expectSelector, /\[data-admin-search-open\]/);
-  assert.match(home.expectSelector, /\[data-admin-tab="overview"\]/);
-  const users = tests.find((t) => t.path === '/#admin/users' && /data-admin-topnav-group="People"/.test(t.expectSelector || ''));
-  assert.ok(users, 'a check on /#admin/users marks People as the current group');
-  assert.match(users.expectSelector, /\[data-admin-topnav-group="People"\]\[aria-current="true"\]/);
-  assert.match(users.expectSelector, /\[data-admin-tab="users"\]\[aria-current="page"\]/);
+  const home = tests.find((t) => t.path === '/#admin' && /admin-sidebar-primary/.test(t.expectSelector || ''));
+  assert.ok(home, 'a check on /#admin selects Dashboard in the sidebar');
+  assert.match(home.expectText, /Admin Dashboard/);
+  const users = tests.find((t) => t.path === '/#admin/users' && /data-admin-section="users"/.test(t.expectSelector || ''));
+  assert.ok(users, 'a check on /#admin/users marks Users current');
+  assert.match(users.expectSelector, /aria-current="page"/);
 });

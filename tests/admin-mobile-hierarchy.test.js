@@ -48,10 +48,10 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
   // disagreement they guard against is exactly as easy to introduce there.
   // #6456 stacked the top bar above the content (it was a sidebar beside
   // it); the switch is still at md.
-  assert.match(islandTsx, /id="admin-nav-desktop"\s+className="hidden md:block shrink-0"/,
-    'the desktop bar still switches at md — the constant must match it');
-  assert.match(islandTsx, /md:flex md:flex-col md:gap-8/,
-    'the shell stack still switches at md');
+  assert.match(islandTsx, /id="admin-nav-desktop"\s+className="hidden md:block min-w-0"/,
+    'the dedicated Admin rail still switches at md — the constant must match it');
+  assert.match(islandTsx, /md:grid md:grid-cols-/,
+    'the desktop sidebar and dashboard still switch at md');
 });
 
 test('level state and the viewport listener exist', () => {
