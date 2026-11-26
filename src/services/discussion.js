@@ -131,7 +131,57 @@ async function earlierForConversation(pool, conversationId, since, viewerId) {
  * `{ since, fold_at, earlier: null }`, so the card draws every message as a
  * post rather than the hub failing.
  */
-async function discussionSummary(pool, { appId = null, conversationId = null, viewerId = null } = {}) {
+// ── The Earlier post's own reactions (its anchor) ─────────────────────
+//
+// discussion_earlier_reactions (migrations/discussion-earlier-reactions.sql):
+// one set per project, the project whose Discussion it is. Read as the
+// chat reads a message's (first-reacted order, the people's names), with
+// whether the viewer is one of them; a visitor gets the counts alone.
+
+async function earlierReactions(pool, appId, viewerId = null, { names = true } = {}) {
+  if (!appId) return [];
+  const { rows } = await pool.query(
+    `SELECT r.emoji, COUNT(*)::int AS count,
+            COALESCE(array_agg(u.username ORDER BY r.created_at), '{}') AS users,
+            BOOL_OR(r.user_id = $2) AS reacted
+       FROM discussion_earlier_reactions r JOIN users u ON u.id = r.user_id
+      WHERE r.app_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = r.user_id
+        )
+      GROUP BY r.emoji
+      ORDER BY MIN(r.created_at)`,
+    [appId, viewerId || null]
+  );
+  return rows.map((r) => (names
+    ? { emoji: r.emoji, count: Number(r.count) || 0, users: r.users || [], reacted: !!r.reacted }
+    : { emoji: r.emoji, count: Number(r.count) || 0 }));
+}
+
+/** Put the viewer's `emoji` on the Earlier post, or take it off (`on`; omitted, it toggles). The list after. */
+async function toggleEarlierReaction(pool, appId, userId, emoji, on = null) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM discussion_earlier_reactions WHERE app_id = $1 AND user_id = $2 AND emoji = $3',
+    [appId, userId, emoji]
+  );
+  const want = on == null ? !rows.length : !!on;
+  if (want && !rows.length) {
+    await pool.query(
+      `INSERT INTO discussion_earlier_reactions (app_id, user_id, emoji) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [appId, userId, emoji]
+    );
+  } else if (!want && rows.length) {
+    await pool.query(
+      'DELETE FROM discussion_earlier_reactions WHERE app_id = $1 AND user_id = $2 AND emoji = $3',
+      [appId, userId, emoji]
+    );
+  }
+  return earlierReactions(pool, appId, userId);
+}
+
+async function discussionSummary(pool, { appId = null, conversationId = null, viewerId = null, anchorAppId = null, visitor = false } = {}) {
   let since = null;
   try {
     since = await discussionSince(pool);
@@ -145,6 +195,14 @@ async function discussionSummary(pool, { appId = null, conversationId = null, vi
       : await earlierForApp(pool, appId, since, viewerId);
   } catch {
     earlier = null;
+  }
+  // The Earlier post's own reactions, on the project's anchor.
+  if (earlier) {
+    try {
+      earlier.reactions = await earlierReactions(pool, anchorAppId || appId, visitor ? null : viewerId, { names: !visitor });
+    } catch {
+      earlier.reactions = [];
+    }
   }
   return { since, fold_at: EARLIER_FOLD_AT, earlier };
 }
@@ -259,6 +317,8 @@ async function generalConversationId(pool) {
 
 module.exports = {
   EARLIER_FOLD_AT,
+  earlierReactions,
+  toggleEarlierReaction,
   RANKED_MAX,
   generalConversationId,
   rankedInApp,

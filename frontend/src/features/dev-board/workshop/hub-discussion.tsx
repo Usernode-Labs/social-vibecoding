@@ -72,32 +72,50 @@
  */
 
 import {
-  useCallback, useEffect, useId, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState,
   type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject,
 } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ReactionPill } from '@/components/ui/feed';
-import { ArrowUpIcon, ChevronRightIcon, HashIcon, ReplyArrowIcon, ThreadIcon } from '@/components/ui/icons';
+import {
+  ArrowUpIcon, BoldIcon, ChatsIcon, ChevronRightIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, QuoteIcon,
+  ReplyArrowIcon, StrikethroughIcon, ThreadIcon, UnderlineIcon,
+} from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { messageStamp, shortDate } from '../../../lib/timestamp';
 import { enterSends, isTouchInput } from '../../../lib/enter-sends';
 import { watch as watchLiveReads } from '../../../lib/live-reads';
+import { cardRunLabel, cardRunStarts } from '../../../lib/card-runs';
 import { useStoreState } from '../../../lib/use-store-state';
-import { MessageActionBar } from '../../message-actions/action-bar';
+import { MAX_ATTACHMENTS, stageFiles } from '../../attachments/limits';
+import { PendingStripRows, type PendingAttachmentView } from '../../attachments/pending-strip';
+import { openReport } from '../../dialogs/report';
+import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../../message-actions/action-sheet';
+import { toast } from '../../message-actions/clipboard';
+import { messageMenu, messageSheet } from '../../message-actions/message-menu';
 import { EmojiPicker } from '../../message-actions/emoji-picker';
 import { emojiName } from '../../message-actions/emoji-data';
 import { rememberReaction, useRecentReactions } from '../../message-actions/recents';
 import { useDismiss } from '../../message-actions/use-dismiss';
-import { MessageMarkdown, UserAvatar } from '../../messages/format';
+import { Attachments } from '../../group-chat/transcript';
+import type { Attachment } from '../../group-chat/transcript-store';
+import { attachmentBadge } from '../../messages/attachment-views';
+import { openAppTarget } from '../../messages/bot-shared';
+import { CardHomeContext, MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
+import { applyFormat, type FormatKind } from '../../messages/composer-format';
+import { LinkEmbeds } from '../../messages/link-cards';
+import { channelHandles, setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
+import { ChannelMute } from './channel-head';
 import {
-  POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
+  POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, publicSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
   sortItems, toggledReactions,
   type DiscussionItem, type DiscussionPerson, type DiscussionSort, type DiscussionSource, type DiscussionSummary,
-  type EarlierFold, type LiveEvent, type Said,
+  type DiscussionReaction, type EarlierFold, type LiveEvent, type Said, type SharedSpec,
 } from './discussion-feed';
 import { takeDiscussionTarget, type DiscussionTarget } from './project-discussion';
 
@@ -111,8 +129,8 @@ export const REFRESH_MS = 5 * 60_000;
 const STALE_MS = 300;
 /** At most this many older posts with a new reply are brought in by one read. */
 const ACTIVE_ROOTS_READ = 5;
-/** Older pages of the room a door's message is looked for in before #general's chat takes it. */
-export const PLACE_PAGES = 3;
+/** Older pages of the room a door's message is looked for in; past them the page opens at its top. */
+export const PLACE_PAGES = 10;
 /** How long a message a door named stays marked. */
 const FOCUS_MS = 2400;
 
@@ -140,11 +158,13 @@ interface FeedState {
   ranked: readonly number[];
   /** The ranking has more posts after `ranked`. */
   rankedMore: boolean;
+  /** The Earlier post's reactions as the viewer last changed them; null: as the summary says. */
+  earlierReactions: DiscussionReaction[] | null;
 }
 
 const EMPTY: FeedState = {
   status: 'idle', messages: new Map(), oldest: null, more: false, readId: null, opened: new Set(), busy: false,
-  ranked: [], rankedMore: true,
+  ranked: [], rankedMore: true, earlierReactions: null,
 };
 
 export class DiscussionFeed {
@@ -195,7 +215,19 @@ export class DiscussionFeed {
   }
 
   fold(): EarlierFold | null {
-    return earlierFold(this.summary);
+    const fold = earlierFold(this.summary);
+    return fold && this.state.earlierReactions ? { ...fold, reactions: this.state.earlierReactions } : fold;
+  }
+
+  /** Toggle the viewer's reaction on the Earlier post (its own anchor): drawn at once, then as the server answers. */
+  async reactEarlier(emoji: string): Promise<void> {
+    const fold = this.fold();
+    if (!fold) return;
+    const was = fold.reactions;
+    const on = !was.some((r) => r.emoji === emoji && r.reacted);
+    this.set({ earlierReactions: toggledReactions(was, emoji, this.me) });
+    const answer = await this.source.reactEarlier(emoji, on).catch(() => null);
+    this.set({ earlierReactions: answer || was });
   }
 
   /** The posts, as read so far. */
@@ -334,6 +366,7 @@ export class DiscussionFeed {
     this.set({ status: 'loading' });
     try {
       const page = await this.source.page(null);
+      if (page.summary) this.summary = page.summary;
       const readId = page.readId ?? await this.source.readPosition();
       this.state = { ...EMPTY, opened: this.state.opened, status: 'ready', readId };
       this.staleRoots.clear();
@@ -386,20 +419,41 @@ export class DiscussionFeed {
     await Promise.all(reads);
   }
 
-  private async readThread(rootId: number, open: boolean): Promise<void> {
+  /** Reads a post's thread into the feed; answers the id of the root it read, or null. */
+  private async readThread(rootId: number, open: boolean, all = false): Promise<number | null> {
     try {
-      const thread = await this.source.thread(rootId);
+      const thread = await this.source.thread(rootId, all);
       const list = thread.root ? [thread.root, ...thread.replies] : thread.replies;
       const opened = open ? new Set([...this.state.opened, rootId]) : this.state.opened;
       this.merge(list, { opened });
-    } catch { /* drawn as it was */ }
+      return thread.root?.id ?? rootId;
+    } catch { return null; /* drawn as it was */ }
   }
 
-  /** "View N earlier replies" on a post: its thread, read whole. */
-  async openThread(rootId: number): Promise<void> {
+  /** "View N earlier replies" on a post: its thread, opened; `all` ("Show all replies") reads a very long one whole. */
+  async openThread(rootId: number, all = false): Promise<void> {
     this.set({ busy: true });
-    await this.readThread(rootId, true);
+    await this.readThread(rootId, true, all);
     this.set({ busy: false });
+  }
+
+  /**
+   * An older message's own replies, inside the Earlier post: shown under it
+   * (read the first time), or hidden again. There is no chat to open them in.
+   */
+  async toggleOld(rootId: number): Promise<void> {
+    if (this.state.opened.has(rootId)) {
+      const opened = new Set(this.state.opened);
+      opened.delete(rootId);
+      this.set({ opened });
+      return;
+    }
+    await this.readThread(rootId, true);
+  }
+
+  /** The live replies under one message, oldest first. */
+  repliesOf(rootId: number): Said[] {
+    return [...this.state.messages.values()].filter((m) => m.rootId === rootId && !m.deleted).sort((a, b) => a.id - b.id);
   }
 
   /** "View N earlier replies" on the Earlier post: the next older page of the history. */
@@ -427,9 +481,9 @@ export class DiscussionFeed {
     this.set({ busy: false });
   }
 
-  /** Write a post or a reply; it is on the card when the answer lands. */
-  async write(content: string, rootId: number | null): Promise<void> {
-    const said = await this.source.post(content, rootId);
+  /** Write a post or a reply, with the files already taken in; it is on the card when the answer lands. */
+  async write(content: string, rootId: number | null, attachmentIds: string[] = []): Promise<void> {
+    const said = await this.source.post(content, rootId, attachmentIds);
     if (!said) { await this.refresh(); return; }
     const updates: Said[] = [said];
     if (rootId) {
@@ -437,6 +491,20 @@ export class DiscussionFeed {
       if (root) updates.push({ ...root, replyCount: root.replyCount + 1, lastReplyAt: said.at });
     }
     this.merge(updates);
+  }
+
+  /** Edit your own message: the room's words once it has kept them. */
+  async edit(messageId: number, content: string): Promise<void> {
+    const words = await this.source.edit(messageId, content);
+    const said = this.state.messages.get(messageId);
+    if (said) this.merge([{ ...said, content: words }]);
+  }
+
+  /** Delete your own message: a post stays as "deleted" while it has replies, a reply leaves. */
+  async remove(messageId: number): Promise<void> {
+    await this.source.remove(messageId);
+    const said = this.state.messages.get(messageId);
+    if (said) this.merge([{ ...said, deleted: true, content: '', reactions: [] }]);
   }
 
   /** Toggle the viewer's reaction: drawn at once, then as the room answers. */
@@ -463,10 +531,15 @@ export class DiscussionFeed {
     await (this.loaded || this.load());
     if (this.state.status !== 'ready') return null;
     const rootId = target.threadRootId || null;
-    const wanted = target.focusMessageId || rootId;
+    let wanted = target.focusMessageId || rootId;
     if (!wanted) return null;
-    const have = () => this.state.messages.get(wanted) || null;
-    if (rootId && !have()) await this.readThread(rootId, false);
+    const have = () => this.state.messages.get(wanted as number) || null;
+    if (rootId && !have()) {
+      // The server may answer a demo address's thread by its stored root
+      // (staging's fixtures), whose id is then the one to find.
+      const read = await this.readThread(rootId, false);
+      if (read && wanted === rootId) wanted = read;
+    }
     for (let i = 0; !have() && i < PLACE_PAGES && this.state.more && this.state.oldest != null; i += 1) {
       try {
         const page = await this.source.page(this.state.oldest);
@@ -477,13 +550,25 @@ export class DiscussionFeed {
     if (!said) return null;
     if (said.rootId != null && !this.state.messages.has(said.rootId)) await this.readThread(said.rootId, false);
     const item = this.items().find((it) => (it.kind === 'post' && it.root.id === said.id) || it.replies.some((r) => r.id === said.id));
-    if (!item) return null;
+    if (!item) {
+      // A reply to an older message: it is under that message inside the
+      // Earlier post, which opens, and so do the older message's replies.
+      const fold = this.fold();
+      const root = said.rootId != null ? this.state.messages.get(said.rootId) : null;
+      const earlier = this.items().find((it) => it.kind === 'earlier');
+      if (!fold || !root || root.rootId != null || root.id > fold.lastId || !earlier) return null;
+      this.set({ opened: new Set([...this.state.opened, fold.lastId, root.id]) });
+      return { key: earlier.key, messageId: said.id };
+    }
     const asReply = item.kind === 'earlier' || item.root.id !== said.id;
     if (asReply || rootId) {
       const open = item.kind === 'post' ? item.root.id : item.fold.lastId;
       if (item.kind === 'post' && item.replies.length < item.replyCount) await this.readThread(open, true);
       else this.set({ opened: new Set([...this.state.opened, open]) });
     }
+    // A link to an older message's own thread: its replies open under it,
+    // inside the Earlier post (they were read above).
+    if (item.kind === 'earlier' && rootId && said.rootId == null) this.set({ opened: new Set([...this.state.opened, said.id]) });
     return { key: item.key, messageId: said.id };
   }
 
@@ -505,13 +590,29 @@ const feeds = new Map<string, DiscussionFeed>();
 
 /** The source a channel is read from: Homeroom's #general conversation, or the app's own chat. */
 export function sourceFor(slug: string, channel: Channel, viewer: { current: string | null }): DiscussionSource {
+  if (isVisitorChannel(channel)) return publicSource(slug);
   const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
   return conversationId ? conversationSource(conversationId, slug) : appSource(slug, viewer);
 }
 
 function sourceKey(slug: string, channel: Channel): string {
+  if (isVisitorChannel(channel)) return `public:${slug}`;
   const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
   return conversationId ? `conversation:${conversationId}` : `app:${slug}`;
+}
+
+/** The channel a visitor's page hands the card (visitorData): read through the public routes. */
+function isVisitorChannel(channel: Channel): boolean {
+  return !!(channel as { visitor?: unknown }).visitor;
+}
+
+/**
+ * What the signed-out project page hands the card in place of a member's
+ * community record: a channel to read through the public routes, whose
+ * summary rides with the first page.
+ */
+export function visitorData(slug: string): CommunityPayload {
+  return { slug, channel: { visitor: true, discussion: null } } as unknown as CommunityPayload;
 }
 
 /** The one feed of a channel, shared by its hub card and its page. */
@@ -523,7 +624,8 @@ export function feedFor(slug: string, channel: Channel, me: string | null): Disc
     feed = new DiscussionFeed(sourceFor(slug, channel, viewer), summary, viewer);
     feeds.set(feed.source.key, feed);
   } else {
-    feed.summary = summary;
+    // A visitor's summary rides with the first page, not the record.
+    if (!isVisitorChannel(channel)) feed.summary = summary;
     feed.viewer.current = me;
   }
   return feed;
@@ -542,12 +644,14 @@ let focusOnOpen = false;
 interface Viewer { username: string; avatarUrl: string | null }
 
 /** Who is reading, once the page has said (read in an effect: the first render has nobody). */
-function useViewer(): { viewer: Viewer | null; known: boolean } {
+function useViewer(visitor = false): { viewer: Viewer | null; known: boolean } {
   const [seen, setSeen] = useState<{ viewer: Viewer | null; known: boolean }>({ viewer: null, known: false });
   useEffect(() => {
+    // A visitor's page reads as nobody, whoever the shell may hold.
+    if (visitor) { setSeen({ viewer: null, known: true }); return; }
     const user = (window as unknown as { App?: { user?: { username?: string; avatarUrl?: string | null } | null } }).App?.user;
     setSeen({ viewer: user && user.username ? { username: user.username, avatarUrl: user.avatarUrl || null } : null, known: true });
-  }, []);
+  }, [visitor]);
   return seen;
 }
 
@@ -557,13 +661,6 @@ function asUser(who: DiscussionPerson): ConversationUser {
 
 function nameOf(who: DiscussionPerson): string {
   return who.bot && who.displayName ? who.displayName : who.username;
-}
-
-/** Open a place in the channel's own chat: an old message's thread. */
-function openInGeneral(slug: string, channel: Channel, threadRootId: number): void {
-  const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
-  (window as unknown as { AppView?: { _landOnDiscussion?: (slug: string, target: object) => void } })
-    .AppView?._landOnDiscussion?.(slug, { threadRootId, asChat: true, ...(conversationId ? { conversationId } : {}) });
 }
 
 // ── The card ───────────────────────────────────────────────────────────
@@ -576,25 +673,30 @@ export interface DiscussionCardProps {
   mode: 'full' | 'preview' | 'page';
   /** The phone's card: open the page. */
   onOpenPage?: () => void;
-  /** The page: show #general as a chat (its "Open as chat"). */
-  onChat?: () => void;
-  /** The page: a door's message the posts do not show, for #general's chat to take. */
-  onMissing?: (target: DiscussionTarget) => void;
+  /**
+   * The signed-out project page (../../guest/guest-discussion.tsx): read
+   * only, through the public routes (`data` is visitorData), and "Start a
+   * post…" asks the visitor to sign in.
+   */
+  visitor?: { onSignIn: () => void } | null;
 }
 
-export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onMissing }: DiscussionCardProps): ReactNode {
-  useMessages('project');
+export function DiscussionCard({ slug, name, data, mode, onOpenPage, visitor = null }: DiscussionCardProps): ReactNode {
+  const t = useMessages('project');
   useMessages('messages');
   const headId = useId();
-  const { viewer, known } = useViewer();
+  const { viewer, known } = useViewer(!!visitor);
   const channel = data?.channel || null;
   const me = viewer ? viewer.username : null;
   const feed = useMemo(() => (channel ? feedFor(slug, channel, me) : null), [slug, channel, me]);
   const host = useRef<HTMLElement | null>(null);
   const [focus, setFocus] = useState<Placed | null>(null);
-  const missing = useRef(onMissing);
-  missing.current = onMissing;
   const focused = useCallback(() => setFocus(null), []);
+  const signIn = useRef(visitor?.onSignIn);
+  signIn.current = visitor?.onSignIn;
+  const isVisitor = !!visitor;
+  const homeroom = !!Number((channel as { conversation_id?: unknown } | null)?.conversation_id);
+  const room = useMemo<Room>(() => ({ slug, visitor: isVisitor, signIn: () => signIn.current?.(), homeroom }), [slug, isVisitor, homeroom]);
 
   // Read once the viewer is known, so their own reactions read as theirs.
   useEffect(() => (feed && known ? feed.hold() : undefined), [feed, known]);
@@ -611,15 +713,13 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
     let gone = false;
     const room = Number((channel as { conversation_id?: unknown } | null)?.conversation_id) || null;
     const take = () => {
-      const target = takeDiscussionTarget(slug, null, 'posts');
+      const target = takeDiscussionTarget(slug, null);
       if (!target || !(target.threadRootId || target.focusMessageId)) return;
-      // A message of another room than the one this page reads (a demo
-      // #general, an old conversation) is the chat's at once.
-      if (target.conversationId && room && target.conversationId !== room) { missing.current?.(target); return; }
+      // A message of another room than the one this page reads (an old
+      // conversation, a demo's) has no post here: the page opens at its top.
+      if (target.conversationId && room && target.conversationId !== room) return;
       void feed.place(target).then((found) => {
-        if (gone) return;
-        if (found) setFocus(found);
-        else missing.current?.(target);
+        if (!gone && found) setFocus(found);
       });
     };
     take();
@@ -630,7 +730,22 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
     return () => { gone = true; window.removeEventListener('usernode:workshop-discussion', heard); };
   }, [mode, feed, known, slug, channel]);
 
-  if (!channel || !feed) return null;
+  if (!channel || !feed) {
+    // The place itself says why there is nothing: still reading the project,
+    // or a viewer who may not read its Discussion.
+    if (mode !== 'page') return null;
+    return (
+      <div className="dev-ws-discussion-page" data-ws-discussion-page="">
+        {data ? (
+          <p className="dh-empty" data-ws-discussion-none="">{t('project:discussion.none')}</p>
+        ) : (
+          <section className="dev-ws-hub-section dev-ws-hub-discussion" data-ws-hub-discussion="page">
+            <FeedLoading status="loading" onRetry={() => {}} rows={3} />
+          </section>
+        )}
+      </div>
+    );
+  }
   const card = (
     <section
       ref={host}
@@ -638,11 +753,13 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
       data-ws-hub-discussion={mode}
       aria-labelledby={headId}
     >
+      <RoomContext.Provider value={room}>
       <FeedView
         feed={feed}
         slug={slug}
         name={name}
         channel={channel}
+        data={data}
         mode={mode}
         headId={headId}
         host={host}
@@ -650,19 +767,21 @@ export function DiscussionCard({ slug, name, data, mode, onOpenPage, onChat, onM
         focus={focus}
         onFocused={focused}
         onOpenPage={onOpenPage}
-        onChat={onChat}
       />
+      </RoomContext.Provider>
     </section>
   );
   if (mode !== 'page') return card;
   return <div className="dev-ws-discussion-page" data-ws-discussion-page="">{card}</div>;
 }
 
-function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus, onFocused, onOpenPage, onChat }: {
+function FeedView({ feed, slug, name, channel, data, mode, headId, host, viewer, focus, onFocused, onOpenPage }: {
   feed: DiscussionFeed;
   slug: string;
   name: string;
   channel: Channel;
+  /** The project's record, which says whether its Discussion is muted (Mute, in the page's head). */
+  data: CommunityPayload | null;
   mode: DiscussionCardProps['mode'];
   headId: string;
   host: RefObject<HTMLElement | null>;
@@ -671,12 +790,13 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   focus: Placed | null;
   onFocused: () => void;
   onOpenPage?: () => void;
-  onChat?: () => void;
 }): ReactNode {
   const t = useMessages('project');
+  const room = useContext(RoomContext);
   const state = useStoreState(feed);
   const [sort, setSort] = useState<DiscussionSort>('newest');
   const [limit, setLimit] = useState(POSTS_SHOWN);
+  const [openRuns, setOpenRuns] = useState<ReadonlySet<string>>(() => new Set());
   const items = useMemo(() => sortItems(feed.items(), mode === 'preview' ? 'newest' : sort), [feed, state, sort, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const startRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -725,17 +845,12 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
     return () => clearTimeout(clear);
   }, [marked]);
 
-  // The page's heading is the place's name; its far end shows the same room as a chat.
   const head = (
     <div className="dev-ws-hub-discussion-head">
       <h2 id={headId} className="dev-ws-hub-discussion-title">{t('project:hub.discussion.title')}</h2>
       <p className="dev-ws-hub-discussion-about">{t('project:hub.discussion.about', { project: name })}</p>
-      {mode === 'page' && onChat ? (
-        <button type="button" className="dh-as-chat" data-ws-discussion-as-chat="" onClick={onChat}>
-          <HashIcon aria-hidden="true" />
-          {t('project:hub.discussion.asChat')}
-        </button>
-      ) : null}
+      {/* #5303: Mute, at the end of the page's head (./channel-head.tsx). */}
+      {mode === 'page' && !room.visitor ? <ChannelMute slug={slug} data={data} /> : null}
     </div>
   );
 
@@ -762,29 +877,35 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
             </ul>
           ) : <p className="dh-empty" data-ws-discussion-empty="">{t('project:hub.discussion.empty')}</p>
         ) : <FeedLoading status={state.status} onRetry={() => void feed.load()} rows={2} />}
-        <button type="button" className="dh-composer dh-composer-door" data-ws-discussion-start-door="" onClick={() => open(true)}>
-          <ViewerFace viewer={viewer} />
-          <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
-          <span className="dh-send" aria-hidden="true"><ArrowUpIcon /></span>
-        </button>
+        {room.visitor ? <SignInDoor preview /> : (
+          <button type="button" className="dh-composer dh-composer-door" data-ws-discussion-start-door="" onClick={() => open(true)}>
+            <ViewerFace viewer={viewer} />
+            <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
+            <span className="dh-send" aria-hidden="true"><ArrowUpIcon /></span>
+          </button>
+        )}
       </>
     );
   }
 
   const shown = items.slice(0, limit);
+  const runs = cardRunStarts(shown, isCardPost);
   const canMore = items.length > limit || (sort === 'replies' ? state.rankedMore : feed.morePosts());
   return (
     <>
       {head}
-      <Composer
-        kind="post"
-        boxRef={startRef}
-        viewer={viewer}
-        placeholder={t('project:hub.discussion.start.placeholder')}
-        label={t('project:hub.discussion.start.label', { project: name })}
-        sendLabel={t('project:hub.discussion.start.send')}
-        onSend={(words) => feed.write(words, null)}
-      />
+      {room.visitor ? <SignInDoor /> : (
+        <Composer
+          kind="post"
+          boxRef={startRef}
+          viewer={viewer}
+          placeholder={t('project:hub.discussion.start.placeholder')}
+          label={t('project:hub.discussion.start.label', { project: name })}
+          sendLabel={t('project:hub.discussion.start.send')}
+          onSend={(words, ids) => feed.write(words, null, ids)}
+          upload={(file) => feed.source.upload(file)}
+        />
+      )}
       <div className="dh-sort" role="group" aria-label={t('project:hub.discussion.sort.label')} data-ws-discussion-sort={sort}>
         <span className="dh-sort-label" aria-hidden="true">{t('project:hub.discussion.sort.label')}</span>
         <button type="button" aria-pressed={sort === 'newest'} data-ws-discussion-sort-by="newest" onClick={() => setSort('newest')}>
@@ -798,16 +919,41 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
         <FeedLoading status={state.status} onRetry={() => void feed.load()} rows={3} />
       ) : shown.length ? (
         <div className="dh-list" data-ws-discussion-posts={String(shown.length)}>
-          {shown.map((item) => (
-            <Thread key={item.key} item={item} feed={feed} slug={slug} channel={channel} viewer={viewer} readId={state.readId} busy={state.busy} opened={state.opened} marked={marked} />
-          ))}
+          {shown.map((item, at) => {
+            // #2884, as the chat drew it: a run of posts that only share a
+            // card is its first card and "… N more", until opened.
+            const runAt = [...runs.entries()].find(([start, length]) => at > start && at < start + length);
+            if (runAt && !openRuns.has(shown[runAt[0]].key)) return null;
+            const run = runs.get(at);
+            const thread = <Thread key={item.key} item={item} feed={feed} slug={slug} channel={channel} viewer={viewer} readId={state.readId} busy={state.busy} opened={state.opened} marked={marked} />;
+            if (!run || openRuns.has(item.key)) return thread;
+            return (
+              <div key={item.key} className="dh-card-run" data-ws-discussion-card-run={String(run)}>
+                {thread}
+                <Button
+                  type="button"
+                  variant="unstyled"
+                  size="none"
+                  ink="none"
+                  className="dh-card-run-more"
+                  data-ws-discussion-card-run-more=""
+                  onClick={() => setOpenRuns((was) => new Set([...was, item.key]))}
+                >
+                  {cardRunLabel(run - 1)}
+                </Button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="dh-empty" data-ws-discussion-empty="">{t('project:hub.discussion.empty')}</p>
       )}
       {state.status === 'ready' && canMore ? (
-        <button
+        <Button
           type="button"
+          variant="unstyled"
+          size="none"
+          ink="none"
           className="dh-more-posts"
           data-ws-discussion-more=""
           disabled={state.busy}
@@ -817,7 +963,7 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
           }}
         >
           {t('project:hub.discussion.morePosts')}
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -871,7 +1017,10 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
   const rootId = item.kind === 'post' ? item.root.id : item.fold.lastId;
   const open = opened.has(rootId);
   const { shown, hidden } = shownReplies(item, open);
-  const hasBox = item.replyCount > 0 || replying;
+  // A member always has the reply field under a post; a visitor reads the replies there are.
+  const room = useContext(RoomContext);
+  const canReply = !room.visitor && !!viewer;
+  const hasBox = item.replyCount > 0 || canReply || replying;
   const startReply = () => {
     setReplying(true);
     // The box is drawn on the next render; focus it once it is there.
@@ -882,23 +1031,19 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
       if (item.olderToRead || !open) void feed.openEarlier();
       return;
     }
-    if (!open) { void feed.openThread(item.root.id); return; }
-    openInGeneral(slug, channel, item.root.id);
+    void feed.openThread(item.root.id, open);
   };
   const me = viewer?.username || null;
   return (
     <div className="dh-thread" data-ws-discussion-thread={item.key}>
       {item.kind === 'post' ? (
         <Message said={item.root} feed={feed} me={me} className="dh-post" marked={marked === item.root.id} onReply={startReply}>
-          <PostHeader item={item} readId={readId} me={me} onReply={startReply} />
+          <PostHeader item={item} readId={readId} me={me} />
           <PostWords item={item} />
           <Pills said={item.root} feed={feed} me={me} />
         </Message>
       ) : (
-        <article className="dh-post dh-post-earlier" data-ws-discussion-earlier="">
-          <PostHeader item={item} readId={readId} me={me} onReply={startReply} />
-          <PostWords item={item} />
-        </article>
+        <EarlierPost item={item} feed={feed} me={me} readId={readId} canReact={canReply} onReply={startReply} />
       )}
       {hasBox ? (
         <div className="dh-replies" data-ws-discussion-replies={String(item.replyCount)}>
@@ -914,25 +1059,50 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               <ReplyRow said={reply}>
                 <Pills said={reply} feed={feed} me={me} small />
                 {item.kind === 'earlier' && reply.rootId == null && oldThreadCount(item, reply) > 0 ? (
-                  <button type="button" className="dh-old-thread" data-ws-discussion-old-thread={String(reply.id)} onClick={() => openInGeneral(slug, channel, reply.id)}>
+                  <Button
+                    type="button"
+                    variant="unstyled"
+                    size="none"
+                    ink="none"
+                    className="dh-old-thread"
+                    data-ws-discussion-old-thread={String(reply.id)}
+                    aria-expanded={opened.has(reply.id)}
+                    onClick={() => void feed.toggleOld(reply.id)}
+                  >
                     <ThreadIcon aria-hidden="true" />
-                    {t('project:hub.discussion.oldThread', { count: oldThreadCount(item, reply) })}
-                  </button>
+                    {opened.has(reply.id)
+                      ? t('project:hub.discussion.oldThreadHide')
+                      : t('project:hub.discussion.oldThread', { count: oldThreadCount(item, reply) })}
+                  </Button>
                 ) : null}
               </ReplyRow>
+              {item.kind === 'earlier' && reply.rootId == null && opened.has(reply.id) && oldThreadCount(item, reply) > 0 ? (
+                <div className="dh-old-replies" data-ws-discussion-old-replies={String(reply.id)}>
+                  {feed.repliesOf(reply.id).filter((r) => !item.replies.includes(r)).map((old) => (
+                    <Message key={old.id} said={old} feed={feed} me={me} className="dh-reply" marked={marked === old.id} onReply={startReply}>
+                      <ReplyRow said={old}>
+                        <Pills said={old} feed={feed} me={me} small />
+                      </ReplyRow>
+                    </Message>
+                  ))}
+                </div>
+              ) : null}
             </Message>
           ))}
-          <Composer
-            kind="reply"
-            boxRef={replyBox}
-            viewer={viewer}
-            placeholder={t('project:hub.discussion.reply.placeholder')}
-            label={item.kind === 'post'
-              ? t('project:hub.discussion.reply.label', { username: nameOf(item.root.who) })
-              : t('project:hub.discussion.reply.labelEarlier')}
-            sendLabel={t('project:hub.discussion.reply.send')}
-            onSend={(words) => feed.write(words, rootId)}
-          />
+          {canReply ? (
+            <Composer
+              kind="reply"
+              boxRef={replyBox}
+              viewer={viewer}
+              placeholder={t('project:hub.discussion.reply.placeholder')}
+              label={item.kind === 'post'
+                ? t('project:hub.discussion.reply.label', { username: nameOf(item.root.who) })
+                : t('project:hub.discussion.reply.labelEarlier')}
+              sendLabel={t('project:hub.discussion.reply.send')}
+              onSend={(words, ids) => feed.write(words, rootId, ids)}
+              upload={(file) => feed.source.upload(file)}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -940,9 +1110,99 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
 }
 
 /**
- * An old message's own reply thread, inside the Earlier post: how many
- * replies it has in #general. The last old message's thread also holds what
- * was written into the Earlier post since, which the post shows itself.
+ * The Earlier post: not a message, but reacted to and replied to as one.
+ * Its reactions hang on its project's own anchor (DiscussionFeed.reactEarlier),
+ * through the same hover bar and long-press sheet a post has; its replies
+ * box is the one under it.
+ */
+function EarlierPost({ item, feed, me, readId, canReact, onReply }: {
+  item: DiscussionItem;
+  feed: DiscussionFeed;
+  me: string | null;
+  readId: number | null;
+  canReact: boolean;
+  onReply: () => void;
+}): ReactNode {
+  const tm = useMessages('messages');
+  const t = useMessages('project');
+  const recents = useRecentReactions();
+  const [picking, setPicking] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const bar = useRef<HTMLDivElement | null>(null);
+  const pickerButton = useRef<HTMLButtonElement | null>(null);
+  useDismiss(picking, [bar], () => setPicking(false));
+  const press = useLongPress(() => setSheet(true), { disabled: !canReact });
+  if (item.kind !== 'earlier') return null;
+  const reactions = item.fold.reactions;
+  const reacted = (emoji: string) => reactions.some((r) => r.emoji === emoji && r.reacted);
+  const react = (emoji: string) => { rememberReaction(emoji); void feed.reactEarlier(emoji); };
+  return (
+    <article className="dh-post dh-post-earlier dh-msg" data-ws-discussion-earlier="" {...(canReact ? press : {})}>
+      <PostHeader item={item} readId={readId} me={me} />
+      <PostWords item={item} />
+      {reactions.length ? (
+        <div className="dh-pills" data-ws-discussion-earlier-reactions="">
+          {reactions.map((r) => (
+            <ReactionPill
+              key={r.emoji}
+              emoji={r.emoji}
+              count={r.count}
+              tone={r.reacted ? 'accent' : 'neutral'}
+              className="dh-pill"
+              title={r.users.join(', ')}
+              aria-pressed={r.reacted}
+              aria-label={r.reacted
+                ? tm('messages:actions.removeReaction', { emoji: emojiName(r.emoji) })
+                : tm('messages:actions.reactWith', { emoji: emojiName(r.emoji) })}
+              disabled={!canReact}
+              data-emoji={r.emoji}
+              onClick={() => react(r.emoji)}
+            />
+          ))}
+        </div>
+      ) : null}
+      {canReact ? (
+        <MessageActionBar
+          className="dh-actions"
+          barRef={bar}
+          recents={recents}
+          reacted={reacted}
+          onReact={react}
+          pickerOpen={picking}
+          onTogglePicker={() => setPicking((v) => !v)}
+          pickerButtonRef={pickerButton}
+          onReply={onReply}
+        >
+          {picking ? (
+            <EmojiPicker
+              placement="below"
+              autoFocus={!isTouchInput()}
+              onPick={(emoji) => { setPicking(false); react(emoji); }}
+              onClose={() => setPicking(false)}
+            />
+          ) : null}
+        </MessageActionBar>
+      ) : null}
+      {canReact ? (
+        <MessageActionSheet
+          open={sheet}
+          onClose={() => setSheet(false)}
+          recents={recents}
+          reacted={reacted}
+          onReact={(emoji) => { setSheet(false); react(emoji); }}
+          onPick={react}
+          items={messageSheet({ reply: () => { setSheet(false); onReply(); } }, [])}
+          preview={{ who: t('project:hub.discussion.earlier.title'), text: t('project:hub.discussion.earlier.body') }}
+        />
+      ) : null}
+    </article>
+  );
+}
+
+/**
+ * An older message's own replies, inside the Earlier post: how many it has.
+ * The last older message's thread also holds what was written into the
+ * Earlier post since, which the post shows itself.
  */
 function oldThreadCount(item: DiscussionItem, said: Said): number {
   if (item.kind !== 'earlier' || said.id !== item.fold.lastId) return said.replyCount;
@@ -950,37 +1210,34 @@ function oldThreadCount(item: DiscussionItem, said: Said): number {
 }
 
 /** A post's one header line: face, name, time, the new dot, and the replies at its far end. */
-function PostHeader({ item, readId, me, onReply }: {
+function PostHeader({ item, readId, me }: {
   item: DiscussionItem;
   readId: number | null;
   me: string | null;
-  /** Absent in the phone's preview, where the whole row opens the page. */
-  onReply?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const fresh = isNewTo(item, readId, me);
   const count = item.replyCount;
+  // Its replies, counted, at the far end; a post with none says nothing
+  // there: a member's reply field is always under it.
   const tail = count > 0 ? (
-    <span className="dh-count">
-      <ThreadIcon aria-hidden="true" />
-      {t('project:hub.discussion.replies', { count })}
+    <span className="dh-tail">
+      <span className="dh-count">
+        <ThreadIcon aria-hidden="true" />
+        {t('project:hub.discussion.replies', { count })}
+      </span>
     </span>
-  ) : (
-    <span className="dh-count dh-count-none">
-      <ThreadIcon aria-hidden="true" />
-      {t('project:hub.discussion.reply')}
-    </span>
-  );
+  ) : null;
   if (item.kind === 'earlier') {
     const { from, to } = item.fold;
     const range = from && to ? t('project:hub.discussion.earlier.range', { from: shortDate(from), to: shortDate(to) }) : '';
     return (
       <div className="dh-head">
-        <span className="dh-earlier-mark" aria-hidden="true"><HashIcon /></span>
+        <span className="dh-earlier-mark" aria-hidden="true"><ChatsIcon /></span>
         <b className="dh-name">{t('project:hub.discussion.earlier.title')}</b>
         {range ? <span className="dh-time">{range}</span> : null}
         {fresh ? <NewDot /> : null}
-        {onReply && count === 0 ? <button type="button" className="dh-tail" onClick={onReply}>{tail}</button> : <span className="dh-tail">{tail}</span>}
+        {tail}
       </div>
     );
   }
@@ -991,7 +1248,7 @@ function PostHeader({ item, readId, me, onReply }: {
       <b className="dh-name">{nameOf(item.root.who)}</b>
       <span className="dh-time" title={stamp.title}>{stamp.text}</span>
       {fresh ? <NewDot /> : null}
-      {onReply && count === 0 ? <button type="button" className="dh-tail" data-ws-discussion-reply="" onClick={onReply}>{tail}</button> : <span className="dh-tail">{tail}</span>}
+      {tail}
     </div>
   );
 }
@@ -1011,12 +1268,121 @@ function PostWords({ item, clamp = false }: { item: DiscussionItem; clamp?: bool
   return <Words said={item.root} clamp={clamp} className="dh-words" />;
 }
 
+/** A post that only shares a card (a plan, a request, a change): no words, no files, no replies. */
+export function isCardPost(item: DiscussionItem): boolean {
+  if (item.kind !== 'post' || item.replyCount > 0) return false;
+  const said = item.root;
+  return !said.deleted && !said.content.trim() && !said.attachments.length && (!!said.spec || said.cards.length > 0);
+}
+
+/** Which project the room is, and whether its reader may only read (a visitor): for what the rows draw. */
+interface Room {
+  slug: string;
+  visitor: boolean;
+  signIn?: () => void;
+  /** Homeroom's own room (#general, a Messages channel): `#name` in a post links to that channel, as in Messages. */
+  homeroom?: boolean;
+}
+const RoomContext = createContext<Room>({ slug: '', visitor: false });
+
+/**
+ * A visitor's "Start a post…": the box as a member sees it, its far end
+ * "Sign in to post", the whole of it asking them to sign in.
+ */
+function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
+  const t = useMessages('project');
+  const room = useContext(RoomContext);
+  return (
+    <Button
+      type="button"
+      variant="unstyled"
+      size="none"
+      ink="none"
+      className={`dh-composer dh-composer-door dh-sign-in-door${preview ? '' : ' dh-composer-post'}`}
+      data-ws-discussion-sign-in=""
+      onClick={() => room.signIn?.()}
+    >
+      <span className="dh-face-blank" aria-hidden="true" />
+      <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
+      <span className="dh-sign-in">{t('project:hub.discussion.signInToPost')}</span>
+    </Button>
+  );
+}
+
+/**
+ * A message's words, as the chat draws them (the same markdown, with `#N`
+ * chips for the project's requests), then what rides on it: a plan it
+ * shares, the cards it shares, its files (images in place, any other file
+ * as the chat's chip). Clamped to two lines in the phone's preview.
+ */
 function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean; className: string }): ReactNode {
   const t = useMessages('project');
+  const tc = useMessages('chat');
+  const room = useContext(RoomContext);
+  const editing = useContext(EditingContext);
+  if (editing && editing.id === said.id) return <EditBox editing={editing} />;
   if (said.deleted) return <p className={`${className} dh-deleted`}>{t('project:hub.discussion.deleted')}</p>;
-  if (!said.content.trim()) return <p className={`${className} dh-quiet`}>{t('project:hub.discussion.files', { count: Math.max(1, said.files) })}</p>;
-  if (clamp) return <p className={`${className} dh-clamp`}>{said.content.replace(/\s+/g, ' ').trim()}</p>;
-  return <div className={className}><MessageMarkdown content={said.content} /></div>;
+  const words = said.content.trim();
+  if (clamp) {
+    const line = words ? said.content.replace(/\s+/g, ' ').trim()
+      : said.spec ? said.spec.title
+        : said.cards.length ? (said.cards[0].title || t('project:hub.discussion.shared'))
+          : t('project:hub.discussion.files', { count: Math.max(1, said.files) });
+    return <p className={`${className} dh-clamp${words ? '' : ' dh-quiet'}`}>{line}</p>;
+  }
+  const files: Attachment[] = said.attachments.map((a) => ({
+    id: a.id,
+    kind: a.image ? 'image' : a.kind === 'html' && a.viewUrl ? 'html' : 'binary',
+    name: a.name || tc('chat:group.attachment.unnamed'),
+    unnamed: !a.name,
+    url: a.url,
+    size: a.size ? fileSize(a.size) : '',
+    badge: attachmentBadge(a.name, ''),
+  }));
+  return (
+    <div className={className}>
+      {words ? <MessageMarkdown content={said.content} channels={room.homeroom ? channelHandles() : undefined} appSlug={room.slug || null} /> : null}
+      {said.spec ? <SpecCard spec={said.spec} slug={room.slug} /> : null}
+      {/* #4238: Homeroom bot's first-version post opens the app it made. */}
+      {said.openApp && !clamp ? (
+        <Button
+          type="button"
+          data-ws-discussion-open-app=""
+          variant="pillAccent"
+          size="sm"
+          className="mt-2 font-semibold"
+          onClick={() => openAppTarget(said.openApp?.target)}
+        >
+          {said.openApp.label}
+        </Button>
+      ) : null}
+      {/* A Homeroom link in the words: its card, as every room draws it (a visitor reads the words alone). */}
+      {words && !clamp && !room.visitor ? <LinkEmbeds text={said.content} exclude={said.cards} inboxOnly /> : null}
+      {said.cards.length ? (
+        <div className="messages-object-list dh-cards" data-ws-discussion-cards={String(said.cards.length)}>
+          {/* #5303: a card from another project says which one it is from. */}
+          <CardHomeContext.Provider value={room.slug || null}>
+            {said.cards.map((card, at) => <ObjectCard key={`${card.type}:${at}`} object={card} compact />)}
+          </CardHomeContext.Provider>
+        </div>
+      ) : null}
+      {files.length ? <div className="dh-files" data-ws-discussion-files={String(files.length)}><Attachments items={files} /></div> : null}
+    </div>
+  );
+}
+
+/** A plan shared into a project's chat: its title, and a way to the change it became. */
+function SpecCard({ spec, slug }: { spec: SharedSpec; slug: string }): ReactNode {
+  const t = useMessages('project');
+  const body = (
+    <>
+      <span className="dh-spec-label">{t('project:hub.discussion.sharedPlan')}</span>
+      <span className="dh-spec-title">{spec.title || t('project:hub.discussion.sharedPlanUntitled')}</span>
+    </>
+  );
+  return spec.prNumber && slug
+    ? <a className="dh-spec" data-ws-discussion-spec="" href={`#app/${encodeURIComponent(slug)}/dev/changes/${spec.prNumber}`}>{body}</a>
+    : <div className="dh-spec" data-ws-discussion-spec="">{body}</div>;
 }
 
 /** A reply, drawn as a chat row is: a small face, the name and time, the words. */
@@ -1063,10 +1429,66 @@ function Pills({ said, feed, me, small = false }: { said: Said; feed: Discussion
   );
 }
 
+/** A message being edited in place: what its words draw instead of themselves. */
+interface Editing {
+  id: number;
+  value: string;
+  busy: boolean;
+  error: string;
+  change: (value: string) => void;
+  save: () => void;
+  cancel: () => void;
+}
+const EditingContext = createContext<Editing | null>(null);
+
+/** The platform's in-place editor (as Messages' row draws it): Enter saves, Escape cancels. */
+function EditBox({ editing }: { editing: Editing }): ReactNode {
+  const t = useMessages('messages');
+  const tc = useMessages('core');
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    node.focus({ preventScroll: true });
+    node.setSelectionRange(node.value.length, node.value.length);
+  }, []);
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${node.scrollHeight}px`;
+  }, [editing.value]);
+  return (
+    <div className="dh-edit" data-ws-discussion-editing={String(editing.id)}>
+      <textarea
+        ref={box}
+        className="dh-box"
+        dir="auto"
+        rows={2}
+        maxLength={8000}
+        aria-label={t('messages:row.editLabel')}
+        value={editing.value}
+        onChange={(event) => editing.change(event.target.value.slice(0, 8000))}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.preventDefault(); editing.cancel(); } else if (enterSends(event.nativeEvent)) { event.preventDefault(); editing.save(); }
+        }}
+      />
+      <div className="dh-edit-acts">
+        <button type="button" className="dh-edit-save" disabled={editing.busy || !editing.value.trim()} onClick={editing.save}>{tc('core:common.save')}</button>
+        <button type="button" className="dh-edit-cancel" onClick={editing.cancel}>{tc('core:common.cancel')}</button>
+      </div>
+      {editing.error ? <p className="dh-send-failed" role="alert">{editing.error}</p> : null}
+    </div>
+  );
+}
+
 /**
- * A message that can be reacted to and replied to: the hover bar on a
- * pointer, the long-press sheet on a touch screen. Nobody signed in, or a
- * deleted message: neither.
+ * A message that can be reacted to, replied to and acted on: the hover bar
+ * on a pointer (its reactions, Reply, and the ⋯ menu every chat's rows
+ * open: ../../message-actions/message-menu.ts), the long-press sheet on a
+ * touch screen (Reply, then the same menu). Your own: Edit, in place, and
+ * Delete, once confirmed; somebody else's: Report and Block. Nobody signed
+ * in, or a deleted message: none of it.
  */
 function Message({ said, feed, me, className, marked = false, onReply, children }: {
   said: Said;
@@ -1077,27 +1499,61 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
   onReply: () => void;
   children: ReactNode;
 }): ReactNode {
-  const tm = useMessages('messages');
+  const t = useMessages('project');
+  useMessages('messages');
+  const tc = useMessages('chat');
   const recents = useRecentReactions();
   const [picking, setPicking] = useState(false);
+  const [menu, setMenu] = useState<ReturnType<typeof placementFor> | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [edit, setEdit] = useState<{ value: string; busy: boolean; error: string } | null>(null);
   const bar = useRef<HTMLDivElement | null>(null);
   const pickerButton = useRef<HTMLButtonElement | null>(null);
+  const moreButton = useRef<HTMLButtonElement | null>(null);
   const can = !!me && !said.deleted;
+  const mine = can && said.who.username === me;
   useDismiss(picking, [bar], () => setPicking(false));
-  const press = useLongPress(() => setSheet(true), { disabled: !can });
+  const press = useLongPress(() => setSheet(true), { disabled: !can || !!edit });
   const reacted = (emoji: string) => said.reactions.some((r) => r.emoji === emoji && r.reacted);
   const react = (emoji: string) => { rememberReaction(emoji); void feed.react(said.id, emoji); };
+  const who = said.who;
+  const items: MenuItem[] = can ? messageMenu({
+    edit: mine && said.content.trim() ? () => setEdit({ value: said.content, busy: false, error: '' }) : null,
+    text: said.content || null,
+    pictures: said.attachments.filter((a) => a.image).map((a) => ({ src: a.url, name: a.name })),
+    link: feed.source.address(said),
+    remove: mine ? () => feed.remove(said.id) : null,
+    report: !mine && who.id ? () => openReport(feed.source.kind === 'app'
+      ? { targetType: 'app_message', target: said.id, label: tc('chat:group.report.label', { username: who.username }), userId: who.id || undefined }
+      : { targetType: 'conversation_message', target: said.id, label: t('messages:row.reportLabel', { name: nameOf(who) }), userId: who.id || undefined }) : null,
+    block: !mine && who.id && !who.bot ? { who: { name: `@${who.username}` }, run: () => setUserBlocked(who.id as number, true) } : null,
+    failed: (_error, fallback) => toast(fallback),
+  }) : [];
+  const sheetItems = messageSheet({ reply: () => { setSheet(false); onReply(); } }, items);
+  const editing: Editing | null = edit ? {
+    id: said.id,
+    ...edit,
+    change: (value) => setEdit((was) => (was ? { ...was, value } : was)),
+    cancel: () => setEdit(null),
+    save: () => {
+      const value = edit.value.trim();
+      if (!value || edit.busy) return;
+      setEdit({ ...edit, busy: true, error: '' });
+      feed.edit(said.id, value).then(() => setEdit(null), () => {
+        setEdit((was) => (was ? { ...was, busy: false, error: t('project:hub.discussion.editFailed') } : was));
+      });
+    },
+  } : null;
   const Tag = className === 'dh-post' ? 'article' : 'div';
   return (
     <Tag
       className={`${className} dh-msg`}
       data-ws-discussion-message={String(said.id)}
       data-ws-discussion-marked={marked ? '' : undefined}
-      {...(can ? press : {})}
+      {...(can && !edit ? press : {})}
     >
-      {children}
-      {can ? (
+      <EditingContext.Provider value={editing}>{children}</EditingContext.Provider>
+      {can && !edit ? (
         <MessageActionBar
           className="dh-actions"
           barRef={bar}
@@ -1105,9 +1561,12 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
           reacted={reacted}
           onReact={react}
           pickerOpen={picking}
-          onTogglePicker={() => setPicking((v) => !v)}
+          onTogglePicker={() => { setMenu(null); setPicking((v) => !v); }}
           pickerButtonRef={pickerButton}
           onReply={onReply}
+          moreOpen={!!menu}
+          moreButtonRef={moreButton}
+          onToggleMore={() => { setPicking(false); setMenu((open) => (open ? null : placementFor(moreButton.current, items.length * 38 + 24))); }}
         >
           {picking ? (
             <EmojiPicker
@@ -1117,6 +1576,7 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
               onClose={() => setPicking(false)}
             />
           ) : null}
+          {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
         </MessageActionBar>
       ) : null}
       {can ? (
@@ -1127,7 +1587,7 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
           reacted={reacted}
           onReact={(emoji) => { setSheet(false); react(emoji); }}
           onPick={react}
-          items={[{ key: 'reply', label: tm('messages:actions.reply'), icon: ReplyArrowIcon, onSelect: () => { setSheet(false); onReply(); } }]}
+          items={sheetItems}
           preview={{ who: nameOf(said.who), text: said.content.replace(/\s+/g, ' ').trim().slice(0, 120) }}
         />
       ) : null}
@@ -1146,35 +1606,97 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
  * through (../../../lib/join-required.ts), and any other refusal is said under
  * the box with what was typed kept.
  */
-function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend }: {
+/** The formatting row a post's box wears, as a channel's composer did (#6035): the chat's own buttons and rules. */
+const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof BoldIcon }> = [
+  { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
+  { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
+  { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'strike', label: 'messages:composer.format.strike', Icon: StrikethroughIcon },
+  { kind: 'heading', label: 'messages:composer.format.heading', Icon: HeadingIcon },
+  { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
+  { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
+  { kind: 'link', label: 'messages:composer.format.link', Icon: LinkIcon },
+];
+
+/** A file picked for the next post or reply, before it is sent. */
+interface Staged { key: string; file: File; thumb: string | null }
+
+let stagedSeq = 0;
+
+/**
+ * The box a post or a reply is written in. Files ride along as they do in
+ * the chat: the paperclip (or a drop) stages up to four, under the room's
+ * own limits (../../attachments/limits.ts), shown as the chat's strip; they
+ * are taken in through the room's own upload route when the post is sent.
+ * A post's box wears the formatting row; Ctrl/Cmd + B and I work in both.
+ */
+function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend, upload }: {
   kind: 'post' | 'reply';
   boxRef: RefObject<HTMLTextAreaElement | null>;
   viewer: Viewer | null;
   placeholder: string;
   label: string;
   sendLabel: string;
-  onSend: (words: string) => Promise<void>;
+  onSend: (words: string, attachmentIds: string[]) => Promise<void>;
+  upload: (file: File) => Promise<string>;
 }): ReactNode {
   const t = useMessages('project');
+  const tm = useMessages('messages');
   const [words, setWords] = useState('');
+  const [staged, setStaged] = useState<Staged[]>([]);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
-  const empty = !words.trim();
+  const picker = useRef<HTMLInputElement | null>(null);
+  const caret = useRef<{ start: number; end: number } | null>(null);
+  const empty = !words.trim() && !staged.length;
   const grow = () => {
     const box = boxRef.current;
     if (!box) return;
     box.style.height = 'auto';
     box.style.height = `${Math.min(box.scrollHeight, 240)}px`;
+    if (caret.current) {
+      box.setSelectionRange(caret.current.start, caret.current.end);
+      caret.current = null;
+    }
   };
   useEffect(grow, [words]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A picture's preview is the browser's own copy until it is sent.
+  useEffect(() => () => { for (const item of staged) if (item.thumb) URL.revokeObjectURL(item.thumb); }, [staged]);
+  const stage = (files: File[]) => {
+    const { upload: take, refused } = stageFiles(files, staged.length, tm);
+    setFailed(refused || null);
+    if (!take.length) return;
+    setStaged((held) => [...held, ...take.map((file) => ({
+      key: `f${stagedSeq += 1}`,
+      file,
+      thumb: file.type.startsWith('image/') && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null,
+    }))]);
+  };
+  const format = (how: FormatKind) => {
+    const box = boxRef.current;
+    if (!box) return;
+    const result = applyFormat(box.value.slice(0, 8000), box.selectionStart ?? box.value.length, box.selectionEnd ?? box.value.length, how);
+    caret.current = { start: result.start, end: result.end };
+    box.focus({ preventScroll: true });
+    setWords(result.value);
+  };
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     if (empty || sending) return;
     setSending(true);
     setFailed(null);
+    let ids: string[];
     try {
-      await onSend(words.trim());
+      ids = await Promise.all(staged.map((item) => upload(item.file)));
+    } catch (error) {
+      setFailed(error instanceof Error && error.message ? error.message : tm('messages:composer.uploadFailed'));
+      setSending(false);
+      return;
+    }
+    try {
+      await onSend(words.trim(), ids);
       setWords('');
+      setStaged([]);
     } catch (error) {
       const said = error instanceof Error && error.message ? error.message : '';
       setFailed(said || t('project:hub.discussion.sendFailed'));
@@ -1183,13 +1705,58 @@ function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend 
     }
   };
   const onKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && !event.altKey && (event.key === 'b' || event.key === 'i')) {
+      event.preventDefault();
+      format(event.key === 'b' ? 'bold' : 'italic');
+      return;
+    }
     if (enterSends(event.nativeEvent)) {
       event.preventDefault();
       void send();
     }
   };
+  const pending: PendingAttachmentView[] = staged.map((item) => ({
+    key: item.key,
+    name: item.file.name,
+    kind: item.thumb ? 'image' : 'binary',
+    badge: attachmentBadge(item.file.name, item.file.type),
+    size: fileSize(item.file.size),
+    thumbUrl: item.thumb,
+    uploading: sending,
+  }));
   return (
-    <form className={kind === 'post' ? 'dh-composer dh-composer-post' : 'dh-composer dh-composer-reply'} data-ws-discussion-compose={kind} onSubmit={send}>
+    <form
+      className={kind === 'post' ? 'dh-composer dh-composer-post' : 'dh-composer dh-composer-reply'}
+      data-ws-discussion-compose={kind}
+      onSubmit={send}
+      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer?.files || []);
+        if (!files.length) return;
+        event.preventDefault();
+        stage(files);
+      }}
+    >
+      {kind === 'post' ? (
+        <div className="dh-format-bar messages-format-bar" role="toolbar" aria-label={tm('messages:composer.format.bar')} data-ws-discussion-format="">
+          {FORMAT_BUTTONS.map(({ kind: how, label: name, Icon }) => (
+            <button
+              key={how}
+              type="button"
+              className="messages-format-btn"
+              data-format={how}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => format(how)}
+              disabled={sending}
+              aria-label={tm(name)}
+              title={tm(name)}
+            >
+              <Icon aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       {kind === 'post' ? <ViewerFace viewer={viewer} /> : null}
       <textarea
         ref={boxRef}
@@ -1203,10 +1770,40 @@ function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend 
         disabled={sending}
         onChange={(event) => setWords(event.currentTarget.value)}
         onKeyDown={onKey}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData?.files || []);
+          if (!files.length) return;
+          event.preventDefault();
+          stage(files);
+        }}
+      />
+      <button
+        type="button"
+        className="dh-attach"
+        data-ws-discussion-attach=""
+        disabled={sending || staged.length >= MAX_ATTACHMENTS}
+        aria-label={tm('messages:composer.attachFiles')}
+        title={tm('messages:composer.attachFiles')}
+        onClick={() => picker.current?.click()}
+      >
+        <PaperClipIcon aria-hidden="true" />
+      </button>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        tabIndex={-1}
+        onChange={(event) => { stage(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ''; }}
       />
       <button type="submit" className="dh-send" disabled={empty || sending} aria-label={sendLabel} title={sendLabel}>
         <ArrowUpIcon aria-hidden="true" />
       </button>
+      {pending.length ? (
+        <div className="dh-staged" data-ws-discussion-staged={String(pending.length)}>
+          <PendingStripRows items={pending} onRemove={(at) => setStaged((held) => held.filter((_, i) => i !== at))} />
+        </div>
+      ) : null}
       {failed ? <p className="dh-send-failed" role="alert" data-ws-discussion-send-failed="">{failed}</p> : null}
     </form>
   );

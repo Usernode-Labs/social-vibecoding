@@ -418,6 +418,10 @@ export function useChannelHandles(): ReadonlySet<string> {
   const list = channels();
   return handleSetFor(list);
 }
+/** The same handles, read once without subscribing (a Discussion post's `#name` links). */
+export function channelHandles(): ReadonlySet<string> {
+  return handleSetFor(channels());
+}
 const handleSets = new WeakMap<ChannelRef[], ReadonlySet<string>>();
 function handleSetFor(list: ChannelRef[]): ReadonlySet<string> {
   let set = handleSets.get(list);

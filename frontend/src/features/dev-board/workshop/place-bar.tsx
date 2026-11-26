@@ -28,7 +28,7 @@ import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { navStore } from '../../nav/nav-store.js';
-import { placeHandle, placeName, type PlaceKey } from './places';
+import { placeName, placeTitleHandle, type PlaceKey } from './places';
 import { livePlace, placeStore, toggleTray } from './place-store';
 
 /** What waits for you, aloud: "29 to vote, 4 unread", or null for nothing. Pure. */
@@ -157,7 +157,7 @@ export function HeaderPlaceName({ slug, fallback }: { slug: string | null; fallb
   }
   // #5683: never a channel from another community beside this one's name.
   const shown = livePlace(slug, place);
-  const handle = placeHandle(shown);
+  const handle = placeTitleHandle(shown);
   return (
     <span className="header-place-name" data-header-place="" aria-hidden="true">
       {handle ? <span className="dev-ws-place-title-hash">#</span> : null}
@@ -170,7 +170,7 @@ export function PlaceBar({ place, barRef }: {
   place: PlaceKey;
   barRef?: (el: HTMLElement | null) => void;
 }): ReactNode {
-  const handle = placeHandle(place);
+  const handle = placeTitleHandle(place);
   return (
     <div ref={barRef} className="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar={place}>
       <div className="dev-ws-tabtrack">

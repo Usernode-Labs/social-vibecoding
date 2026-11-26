@@ -57,7 +57,10 @@ test('the options carry the switch, and the admin switches it beside the invite 
   assert.match(admin, /router\.get\('\/api\/v4\/admin\/story-landing',/);
   assert.match(admin, /router\.put\('\/api\/v4\/admin\/story-landing', adminWriteGate,/);
   const screen = read('frontend/src/features/admin/topochain/waitlist.tsx');
-  assert.match(screen, /\{showAnalytics \? <WaitlistAnalyticsPanel onClose=\{\(\) => setShowAnalytics\(false\)\} \/> : null\}\s+<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
+  // The waitlist screen is tabs now (request 7224): the trends have a tab of
+  // their own, and this switch is the row after the waitlist's in the
+  // Settings tab's one group.
+  assert.match(screen, /<TabPanel tabsId=\{WL_TABS_ID\} tab="settings" active=\{tab === 'settings'\}>\s+<SettingsGroup title="Waitlist settings"[^>]*>\s+<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
   assert.match(screen, /id="admin-topo-wl-story-enabled"/);
 });
 

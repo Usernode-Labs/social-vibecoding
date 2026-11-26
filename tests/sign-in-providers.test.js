@@ -630,7 +630,7 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
 
 test('the console section is registered like its neighbours', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleJs, /\{ key: 'sign-in', label: 'Sign-in providers', group: 'Platform' \}/);
+  assert.match(consoleJs, /\{ key: 'sign-in', label: 'Sign-in providers', group: 'Delivery & sign-in' \}/);
   assert.match(consoleJs, /'sign-in': 'AdminSignIn'/);
   assert.match(consoleJs, /'sign-in': '<svg/);
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-sign-in\.tsx';/);

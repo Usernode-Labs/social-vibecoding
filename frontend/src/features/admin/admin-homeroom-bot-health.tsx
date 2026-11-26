@@ -1,6 +1,7 @@
 'use strict';
 
 import { AdminUI } from './admin-console.js';
+import { Badge } from './topochain/ui.tsx';
 
 // Rollout health (#admin/homeroom-bot, Overview): whether the bot is
 // working, over the last week. The numbers and
@@ -354,7 +355,7 @@ export function RolloutHealth({ health, failures, incidents }: {
             <li key={r.key} className={FIGURE} data-rollout={r.key} data-watch={r.watch == null ? 'unknown' : String(r.watch)}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className={AdminUI.muted}>{r.label}</span>
-                {r.watch ? <span className={AdminUI.badge.warn}>Worth a look</span> : null}
+                {r.watch ? <Badge tone="amber" label="Worth a look" /> : null}
               </div>
               <div className="text-2xl font-semibold mt-0.5 tabular-nums">{r.value}</div>
               <p className={AdminUI.muted}>{r.detail}</p>

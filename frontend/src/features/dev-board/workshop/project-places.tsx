@@ -13,11 +13,10 @@
  *   Discussion
  *
  * #general IS THE DISCUSSION (26 Nov 2026): the row that was "# general"
- * opens the Discussion, #general as posts with replies
- * (./hub-discussion.tsx, place `posts`), and stays lit on #general's chat
- * view of the same room (place `discussion`, its "Open as chat"). Its count
- * is #general's unread, and like a channel's it is not drawn while you read
- * it.
+ * is the project's Discussion, its messages as posts with replies
+ * (./hub-discussion.tsx, place `discussion`); there is no chat view of it.
+ * Its count is #general's unread, and like a channel's it is not drawn
+ * while you read it.
  *
  * A topic's channel is not one of these places (#6709): the Hub's Topics
  * card and the channel's own address reach it, and a retired topic stays
@@ -78,7 +77,7 @@ export function placeRows(places: PlacesPayload | null | undefined, owed: number
   const general = channels.find((c) => c.kind === 'general');
   return {
     pages: PAGE_PLACES.map((p) => ({ key: p.key, label: translate(p.label), count: p.key === 'needs' ? Math.max(0, Number(owed) || 0) : 0 })),
-    general: { key: 'posts', label: translate('project:places.list.discussion'), count: Math.max(0, Number(general?.unread) || 0) },
+    general: { key: 'discussion', label: translate('project:places.list.discussion'), count: Math.max(0, Number(general?.unread) || 0) },
     topics: liveTopics(places).map((t) => ({
       key: channelPlace(t.handle),
       label: t.handle,
@@ -94,7 +93,7 @@ function PageGlyph({ k }: { k: PlaceKey }) {
   if (k === 'status') return <Squares2X2Icon className={cls} aria-hidden="true" />;
   if (k === 'needs') return <BallotIcon className={cls} aria-hidden="true" />;
   if (k === 'workshop') return <BoardIcon className={cls} aria-hidden="true" />;
-  if (k === 'posts') return <ChatIcon className={cls} aria-hidden="true" />;
+  if (k === 'discussion') return <ChatIcon className={cls} aria-hidden="true" />;
   return <HashIcon className={`${cls} dev-ws-place-hash`} aria-hidden="true" />;
 }
 
@@ -112,7 +111,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   // The channel you are reading draws no count of its own, as the place bar
   // leaves it out of its unread; the count of Needs you stays while you are
   // there (#5447).
-  const channel = isChannelPlace(k) || k === 'posts';
+  const channel = isChannelPlace(k);
   const phrase = channel && lit ? null : countPhrase(k, count);
   // A channel's pill says what it counts ("9 unread", capped as "99+ unread"),
   // its hover text the same; Needs you keeps the bare number.
@@ -227,7 +226,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
             k={rows.general.key}
             label={rows.general.label}
             count={rows.general.count}
-            lit={lit === 'posts'}
+            lit={lit === 'discussion'}
             onPlace={onPlace}
           />
         </div>

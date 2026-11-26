@@ -67,7 +67,11 @@ test('the helper calls, per helper and the model asked first, in words', () => {
   assert.match(html, /2 not answered/);
   assert.match(html, /Small-change tag/);
   assert.match(html, /12 s \/ 15 s/);
-  assert.match(html, /aria-pressed="true" class="btn-primarySm"[^>]*>Last 7 days</);
+  // The days are the kit's Segmented now: a radio group that carries the
+  // days in data-value, where they were three pressed buttons (request 7224).
+  assert.match(html, /<div id="admin-homeroom-bot-calls-days" role="radiogroup"[^>]*data-value="7"/);
+  assert.match(html, /<button type="button" role="radio" aria-checked="true"[^>]*data-value="7"[^>]*>Last 7 days</);
+  assert.equal((html.match(/role="radio" aria-checked="true"/g) || []).length, 1, 'one span of days is the checked one');
   const empty = renderToHtml(createElement(HelperCallsView, { payload: { ...PAYLOAD, helpers: [], totals: { calls: 0, costUsd: 0 } }, days: 1, onDays() {} }));
   assert.match(empty, /id="admin-homeroom-bot-calls-empty"/);
   assert.equal(seconds(600), '0.6 s');

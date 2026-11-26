@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { BTN } from './topochain/tokens.ts';
+import { Badge, Field, Figures, List, ScreenHeader } from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Access review (#admin/access-review, #5133): every account with admin
 // rights, what each one can do, and the quarterly review that confirms the
@@ -79,43 +82,49 @@ export function reviewLine(review: ReviewState): { last: string; due: string } {
   };
 }
 
+// What an account can do. Yes is amber on purpose: each one is a power to
+// look at twice in a review.
 function YesNo({ on }: { on: boolean }) {
-  return <span className={on ? AdminUI.badge.warn : AdminUI.badge.outline}>{on ? 'Yes' : 'No'}</span>;
+  return <Badge tone={on ? 'amber' : 'zinc'} label={on ? 'Yes' : 'No'} />;
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
-      <div className="text-sm text-zinc-900 dark:text-zinc-100 break-words">{value}</div>
-    </div>
-  );
-}
-
-function AdminCard({ a }: { a: AdminRow }) {
-  const granted = a.roleSetAt
+function granted(a: AdminRow): string {
+  return a.roleSetAt
     ? `${fmtDate(a.roleSetAt)}${a.roleSetBy ? ` by ${a.roleSetBy}` : ''}`
     : 'Not recorded';
+}
+
+// One row per admin in the shared list (26 Nov 2026); each was a card of its
+// own. data-admin-id sat on the card, and the list draws its own rows, so the
+// username carries it.
+const FINE = 'text-xs text-zinc-500 dark:text-zinc-400';
+const ADMIN_COLUMNS: Column<AdminRow>[] = [
+  {
+    label: 'Account',
+    primary: true,
+    cell: (a) => <span data-admin-id={a.id} className="font-medium break-all">{a.username}</span>,
+  },
+  {
+    label: 'Role',
+    cell: (a) => (
+      <Badge tone={a.role === 'admin' ? 'violet' : 'zinc'} label={a.role === 'admin' ? 'Full admin' : 'View-only admin'} />
+    ),
+  },
+  { label: 'Role given', cell: (a) => granted(a), tdClass: FINE },
+  { label: 'Last sign-in', cell: (a) => (a.lastSignInAt ? fmtDate(a.lastSignInAt) : 'No live session'), tdClass: FINE },
+  { label: 'Account made', cell: (a) => fmtDate(a.accountCreatedAt) || 'Not recorded', tdClass: FINE },
+  { label: 'Last database export', cell: (a) => (a.lastDatabaseExportAt ? fmtDate(a.lastDatabaseExportAt) : 'Never'), tdClass: FINE },
+];
+
+// What the role lets the account do, behind the row's arrow: it follows from
+// the role, so it is read now and then, not on every row.
+function AdminPowers({ a }: { a: AdminRow }) {
   return (
-    <div className={`${AdminUI.card} p-4`} data-admin-id={a.id}>
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="font-medium text-zinc-900 dark:text-zinc-100 break-all">{a.username}</span>
-        <span className={a.role === 'admin' ? AdminUI.badge.secondary : AdminUI.badge.default}>
-          {a.role === 'admin' ? 'Full admin' : 'View-only admin'}
-        </span>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-        <Fact label="Role given" value={granted} />
-        <Fact label="Last sign-in" value={a.lastSignInAt ? fmtDate(a.lastSignInAt) : 'No live session'} />
-        <Fact label="Account made" value={fmtDate(a.accountCreatedAt) || 'Not recorded'} />
-        <Fact label="Last database export" value={a.lastDatabaseExportAt ? fmtDate(a.lastDatabaseExportAt) : 'Never'} />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-zinc-600 dark:text-zinc-300">
-        <span className="inline-flex items-center gap-1.5">Export the database <YesNo on={a.capabilities.databaseExport} /></span>
-        <span className="inline-flex items-center gap-1.5">CSV exports with personal data <YesNo on={a.capabilities.personalDataExports} /></span>
-        <span className="inline-flex items-center gap-1.5">SQL console <YesNo on={a.capabilities.sqlConsole} /></span>
-        <span className="inline-flex items-center gap-1.5">Change things <YesNo on={a.capabilities.changeThings} /></span>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-600 dark:text-zinc-300">
+      <span className="inline-flex items-center gap-1.5">Export the database <YesNo on={a.capabilities.databaseExport} /></span>
+      <span className="inline-flex items-center gap-1.5">CSV exports with personal data <YesNo on={a.capabilities.personalDataExports} /></span>
+      <span className="inline-flex items-center gap-1.5">SQL console <YesNo on={a.capabilities.sqlConsole} /></span>
+      <span className="inline-flex items-center gap-1.5">Change things <YesNo on={a.capabilities.changeThings} /></span>
     </div>
   );
 }
@@ -183,9 +192,8 @@ function AccessReviewSection() {
 
   if (!canWrite) {
     return (
-      <div id="admin-access-review-panel" className={`${AdminUI.card} p-4`}>
-        <h2 className={AdminUI.cardTitle}>Access review</h2>
-        <p className={`${AdminUI.muted} mt-2`}>The access review is for full admins.</p>
+      <div id="admin-access-review-panel">
+        <ScreenHeader title="Access review" subtitle="The access review is for full admins." />
       </div>
     );
   }
@@ -194,61 +202,68 @@ function AccessReviewSection() {
   const line = report ? reviewLine(report.review) : null;
 
   return (
-    <div id="admin-access-review-panel" className="space-y-4">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Access review</h2>
-          <button id="admin-access-review-refresh" type="button" className={`${AdminUI.btn.link} text-xs px-1 py-1`}
+    <div id="admin-access-review-panel">
+      <ScreenHeader
+        title="Access review"
+        subtitle="Every account with admin rights and what it can do. Once a quarter, check that each one still needs its access, take it away in Users where it does not, then mark the list reviewed."
+        actions={(
+          <button id="admin-access-review-refresh" type="button" className={BTN.secondarySm}
             onClick={() => { setStatus(null); refresh(); }}>Refresh</button>
-        </div>
-        <p className={AdminUI.cardDescription}>
-          Every account with admin rights and what it can do. Once a quarter, check that each one still needs its access,
-          take it away in Users where it does not, then mark the list reviewed.
-        </p>
-        {load.kind === 'loading' ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : null}
-        {load.kind === 'error' ? <p className="text-sm text-red-700 dark:text-red-400 mt-3">{load.error}</p> : null}
-        {report && line ? (
-          <div className="mt-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span id="admin-access-review-last" className="text-sm text-zinc-900 dark:text-zinc-100">{line.last}</span>
-              <span id="admin-access-review-due" className={report.review.overdue ? AdminUI.badge.warn : AdminUI.badge.default}>
-                {line.due}
-              </span>
-            </div>
-            {report.review.note ? (
-              <p className={AdminUI.muted}>{`Note: ${report.review.note}`}</p>
-            ) : null}
-            <div>
-              <label htmlFor="admin-access-review-note" className={AdminUI.label}>Note (optional)</label>
-              <textarea id="admin-access-review-note" className={`${AdminUI.textarea} mt-1`} maxLength={NOTE_MAX}
-                placeholder="What changed in this review, for example who lost access"
-                value={note} onChange={(e) => setNote(e.target.value)} />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <button id="admin-access-review-mark" type="button" className={AdminUI.btn.primary}
-                disabled={busy} onClick={markReviewed}>
-                {busy ? 'Recording…' : 'Reviewed'}
-              </button>
-              {status ? (
-                <span className={status.ok
-                  ? 'text-xs text-emerald-700 dark:text-emerald-400'
-                  : 'text-xs text-red-700 dark:text-red-400'}>{status.text}</span>
-              ) : null}
-            </div>
+        )}
+      />
+      <Figures
+        id="admin-access-review-figures"
+        items={[
+          { key: 'full', label: 'Full admins', value: report ? report.counts.full.toLocaleString() : null, tone: 'yellow' },
+          { key: 'view', label: 'View-only admins', value: report ? report.counts.viewOnly.toLocaleString() : null, tone: 'sky' },
+        ]}
+      />
+      {load.kind === 'loading' ? <p className={AdminUI.loading}>Loading…</p> : null}
+      {load.kind === 'error' ? <p className="text-sm text-red-700 dark:text-red-400">{load.error}</p> : null}
+      {report && line ? (
+        <div className={`${AdminUI.card} p-4 mb-4 space-y-3`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span id="admin-access-review-last" className="text-sm text-zinc-900 dark:text-zinc-100">{line.last}</span>
+            <span id="admin-access-review-due" className={report.review.overdue ? AdminUI.badge.warn : AdminUI.badge.default}>
+              {line.due}
+            </span>
           </div>
-        ) : null}
-      </div>
+          {report.review.note ? (
+            <p className={AdminUI.muted}>{`Note: ${report.review.note}`}</p>
+          ) : null}
+          <Field label="Note (optional)" htmlFor="admin-access-review-note">
+            <textarea id="admin-access-review-note" className={AdminUI.textarea} maxLength={NOTE_MAX}
+              placeholder="What changed in this review, for example who lost access"
+              value={note} onChange={(e) => setNote(e.target.value)} />
+          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <button id="admin-access-review-mark" type="button" className={AdminUI.btn.primary}
+              disabled={busy} onClick={markReviewed}>
+              {busy ? 'Recording…' : 'Reviewed'}
+            </button>
+            {status ? (
+              <span className={status.ok
+                ? 'text-xs text-emerald-700 dark:text-emerald-400'
+                : 'text-xs text-red-700 dark:text-red-400'}>{status.text}</span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {report ? (
-        <div className="space-y-2">
-          <p className={AdminUI.muted}>
-            {`${report.counts.full} full ${report.counts.full === 1 ? 'admin' : 'admins'}, ${report.counts.viewOnly} view-only.`}
-            {' Full admins change things and take exports; every admin can read the console and run the read-only SQL console.'}
+        <>
+          <p className={`${AdminUI.muted} mb-3`}>
+            Full admins change things and take exports; every admin can read the console and run the read-only SQL console.
           </p>
-          <div id="admin-access-review-list" className="space-y-2">
-            {report.admins.map((a) => <AdminCard key={a.id} a={a} />)}
+          <div id="admin-access-review-list">
+            <List
+              items={report.admins}
+              rowKey={(a) => a.id}
+              columns={ADMIN_COLUMNS}
+              details={(a) => <AdminPowers a={a} />}
+            />
           </div>
-        </div>
+        </>
       ) : null}
     </div>
   );

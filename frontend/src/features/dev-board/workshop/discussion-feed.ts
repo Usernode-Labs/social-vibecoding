@@ -45,7 +45,7 @@
  */
 
 import * as messagesApi from '../../messages/api';
-import type { ConversationMessage } from '../../messages/types';
+import type { ConversationMessage, SharedObjectCard } from '../../messages/types';
 
 /** How many replies a post shows under it before "View N earlier replies". */
 export const REPLIES_SHOWN = 3;
@@ -73,6 +73,30 @@ export interface DiscussionReaction {
   users: string[];
 }
 
+/**
+ * A file on a message, from either room: an image is drawn in place, any
+ * other file as the chat's file chip. `url` is where its bytes are read
+ * (the room's own attachment route, or for a visitor the public one).
+ */
+export interface DiscussionAttachment {
+  id: string;
+  name: string;
+  url: string;
+  /** An html file's sandboxed preview, where the room serves one. */
+  viewUrl: string | null;
+  image: boolean;
+  /** image | markdown | html | text | binary, or a content type's family. */
+  kind: string;
+  /** Bytes, or 0 when the room did not say. */
+  size: number;
+}
+
+/** A plan shared into a project's chat (msg_type spec_share): its title, and the change it became. */
+export interface SharedSpec {
+  title: string;
+  prNumber: number | null;
+}
+
 /** One message, from either room. */
 export interface Said {
   id: number;
@@ -83,6 +107,14 @@ export interface Said {
   reactions: DiscussionReaction[];
   /** How many files ride on it, for a message with no words. */
   files: number;
+  /** Its files, drawn under its words. */
+  attachments: DiscussionAttachment[];
+  /** Cards it shares (a request, a change, a project: Messages' shared objects). */
+  cards: SharedObjectCard[];
+  /** A plan it shares (a project's chat). */
+  spec: SharedSpec | null;
+  /** #4238: Homeroom bot's first-version post, the button that opens the app it made. */
+  openApp?: { label: string; target: string } | null;
   /** A reply: the message its thread hangs off. Null for a main-stream message. */
   rootId: number | null;
   /** A main-stream message: how many replies its thread holds, and when the last came. */
@@ -94,7 +126,14 @@ export interface Said {
 export interface DiscussionSummary {
   since: string | null;
   fold_at?: number;
-  earlier: { count: number; from: string | null; to: string | null; last_id: number | null } | null;
+  earlier: {
+    count: number;
+    from: string | null;
+    to: string | null;
+    last_id: number | null;
+    /** The Earlier post's own reactions, on its project's anchor. */
+    reactions?: Array<{ emoji: string; count: number; users?: string[]; reacted?: boolean }>;
+  } | null;
 }
 
 /** The fold, when it applies: the history from before Discussion is one post. */
@@ -104,6 +143,8 @@ export interface EarlierFold {
   to: string | null;
   lastId: number;
   since: string;
+  /** Its own reactions (the post is not a message: they hang on its project's anchor). */
+  reactions: DiscussionReaction[];
 }
 
 export interface DiscussionPost {
@@ -148,7 +189,13 @@ export function earlierFold(summary: DiscussionSummary | null | undefined): Earl
   const at = Number.isFinite(Number(summary.fold_at)) && Number(summary.fold_at) > 0 ? Number(summary.fold_at) : EARLIER_FOLD_AT;
   const { count, from, to, last_id: lastId } = summary.earlier;
   if (!(Number(count) > at) || !lastId) return null;
-  return { count: Number(count), from: from || null, to: to || null, lastId: Number(lastId), since: summary.since };
+  const reactions = (summary.earlier.reactions || []).map((r) => ({
+    emoji: String(r.emoji || ''),
+    count: Number(r.count) || 0,
+    reacted: !!r.reacted,
+    users: Array.isArray(r.users) ? r.users.map(String) : [],
+  })).filter((r) => r.emoji && r.count > 0);
+  return { count: Number(count), from: from || null, to: to || null, lastId: Number(lastId), since: summary.since, reactions };
 }
 
 /** Pure: whether a message belongs to the folded history (or answers it). */
@@ -314,7 +361,49 @@ function appReactions(list: unknown, me: string | null): DiscussionReaction[] {
 const APP_POST_KINDS = new Set(['message', 'spec_share']);
 
 /** Pure: one app chat row (routes/chat.js) as `Said`, or null for a row that is no post or reply. */
-export function fromAppRow(row: unknown, me: string | null): Said | null {
+/** Pure: a project chat row's files (`metadata.attachments`), read from `fileBase` (its attachment route). */
+export function appAttachments(metadata: unknown, fileBase: string | null): DiscussionAttachment[] {
+  const list = ((metadata || {}) as Json).attachments;
+  if (!Array.isArray(list) || !fileBase) return [];
+  return list.map((raw) => {
+    const a = (raw || {}) as Json;
+    const id = str(a.id);
+    if (!/^[0-9a-f]{32}$/.test(id)) return null;
+    const kind = str(a.kind) || 'binary';
+    return {
+      id,
+      name: str(a.filename) || str(a.name),
+      url: `${fileBase}/${id}`,
+      viewUrl: kind === 'html' ? `${fileBase}/${id}/view` : null,
+      image: kind === 'image',
+      kind,
+      size: Number(a.sizeBytes ?? a.size_bytes ?? a.size) || 0,
+    };
+  }).filter((a): a is DiscussionAttachment => !!a);
+}
+
+/** Pure: a project chat row's shared plan (`metadata.specShare`), or null. */
+function appSpec(m: Json): SharedSpec | null {
+  if (str(m.msg_type) !== 'spec_share') return null;
+  const share = ((m.metadata || {}) as Json).specShare as Json | undefined;
+  if (!share) return null;
+  return { title: str(share.title), prNumber: num(share.prNumber ?? share.pr_number) };
+}
+
+/**
+ * Pure: #4238, Homeroom bot's first-version post (`metadata.kind`
+ * 'first_version'): its Open action, a label and an address in the app, or
+ * null. The chat drew it as a button (group-chat.js _openAppView).
+ */
+export function appOpenApp(m: Json): { label: string; target: string } | null {
+  const meta = (m.metadata || {}) as Json;
+  if (m.deleted || m.thread_type != null || meta.kind !== 'first_version' || !Array.isArray(meta.actions)) return null;
+  const open = (meta.actions as Json[]).find((a) => a && a.type === 'open' && typeof a.target === 'string'
+    && String(a.target).startsWith('#app/') && typeof a.label === 'string' && !!a.label);
+  return open ? { label: str(open.label), target: str(open.target) } : null;
+}
+
+export function fromAppRow(row: unknown, me: string | null, fileBase: string | null = null): Said | null {
   const m = (row || {}) as Json;
   const id = num(m.id);
   if (!id) return null;
@@ -331,6 +420,10 @@ export function fromAppRow(row: unknown, me: string | null): Said | null {
     deleted: !!m.deleted,
     reactions: appReactions(m.reactions, me),
     files: Array.isArray((m.metadata as Json | null)?.attachments) ? ((m.metadata as Json).attachments as unknown[]).length : 0,
+    attachments: appAttachments(m.metadata, fileBase),
+    cards: [],
+    spec: appSpec(m),
+    openApp: appOpenApp(m),
     rootId: threadType === 'message' ? num(m.thread_ref) : null,
     replyCount: thread ? Number(thread.reply_count) || 0 : 0,
     lastReplyAt: thread ? str(thread.last_reply_at) || null : null,
@@ -354,6 +447,17 @@ export function fromConversationMessage(m: ConversationMessage): Said | null {
     deleted: !!m.deleted,
     reactions: (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, reacted: !!r.reacted, users: r.users || [] })),
     files: (m.attachments || []).length,
+    attachments: (m.attachments || []).map((a) => ({
+      id: String(a.id),
+      name: a.name || '',
+      url: a.url,
+      viewUrl: a.viewUrl || null,
+      image: String(a.contentType || '').startsWith('image/'),
+      kind: a.kind || String(a.contentType || '').split('/')[0] || 'binary',
+      size: Number(a.size) || 0,
+    })),
+    cards: Array.isArray(m.objects) ? m.objects : [],
+    spec: null,
     rootId: m.threadRootId || null,
     replyCount: m.thread ? m.thread.replyCount || 0 : 0,
     lastReplyAt: m.thread ? m.thread.lastReplyAt || null : null,
@@ -363,14 +467,30 @@ export function fromConversationMessage(m: ConversationMessage): Said | null {
 /** One room, as the card reads and writes it. */
 export interface DiscussionSource {
   key: string;
+  /** Which kind of room: a project's own chat, or a Messages conversation (Homeroom's #general). */
+  kind: 'app' | 'conversation';
+  /** A message's address: a link that lands on its post (AppView._landOnDiscussion). */
+  address(said: Said): string;
+  /** Edit your own message; the words as the room keeps them. */
+  edit(messageId: number, content: string): Promise<string>;
+  /** Delete your own message. */
+  remove(messageId: number): Promise<void>;
   /** Whether the main stream carries each reply as a line (the app chat's does). */
   streamHoldsReplies: boolean;
-  /** A page of the main stream, oldest first, before `before` (the newest page without it). */
-  page(before: number | null): Promise<{ messages: Said[]; more: boolean; readId: number | null }>;
-  /** A thread: its first message and its newest replies, oldest first. */
-  thread(rootId: number): Promise<{ root: Said | null; replies: Said[] }>;
-  /** Write a post (`rootId` null) or a reply. */
-  post(content: string, rootId: number | null): Promise<Said | null>;
+  /**
+   * A page of the main stream, oldest first, before `before` (the newest page
+   * without it). A room whose summary rides with its first page (a visitor's)
+   * hands it back too.
+   */
+  page(before: number | null): Promise<{ messages: Said[]; more: boolean; readId: number | null; summary?: DiscussionSummary | null }>;
+  /** A thread: its first message and its newest replies, oldest first (`all`: as many as the room gives). */
+  thread(rootId: number, all?: boolean): Promise<{ root: Said | null; replies: Said[] }>;
+  /** Write a post (`rootId` null) or a reply, with the files `upload` took in. */
+  post(content: string, rootId: number | null, attachmentIds?: string[]): Promise<Said | null>;
+  /** Take a file in through the room's own upload route (its limits); the id a post carries it by. */
+  upload(file: File): Promise<string>;
+  /** Put an emoji on the Earlier post or take it off: its reactions after, or null on a refusal. */
+  reactEarlier(emoji: string, on: boolean): Promise<DiscussionReaction[] | null>;
   react(messageId: number, emoji: string, on: boolean): Promise<DiscussionReaction[] | null>;
   /** Where the viewer's reading stands, when the page did not say. */
   readPosition(): Promise<number | null>;
@@ -400,7 +520,7 @@ export type LiveEvent =
   | { kind: 'stale'; messageId: number | null; rootId: number | null };
 
 /** Pure: one frame of a project's chat socket as a LiveEvent, or null for one the Discussion does not draw. */
-export function liveFromAppFrame(frame: unknown, me: string | null): LiveEvent | null {
+export function liveFromAppFrame(frame: unknown, me: string | null, fileBase: string | null = null): LiveEvent | null {
   const f = (frame || {}) as Json;
   switch (str(f.type)) {
     case 'chat': {
@@ -417,7 +537,7 @@ export function liveFromAppFrame(frame: unknown, me: string | null): LiveEvent |
         created_at: f.createdAt,
         reactions: [],
         deleted: false,
-      }, me);
+      }, me, fileBase);
       return said ? { kind: 'said', said } : null;
     }
     case 'thread_summary': {
@@ -454,6 +574,17 @@ export function liveFromConversationEvent(event: unknown, conversationId: number
 /** Wait before a dropped socket is opened again, doubling to the cap. */
 export const LIVE_RETRY_MS = 1000;
 export const LIVE_RETRY_MAX_MS = 30_000;
+
+/** The Earlier post's reactions, the same route for either room: the project's own anchor. */
+async function earlierReact(slug: string, emoji: string, on: boolean, me: string | null): Promise<DiscussionReaction[] | null> {
+  const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/discussion/earlier/reactions`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ emoji, on }),
+  });
+  if (!response.ok) return null;
+  const data = await readJson(response);
+  return appReactions(data.reactions, me);
+}
 
 /** The "Most replies" read both rooms share: the project's own address answers for either. */
 async function rankedRead(slug: string, afterId: number, offset: number, limit: number): Promise<{ ids: number[]; more: boolean }> {
@@ -492,7 +623,7 @@ function appSocket(slug: string, viewer: { current: string | null }, heard: (eve
     ws.onmessage = (message) => {
       let frame: unknown = null;
       try { frame = JSON.parse(String(message.data)); } catch { return; }
-      const event = liveFromAppFrame(frame, viewer.current);
+      const event = liveFromAppFrame(frame, viewer.current, `/api/apps/${encodeURIComponent(slug)}/chat-attachments`);
       if (event) heard(event);
     };
     ws.onclose = (closed) => {
@@ -554,10 +685,30 @@ function clientKey(): string {
 /** An ordinary project's channel: the app's own chat. */
 export function appSource(slug: string, viewer: { current: string | null }): DiscussionSource {
   const base = `/api/apps/${encodeURIComponent(slug)}/messages`;
+  const files = `/api/apps/${encodeURIComponent(slug)}/chat-attachments`;
   const json = { 'Content-Type': 'application/json', Accept: 'application/json' };
   return {
     key: `app:${slug}`,
+    kind: 'app',
     streamHoldsReplies: true,
+    address(said) {
+      return `#messages/app/${encodeURIComponent(slug)}/m/${said.id}`;
+    },
+    async edit(messageId, content) {
+      const response = await fetch(`${base}/${messageId}`, {
+        method: 'PATCH', credentials: 'same-origin', headers: json, body: JSON.stringify({ content }),
+      });
+      const data = await readJson(response);
+      if (!response.ok) throw new DiscussionWriteError(response.status, str(data.error));
+      return str(data.content) || content;
+    },
+    async remove(messageId) {
+      const response = await fetch(`${base}/${messageId}`, { method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      if (!response.ok) {
+        const data = await readJson(response);
+        throw new DiscussionWriteError(response.status, str(data.error));
+      }
+    },
     async page(before) {
       const params = new URLSearchParams({ limit: '60' });
       if (before) params.set('before', String(before));
@@ -567,28 +718,37 @@ export function appSource(slug: string, viewer: { current: string | null }): Dis
       const rows = Array.isArray(data.messages) ? data.messages : [];
       const read = (data.read || null) as Json | null;
       return {
-        messages: rows.map((row) => fromAppRow(row, viewer.current)).filter((m): m is Said => !!m),
+        messages: rows.map((row) => fromAppRow(row, viewer.current, files)).filter((m): m is Said => !!m),
         more: !!data.has_more_before,
         readId: read ? num(read.last_read_message_id) : null,
       };
     },
-    async thread(rootId) {
-      const params = new URLSearchParams({ thread_type: 'message', thread_ref: String(rootId), limit: '50' });
+    async thread(rootId, all = false) {
+      const params = new URLSearchParams({ thread_type: 'message', thread_ref: String(rootId), limit: all ? '200' : '50' });
       const response = await fetch(withDemo(`${base}?${params}`), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
       if (!response.ok) return { root: null, replies: [] };
       const data = await readJson(response);
       const replies = (Array.isArray(data.messages) ? data.messages : [])
-        .map((row) => fromAppRow({ ...(row as Json), thread_type: 'message', thread_ref: rootId }, viewer.current))
+        .map((row) => fromAppRow({ ...(row as Json), thread_type: 'message', thread_ref: rootId }, viewer.current, files))
         .filter((m): m is Said => !!m);
-      return { root: data.root ? fromAppRow(data.root, viewer.current) : null, replies };
+      return { root: data.root ? fromAppRow(data.root, viewer.current, files) : null, replies };
     },
-    async post(content, rootId) {
+    async upload(file) {
+      const response = await fetch(`${files}?filename=${encodeURIComponent(file.name || 'file')}`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' }, body: file,
+      });
+      const data = await readJson(response);
+      if (!response.ok || !str(data.id)) throw new DiscussionWriteError(response.status, str(data.error));
+      return str(data.id);
+    },
+    async post(content, rootId, attachmentIds = []) {
       const body: Json = { content, client_key: clientKey() };
       if (rootId) { body.thread_type = 'message'; body.thread_ref = rootId; }
+      if (attachmentIds.length) body.attachment_ids = attachmentIds;
       const response = await fetch(base, { method: 'POST', credentials: 'same-origin', headers: json, body: JSON.stringify(body) });
       const data = await readJson(response);
       if (!response.ok) throw new DiscussionWriteError(response.status, str(data.error));
-      return data.message ? fromAppRow({ ...(data.message as Json), deleted: false }, viewer.current) : null;
+      return data.message ? fromAppRow({ ...(data.message as Json), deleted: false }, viewer.current, files) : null;
     },
     async react(messageId, emoji, on) {
       const response = await fetch(`${base}/${messageId}/reactions`, {
@@ -609,9 +769,67 @@ export function appSource(slug: string, viewer: { current: string | null }): Dis
     ranked(afterId, offset, limit) {
       return rankedRead(slug, afterId, offset, limit);
     },
+    reactEarlier(emoji, on) {
+      return earlierReact(slug, emoji, on, viewer.current);
+    },
     live(heard) {
       return appSocket(slug, viewer, heard);
     },
+  };
+}
+
+/**
+ * A public project's Discussion, for a visitor (routes/public-api.js): read
+ * only, nothing about the reader, its files through the public route. Every
+ * write is refused here before it is sent; the page offers sign-in instead.
+ */
+export function publicSource(slug: string): DiscussionSource {
+  const base = `/api/public/apps/${encodeURIComponent(slug)}/discussion`;
+  const files = `${base}/attachments`;
+  const read = async (url: string): Promise<Json> => {
+    const response = await fetch(url, { credentials: 'omit', headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`public discussion ${response.status}`);
+    return readJson(response);
+  };
+  const refuse = () => Promise.reject(new DiscussionWriteError(401, ''));
+  return {
+    key: `public:${slug}`,
+    kind: 'app',
+    streamHoldsReplies: true,
+    address() {
+      return `#app/${encodeURIComponent(slug)}/dev/discussion`;
+    },
+    async page(before) {
+      const data = await read(before ? `${base}?before=${before}` : base);
+      const rows = Array.isArray(data.messages) ? data.messages : [];
+      return {
+        messages: rows.map((row) => fromAppRow(row, null, files)).filter((m): m is Said => !!m),
+        more: !!data.has_more_before,
+        readId: null,
+        summary: (data.discussion as DiscussionSummary | undefined) || null,
+      };
+    },
+    async thread(rootId) {
+      try {
+        const data = await read(`${base}/thread/${rootId}`);
+        const replies = (Array.isArray(data.messages) ? data.messages : [])
+          .map((row) => fromAppRow({ ...(row as Json), thread_type: 'message', thread_ref: rootId }, null, files))
+          .filter((m): m is Said => !!m);
+        return { root: data.root ? fromAppRow(data.root, null, files) : null, replies };
+      } catch {
+        return { root: null, replies: [] };
+      }
+    },
+    post: refuse,
+    upload: refuse,
+    edit: refuse,
+    remove: refuse,
+    async react() { return null; },
+    async reactEarlier() { return null; },
+    async readPosition() { return null; },
+    async markRead() { /* a visitor has no reading to move */ },
+    ranked: () => Promise.reject(new Error('no ranking for a visitor')),
+    live() { return () => {}; },
   };
 }
 
@@ -620,7 +838,28 @@ export function conversationSource(conversationId: number, slug: string): Discus
   const shape = (list: ConversationMessage[]) => list.map(fromConversationMessage).filter((m): m is Said => !!m);
   return {
     key: `conversation:${conversationId}`,
+    kind: 'conversation',
     streamHoldsReplies: false,
+    address(said) {
+      return `#messages/${conversationId}/m/${said.id}`;
+    },
+    async edit(messageId, content) {
+      try {
+        const saved = await messagesApi.editMessage(conversationId, messageId, content);
+        return saved?.content ?? content;
+      } catch (error) {
+        const status = error instanceof messagesApi.MessagesApiError ? error.status : 0;
+        throw new DiscussionWriteError(status, error instanceof Error ? error.message : '');
+      }
+    },
+    async remove(messageId) {
+      try {
+        await messagesApi.deleteMessage(conversationId, messageId);
+      } catch (error) {
+        const status = error instanceof messagesApi.MessagesApiError ? error.status : 0;
+        throw new DiscussionWriteError(status, error instanceof Error ? error.message : '');
+      }
+    },
     async page(before) {
       const page = await messagesApi.listMessages(conversationId, before);
       // The main stream may carry a reply or two shown in the chat as well
@@ -630,13 +869,25 @@ export function conversationSource(conversationId: number, slug: string): Discus
     async thread(rootId) {
       const page = await messagesApi.listThread(conversationId, rootId);
       const root = page.root ? fromConversationMessage(page.root) : null;
-      return { root, replies: shape(page.messages).map((m) => ({ ...m, rootId })) };
+      // Under the root the server read: a demo address names it by an alias.
+      const under = root?.id ?? rootId;
+      return { root, replies: shape(page.messages).map((m) => ({ ...m, rootId: under })) };
     },
-    async post(content, rootId) {
+    async upload(file) {
+      try {
+        const attachment = await messagesApi.uploadAttachment(conversationId, file);
+        return String(attachment.id);
+      } catch (error) {
+        const status = error instanceof messagesApi.MessagesApiError ? error.status : 0;
+        throw new DiscussionWriteError(status, error instanceof Error ? error.message : '');
+      }
+    },
+    async post(content, rootId, attachmentIds = []) {
       try {
         const sent = await messagesApi.sendMessage(conversationId, {
           content,
           ...(rootId ? { threadRootId: rootId } : {}),
+          ...(attachmentIds.length ? { attachmentIds } : {}),
           idempotencyKey: clientKey(),
         });
         const said = fromConversationMessage(sent);
@@ -667,6 +918,9 @@ export function conversationSource(conversationId: number, slug: string): Discus
     },
     ranked(afterId, offset, limit) {
       return rankedRead(slug, afterId, offset, limit);
+    },
+    reactEarlier(emoji, on) {
+      return earlierReact(slug, emoji, on, null);
     },
     // The page's events socket names what changed in the room (public/js/app.js
     // relays it as `usernode:conversation-changed`); the feed reads it again.

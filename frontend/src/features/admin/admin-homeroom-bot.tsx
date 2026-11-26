@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { Badge, TABLE, TabPanel, Tabs, Toolbar } from './topochain/ui.tsx';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
@@ -212,7 +213,7 @@ export function StagesInUse({ configurations, fallback, nameOf, onOpen }: {
   const head = (scope: 'firstVersion' | 'later', label: string) => {
     const conf = configurations?.[scope] || null;
     return (
-      <th className={AdminUI.th} data-stage-scope={scope}>
+      <th className={TABLE.th} data-stage-scope={scope}>
         <div>{label}</div>
         <div className="normal-case font-normal tracking-normal">{conf ? `${conf.label} v${conf.version}` : 'No configuration current'}</div>
       </th>
@@ -226,21 +227,21 @@ export function StagesInUse({ configurations, fallback, nameOf, onOpen }: {
           <button type="button" className={`${AdminUI.btn.link} text-sm`} id="admin-homeroom-bot-stages-open" onClick={onOpen}>Change it in Configurations</button>
         ) : null}
       </div>
-      <div className={AdminUI.tableWrap}>
-        <table className={`${AdminUI.table} min-w-[36rem]`}>
-          <thead className={AdminUI.thead}>
+      <div className={TABLE.wrap}>
+        <table className={`${TABLE.table} min-w-[36rem]`}>
+          <thead className={TABLE.thead}>
             <tr>
-              <th className={AdminUI.th}>Stage</th>
+              <th className={TABLE.th}>Stage</th>
               {head('firstVersion', 'First versions')}
               {head('later', 'Later changes')}
             </tr>
           </thead>
           <tbody>
             {MODEL_STAGES.map((m) => (
-              <tr key={m.key} className={AdminUI.trHover} data-stage-row={m.key}>
-                <td className={AdminUI.td}>{m.label}</td>
-                <td className={`${AdminUI.td} text-xs`}>{stageCell(m.key, 'firstVersion', configurations, fallback(m.key), nameOf)}</td>
-                <td className={`${AdminUI.td} text-xs`}>{stageCell(m.key, 'later', configurations, fallback(m.key), nameOf)}</td>
+              <tr key={m.key} className={TABLE.tr} data-stage-row={m.key}>
+                <td className={TABLE.td}>{m.label}</td>
+                <td className={`${TABLE.td} text-xs`}>{stageCell(m.key, 'firstVersion', configurations, fallback(m.key), nameOf)}</td>
+                <td className={`${TABLE.td} text-xs`}>{stageCell(m.key, 'later', configurations, fallback(m.key), nameOf)}</td>
               </tr>
             ))}
           </tbody>
@@ -644,14 +645,17 @@ const VERDICT_LABEL: Record<Run['verdict'], string> = {
   revise: 'Revised its proposal',
 };
 
+// The shared Badge's tones (26 Nov 2026). A verdict is repeated down the
+// table, so it takes the soft ones: a solid pill on every row was a wall of
+// colour.
 const VERDICT_BADGE: Record<Run['verdict'], string> = {
-  question: AdminUI.badge.warn,
-  ready: AdminUI.badge.success,
-  person: AdminUI.badge.secondary,
-  empty: AdminUI.badge.outline,
-  failed: AdminUI.badge.destructive,
-  answer: AdminUI.badge.secondary,
-  revise: AdminUI.badge.success,
+  question: 'amber',
+  ready: 'mint',
+  person: 'violet',
+  empty: 'zinc',
+  failed: 'red',
+  answer: 'sky',
+  revise: 'mint',
 };
 
 /** #3264: a run that followed up on a proposal the bot had already opened. */
@@ -1234,9 +1238,10 @@ function WorkingNow({ items }: { items: Working[] }) {
     <ul className="text-sm space-y-1" id="admin-homeroom-bot-working">
       {items.map((w) => (
         <li key={`${w.kind || 'read'}:${w.appSlug}#${w.issueNumber}`} className="flex flex-wrap items-center gap-2" data-working={`${w.appSlug}#${w.issueNumber}`}>
-          <span className={w.lane === 'live' ? AdminUI.badge.success : AdminUI.badge.default}>
-            {w.lane !== 'live' ? 'background' : w.kind === 'build' ? 'building' : 'reading'}
-          </span>
+          <Badge
+            tone={w.lane === 'live' ? 'mint' : 'zinc'}
+            label={w.lane !== 'live' ? 'background' : w.kind === 'build' ? 'building' : 'reading'}
+          />
           <span>{`${w.appName} #${w.issueNumber}`}</span>
           {w.person ? <span className={AdminUI.muted}>{`for @${w.person}`}</span> : null}
           <span className={AdminUI.muted}>{`since ${when(w.since)}`}</span>
@@ -1258,9 +1263,10 @@ function QueueItems({ items }: { items: QueueItem[] }) {
     <ul className="text-sm space-y-1" id="admin-homeroom-bot-queue">
       {items.map((q) => (
         <li key={q.id} className="flex flex-wrap items-center gap-2">
-          <span className={q.started_at ? AdminUI.badge.secondary : AdminUI.badge.default}>
-            {q.started_at ? 'running' : q.priority === 0 ? 'run now' : q.reason}
-          </span>
+          <Badge
+            tone={q.started_at ? 'mint' : 'sky'}
+            label={q.started_at ? 'running' : q.priority === 0 ? 'run now' : q.reason}
+          />
           <span>{q.app_name}</span>
           <span className={AdminUI.muted}>#{q.issue_number}</span>
           {waitLine(q.waiting) ? (
@@ -1333,7 +1339,7 @@ export function AppModes({ apps, paused, savedPaused, canWrite, onChange, onRetr
                 >{o.label}</button>
               ))}
             </span>
-            {changed ? <span className={AdminUI.badge.warn}>not saved</span> : null}
+            {changed ? <Badge tone="amber" label="not saved" /> : null}
             {canWrite && !savedPaused.includes(slug) ? (
               <button
                 type="button"
@@ -1417,7 +1423,7 @@ export function AppCaps({ apps, value, saved, defaults, canWrite, onChange }: {
             {canWrite ? (
               <button type="button" className={AdminUI.btn.outlineSm} data-app-caps-drop={id} onClick={() => drop(id)}>Use the defaults</button>
             ) : null}
-            {changed ? <span className={AdminUI.badge.warn}>not saved</span> : null}
+            {changed ? <Badge tone="amber" label="not saved" /> : null}
           </div>
         );
       })}
@@ -1830,6 +1836,7 @@ const TAB_HASH: Record<Tab, string> = {
   benchmark: '#admin/homeroom-bot/benchmark',
   calls: '#admin/homeroom-bot/calls',
 };
+const TABS_ID = 'admin-homeroom-bot-tabs';
 const TAB_LABEL: Record<Tab, string> = {
   overview: 'Overview', configs: 'Configurations', benchmark: 'Benchmark', settings: 'Settings', calls: 'Calls',
 };
@@ -2095,18 +2102,25 @@ function HomeroomBotSection() {
   return (
     <div className="space-y-4" id="admin-homeroom-bot">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-1" role="tablist" aria-label="Homeroom bot" id="admin-homeroom-bot-tabs">
-          {TABS.map((key) => (
-            <button
-              key={key} type="button" role="tab" id={`admin-homeroom-bot-tab-${key}`}
-              aria-selected={tab === key} aria-controls={`admin-homeroom-bot-panel-${key}`}
-              className={tab === key ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm}
-              onClick={() => showTab(key)}
-            >
-              {TAB_LABEL[key]}
-              {key === 'settings' && dirty.length ? <span className="ms-1">(not saved)</span> : null}
-            </button>
-          ))}
+        {/* The shared tab strip (26 Nov 2026). Each tab keeps its old id; a
+            panel's old id is on the wrapper inside its TabPanel. */}
+        <div className="min-w-0 flex-1">
+          <Tabs<Tab>
+            id={TABS_ID}
+            label="Homeroom bot"
+            value={tab}
+            onChange={showTab}
+            tabs={TABS.map((key) => ({
+              key,
+              id: `admin-homeroom-bot-tab-${key}`,
+              label: (
+                <>
+                  {TAB_LABEL[key]}
+                  {key === 'settings' && dirty.length ? <span className="ms-1">(not saved)</span> : null}
+                </>
+              ),
+            }))}
+          />
         </div>
         <span className={chip.text ? HEALTH_BADGE[chip.tone] : 'hidden'} id="admin-homeroom-bot-health">{chip.text}</span>
       </div>
@@ -2117,7 +2131,8 @@ function HomeroomBotSection() {
       </p>
 
       {/* ── Overview ─────────────────────────────────────────────────── */}
-      <div id="admin-homeroom-bot-panel-overview" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-overview" hidden={tab !== 'overview'} className="space-y-4">
+      <TabPanel tabsId={TABS_ID} tab="overview" active={tab === 'overview'}>
+      <div id="admin-homeroom-bot-panel-overview" className="space-y-4">
         <div className={`${AdminUI.card} p-4`}>
           <div className={AdminUI.cardHeader}>
             <h2 className={AdminUI.cardTitle}>Homeroom bot</h2>
@@ -2252,7 +2267,9 @@ function HomeroomBotSection() {
         <div className={`${AdminUI.card} p-4`}>
           <div className={AdminUI.cardHeader}>
             <h3 className={AdminUI.cardTitle}>Verdicts</h3>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+          </div>
+          {/* The list's filters and its export sit in the one bar over it. */}
+          <Toolbar>
               <div className="w-44">
                 <select
                   id="admin-homeroom-bot-filter-app"
@@ -2292,18 +2309,19 @@ function HomeroomBotSection() {
                   download
                 >Download CSV</a>
               ) : null}
-            </div>
-          </div>
-          <div className={AdminUI.tableWrap}>
-            <table className={AdminUI.table} id="admin-homeroom-bot-table">
-              <thead className={AdminUI.thead}>
+          </Toolbar>
+          {/* Written by hand, in the shared table's classes: a row carries
+              data hooks and opens a detail row the page controls. */}
+          <div className={TABLE.wrap}>
+            <table className={TABLE.table} id="admin-homeroom-bot-table">
+              <thead className={TABLE.thead}>
                 <tr>
-                  <th className={AdminUI.th}>When</th>
-                  <th className={AdminUI.th}>App</th>
-                  <th className={AdminUI.th}>Issue</th>
-                  <th className={AdminUI.th}>Verdict</th>
-                  <th className={AdminUI.th}>Cost</th>
-                  <th className={AdminUI.th}>Your rating</th>
+                  <th className={TABLE.th}>When</th>
+                  <th className={TABLE.th}>App</th>
+                  <th className={TABLE.th}>Issue</th>
+                  <th className={TABLE.th}>Verdict</th>
+                  <th className={TABLE.th}>Cost</th>
+                  <th className={TABLE.th}>Your rating</th>
                 </tr>
               </thead>
               <tbody>
@@ -2311,32 +2329,33 @@ function HomeroomBotSection() {
                   const isOpen = !!open[run.id];
                   const ratingLabel = run.verdict === 'question' ? 'Right question?' : run.verdict === 'ready' ? 'Would you have built this?' : 'Agree?';
                   return [
-                    <tr className={AdminUI.trHover} key={run.id} data-homeroom-bot-run={run.id} data-verdict={run.verdict}>
-                      <td className={`${AdminUI.td} whitespace-nowrap`}>{when(run.created_at)}</td>
-                      <td className={AdminUI.td}>{run.app_name}</td>
-                      <td className={AdminUI.td}>
+                    <tr className={TABLE.tr} key={run.id} data-homeroom-bot-run={run.id} data-verdict={run.verdict}>
+                      <td className={`${TABLE.td} whitespace-nowrap`}>{when(run.created_at)}</td>
+                      <td className={TABLE.td}>{run.app_name}</td>
+                      <td className={TABLE.td}>
                         {run.issueUrl
                           ? <a className={AdminUI.btn.link} href={run.issueUrl}>#{run.issue_number}</a>
                           : <span>#{run.issue_number}</span>}
                       </td>
-                      <td className={AdminUI.td}>
+                      <td className={TABLE.td}>
                         <button
                           type="button"
                           className="text-start"
                           aria-expanded={isOpen}
                           onClick={() => setOpen((o) => ({ ...o, [run.id]: !isOpen }))}
                         >
-                          <span className={run.budget_stop ? AdminUI.badge.warn : VERDICT_BADGE[run.verdict]}>
-                            {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
-                          </span>
+                          <Badge
+                            tone={run.budget_stop ? 'amber' : VERDICT_BADGE[run.verdict]}
+                            label={run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
+                          />
                           {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ms-1`}>held</span> : null}
                           {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ms-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
                           {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ms-1`}>follow-up</span> : null}
                           <span className={`${AdminUI.muted} ms-2`}>{isOpen ? 'hide' : 'show'}</span>
                         </button>
                       </td>
-                      <td className={`${AdminUI.td} whitespace-nowrap`}>{money(run.cost_usd)}</td>
-                      <td className={AdminUI.td}>
+                      <td className={`${TABLE.td} whitespace-nowrap`}>{money(run.cost_usd)}</td>
+                      <td className={TABLE.td}>
                         {run.verdict === 'failed' ? (
                           <span className={AdminUI.muted}>–</span>
                         ) : canWrite ? (
@@ -2366,7 +2385,7 @@ function HomeroomBotSection() {
                     </tr>,
                     isOpen ? (
                       <tr key={`${run.id}-detail`} data-homeroom-bot-detail={run.id}>
-                        <td className={AdminUI.td} colSpan={6}>
+                        <td className={TABLE.td} colSpan={6}>
                           <div className="space-y-2">
                             <VerdictBody run={run} />
                             <RunLabel
@@ -2394,7 +2413,7 @@ function HomeroomBotSection() {
                 })}
                 {runs.length === 0 ? (
                   <tr>
-                    <td className={AdminUI.td} colSpan={6} id="admin-homeroom-bot-empty">
+                    <td className={TABLE.td} colSpan={6} id="admin-homeroom-bot-empty">
                       {payload
                         ? (settings?.mode === 'off'
                           ? 'No verdicts yet. Turn the bot on in Settings and the first pass starts within two minutes.'
@@ -2440,9 +2459,11 @@ function HomeroomBotSection() {
           )}
         </div>
       </div>
+      </TabPanel>
 
       {/* ── Settings ─────────────────────────────────────────────────── */}
-      <div id="admin-homeroom-bot-panel-settings" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-settings" hidden={tab !== 'settings'} className="space-y-4">
+      <TabPanel tabsId={TABS_ID} tab="settings" active={tab === 'settings'}>
+      <div id="admin-homeroom-bot-panel-settings" className="space-y-4">
         {!form || !saved ? <p className={AdminUI.loading}>Loading…</p> : (
           <>
             <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-settings-main">
@@ -2873,24 +2894,31 @@ function HomeroomBotSection() {
           </>
         )}
       </div>
+      </TabPanel>
 
       {/* ── Benchmark ────────────────────────────────────────────────── */}
-      <div id="admin-homeroom-bot-panel-benchmark" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-benchmark" hidden={tab !== 'benchmark'}>
+      <TabPanel tabsId={TABS_ID} tab="benchmark" active={tab === 'benchmark'}>
+      <div id="admin-homeroom-bot-panel-benchmark">
         {benchSeen ? (
           <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={modelsInUse(payload)}
             defaultModel={payload?.defaultModel || null} onUseModel={applyBenchModel} />
         ) : null}
       </div>
+      </TabPanel>
 
       {/* ── Configurations ───────────────────────────────────────────── */}
-      <div id="admin-homeroom-bot-panel-configs" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-configs" hidden={tab !== 'configs'}>
+      <TabPanel tabsId={TABS_ID} tab="configs" active={tab === 'configs'}>
+      <div id="admin-homeroom-bot-panel-configs">
         {configsSeen ? <BotConfigsSection onOpenBenchmark={() => showTab('benchmark')} asked={configAsk} /> : null}
       </div>
+      </TabPanel>
 
       {/* ── Calls ────────────────────────────────────────────────────── */}
-      <div id="admin-homeroom-bot-panel-calls" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-calls" hidden={tab !== 'calls'}>
+      <TabPanel tabsId={TABS_ID} tab="calls" active={tab === 'calls'}>
+      <div id="admin-homeroom-bot-panel-calls">
         {callsSeen ? <HelperCalls /> : null}
       </div>
+      </TabPanel>
     </div>
   );
 }

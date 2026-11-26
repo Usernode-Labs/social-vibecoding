@@ -1090,7 +1090,7 @@ test('a project page\'s sheets are titled for what the visitor tried, and come b
   assert.equal(intentTitle({ kind: 'join', app }, t, false), 'Sign up to join Game Corner');
   assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, false), 'Sign up to vote on this change');
   assert.equal(intentTitle({ kind: 'ask', app }, t, false), 'Sign up to ask for something');
-  assert.equal(intentTitle({ kind: 'chat', app }, t, false), 'Sign up to chat in Game Corner');
+  assert.equal(intentTitle({ kind: 'chat', app }, t, false), 'Sign up to post in Game Corner');
   assert.equal(intentTitle({ kind: 'use', app }, t, false), 'Sign in to use Game Corner');
   // While new accounts wait, taking part asks for an account in the title,
   // not in a line under it (#4037); Try it does not, since a waiting account
@@ -1098,7 +1098,7 @@ test('a project page\'s sheets are titled for what the visitor tried, and come b
   assert.equal(intentTitle({ kind: 'join', app }, t, true), 'Create your account to be part of Game Corner');
   assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, true), 'Create your account to vote on changes');
   assert.equal(intentTitle({ kind: 'ask', app }, t, true), 'Create your account to ask for something');
-  assert.equal(intentTitle({ kind: 'chat', app }, t, true), 'Create your account to chat in Game Corner');
+  assert.equal(intentTitle({ kind: 'chat', app }, t, true), 'Create your account to post in Game Corner');
   assert.equal(intentTitle({ kind: 'use', app }, t, true), 'Sign in to use Game Corner');
   const src = read(LANDING);
   assert.match(src, /export function intentTitle\(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT\): string \{/);

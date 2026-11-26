@@ -290,7 +290,9 @@ test('the Versions card renders its ids, reads the setting, and offers nothing b
   assert.match(html, /id="admin-versions"/);
   assert.match(html, /id="admin-versions-state"[^>]*>Loading…</);
   assert.match(html, />Versions</);
-  assert.doesNotMatch(html, /admin-versions-toggle-btn/, 'no button before the read lands');
+  // The control is a switch in a settings row now, and the row's title is
+  // named after the switch's id whether or not it is drawn (request 7224).
+  assert.doesNotMatch(html, /id="admin-versions-toggle-btn"|role="switch"|<button\b/, 'no switch before the read lands');
   assert.doesNotMatch(html, /—/, 'no em dash in the copy');
   const src = read('frontend/src/features/admin/admin-limits.tsx');
   assert.match(src, /fetchJson\('\/api\/admin\/versions'\)/);

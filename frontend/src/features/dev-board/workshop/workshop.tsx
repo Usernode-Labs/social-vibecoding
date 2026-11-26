@@ -216,7 +216,7 @@ export function pageTitle(tab: TabKey): string {
   if (tab === 'all') return translate('project:page.title.allItems');
   if (tab === 'bot') return translate('project:page.title.bot');
   if (tab === 'plan') return translate('project:page.title.plan');
-  if (tab === 'posts') return translate('project:page.title.discussion');
+  if (tab === 'posts' || tab === 'discussion') return translate('project:page.title.discussion');
   const handle = placeHandle(tab);
   if (handle) return `#${handle}`;
   if (tab === 'status') return translate('project:page.title.hub');
@@ -3822,7 +3822,7 @@ export function DevWorkshop(): ReactNode {
           {talkHere ? (
             <>
               <DiscussionCard slug={slug} name={projectName} data={community} mode="full" />
-              <DiscussionCard slug={slug} name={projectName} data={community} mode="preview" onOpenPage={() => openTab('posts')} />
+              <DiscussionCard slug={slug} name={projectName} data={community} mode="preview" onOpenPage={() => openTab('discussion')} />
             </>
           ) : null}
         </div>
@@ -3845,34 +3845,16 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── THE DISCUSSION (26 Nov 2026) ──
-          #general as posts with replies, the whole width: the places list's
-          Discussion row, where a phone's Discussion card opens and where a
-          link to a #general message lands. "Open as chat" shows the same
-          room as #general's chat (`discussion`), which keeps the Discussion
-          row lit; a link whose message the posts do not show goes on there,
-          in place of this entry. A viewer the record gives no channel (one
-          who may not read the room) gets the chat's own answer. See
-          ./hub-discussion.tsx. */}
-      {tab === 'posts' && slug && community ? (community.channel ? (
-        <DiscussionCard
-          slug={slug}
-          name={app.name || community.name || slug}
-          data={community}
-          mode="page"
-          onChat={() => openTab('discussion')}
-          onMissing={(target) => {
-            callAppView('_stashDiscussionTarget', slug, { ...target, asChat: true });
-            setTab('discussion');
-            callAppView('_setWorkshopTab', 'discussion', slug);
-            callAppView('_stampWorkshopTab', slug, 'discussion');
-          }}
-        />
-      ) : (
-        <ProjectDiscussion slug={slug} name={app.name || community.name || slug} data={community} channel={null} onPlace={openTab} />
-      )) : null}
+          The project's Discussion: #general's messages as posts with
+          replies, the whole width. The places list's Discussion row, where
+          a phone's Discussion card opens, and where a link to one of its
+          messages lands. There is no chat view of it. See ./hub-discussion.tsx. */}
+      {(tab === 'discussion' || tab === 'posts') && slug ? (
+        <DiscussionCard slug={slug} name={app.name || community?.name || slug} data={community} mode="page" />
+      ) : null}
 
-      {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}
-      {isChannelPlace(tab) ? (
+      {/* ── A TOPIC'S CHANNEL, whole ── (./project-discussion.tsx) */}
+      {isChannelPlace(tab) && tab !== 'discussion' ? (
         <ProjectDiscussion
           slug={slug}
           name={app.name || community?.name || slug}

@@ -504,7 +504,17 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(await discussion.earlierForApp(pool, other.id, since, member.id), null, 'the blocked author\'s message is not counted for the blocker');
     await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [member.id, owner.id]);
     const told = await discussion.discussionSummary(pool, { appId: other.id, viewerId: owner.id });
-    assert.deepEqual(told, { since, fold_at: 8, earlier });
+    assert.deepEqual(told, { since, fold_at: 8, earlier: { ...earlier, reactions: [] } });
+    // The Earlier post takes reactions on its own anchor (26 Nov 2026): the
+    // project's row in discussion_earlier_reactions, read with the summary;
+    // a visitor's summary has the counts alone.
+    await discussion.toggleEarlierReaction(pool, other.id, member.id, '❤️', true);
+    const liked = await discussion.discussionSummary(pool, { appId: other.id, viewerId: member.id });
+    assert.deepEqual(liked.earlier.reactions, [{ emoji: '❤️', count: 1, users: [member.username], reacted: true }]);
+    const seen = await discussion.discussionSummary(pool, { appId: other.id, visitor: true });
+    assert.deepEqual(seen.earlier.reactions, [{ emoji: '❤️', count: 1 }]);
+    await discussion.toggleEarlierReaction(pool, other.id, member.id, '❤️', false);
+    assert.deepEqual((await discussion.discussionSummary(pool, { appId: other.id, viewerId: member.id })).earlier.reactions, []);
     const inGeneral = await discussion.discussionSummary(pool, { conversationId: general, viewerId: member.id });
     assert.equal(inGeneral.earlier, null, '#general\'s messages here were all written after the marker');
     discussion.resetDiscussionSinceForTest();

@@ -42,7 +42,7 @@ const audit = read('scripts/audit-react-ownership.mjs');
 const manifest = JSON.parse(read('dapp.json'));
 
 test('Journey is registered wherever the console looks for a section', () => {
-  assert.match(consoleJs, /\{ key: 'journey', label: 'Journey', group: 'Insights' \}/,
+  assert.match(consoleJs, /\{ key: 'journey', label: 'Journey', group: 'Growth' \}/,
     'a menu entry under Insights');
   assert.match(consoleJs, /journey: 'AdminJourney',/, 'SECTION_MODULES dispatches to the module');
   assert.match(consoleJs, /'journey': '<svg /, 'the menu entry has an icon');

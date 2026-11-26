@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchJson } from './api.ts';
 import { BTN } from './tokens.ts';
-import { EmptyState, Input, Panel, ScreenHeader, Skeleton, Textarea } from './ui.tsx';
+import { EmptyState, Input, Panel, ScreenHeader, Skeleton, TABLE, Textarea } from './ui.tsx';
 
 // SQL console — read-only queries against the app database, with the schema
 // browser and the query templates beside the editor. POST
@@ -37,7 +37,8 @@ import { EmptyState, Input, Panel, ScreenHeader, Skeleton, Textarea } from './ui
 //
 // The result grid is deliberately not the shared list renderer: the columns
 // are whatever the query returned, so there is no primary column to title a
-// card with and no stable label set.
+// card with and no stable label set. It is written with the shared table
+// classes (26 Nov 2026), so it has the same head band and row hover.
 //
 // Ids are like-for-like — `admin-topo-sql-*` are named by four declared
 // checks in dapp.json.
@@ -88,18 +89,18 @@ function ResultBlock({ result }: { result: QueryResult }) {
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2 mt-3">
         {`${result.rowCount} row(s)${result.limited ? ' (truncated to the limit)' : ''} in ${result.ms} ms`}
       </p>
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full">
-          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      <div className={TABLE.wrap}>
+        <table className={TABLE.table}>
+          <thead className={TABLE.thead}>
             <tr>
-              {result.columns.map((c) => <th key={c} className="px-2 py-1 text-start">{c}</th>)}
+              {result.columns.map((c) => <th key={c} className={TABLE.th}>{c}</th>)}
             </tr>
           </thead>
           <tbody>
             {result.rows.map((row, i) => (
-              <tr key={i} className="border-t border-zinc-200 dark:border-zinc-800">
+              <tr key={i} className={TABLE.tr}>
                 {result.columns.map((c) => (
-                  <td key={c} className="px-2 py-1 text-xs font-mono whitespace-nowrap">
+                  <td key={c} className={`${TABLE.td} text-xs font-mono whitespace-nowrap`}>
                     {row[c] == null ? '' : String(row[c])}
                   </td>
                 ))}
@@ -211,15 +212,18 @@ function SqlConsoleScreen() {
                 </button>
                 <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span>Limit</span>
-                  <input
-                    id="admin-topo-sql-limit"
-                    type="number"
-                    min="1"
-                    max="1000"
-                    value={limit}
-                    onChange={(e) => setLimit(e.target.value)}
-                    className="w-24 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-violet-500"
-                  />
+                  {/* The shared field is full width, so the span sets it. */}
+                  <span className="block w-24">
+                    <Input
+                      id="admin-topo-sql-limit"
+                      type="number"
+                      min="1"
+                      max="1000"
+                      className="font-mono"
+                      value={limit}
+                      onChange={(e) => setLimit(e.target.value)}
+                    />
+                  </span>
                 </label>
               </>
             )}

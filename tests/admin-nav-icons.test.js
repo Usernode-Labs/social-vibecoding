@@ -15,7 +15,9 @@ const SRC = fs.readFileSync(
 );
 
 function sectionKeys() {
-  return [...SRC.matchAll(/\{ key: '([a-z0-9-]+)', label: '[^']+', group: '[A-Za-z]+'[^}]*\}/g)]
+  // A group's name may hold a space, an ampersand or a hyphen now
+  // ("Delivery & sign-in", request 7224).
+  return [...SRC.matchAll(/\{ key: '([a-z0-9-]+)', label: '[^']+', group: '[^']+'[^}]*\}/g)]
     .map((m) => m[1]);
 }
 
@@ -28,11 +30,20 @@ function iconKeys() {
 
 test('every admin section has a nav icon', () => {
   const sections = sectionKeys();
-  assert.ok(sections.includes('status') && sections.includes('e2e'), `found ${sections.length} sections`);
+  assert.ok(sections.includes('status') && sections.includes('sign-in'), `found ${sections.length} sections`);
+  // Every entry of SECTIONS is read, whatever its group is called.
+  assert.equal(sections.length, (SRC.match(/^\s*\{ key: '[a-z0-9-]+', label: /gm) || []).length);
   const icons = new Set(iconKeys());
   assert.deepEqual(sections.filter((k) => !icons.has(k)), []);
 });
 
-test('E2E coverage has its icon (#1862)', () => {
-  assert.ok(iconKeys().includes('e2e'));
+// E2E coverage was removed (request 7224): it is no section and has no icon,
+// and an old link to it opens the dashboard.
+test('E2E coverage is gone, and an old link to it opens the dashboard', () => {
+  assert.ok(!sectionKeys().includes('e2e'), 'no section');
+  assert.ok(!iconKeys().includes('e2e'), 'no icon left behind for it');
+  const start = SRC.indexOf('LEGACY_SECTION_KEYS: {');
+  assert.ok(start > 0, 'LEGACY_SECTION_KEYS is declared');
+  assert.match(SRC.slice(start, SRC.indexOf('},', start)), /^\s*e2e: 'overview',$/m);
+  assert.ok(sectionKeys().includes('overview') && iconKeys().includes('overview'), 'and the dashboard has its icon');
 });

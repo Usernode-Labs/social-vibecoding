@@ -5,6 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
+import {
+  Badge, EmptyState, ErrorState, Field, Figures, Input, List, Panel, ScreenHeader, SettingRow,
+  SettingsGroup, Skeleton, TabPanel, Tabs,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // SMS delivery section of the admin console (#admin/sms).
 //
@@ -27,6 +32,12 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 // is the Identity Toolkit call with the invisible reCAPTCHA the sign-in
 // sheet earns; with Brevo or Twilio it is a plain test message, so nobody
 // enters a code. The answer names the provider's own code, which users never see.
+//
+// The page is four tabs since 26 Nov 2026, built from the shared admin kit
+// (topochain/ui.tsx): Provider (the status, the choice, the backup and the
+// Sender IDs), Send a test SMS, Recent texts and Recent failures. It was one
+// long page, and the two logs sat under everything else. Every panel stays
+// mounted, so each id is in the document whichever tab is up.
 //
 // PERMISSIONS: visible to any admin. Changing the provider and sending the
 // test are full-admin-only; a view-only admin sees why. The server enforces
@@ -271,55 +282,59 @@ function ProviderCard({ provider, write, onSaved }: {
   };
 
   return (
-    <div id="admin-sms-provider" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
-      <h3 className="text-sm font-semibold mb-2">Text messages are sent by</h3>
-      {provider.options.map((o) => (
-        <label key={o.name} className="flex items-start gap-2 text-sm py-1">
-          <input
-            type="radio"
-            name="admin-sms-provider"
-            value={o.name}
-            checked={picked === o.name}
-            disabled={!write || !o.ready}
-            onChange={() => setPicked(o.name)}
-            className="mt-1"
-          />
-          <span>
-            <span className="font-medium">{o.label}</span>
-            {o.ready ? (
-              <span className="text-xs text-emerald-700 dark:text-emerald-400">{' Ready'}</span>
-            ) : (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
-                {'Needs '}<MissingList missing={o.missing} />
-              </span>
-            )}
-          </span>
-        </label>
-      ))}
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-        {SOURCE_NOTES[provider.source] || SOURCE_NOTES.default}
-        {' A provider that is not ready cannot be chosen.'}
-      </p>
-      {!write ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
-          Changing who sends texts needs full admin access. Any admin can read this section.
+    <div id="admin-sms-provider">
+      <Panel
+        title="Text messages are sent by"
+        footer={write ? (
+          <button
+            id="admin-sms-provider-save"
+            type="button"
+            className={AdminUI.btn.primary}
+            disabled={saving || !changed || !option || !option.ready}
+            onClick={save}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        ) : undefined}
+      >
+        {provider.options.map((o) => (
+          <label key={o.name} className="flex items-start gap-2 text-sm py-1">
+            <input
+              type="radio"
+              name="admin-sms-provider"
+              value={o.name}
+              checked={picked === o.name}
+              disabled={!write || !o.ready}
+              onChange={() => setPicked(o.name)}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">{o.label}</span>
+              {o.ready ? (
+                <span className="text-xs text-emerald-700 dark:text-emerald-400">{' Ready'}</span>
+              ) : (
+                <span className="text-xs text-amber-700 dark:text-amber-400">
+                  {'Needs '}<MissingList missing={o.missing} />
+                </span>
+              )}
+            </span>
+          </label>
+        ))}
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+          {SOURCE_NOTES[provider.source] || SOURCE_NOTES.default}
+          {' A provider that is not ready cannot be chosen.'}
         </p>
-      ) : (
-        <button
-          id="admin-sms-provider-save"
-          type="button"
-          className={`${AdminUI.btn.primary} mt-2`}
-          disabled={saving || !changed || !option || !option.ready}
-          onClick={save}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      )}
-      {note ? (
-        <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-          {note.text}
-        </p>
-      ) : null}
+        {!write ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+            Changing who sends texts needs full admin access. Any admin can read this section.
+          </p>
+        ) : null}
+        {note ? (
+          <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+            {note.text}
+          </p>
+        ) : null}
+      </Panel>
     </div>
   );
 }
@@ -352,38 +367,33 @@ function FallbackCard({ fallback, write, onSaved }: {
     onSaved();
   };
 
+  // A switch that saves when it is changed, so it is a settings row
+  // (26 Nov 2026). It was a checkbox in a card of its own.
   return (
-    <div id="admin-sms-fallback" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
-      <h3 className="text-sm font-semibold mb-2">Firebase backup for sign-in codes</h3>
-      <label className="flex items-start gap-2 text-sm py-1">
-        <input
+    <div id="admin-sms-fallback">
+      <SettingsGroup title="Firebase backup for sign-in codes">
+        <SettingRow
           id="admin-sms-fallback-enabled"
-          type="checkbox"
-          className="mt-1"
+          title="When the gateway cannot send a sign-in code, or someone asks for a new one while the first is still unused, Firebase sends it instead."
+          help={fallback.ready
+            ? 'Firebase is set up. A backup text asks the person for Google’s reCAPTCHA check first; other sign-ins skip it. Marketing and test texts never use the backup.'
+            : 'Firebase is not set up, so there is no backup whatever this says.'}
           checked={fallback.enabled}
-          disabled={!write || saving}
-          onChange={(e) => toggle(e.target.checked)}
-        />
-        <span>
-          When the gateway cannot send a sign-in code, or someone asks for a new one while
-          the first is still unused, Firebase sends it instead.
-        </span>
-      </label>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-        {fallback.ready
-          ? 'Firebase is set up. A backup text asks the person for Google’s reCAPTCHA check first; other sign-ins skip it. Marketing and test texts never use the backup.'
-          : 'Firebase is not set up, so there is no backup whatever this says.'}
-      </p>
-      {!write ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
-          Changing this needs full admin access.
-        </p>
-      ) : null}
-      {note ? (
-        <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-          {note.text}
-        </p>
-      ) : null}
+          canEdit={write}
+          onChange={toggle}
+        >
+          {!write ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+              Changing this needs full admin access.
+            </p>
+          ) : null}
+          {note ? (
+            <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+              {note.text}
+            </p>
+          ) : null}
+        </SettingRow>
+      </SettingsGroup>
     </div>
   );
 }
@@ -459,55 +469,42 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
   );
 }
 
+const SENDER_COLUMNS: Column<SenderRow>[] = [
+  { label: 'Country', primary: true, cell: (s) => `${s.countryName} (${s.country})` },
+  { label: 'Sender ID', tdClass: 'font-mono text-xs', cell: (s) => s.sender },
+  {
+    label: 'Ready',
+    cell: (s) => (s.ready
+      ? <Badge tone="mint" label="Yes" />
+      : <Badge tone="red" label={s.needsRegistration && !s.registered ? 'No: needs registration marked' : 'No'} />),
+  },
+];
+
 function SendersCard({ senders, selected, gateway }: {
   senders: SenderRow[]; selected: string; gateway: string;
 }) {
   const g = GATEWAYS[gateway] || GATEWAYS.brevo;
   return (
-    <div id="admin-sms-senders" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
-      <h3 className="text-sm font-semibold mb-2">Sender IDs</h3>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-        {`${g.label} texts only these countries. Register a Sender ID in ${g.label} first, then add it to `}
-        <Mono>{g.registry}</Mono>
-        {'. A country that is not on this list is refused.'}
-      </p>
-      {senders.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {`No Sender IDs are registered, so ${g.label} texts no country.`}
-          {selected === gateway ? ' Phone sign-in cannot text a real number until one is added.' : ''}
-        </p>
-      ) : (
-        <div className={AdminUI.tableWrap}>
-          <table className={AdminUI.table}>
-            <thead className={AdminUI.thead}>
-              <tr>
-                <th className={AdminUI.th}>Country</th>
-                <th className={AdminUI.th}>Sender ID</th>
-                <th className={AdminUI.th}>Ready</th>
-              </tr>
-            </thead>
-            <tbody>
-              {senders.map((s) => (
-                <tr key={s.country}>
-                  <td className={AdminUI.td}>{`${s.countryName} (${s.country})`}</td>
-                  <td className={`${AdminUI.td} font-mono text-xs`}>{s.sender}</td>
-                  <td className={AdminUI.td}>
-                    {s.ready ? (
-                      <span className="text-emerald-700 dark:text-emerald-400">Yes</span>
-                    ) : (
-                      <span className="text-rose-600 dark:text-rose-400">
-                        {s.needsRegistration && !s.registered
-                          ? 'No: needs registration marked'
-                          : 'No'}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div id="admin-sms-senders">
+      <Panel
+        title="Sender IDs"
+        subtitle={(
+          <>
+            {`${g.label} texts only these countries. Register a Sender ID in ${g.label} first, then add it to `}
+            <Mono>{g.registry}</Mono>
+            {'. A country that is not on this list is refused.'}
+          </>
+        )}
+      >
+        {senders.length === 0 ? (
+          <EmptyState
+            title={`No Sender IDs are registered, so ${g.label} texts no country.`}
+            body={selected === gateway ? 'Phone sign-in cannot text a real number until one is added.' : undefined}
+          />
+        ) : (
+          <List<SenderRow> items={senders} columns={SENDER_COLUMNS} rowKey={(s) => s.country} />
+        )}
+      </Panel>
     </div>
   );
 }
@@ -555,131 +552,123 @@ function OutcomeLine({ outcome }: { outcome: Outcome }) {
   );
 }
 
+// A result repeated down the log is a soft pill: green for sent, red for a
+// text that did not go, grey for one only written to a preview's log.
+const DELIVERY_TONES: Record<string, string> = {
+  sent: 'mint',
+  logged: 'zinc',
+  refused: 'red',
+  failed: 'red',
+};
+
+const DELIVERY_COLUMNS: Column<DeliveryRow>[] = [
+  {
+    label: 'When (UTC)',
+    primary: true,
+    tdClass: 'whitespace-nowrap text-zinc-500 dark:text-zinc-400',
+    cell: (d) => (d.created_at ? d.created_at.replace('T', ' ').slice(0, 16) : ''),
+  },
+  { label: 'Kind', cell: (d) => DELIVERY_KINDS[d.kind] || d.kind },
+  { label: 'Country', cell: (d) => d.country || '' },
+  { label: 'Sender ID', tdClass: 'font-mono text-xs', cell: (d) => d.sender_id || '' },
+  { label: 'Number', tdClass: 'font-mono text-xs', cell: (d) => (d.phone_last4 ? `…${d.phone_last4}` : '') },
+  {
+    label: 'Result',
+    cell: (d) => (
+      <>
+        <Badge tone={DELIVERY_TONES[d.status] || 'zinc'} label={DELIVERY_RESULTS[d.status] || d.status} />
+        {d.error_code ? <span className="text-xs text-zinc-500 dark:text-zinc-400"> <Mono>{d.error_code}</Mono></span> : null}
+        {d.provider_code && d.provider_code !== d.error_code ? (
+          <span className="text-xs text-zinc-500 dark:text-zinc-400"> (<Mono>{d.provider_code}</Mono>)</span>
+        ) : null}
+        {d.provider_message_id ? (
+          <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{` id ${d.provider_message_id}`}</span>
+        ) : null}
+        {d.delivery_status ? <div className="text-xs text-zinc-500 dark:text-zinc-400">{d.delivery_status}</div> : null}
+      </>
+    ),
+  },
+];
+
+// The tab is named Recent texts, so the list carries no heading of its own.
 function DeliveriesCard({ deliveries, failed }: { deliveries: DeliveryRow[] | null; failed: boolean }) {
   return (
-    <div id="admin-sms-deliveries" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
-      <h3 className="text-sm font-semibold mb-2">Recent texts</h3>
+    <div id="admin-sms-deliveries">
       {failed ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the delivery log.</p>
+        <ErrorState title="Could not load the delivery log." />
       ) : deliveries === null ? (
-        <p className={AdminUI.loading}>Loading…</p>
+        <Skeleton rows={6} />
       ) : deliveries.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No texts have been sent yet. Each send, whatever its outcome, appears here.
-        </p>
+        <EmptyState
+          title="No texts have been sent yet."
+          body="Each send, whatever its outcome, appears here."
+        />
       ) : (
-        <div className={AdminUI.tableWrap}>
-          <table className={AdminUI.table}>
-            <thead className={AdminUI.thead}>
-              <tr>
-                <th className={AdminUI.th}>When (UTC)</th>
-                <th className={AdminUI.th}>Kind</th>
-                <th className={AdminUI.th}>Country</th>
-                <th className={AdminUI.th}>Sender ID</th>
-                <th className={AdminUI.th}>Number</th>
-                <th className={AdminUI.th}>Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveries.map((d) => {
-                const result = DELIVERY_RESULTS[d.status] || d.status;
-                const bad = d.status === 'refused' || d.status === 'failed';
-                return (
-                  <tr key={d.id}>
-                    <td className={`${AdminUI.td} whitespace-nowrap text-zinc-500 dark:text-zinc-400`}>
-                      {d.created_at ? d.created_at.replace('T', ' ').slice(0, 16) : ''}
-                    </td>
-                    <td className={AdminUI.td}>{DELIVERY_KINDS[d.kind] || d.kind}</td>
-                    <td className={AdminUI.td}>{d.country || ''}</td>
-                    <td className={`${AdminUI.td} font-mono text-xs`}>{d.sender_id || ''}</td>
-                    <td className={`${AdminUI.td} font-mono text-xs`}>{d.phone_last4 ? `…${d.phone_last4}` : ''}</td>
-                    <td className={AdminUI.td}>
-                      <span className={bad ? 'text-rose-600 dark:text-rose-400' : undefined}>{result}</span>
-                      {d.error_code ? <span className="text-xs text-zinc-500 dark:text-zinc-400"> <Mono>{d.error_code}</Mono></span> : null}
-                      {d.provider_code && d.provider_code !== d.error_code ? (
-                        <span className="text-xs text-zinc-500 dark:text-zinc-400"> (<Mono>{d.provider_code}</Mono>)</span>
-                      ) : null}
-                      {d.provider_message_id ? (
-                        <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{` id ${d.provider_message_id}`}</span>
-                      ) : null}
-                      {d.delivery_status ? <div className="text-xs text-zinc-500 dark:text-zinc-400">{d.delivery_status}</div> : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <List<DeliveryRow> items={deliveries} columns={DELIVERY_COLUMNS} rowKey={(d) => d.id} />
       )}
     </div>
   );
 }
 
+const FAILURE_COLUMNS: Column<PhoneFailure>[] = [
+  {
+    label: 'When (UTC)',
+    primary: true,
+    tdClass: 'whitespace-nowrap text-zinc-500 dark:text-zinc-400',
+    cell: (f) => (f.created_at ? f.created_at.replace('T', ' ').slice(0, 16) : ''),
+  },
+  { label: 'Step', cell: (f) => KIND_LABELS[f.kind] || f.kind },
+  {
+    label: 'Account',
+    cell: (f) => (f.username ? (
+      <span className="font-mono text-xs">{f.username}</span>
+    ) : (
+      <span className="text-zinc-400 dark:text-zinc-600">not signed in</span>
+    )),
+  },
+  { label: 'Number', tdClass: 'font-mono text-xs', cell: (f) => (f.phone_last4 ? `…${f.phone_last4}` : '') },
+  {
+    label: 'Reason',
+    cell: (f) => (
+      <>
+        <Mono>{f.error_code}</Mono>
+        {f.provider_code && f.provider_code !== f.error_code ? (
+          <span className="text-zinc-500 dark:text-zinc-400">
+            {' (Provider: '}<Mono>{f.provider_code}</Mono>{')'}
+          </span>
+        ) : null}
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{f.message}</div>
+      </>
+    ),
+  },
+];
+
+// The tab is named Recent failures, so the list carries no heading of its own.
 function FailuresCard({ failures, total7d, failed }: { failures: PhoneFailure[] | null; total7d: number | null; failed: boolean }) {
+  if (failed) return <ErrorState title="Could not load the failure log." />;
+  if (failures === null) return <Skeleton rows={6} />;
+  if (failures.length === 0) {
+    return (
+      <EmptyState
+        title="No failures recorded."
+        body="Every failed code request, verification and link attempt would appear here with the reason the provider gave."
+      />
+    );
+  }
   return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
-      <h3 className="text-sm font-semibold mb-2">Recent failures</h3>
-      {failed ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the failure log.</p>
-      ) : failures === null ? (
-        <p className={AdminUI.loading}>Loading…</p>
-      ) : failures.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No failures recorded. Every failed code request, verification and link attempt
-          would appear here with the reason the provider gave.
-        </p>
-      ) : (
-        <>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-            {`The 50 most recent, newest first. ${total7d === 1 ? '1 failure' : `${total7d ?? failures.length} failures`} in the last 7 days.`}
-          </p>
-          <div className={AdminUI.tableWrap} id="admin-sms-failures-table">
-            <table className={AdminUI.table}>
-              <thead className={AdminUI.thead}>
-                <tr>
-                  <th className={AdminUI.th}>When (UTC)</th>
-                  <th className={AdminUI.th}>Step</th>
-                  <th className={AdminUI.th}>Account</th>
-                  <th className={AdminUI.th}>Number</th>
-                  <th className={AdminUI.th}>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {failures.map((f) => (
-                  <tr key={f.id}>
-                    <td className={`${AdminUI.td} whitespace-nowrap text-zinc-500 dark:text-zinc-400`}>
-                      {f.created_at ? f.created_at.replace('T', ' ').slice(0, 16) : ''}
-                    </td>
-                    <td className={AdminUI.td}>{KIND_LABELS[f.kind] || f.kind}</td>
-                    <td className={AdminUI.td}>
-                      {f.username ? (
-                        <span className="font-mono text-xs">{f.username}</span>
-                      ) : (
-                        <span className="text-zinc-400 dark:text-zinc-600">not signed in</span>
-                      )}
-                    </td>
-                    <td className={`${AdminUI.td} font-mono text-xs`}>
-                      {f.phone_last4 ? `…${f.phone_last4}` : ''}
-                    </td>
-                    <td className={AdminUI.td}>
-                      <Mono>{f.error_code}</Mono>
-                      {f.provider_code && f.provider_code !== f.error_code ? (
-                        <span className="text-zinc-500 dark:text-zinc-400">
-                          {' (Provider: '}<Mono>{f.provider_code}</Mono>{')'}
-                        </span>
-                      ) : null}
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{f.message}</div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
+    <>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        {`The 50 most recent, newest first. ${total7d === 1 ? '1 failure' : `${total7d ?? failures.length} failures`} in the last 7 days.`}
+      </p>
+      <div id="admin-sms-failures-table">
+        <List<PhoneFailure> items={failures} columns={FAILURE_COLUMNS} rowKey={(f) => f.id} />
+      </div>
+    </>
   );
 }
+
+type SmsTab = 'provider' | 'test' | 'texts' | 'failures';
+const SMS_TABS_ID = 'admin-sms-tabs';
 
 function SmsSection() {
   const write = canWrite();
@@ -693,6 +682,7 @@ function SmsSection() {
   const [to, setTo] = useState('');
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<Result>({ kind: 'none' });
+  const [tab, setTab] = useState<SmsTab>('provider');
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -767,84 +757,129 @@ function SmsSection() {
 
   const n = RECAPTCHA_NOTICE;
 
+  const showSenders = !!(status && status.senders
+    && (isGateway || (provider && provider.options.some((o) => GATEWAYS[o.name] && o.ready))));
+
+  // Only what the three reads above already brought: nothing is fetched to
+  // fill a tile, and one that has not arrived is a dash.
+  const notSent = deliveries ? deliveries.filter((d) => d.status === 'refused' || d.status === 'failed').length : null;
+  const failed7d = failures ? (total7d ?? failures.length) : null;
+  const figures: Figure[] = [];
+  if (showSenders && status && status.senders) {
+    figures.push({
+      key: 'countries',
+      label: 'Countries with a ready Sender ID',
+      value: status.senders.filter((s) => s.ready).length,
+    });
+  }
+  figures.push({
+    key: 'not-sent',
+    label: 'Recent texts refused or failed',
+    value: notSent,
+    tone: notSent ? 'yellow' : 'sky',
+    onClick: () => setTab('texts'),
+  });
+  figures.push({
+    key: 'failures',
+    label: 'Sign-in failures, last 7 days',
+    value: failed7d,
+    tone: failed7d ? 'yellow' : 'sky',
+    onClick: () => setTab('failures'),
+  });
+
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <h2 className={AdminUI.cardTitle}>SMS delivery</h2>
-      </div>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-        Sign-in codes by text are sent by the provider chosen below, not by Homeroom.
-        This is where you choose it and check that a text actually goes out.
-      </p>
-      {provider ? (
-        <ProviderCard provider={provider} write={write} onSaved={loadStatus} />
-      ) : null}
-      {isGateway && status?.fallback ? (
-        <FallbackCard fallback={status.fallback} write={write} onSaved={loadStatus} />
-      ) : null}
-      <div id="admin-sms-status" className="mb-4">
-        <StatusCard status={status} failed={statusFailed} />
-      </div>
-      {status && status.senders && (isGateway || (provider && provider.options.some((o) => GATEWAYS[o.name] && o.ready))) ? (
-        <SendersCard senders={status.senders} selected={provider ? provider.selected : 'firebase'}
-          gateway={status.senderProvider || gateway || 'brevo'} />
-      ) : null}
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
-        <h3 className="text-sm font-semibold mb-2">Send a test SMS</h3>
-        {write ? (
-          <>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="block text-xs grow max-w-md">
-                <span className="text-zinc-500 dark:text-zinc-400">Phone number</span>
-                <input id="admin-sms-to" type="tel" autoComplete="off" spellCheck={false}
-                  placeholder="+44 7700 900123"
-                  className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-1.5 text-sm"
-                  value={to}
-                  disabled={!offered}
-                  onChange={(e) => setTo(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendTest(); } }} />
-              </label>
-              <button id="admin-sms-send" type="button" className={AdminUI.btn.primary}
-                disabled={sending || !offered} onClick={sendTest}>
-                {sending ? 'Sending…' : 'Send test SMS'}
-              </button>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-              {gateway ? (
-                `Sends one test text to this number through ${GATEWAYS[gateway].label}, from the Sender ID for its country, and shows exactly what ${GATEWAYS[gateway].label} answered. It is a plain test message, so nobody has to enter a code.`
-              ) : (
-                'Sends one sign-in code text to this number through Firebase and shows exactly what Firebase answered. The text is Firebase’s own code message, and nobody has to enter the code.'
-              )}
-              {' Up to 5 per hour, and one per number per minute.'}
+      <ScreenHeader
+        title="SMS delivery"
+        subtitle="Sign-in codes by text are sent by the provider chosen below, not by Homeroom. This is where you choose it and check that a text actually goes out."
+      />
+      <Figures id="admin-sms-figures" items={figures} />
+      <Tabs<SmsTab>
+        id={SMS_TABS_ID}
+        label="SMS delivery"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'provider', label: 'Provider' },
+          { key: 'test', label: 'Send a test SMS' },
+          { key: 'texts', label: 'Recent texts' },
+          { key: 'failures', label: 'Recent failures' },
+        ]}
+      />
+      <TabPanel tabsId={SMS_TABS_ID} tab="provider" active={tab === 'provider'}>
+        {provider ? (
+          <ProviderCard provider={provider} write={write} onSaved={loadStatus} />
+        ) : null}
+        {isGateway && status?.fallback ? (
+          <FallbackCard fallback={status.fallback} write={write} onSaved={loadStatus} />
+        ) : null}
+        <div id="admin-sms-status" className="mb-4">
+          <StatusCard status={status} failed={statusFailed} />
+        </div>
+        {showSenders && status && status.senders ? (
+          <SendersCard senders={status.senders} selected={provider ? provider.selected : 'firebase'}
+            gateway={status.senderProvider || gateway || 'brevo'} />
+        ) : null}
+      </TabPanel>
+      <TabPanel tabsId={SMS_TABS_ID} tab="test" active={tab === 'test'}>
+        <Panel title="Send a test SMS">
+          {write ? (
+            <>
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="Phone number" htmlFor="admin-sms-to" className="grow max-w-md">
+                  <Input id="admin-sms-to" type="tel" autoComplete="off" spellCheck={false}
+                    placeholder="+44 7700 900123"
+                    value={to}
+                    disabled={!offered}
+                    onChange={(e) => setTo(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendTest(); } }} />
+                </Field>
+                <button id="admin-sms-send" type="button" className={AdminUI.btn.primary}
+                  disabled={sending || !offered} onClick={sendTest}>
+                  {sending ? 'Sending…' : 'Send test SMS'}
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+                {gateway ? (
+                  `Sends one test text to this number through ${GATEWAYS[gateway].label}, from the Sender ID for its country, and shows exactly what ${GATEWAYS[gateway].label} answered. It is a plain test message, so nobody has to enter a code.`
+                ) : (
+                  'Sends one sign-in code text to this number through Firebase and shows exactly what Firebase answered. The text is Firebase’s own code message, and nobody has to enter the code.'
+                )}
+                {' Up to 5 per hour, and one per number per minute.'}
+              </p>
+              {!isGateway ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                  {n.lead}
+                  <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
+                  {n.and}
+                  <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
+                  {n.tail}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Sending a test SMS needs full admin access. The configuration on the Provider tab is readable by any admin.
             </p>
-            {!isGateway ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                {n.lead}
-                <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
-                {n.and}
-                <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
-                {n.tail}
+          )}
+          <div id="admin-sms-result">
+            {result.kind === 'outcome' ? <OutcomeLine outcome={result.outcome} /> : null}
+            {result.kind === 'note' ? (
+              <p className={`text-sm mt-3 ${result.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                {result.text}
               </p>
             ) : null}
-          </>
-        ) : (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Sending a test SMS needs full admin access. The configuration above is readable by any admin.
-          </p>
-        )}
-        <div id="admin-sms-result">
-          {result.kind === 'outcome' ? <OutcomeLine outcome={result.outcome} /> : null}
-          {result.kind === 'note' ? (
-            <p className={`text-sm mt-3 ${result.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-              {result.text}
-            </p>
-          ) : null}
+          </div>
+        </Panel>
+      </TabPanel>
+      <TabPanel tabsId={SMS_TABS_ID} tab="texts" active={tab === 'texts'}>
+        <DeliveriesCard deliveries={deliveries} failed={deliveriesFailed} />
+      </TabPanel>
+      <TabPanel tabsId={SMS_TABS_ID} tab="failures" active={tab === 'failures'}>
+        <div id="admin-sms-failures" className="mb-4">
+          <FailuresCard failures={failures} total7d={total7d} failed={failuresFailed} />
         </div>
-      </div>
-      <DeliveriesCard deliveries={deliveries} failed={deliveriesFailed} />
-      <div id="admin-sms-failures" className="mb-4">
-        <FailuresCard failures={failures} total7d={total7d} failed={failuresFailed} />
-      </div>
+      </TabPanel>
     </div>
   );
 }

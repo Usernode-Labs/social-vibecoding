@@ -4,6 +4,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+// The console's shared page parts (26 Nov 2026): this page is built from the
+// same header, figures, bar and list as every other admin page. The figures
+// row is imported under another name because this file already exports a
+// `Figures` type for the payload.
+import { BTN } from './topochain/tokens.ts';
+import {
+  Badge, Figures as FigureRow, Input, List, ScreenHeader, Segmented, Select, Toolbar,
+} from './topochain/ui.tsx';
+import type { Column, Figure } from './topochain/ui.tsx';
 
 // Apps & usage (#admin/apps): every app on the platform, who is in it, who
 // has built it and how much it is being used, over the last 7, 30 or 90
@@ -78,27 +87,6 @@ export const SORTS: { key: string; label: string }[] = [
   { key: 'name', label: 'Name' },
 ];
 
-const UsageUI = Object.freeze({
-  controls: 'grid gap-3 sm:grid-cols-3 mb-4',
-  controlLabel: `${AdminUI.label} block mb-1`,
-  tiles: 'grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6',
-  tile: 'rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3',
-  tileFigure: 'text-xl font-semibold text-zinc-900 dark:text-zinc-100 tabular-nums',
-  tileLabel: 'text-xs text-zinc-500 dark:text-zinc-400',
-  tileSplit: 'mt-1 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
-  row: 'rounded-xl bg-zinc-100 dark:bg-zinc-800',
-  rowButton: 'w-full text-start p-3 rounded-xl hover:bg-zinc-200/60 dark:hover:bg-zinc-700/50 transition-colors',
-  rowHead: 'flex flex-wrap items-center justify-between gap-2',
-  rowName: 'text-sm font-semibold text-zinc-900 dark:text-zinc-100',
-  rowSlug: 'text-xs font-mono text-zinc-500 dark:text-zinc-400',
-  rowWhen: 'text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
-  stats: 'grid gap-x-4 gap-y-1 grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 mt-2',
-  stat: 'text-xs text-zinc-500 dark:text-zinc-400',
-  statFigure: 'text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums',
-  detail: 'px-3 pb-3 pt-1 grid gap-3 sm:grid-cols-2 text-sm text-zinc-700 dark:text-zinc-300',
-  detailLabel: 'text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1',
-});
-
 /** Seconds as a short duration: "45s", "12m", "3h 20m", "2d 4h". Pure. */
 export function formatDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds || 0));
@@ -141,12 +129,16 @@ export function sortApps(apps: AppUsage[], key: string): AppUsage[] {
   return [...apps].sort(order[key] || order.used);
 }
 
-/** How an app's status reads, and the badge it wears. Pure. */
-export function statusBadge(status: string): { label: string; className: string } {
-  if (status === 'running') return { label: 'Running', className: AdminUI.badge.success };
-  if (status === 'error') return { label: 'Failed', className: AdminUI.badge.destructive };
-  if (status === 'awaiting_secrets') return { label: 'Needs secrets', className: AdminUI.badge.warn };
-  return { label: status.replace(/_/g, ' '), className: AdminUI.badge.default };
+/**
+ * How an app's status reads, and the badge it wears. Pure. `tone` is the
+ * shared Badge's: the status is repeated down the list, so the usual one
+ * (Running) is the soft mint, and only trouble is loud.
+ */
+export function statusBadge(status: string): { label: string; className: string; tone: string } {
+  if (status === 'running') return { label: 'Running', className: AdminUI.badge.success, tone: 'mint' };
+  if (status === 'error') return { label: 'Failed', className: AdminUI.badge.destructive, tone: 'red' };
+  if (status === 'awaiting_secrets') return { label: 'Needs secrets', className: AdminUI.badge.warn, tone: 'amber' };
+  return { label: status.replace(/_/g, ' '), className: AdminUI.badge.default, tone: 'zinc' };
 }
 
 function plural(n: number, word: string): string {
@@ -177,80 +169,71 @@ export function tileSplits(t: AppsUsagePayload['totals'] | null): Record<string,
   };
 }
 
-function Tile({ id, figure, label, detail }: { id: string; figure: string; label: string; detail?: string | null }) {
-  return (
-    <div className={UsageUI.tile} data-tile={id}>
-      <div className={UsageUI.tileFigure}>{figure}</div>
-      <div className={UsageUI.tileLabel}>{label}</div>
-      {detail ? <div className={UsageUI.tileSplit} data-tile-split>{detail}</div> : null}
-    </div>
-  );
-}
+// A row's figure, with the hook the old row's stat carried.
+const stat = (name: string, figure: string | number) => (
+  <span data-stat={name} className="tabular-nums">{figure}</span>
+);
 
-function Stat({ name, figure, label }: { name: string; figure: string | number; label: string }) {
-  return (
-    <div className={UsageUI.stat} data-stat={name}>
-      <span className={UsageUI.statFigure}>{figure}</span> {label}
-    </div>
-  );
-}
+const APP_COLUMNS: Column<AppUsage>[] = [
+  {
+    label: 'App',
+    primary: true,
+    cell: (app) => (
+      <span data-app-slug={app.slug} className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-semibold">{app.name}</span>
+        <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{app.slug}</span>
+        {app.platform ? <Badge label="Platform" tone="violet" /> : null}
+      </span>
+    ),
+  },
+  {
+    label: 'Status',
+    cell: (app) => {
+      const badge = statusBadge(app.status);
+      return <Badge label={badge.label} tone={badge.tone} />;
+    },
+  },
+  { label: 'Members', cell: (app) => stat('members', app.members) },
+  { label: 'Contributors', cell: (app) => stat('contributors', app.contributors) },
+  { label: 'Users', cell: (app) => stat('users', app.users) },
+  { label: 'Time used', cell: (app) => stat('time', formatDuration(app.seconds)) },
+  { label: 'Proposed', cell: (app) => stat('proposed', app.proposed) },
+  { label: 'Merged', cell: (app) => stat('merged', app.merged) },
+  { label: 'Requests', cell: (app) => stat('requests', app.requests) },
+  { label: 'Last active', cell: (app) => <span className="tabular-nums">{when(app.lastActiveAt)}</span> },
+];
 
-function AppRow({ app, open, onToggle }: { app: AppUsage; open: boolean; onToggle: () => void }) {
-  const badge = statusBadge(app.status);
+// What the row's arrow opens (ui.tsx `List`, `details`): who made the app and
+// who has built it. It was a block the whole row toggled.
+function AppDetails({ app }: { app: AppUsage }) {
   const slug = encodeURIComponent(app.slug);
   return (
-    <li className={UsageUI.row} data-app-slug={app.slug} data-open={open ? 'true' : 'false'}>
-      <button type="button" className={UsageUI.rowButton} aria-expanded={open} onClick={onToggle}>
-        <div className={UsageUI.rowHead}>
-          <div className="flex flex-wrap items-baseline gap-x-2 min-w-0">
-            <span className={UsageUI.rowName}>{app.name}</span>
-            <span className={UsageUI.rowSlug}>{app.slug}</span>
-            {app.platform ? <span className={AdminUI.badge.secondary}>Platform</span> : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={UsageUI.rowWhen}>{`Last active ${when(app.lastActiveAt)}`}</span>
-            <span className={badge.className}>{badge.label}</span>
-          </div>
-        </div>
-        <div className={UsageUI.stats}>
-          <Stat name="members" figure={app.members} label={app.members === 1 ? 'member' : 'members'} />
-          <Stat name="contributors" figure={app.contributors} label={app.contributors === 1 ? 'contributor' : 'contributors'} />
-          <Stat name="users" figure={app.users} label={app.users === 1 ? 'user' : 'users'} />
-          <Stat name="time" figure={formatDuration(app.seconds)} label="used" />
-          <Stat name="proposed" figure={app.proposed} label="proposed" />
-          <Stat name="merged" figure={app.merged} label="merged" />
-          <Stat name="requests" figure={app.requests} label={app.requests === 1 ? 'request' : 'requests'} />
-        </div>
-      </button>
-      {open ? (
-        <div className={UsageUI.detail} data-app-detail={app.slug}>
-          <div>
-            <div className={UsageUI.detailLabel}>About</div>
-            <p>{`Made by ${app.creator ? `@${app.creator}` : 'an account that no longer exists'} on ${when(app.createdAt)}.`}</p>
-            <p>{`Last deployed ${when(app.lastDeployAt)}. Visible to: ${app.visibility || 'unknown'}.`}</p>
-            <p>{`${plural(app.newMembers, 'new member')} and ${plural(app.sessions, 'change')} started in this window; ${plural(app.openRequests, 'request')} open now.`}</p>
-            <p className="mt-2 flex flex-wrap gap-x-4">
-              <a className={AdminUI.btn.link} href={`#app/${slug}`}>Open project</a>
-              <a className={AdminUI.btn.link} href="#admin/storage">App storage</a>
-            </p>
-          </div>
-          <div>
-            <div className={UsageUI.detailLabel}>
-              {`Contributors (${app.contributors}, ${app.shippedContributors} with a change merged)`}
-            </div>
-            {app.topContributors.length ? (
-              <ol className="space-y-0.5" data-app-contributors={app.slug}>
-                {app.topContributors.map((c) => (
-                  <li key={c.username}>
-                    {`@${c.username}: ${plural(c.proposed, 'proposal')}, ${c.merged} merged`}
-                  </li>
-                ))}
-              </ol>
-            ) : <p className={AdminUI.muted}>Nobody has proposed a change yet.</p>}
-          </div>
-        </div>
-      ) : null}
-    </li>
+    <div className="grid gap-3 sm:grid-cols-2 text-xs text-zinc-600 dark:text-zinc-300" data-app-detail={app.slug}>
+      <div className="space-y-1">
+        <p className="text-zinc-500 dark:text-zinc-400">About</p>
+        <p>{`Made by ${app.creator ? `@${app.creator}` : 'an account that no longer exists'} on ${when(app.createdAt)}.`}</p>
+        <p>{`Last deployed ${when(app.lastDeployAt)}. Visible to: ${app.visibility || 'unknown'}.`}</p>
+        <p>{`${plural(app.newMembers, 'new member')} and ${plural(app.sessions, 'change')} started in this window; ${plural(app.openRequests, 'request')} open now.`}</p>
+        <p className="flex flex-wrap gap-x-4">
+          <a className={AdminUI.btn.link} href={`#app/${slug}`}>Open project</a>
+          <a className={AdminUI.btn.link} href="#admin/storage">App storage</a>
+        </p>
+      </div>
+      <div className="space-y-1">
+        <p className="text-zinc-500 dark:text-zinc-400">
+          {`Contributors (${app.contributors}, ${app.shippedContributors} with a change merged)`}
+        </p>
+        {app.topContributors.length ? (
+          <ol className="space-y-0.5" data-app-contributors={app.slug}>
+            {app.topContributors.map((c) => (
+              <li key={c.username}>
+                {`@${c.username}: ${plural(c.proposed, 'proposal')}, ${c.merged} merged`}
+              </li>
+            ))}
+          </ol>
+        ) : <p>Nobody has proposed a change yet.</p>}
+      </div>
+    </div>
   );
 }
 
@@ -258,7 +241,6 @@ function AppsUsageSection() {
   const [days, setDays] = useState(30);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('used');
-  const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [data, setData] = useState<AppsUsagePayload | null>(null);
   const [failed, setFailed] = useState(false);
   const seq = useRef(0);
@@ -281,68 +263,80 @@ function AppsUsageSection() {
   const splits = tileSplits(t || null);
   const shown = data ? sortApps(filterApps(data.apps, query), sort) : [];
 
+  // The totals are the payload's own, so the tiles cost no read. The value
+  // keeps the `data-tile` hook dapp.json's declared check selects on. A
+  // shared figure has no second line, so the platform / apps split is its
+  // tooltip.
+  const tile = (key: string, value: string | null, label: string, tone: Figure['tone']): Figure => ({
+    key,
+    label,
+    tone,
+    value: <span data-tile={key}>{value === null ? '–' : value}</span>,
+    detail: (splits && splits[key]) || undefined,
+  });
+  const figures: Figure[] = [
+    tile('apps', t ? String(t.apps) : null, 'apps', 'sky'),
+    tile('used', t ? String(t.usedApps) : null, 'used in this window', 'green'),
+    tile('built', t ? String(t.builtApps) : null, 'with changes proposed or merged', 'yellow'),
+    tile('time', t ? formatDuration(t.seconds) : null, 'time spent in apps', 'sky'),
+    tile('merged', t ? `${t.merged} / ${t.proposed}` : null, 'merged / proposed', 'green'),
+    tile('requests', t ? String(t.requests) : null, 'requests filed', 'yellow'),
+  ];
+
   return (
-    <div className="space-y-4" id="admin-apps-usage">
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={AdminUI.cardHeader}>
-          <h2 className={AdminUI.cardTitle}>Apps &amp; usage</h2>
-          <button id="admin-apps-usage-refresh" type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => load()}>
+    <div id="admin-apps-usage">
+      <ScreenHeader
+        title="Apps & usage"
+        subtitle="Every app on the platform: its members, the people who have proposed changes to it, and how much it was used and built in the chosen window."
+        actions={(
+          <button id="admin-apps-usage-refresh" type="button" className={BTN.secondarySm} onClick={() => load()}>
             Refresh
           </button>
-        </div>
-        <p className={`${AdminUI.muted} mb-3`}>
-          Every app on the platform: its members, the people who have proposed changes to it,
-          and how much it was used and built in the chosen window.
-        </p>
-        <div className={UsageUI.tiles} id="admin-apps-usage-totals">
-          <Tile id="apps" figure={t ? String(t.apps) : '–'} label="apps" detail={splits?.apps} />
-          <Tile id="used" figure={t ? String(t.usedApps) : '–'} label="used in this window" detail={splits?.used} />
-          <Tile id="built" figure={t ? String(t.builtApps) : '–'} label="with changes proposed or merged" detail={splits?.built} />
-          <Tile id="time" figure={t ? formatDuration(t.seconds) : '–'} label="time spent in apps" detail={splits?.time} />
-          <Tile id="merged" figure={t ? `${t.merged} / ${t.proposed}` : '–'} label="merged / proposed" detail={splits?.merged} />
-          <Tile id="requests" figure={t ? String(t.requests) : '–'} label="requests filed" detail={splits?.requests} />
-        </div>
-      </div>
+        )}
+      />
+      <FigureRow id="admin-apps-usage-totals" items={figures} />
 
-      <div className={`${AdminUI.card} p-4`}>
-        <div className={UsageUI.controls}>
-          <div>
-            <label className={UsageUI.controlLabel} htmlFor="admin-apps-usage-search">Search</label>
-            <input id="admin-apps-usage-search" type="search" className={AdminUI.input} value={query}
-              placeholder="Name, slug or creator" onChange={(e) => setQuery(e.target.value)} />
-          </div>
-          <div>
-            <label className={UsageUI.controlLabel} htmlFor="admin-apps-usage-sort">Sort by</label>
-            <select id="admin-apps-usage-sort" className={AdminUI.select} value={sort} onChange={(e) => setSort(e.target.value)}>
-              {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={UsageUI.controlLabel} htmlFor="admin-apps-usage-days">Time window</label>
-            <select id="admin-apps-usage-days" className={AdminUI.select} value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
-              {windows.map((d) => <option key={d} value={String(d)}>{`Last ${d} days`}</option>)}
-            </select>
-          </div>
+      {/* Search, order and window are the list's, so they sit in the one bar
+          over it (26 Nov 2026). The search filters the payload already here,
+          so it answers as it is typed. */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          <Input id="admin-apps-usage-search" type="search" aria-label="Search" value={query}
+            placeholder="Name, slug or creator" onChange={(e) => setQuery(e.target.value)} />
         </div>
+        <div className="w-full sm:w-56">
+          <Select id="admin-apps-usage-sort" aria-label="Sort by" value={sort} onChange={(e) => setSort(e.target.value)}>
+            {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </Select>
+        </div>
+        <Segmented
+          id="admin-apps-usage-days"
+          label="Time window"
+          value={String(days)}
+          options={windows.map((d) => ({ value: String(d), label: `${d} days`, title: `Last ${d} days` }))}
+          onChange={(next) => setDays(Number(next))}
+        />
+      </Toolbar>
 
-        <p className={`${AdminUI.muted} mb-3`} id="admin-apps-usage-summary" data-count={shown.length}
-          data-state={failed ? 'failed' : (data ? 'ready' : 'loading')}>
-          {failed ? 'Could not read apps & usage. Try Refresh.'
-            : !data ? <span className={AdminUI.loading}>Loading…</span>
-              : !data.apps.length ? 'No apps yet.'
-                : shown.length === data.apps.length ? `${plural(shown.length, 'app')}, last ${data.days} days.`
-                  : `${shown.length} of ${plural(data.apps.length, 'app')} match, last ${data.days} days.`}
-        </p>
+      <p className={`${AdminUI.muted} mb-3`} id="admin-apps-usage-summary" data-count={shown.length}
+        data-state={failed ? 'failed' : (data ? 'ready' : 'loading')}>
+        {failed ? 'Could not read apps & usage. Try Refresh.'
+          : !data ? <span className={AdminUI.loading}>Loading…</span>
+            : !data.apps.length ? 'No apps yet.'
+              : shown.length === data.apps.length ? `${plural(shown.length, 'app')}, last ${data.days} days.`
+                : `${shown.length} of ${plural(data.apps.length, 'app')} match, last ${data.days} days.`}
+      </p>
 
-        {shown.length ? (
-          <ul className="space-y-2" id="admin-apps-usage-list">
-            {shown.map((a) => (
-              <AppRow key={a.slug} app={a} open={openSlug === a.slug}
-                onToggle={() => setOpenSlug(openSlug === a.slug ? null : a.slug)} />
-            ))}
-          </ul>
-        ) : null}
-      </div>
+      {shown.length ? (
+        <div id="admin-apps-usage-list">
+          <List
+            items={shown}
+            columns={APP_COLUMNS}
+            rowKey={(app) => app.slug}
+            details={(app) => <AppDetails app={app} />}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

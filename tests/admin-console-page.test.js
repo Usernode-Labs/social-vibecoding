@@ -141,7 +141,7 @@ test('the console island imports every admin module, console first', () => {
     'admin-db-export',
     // #4405: every custom domain a project has claimed.
     'admin-domains',
-    'admin-e2e',
+    // E2E coverage (admin-e2e) was removed with its section (request 7224).
     // Email templates: what every platform email says, and its layouts.
     'admin-email-templates',
     'admin-estimator', 'admin-featured-apps', 'admin-features',

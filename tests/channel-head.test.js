@@ -27,39 +27,35 @@ const record = (over = {}, channel = {}) => ({
   slug: 'homeroom', member_count: 263, places: { owed: 0, channels: [general(channel)] }, ...over,
 });
 
-function head(data) {
-  const { ChannelHead } = loadTsx(HEAD);
-  return renderToHtml(createElement(ChannelHead, { slug: 'homeroom', name: 'Homeroom', data }));
+function mute(data) {
+  const { ChannelMute } = loadTsx(HEAD);
+  return renderToHtml(createElement(ChannelMute, { slug: 'homeroom', data }));
 }
 
-test('#general says what it is for and how many members it reaches, then Mute', () => {
-  const html = head(record({}, { muted: false }));
-  const about = message('project:places.generalHead.about').replace('{{project}}', 'Homeroom');
-  const members = message('project:places.generalHead.members_other').replace('{{count}}', '263');
-  assert.match(html, /data-ws-channel-head="general"/);
-  assert.ok(html.includes(`${about} · ${members}`), 'what it is for, then its members');
+test('#general\'s Mute is at the end of the Discussion page\'s head, off until pressed', () => {
+  const html = mute(record({}, { muted: false }));
   assert.match(html, /data-ws-channel-mute="off"[^>]*aria-pressed="false"|aria-pressed="false"[^>]*data-ws-channel-mute="off"/);
   assert.ok(html.includes(message('project:places.generalHead.mute')));
+  // The room is the Discussion now (26 Nov 2026): its page's head says what
+  // it is for, and carries Mute for a signed-in viewer, not a visitor.
+  const card = read('frontend/src/features/dev-board/workshop/hub-discussion.tsx');
+  assert.match(card, /\{mode === 'page' && !room\.visitor \? <ChannelMute slug=\{slug\} data=\{data\} \/> : null\}/);
 });
 
 test('a muted #general says Muted, pressed', () => {
-  const html = head(record({}, { muted: true }));
+  const html = mute(record({}, { muted: true }));
   assert.match(html, /aria-pressed="true"/);
   assert.ok(html.includes(`>${message('project:places.generalHead.muted')}<`));
 });
 
-test('no member count says nothing, and a record that does not say whether it is muted has no Mute', () => {
-  const html = head(record({ member_count: 0 }, {}));
-  const about = message('project:places.generalHead.about').replace('{{project}}', 'Homeroom');
-  assert.ok(html.includes(`>${about}<`));
-  assert.doesNotMatch(html, /data-ws-channel-mute/);
-  assert.doesNotMatch(head(null), /data-ws-channel-mute/);
+test('a record that does not say whether it is muted has no Mute', () => {
+  assert.doesNotMatch(mute(record({}, {})), /data-ws-channel-mute/);
+  assert.doesNotMatch(mute(null), /data-ws-channel-mute/);
 });
 
-test('both of #general\'s rooms are under the line, and Homeroom\'s gives its cards their home', () => {
+test('#general has no room of its own on the project page: the Discussion is it', () => {
   const src = read(DISCUSSION);
-  assert.equal(src.match(/<ChannelHead slug=\{slug\} name=\{name\} data=\{data\} \/>/g).length, 2);
-  assert.match(src, /<CardHomeContext\.Provider value=\{slug\}>\s*<EmbeddedConversation/);
+  assert.doesNotMatch(src, /ChannelHead|<EmbeddedConversation/);
 });
 
 test('a card from another project says where it is from; its own project and the project itself do not', () => {

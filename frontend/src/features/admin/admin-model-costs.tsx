@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { BTN } from './topochain/tokens.ts';
+import { Figures, ScreenHeader, TABLE } from './topochain/ui.tsx';
+import type { Figure } from './topochain/ui.tsx';
 
 // Model costs (#admin/model-costs) — #2570.
 //
@@ -168,14 +171,37 @@ function ModelCostsSection() {
   const profile = payload?.typicalChange;
   const cleanSince = day(payload?.observedSince);
 
+  // Counts the one read already carries, at the head of the page as on every
+  // other console page (26 Nov 2026). A dash until the read lands.
+  const figures: Figure[] = [
+    { key: 'models', label: 'Models', value: payload ? rows.length.toLocaleString() : null, tone: 'sky' },
+    {
+      key: 'by-hand',
+      label: 'Set by hand',
+      value: payload ? rows.filter((r) => r.overrideCents != null).length.toLocaleString() : null,
+      tone: 'yellow',
+    },
+    {
+      key: 'changes',
+      label: 'Changes counted',
+      value: payload
+        ? rows.reduce((sum, r) => sum + (Number(r.observedChanges) || 0), 0).toLocaleString()
+        : null,
+      tone: 'green',
+    },
+    { key: 'days', label: 'Days observed', value: payload ? payload.days : null, tone: 'sky' },
+  ];
+
+  // The page is the shared header, its figures, the note and the shared
+  // table. It was one card holding all of them, and the table is a card of
+  // its own now, so the outer card went.
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Model costs</h2>
-        <span className={AdminUI.cardDescription}>
-          {payload ? `Observed over the last ${payload.days} days` : 'Loading…'}
-        </span>
-      </div>
+    <>
+      <ScreenHeader
+        title="Model costs"
+        subtitle={payload ? `Observed over the last ${payload.days} days` : 'Loading…'}
+      />
+      <Figures id="admin-model-costs-figures" items={figures} />
       <p className={`${AdminUI.muted} mb-4`} id="admin-model-costs-profile">
         {profile
           ? `Estimates are per-token pricing times a typical change: ${tokens(profile.inputTokens)} in`
@@ -208,38 +234,40 @@ function ModelCostsSection() {
           The observed figures could not be read this time; the estimates below are still current.
         </p>
       ) : null}
-      <div className={AdminUI.tableWrap}>
-        <table className={AdminUI.table} id="admin-model-costs-table">
-          <thead className={AdminUI.thead}>
+      {/* Written by hand with the shared table classes, not `List`: a declared
+          check finds a row by its data-model-cost, and the table by its id. */}
+      <div className={TABLE.wrap}>
+        <table className={TABLE.table} id="admin-model-costs-table">
+          <thead className={TABLE.thead}>
             <tr>
-              <th className={AdminUI.th}>Model</th>
-              <th className={AdminUI.th}>Good for</th>
+              <th className={TABLE.th}>Model</th>
+              <th className={TABLE.th}>Good for</th>
               {/* #2570: the cells hold bare amounts, so the headers carry
                   the unit. Every one of these is per TYPICAL CHANGE, which
                   the paragraph above defines. */}
-              <th className={AdminUI.th}>Shown estimate, per typical change</th>
-              <th className={AdminUI.th}>Observed average, per typical change</th>
-              <th className={AdminUI.th}>Observed median, per typical change</th>
-              <th className={AdminUI.th}>Changes</th>
-              {canWrite ? <th className={AdminUI.th}>Override</th> : null}
+              <th className={TABLE.th}>Shown estimate, per typical change</th>
+              <th className={TABLE.th}>Observed average, per typical change</th>
+              <th className={TABLE.th}>Observed median, per typical change</th>
+              <th className={TABLE.th}>Changes</th>
+              {canWrite ? <th className={TABLE.th}>Override</th> : null}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr className={AdminUI.trHover} key={row.modelId} data-model-cost={row.modelId}>
-                <td className={`${AdminUI.td} font-mono text-xs`}>{row.modelId}</td>
-                <td className={AdminUI.td}>{row.note || '–'}</td>
-                <td className={AdminUI.td}>
+              <tr className={TABLE.tr} key={row.modelId} data-model-cost={row.modelId}>
+                <td className={`${TABLE.td} font-mono text-xs`}>{row.modelId}</td>
+                <td className={TABLE.td}>{row.note || '–'}</td>
+                <td className={TABLE.td}>
                   {money(row.shownCents)}
                   {row.overrideCents != null ? (
                     <span className={`${AdminUI.badge.secondary} ms-2`}>set by hand</span>
                   ) : null}
                 </td>
-                <td className={AdminUI.td}>{money(row.observedAvgCents)}</td>
-                <td className={AdminUI.td}>{money(row.observedMedianCents)}</td>
-                <td className={AdminUI.td}>{row.observedChanges}</td>
+                <td className={TABLE.td}>{money(row.observedAvgCents)}</td>
+                <td className={TABLE.td}>{money(row.observedMedianCents)}</td>
+                <td className={TABLE.td}>{row.observedChanges}</td>
                 {canWrite ? (
-                  <td className={AdminUI.td}>
+                  <td className={TABLE.td}>
                     <div className="flex items-center gap-2">
                       <input
                         type="number" min="0" step="0.01" inputMode="decimal"
@@ -250,7 +278,7 @@ function ModelCostsSection() {
                         onChange={(e) => setDrafts((d) => ({ ...d, [row.modelId]: e.target.value }))}
                       />
                       <button
-                        type="button" className={AdminUI.btn.primarySm}
+                        type="button" className={BTN.rowMain}
                         disabled={busy === row.modelId}
                         onClick={() => save(row.modelId)}
                       >Save</button>
@@ -261,7 +289,7 @@ function ModelCostsSection() {
             ))}
             {rows.length === 0 ? (
               <tr>
-                <td className={AdminUI.td} colSpan={canWrite ? 7 : 6}>
+                <td className={TABLE.td} colSpan={canWrite ? 7 : 6}>
                   No models to show yet.
                 </td>
               </tr>
@@ -274,7 +302,7 @@ function ModelCostsSection() {
         : 'text-xs mt-3 hidden'}>
         {status ? status.text : ''}
       </p>
-    </div>
+    </>
   );
 }
 

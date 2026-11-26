@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { FIELD_CLS } from './topochain/tokens.ts';
+import { Badge, EmptyState, List, ScreenHeader } from './topochain/ui.tsx';
+import type { Column } from './topochain/ui.tsx';
 
 // Database export (#admin/db-export) — an unredacted dump of durable platform
 // data, behind a two-field confirmation, a per-day cap, no re-entry on every
@@ -64,14 +67,16 @@ const DB_EXPORT_REASONS: Record<string, string> = {
   rate_limited: 'Daily export limit reached. Try again later.',
 };
 
-const DB_EXPORT_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  completed: { label: 'Completed', cls: 'bg-green-500/20 text-green-800 dark:text-green-400' },
-  streaming: { label: 'Streaming', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
-  requested: { label: 'Requested', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
-  failed: { label: 'Failed', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
-  cancelled: { label: 'Cancelled', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
-  interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
-  denied: { label: 'Denied', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
+// A status repeated down the history, so the soft tones: sky for one still
+// on its way, mint for done, red and amber for trouble (26 Nov 2026).
+const DB_EXPORT_STATUS_BADGE: Record<string, { label: string; tone: string }> = {
+  completed: { label: 'Completed', tone: 'mint' },
+  streaming: { label: 'Streaming', tone: 'sky' },
+  requested: { label: 'Requested', tone: 'sky' },
+  failed: { label: 'Failed', tone: 'red' },
+  cancelled: { label: 'Cancelled', tone: 'amber' },
+  interrupted: { label: 'Interrupted', tone: 'amber' },
+  denied: { label: 'Denied', tone: 'red' },
 };
 
 function fmtBytes(n: any): string {
@@ -99,36 +104,41 @@ function fmtTime(iso?: string): string {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
-const FIELD = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm';
-const RED_BTN = 'rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors';
+const QUIET = 'text-xs text-zinc-500 dark:text-zinc-400';
 
-function HistoryRow({ r }: { r: Row }) {
-  const b = (r.status && DB_EXPORT_STATUS_BADGE[r.status])
-    || { label: r.status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
+// The history is the shared list (26 Nov 2026). It was a card for each row,
+// drawn by hand, with its own badge colours.
+const HISTORY_COLUMNS: Column<Row>[] = [
+  { label: 'Who', primary: true, cell: (r) => r.username, tdClass: 'font-medium' },
+  {
+    label: 'Status',
+    cell: (r) => {
+      const b = (r.status && DB_EXPORT_STATUS_BADGE[r.status]) || { label: r.status || '—', tone: 'zinc' };
+      return <Badge label={b.label} tone={b.tone} />;
+    },
+  },
+  { label: 'Requested', cell: (r) => fmtTime(r.requested_at), tdClass: QUIET },
+  { label: 'Database', cell: (r) => r.db_name, tdClass: `${QUIET} font-mono` },
+  {
+    label: 'Size',
+    cell: (r) => <span title="compressed size downloaded">{fmtBytes(r.bytes_sent)}</span>,
+    tdClass: QUIET,
+  },
+  { label: 'Duration', cell: (r) => fmtDuration(r.started_at, r.finished_at), tdClass: QUIET },
+  { label: 'From', cell: (r) => r.ip || '—', tdClass: QUIET },
+];
+
+// Why an export was refused or failed, under its row. Drawn only on a row
+// that has one, and always in view: it is the first thing to read there.
+function historyTrouble(r: Row) {
+  if (!r.error && !r.denied_reason) return null;
   return (
-    <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-3">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium">{r.username}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
-          </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>{fmtTime(r.requested_at)}</span>
-            <span className="font-mono">{r.db_name}</span>
-            <span title="compressed size downloaded">{fmtBytes(r.bytes_sent)}</span>
-            <span>{fmtDuration(r.started_at, r.finished_at)}</span>
-            <span>{`from ${r.ip || '—'}`}</span>
-            {r.denied_reason ? (
-              <span className="text-zinc-500 dark:text-zinc-400">
-                {`reason: ${String(r.denied_reason).replace(/_/g, ' ')}`}
-              </span>
-            ) : null}
-          </div>
-          {r.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-1 break-words">{r.error}</div> : null}
-        </div>
-      </div>
-    </div>
+    <>
+      {r.denied_reason ? (
+        <div className={QUIET}>{`reason: ${String(r.denied_reason).replace(/_/g, ' ')}`}</div>
+      ) : null}
+      {r.error ? <div className="text-xs text-red-700 dark:text-red-400 break-words">{r.error}</div> : null}
+    </>
   );
 }
 
@@ -275,7 +285,7 @@ function DbExportSection() {
               // never re-enables the button out from under an open confirm.
               disabled={!status?.available || confirming}
               onClick={() => setConfirming(true)}
-              className="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:hover:bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+              className={AdminUI.btn.destructive}>
               Export database</button>
           ) : (
             <span className="inline-block rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">
@@ -299,7 +309,7 @@ function DbExportSection() {
           </p>
           <div className="mt-3 space-y-2">
             <input id="admin-db-export-phrase" ref={phraseRef} type="text" autoComplete="off" spellCheck={false}
-              placeholder="EXPORT" className={`${FIELD} font-mono`}
+              placeholder="EXPORT" className={`${FIELD_CLS} font-mono`}
               value={phrase} onChange={(e) => setPhrase(e.target.value)} />
             {/* Show/hide, same affordance the platform fields grew in #1606.
                 Hand-written rather than the shell's PasswordInput: the console
@@ -307,7 +317,7 @@ function DbExportSection() {
                 (tests/admin-ui-registry.test.js). */}
             <div className="relative">
               <input id="admin-db-export-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
-                placeholder="Your password" className={`${FIELD} pe-16`}
+                placeholder="Your password" className={`${FIELD_CLS} pe-16`}
                 value={password} onChange={(e) => setPassword(e.target.value)} />
               <button id="admin-db-export-password-toggle" type="button"
                 className="absolute inset-y-0 end-0 flex items-center px-3 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
@@ -321,11 +331,11 @@ function DbExportSection() {
           <p id="admin-db-export-error"
             className={`${error ? '' : 'hidden '}text-xs text-red-700 dark:text-red-400 mt-2`}>{error}</p>
           <div className="flex items-center gap-2 mt-3">
-            <button id="admin-db-export-go" type="button" className={RED_BTN} disabled={busy} onClick={start}>
+            <button id="admin-db-export-go" type="button" className={AdminUI.btn.destructive} disabled={busy} onClick={start}>
               {busy ? 'Exporting…' : 'Download the .sql.gz'}
             </button>
             <button id="admin-db-export-cancel" type="button" onClick={closeConfirm}
-              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+              className={AdminUI.btn.outline}>
               Cancel</button>
           </div>
         </div>
@@ -361,19 +371,27 @@ function DbExportSection() {
         </ul>
       </details>
 
-      <div className={`${AdminUI.card} p-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
-          <h3 className="text-base font-semibold">Export history</h3>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">Append-only: cannot be cleared</span>
+      {/* The history's heading stands over the shared list, which is its own
+          card. Both were inside one more card. */}
+      <div>
+        <ScreenHeader
+          title="Export history"
+          subtitle="Every attempt, including refused ones, is recorded here permanently."
+          actions={<span className={QUIET}>Append-only: cannot be cleared</span>}
+        />
+        <div id="admin-db-export-history">
+          {history && history.length ? (
+            <List
+              items={history}
+              rowKey={(r) => r.id}
+              columns={HISTORY_COLUMNS}
+              extra={historyTrouble}
+            />
+          ) : null}
         </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
-        <div id="admin-db-export-history" className="space-y-2">
-          {(history || []).map((r) => <HistoryRow key={r.id} r={r} />)}
+        <div id="admin-db-export-history-empty" className={history && !history.length ? '' : 'hidden'}>
+          <EmptyState title="No exports recorded yet." />
         </div>
-        <p id="admin-db-export-history-empty"
-          className={`text-sm text-zinc-500 dark:text-zinc-400${history && !history.length ? '' : ' hidden'}`}>
-          No exports recorded yet.
-        </p>
       </div>
     </div>
   );

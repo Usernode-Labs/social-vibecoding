@@ -86,12 +86,16 @@ const row = (over) => ({ id: 1, readAt: null, appSlug: 'garden-ab12', ...over })
 const nav = (calls) => JSON.parse(JSON.stringify(calls.filter((c) => c[0] !== 'dismiss')));
 
 for (const kind of ['mention', 'reply', 'reaction']) {
+  // #general IS THE DISCUSSION (26 Nov 2026): the message's own address,
+  // which the router takes to the project's Discussion, on its post.
   test(`a ${kind} in an app's chat opens its discussion in Messages, on that message`, () => {
-    const { N, calls } = load();
+    const { N, calls, location } = load();
     N.items = [row({ kind, chatMessageId: 5552 })];
     N._onItemClick(1);
-    assert.deepEqual(nav(calls), [['reveal', 'garden-ab12', 5552], ['discussion', 'garden-ab12']],
-      'asked to bring the message into view, then the discussion opened — never the old full-screen chat');
+    // Through Messages' openAddress, which runs the router again when that
+    // address is already up (assigning it would fire no hashchange).
+    assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/5552']], 'the message\'s address: its post in the Discussion; no chat is asked to reveal anything');
+    assert.equal(location.hash, '');
     assert.equal(calls[0][0], 'dismiss', 'and the sheet is out of the way first (#1329)');
   });
 }
@@ -213,10 +217,11 @@ test('a proposal row still opens its proposal', () => {
 });
 
 test('a saved app message opens the discussion on it, and stays saved', () => {
-  const { N, calls } = load();
+  const { N, calls, location } = load();
   N.saved = [{ messageId: 5540, appSlug: 'garden-ab12' }];
   N._onSavedClick(5540);
-  assert.deepEqual(nav(calls), [['reveal', 'garden-ab12', 5540], ['discussion', 'garden-ab12']]);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/5540']], 'its post in the Discussion');
+  assert.equal(location.hash, '');
   assert.equal(N.saved.length, 1, 'opening a save does not consume it');
   // …and one saved in a topic thread opens the topic, as before.
   const topic = load();
@@ -234,20 +239,24 @@ test('accepting an invite opens the app\'s discussion, where the people are', as
   assert.deepEqual(nav(calls), [['discussion', 'garden-ab12']]);
 });
 
-test('before the Messages island publishes, the address is the fallback', () => {
+test('before the Messages island publishes, the message\'s address still routes it', () => {
   // A native exact-open can land during shell startup; the hash routes it.
   const { N, calls, location } = load({ controller: false });
   N.items = [row({ kind: 'mention', chatMessageId: 3 })];
   N._onItemClick(1);
-  assert.equal(location.hash, '#messages/app/garden-ab12');
-  assert.deepEqual(nav(calls), [['reveal', 'garden-ab12', 3]]);
+  assert.equal(location.hash, '#messages/app/garden-ab12/m/3');
+  assert.deepEqual(nav(calls), []);
 });
 
-test('without GroupChat the discussion still opens', () => {
+test('without GroupChat the discussion still opens, on the message', () => {
   const { N, calls } = load({ groupChat: false });
   N.items = [row({ kind: 'mention', chatMessageId: 3 })];
   N._onItemClick(1);
-  assert.deepEqual(nav(calls), [['discussion', 'garden-ab12']]);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/3']]);
+  // A row with no message (an accepted invite) opens the Discussion itself.
+  const bare = load({ groupChat: false });
+  bare.N._openAppDiscussion('garden-ab12', null);
+  assert.deepEqual(nav(bare.calls), [['discussion', 'garden-ab12']]);
 });
 
 test('no row sends a reader to the old full-screen chat any more — except a shared spec', () => {

@@ -223,8 +223,13 @@ test('the Projects in previews card renders its ids and offers nothing until it 
   assert.match(html, /id="admin-preview-projects-state"/);
   assert.match(html, />Projects in previews</);
   assert.match(html, /make projects inside the preview of a Homeroom change/);
-  assert.doesNotMatch(html, /admin-preview-projects-toggle-btn/, 'no button before the read lands');
+  // The control is a switch in a settings row now, and the row's title is
+  // named after the switch's id whether or not it is drawn (request 7224).
+  assert.doesNotMatch(html, /id="admin-preview-projects-toggle-btn"|role="switch"|<button\b/, 'no switch before the read lands');
   assert.doesNotMatch(html, /—/, 'no em dash in the copy');
   const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'frontend', 'src', 'features', 'admin', 'admin-limits.tsx'), 'utf8');
-  assert.match(source, /<GithubBudgetCard \/>\s*<PreviewProjectsCard canWrite=\{canWrite\} \/>/, 'it sits in Limits, after the limits and GitHub\'s budget');
+  // Limits is three tabs now (request 7224): the limits and GitHub's budget
+  // are the first, and this card leads the Features tab that follows it.
+  assert.match(source, /<TabPanel tabsId=\{LIMITS_TABS_ID\} tab="limits" active=\{tab === 'limits'\}>[\s\S]*?<GithubBudgetCard \/>[\s\S]*?<\/TabPanel>\s*<TabPanel tabsId=\{LIMITS_TABS_ID\} tab="features" active=\{tab === 'features'\}>\s*<SettingsGroup title="Features"[^>]*>\s*<PreviewProjectsCard canWrite=\{canWrite\} \/>/,
+    'it sits in Limits, after the limits and GitHub\'s budget');
 });
