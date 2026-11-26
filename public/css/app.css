@@ -28334,6 +28334,31 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) 
 html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
   --platform-tabs-h: calc(52px + 56px + var(--platform-tabs-inset, 0px));
 }
+/* ON A PHONE THE STRIP IS A SLIM LINE, AND STEPS ASIDE FOR A REPLY BOX
+   (phone audit of 25 Nov 2026, request 7164). The strip and the bar took
+   108px of a 780px screen between them, and a page with a reply box at its
+   foot kept about half of the screen for what it says. Under 768px the strip
+   is 40px (its geometry is with its own rules, "#platform-parked — the app
+   you left"), so the band is 40 + 56; and while a reply box is drawn the
+   strip is not (`platform-parked-yield`, features/nav/parked-strip.tsx), so
+   the band is the bar's alone. One number in two rules, as above: change
+   the 40px here with the strip's height there.
+
+   HERE, AND IN THIS ORDER, for the cascade. The first rule repeats the
+   selector above character for character and wins by coming later. The
+   second carries one class more than it. The side strip's rule further down
+   ("NO BAND AT THE FOOT") equals the second's specificity and comes later,
+   so it still wins there, and the keyboard's and the frame's are
+   `!important`. From 768px neither applies: the strip is not drawn on a
+   desktop at all. */
+@media (max-width: 767px) {
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
+    --platform-tabs-h: calc(40px + 56px + var(--platform-tabs-inset, 0px));
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked.platform-parked-yield:not(.hidden)) {
+    --platform-tabs-h: calc(56px + var(--platform-tabs-inset, 0px));
+  }
+}
 
 /* KEYBOARD UP, BAR GONE. The same reasoning `html.un-kb .platform-safe-scroll`
    states for the home-indicator strip: a bar pinned to the bottom of the
@@ -30151,6 +30176,48 @@ html[data-side-strip="left"] #comment-pin-box.comment-sheet {
    `hidden` class, which the island owns — this is presentation. */
 html.un-kb #platform-parked {
   display: none;
+}
+
+/* A SLIM LINE ON A PHONE (request 7164), the only place the strip is drawn
+   (from 768px the sidebar's App row is the offer). 40px, not 52: the same
+   parts a size down, on one line. The band's rule ("ON A PHONE THE STRIP IS
+   A SLIM LINE", by the tab bar's tokens) counts the same 40px. The whole
+   line still resumes, edge to edge, and the ✕ is 44px wide; neither can be
+   taller than the line, because the root clips to its own box for its glass
+   layer and a clip takes the taps outside it too. */
+@media (max-width: 767px) {
+  .platform-parked {
+    height: 40px;
+    padding-inline: 4px 2px;
+  }
+  .platform-parked-open {
+    gap: 8px;
+    height: 40px;
+  }
+  .platform-parked-tile {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    font-size: 0.75rem;
+  }
+  .platform-parked-name {
+    font-size: 0.875rem;
+  }
+  .platform-parked-pill {
+    height: 24px;
+    padding: 0 10px;
+  }
+  .platform-parked-x {
+    width: 44px;
+    height: 40px;
+  }
+  /* A REPLY BOX IS AT THE FOOT OF THIS PAGE, so the strip steps aside and
+     the box and the bar are all that is there. Presentation, like the
+     keyboard's rule above: the app stays parked, and the strip is back on
+     the next page without such a box. By id, to outrank the phase classes. */
+  #platform-parked.platform-parked-yield {
+    display: none;
+  }
 }
 
 /* IN AND OUT BY THE BAR (#3376), on the phone. Parked, the strip rises out

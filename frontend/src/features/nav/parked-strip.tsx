@@ -86,6 +86,18 @@
  * which would then draw at strip size and snap back when the motion ended.
  * The children carry the slide (app.css).
  *
+ * ── On a phone it steps aside for a reply box (request 7164) ──────────
+ *
+ * A request's page, a channel and a conversation have a reply box at the
+ * foot, and with the strip and the bar under it the three took close to half
+ * of a phone's screen. While such a box is drawn (../../lib/bottom-box.ts:
+ * the box says so itself) the root carries `platform-parked-yield`, which
+ * app.css reads under 768px only: the strip is not drawn and its band is not
+ * reserved. The app stays parked and its frame stays loaded; nothing is
+ * forgotten. The strip is back on every page without such a box, so any tab
+ * of the bar, one press away, shows it again. Toggled like `hidden`, never
+ * rendered.
+ *
  * ── The app goes into it, and comes back out of it (#3618) ──────────
  *
  * Closing an app shrinks it into this strip, and Resume grows it back out:
@@ -99,6 +111,7 @@ import { reducedMotion } from '../../lib/reduced-motion';
 
 import { XIcon } from '@/components/ui/icons';
 
+import { bottomBoxStore } from '../../lib/bottom-box';
 import { useMessages } from '../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -151,6 +164,10 @@ export function ParkedStrip() {
   useHiddenClass(ref, !shown || !barUp);
   useClassToggle(ref, 'platform-parked-enter', entering && !!app && barUp);
   useClassToggle(ref, 'platform-parked-leave', !app && !!leaving && barUp);
+  // A page with its own box at the foot (a reply box) is drawn: on a phone
+  // the strip steps aside for it (app.css), and is back on the next page.
+  const { count: bottomBoxes } = useStoreState(bottomBoxStore);
+  useClassToggle(ref, 'platform-parked-yield', bottomBoxes > 0);
 
   // What was on screen at the last change, null before the first; and
   // whether the next change is the stored app arriving on load.

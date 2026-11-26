@@ -523,3 +523,50 @@ test('storage is read defensively and written through one key', () => {
   const set = SRC.slice(SRC.indexOf('export function setParked'));
   assert.ok(set.indexOf('parkedStore.set(') < set.indexOf('localStorage.setItem'));
 });
+
+// ── On a phone it is a slim line, and steps aside for a reply box (#7164) ──
+
+test('on a phone the strip is a 40px line and the band counts the same 40px', () => {
+  const at = CSS.indexOf('@media (max-width: 767px) {\n  .platform-parked {\n    height: 40px;');
+  assert.ok(at > CSS.indexOf('\n.platform-parked-x {'), 'the phone geometry follows the strip\'s own rules');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
+  assert.match(block, /\.platform-parked-open \{\s*gap: 8px;\s*height: 40px;\s*\}/, 'the whole line resumes');
+  assert.match(block, /\.platform-parked-x \{\s*width: 44px;\s*height: 40px;\s*\}/, 'the ✕ is 44px wide');
+  assert.match(block, /\.platform-parked-name \{\s*font-size: 0\.875rem;\s*\}/, 'in rem, so Text size scales it');
+  // The base rules are untouched: 52px is still what the strip is elsewhere.
+  assert.match(CSS, /\n\.platform-parked \{[^}]*height: 52px;/);
+  const band = CSS.indexOf('@media (max-width: 767px) {\n  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {\n    --platform-tabs-h: calc(40px + 56px + var(--platform-tabs-inset, 0px));');
+  const base = CSS.indexOf('--platform-tabs-h: calc(52px + 56px + var(--platform-tabs-inset, 0px));');
+  const sideStrip = CSS.indexOf('html[data-side-strip]:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden))');
+  assert.ok(base > 0 && band > base, 'the phone band comes after the rule it replaces, same selector');
+  assert.ok(sideStrip > band, 'and before the side strip\'s rule, which must still win');
+});
+
+test('while a reply box is drawn the strip is not, and its band is not reserved', () => {
+  assert.match(STRIP, /useClassToggle\(ref, 'platform-parked-yield', bottomBoxes > 0\);/);
+  const at = CSS.indexOf('  #platform-parked.platform-parked-yield {\n    display: none;');
+  assert.ok(at > 0);
+  assert.ok(CSS.lastIndexOf('@media (max-width: 767px) {', at) > CSS.lastIndexOf('\n}\n', at), 'on a phone only');
+  assert.match(CSS, /@media \(max-width: 767px\) \{\n  html:not\(\.un-kb\)[^{]*\{[^}]*\}\n  html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked\.platform-parked-yield:not\(\.hidden\)\) \{\n    --platform-tabs-h: calc\(56px \+ var\(--platform-tabs-inset, 0px\)\);/,
+    'the page keeps only the bar\'s band while the strip is aside');
+  // The reply boxes at the foot say so; the boxed row in a board card does not.
+  const composer = read('frontend/src/features/group-chat/composer.tsx');
+  assert.match(composer, /useBottomBox\(ids\.form, messages \|\| !!fill\);/);
+  // No observer, nothing reported: the strip stays, which is the safe side.
+  assert.match(read('frontend/src/lib/bottom-box.ts'), /typeof IntersectionObserver === 'undefined'\) return undefined;/);
+});
+
+test('boxes are counted, so one going away does not clear another', () => {
+  const count = () => ui.bottomBoxStore.get().count;
+  assert.equal(count(), 0);
+  const a = ui.reportBottomBox();
+  const b = ui.reportBottomBox();
+  a.set(true); a.set(true);
+  assert.equal(count(), 1, 'the same word twice is one box');
+  b.set(true);
+  assert.equal(count(), 2);
+  a.clear();
+  assert.equal(count(), 1, 'the other box is still drawn');
+  b.set(false); b.clear();
+  assert.equal(count(), 0);
+});

@@ -50,6 +50,7 @@ import {
   type PendingAttachmentView,
 } from '../attachments/pending-strip';
 import { useMessages } from '../../lib/i18n/react';
+import { useBottomBox } from '../../lib/bottom-box';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   composerStore,
@@ -252,6 +253,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
   // listens to for the draft, the field's height and the typing line.
   const field = useRef<HTMLTextAreaElement>(null);
   const [dictating, setDictating] = useState(false);
+  // A box at the foot of the page says so while it is drawn, and on a phone
+  // the Resume strip steps aside for it (lib/bottom-box.ts; request 7164).
+  // Not the boxed row inside a board card, which is not at the foot.
+  // Found by its id, which is this form's contract already (see IDS).
+  useBottomBox(ids.form, messages || !!fill);
   const putWords = (text: string) => {
     const el = field.current;
     if (!el) return;
