@@ -109,7 +109,7 @@ const BOOT_ORDER = [
   'seedStagingBotConfigs', 'seedStagingUnreadableReply', 'seedStagingPlatformEnv',
   'seedStagingTopochain', 'seedStagingInviteChallengeStatuses', 'seedStagingFirstChallenges',
   'seedStagingCountedCredit', 'seedStagingChallengeItems', 'seedStagingProfileCustomization', 'seedStagingProfileProjects',
-  'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingPinnedCommunities',
+  'seedStagingBotBuiltDeleteApp', 'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingPinnedCommunities',
   'seedStagingEmojiThreadRequest', 'seedStagingFeedback',
 ];
 

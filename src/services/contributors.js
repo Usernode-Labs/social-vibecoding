@@ -8,6 +8,16 @@
 //   2. accepted members (app_collaborators status='member'),
 //   3. authors of merged proposals (chat_sessions status='merged').
 //
+// A contributor is a PERSON (#7189). Synthetic accounts — Homeroom bot, the
+// demo partner — are not contributors, so every read joins `users` with
+// `is_synthetic IS NOT TRUE`. A change the bot built is credited to the person
+// who asked for it (services/change-person.js CHANGE_PERSON_SQL, the same
+// rule the Journey and admin pages use), so a bot build the creator asked for
+// still counts for the creator and one nobody asked for counts for nobody.
+// That keeps the delete gate honest: a creator whose only other "contributor"
+// was the bot can now delete their app; one with a real other person still
+// cannot.
+//
 // This used to live inside src/routes/public-api.js, which is still the
 // unauthenticated consumer (GET /api/public/apps), the versioned app-facing
 // directory (GET /api/app-platform/v1/apps), and the per-app contributors
@@ -20,6 +30,15 @@
 
 // The three-source union, parameterized on $1 = int[] of app ids. Shared
 // verbatim by both loaders so the definition exists exactly once.
+//
+// The merged branch credits a change to its person (CHANGE_PERSON_SQL): the
+// session's author, except a bot-build session, which belongs to whoever
+// asked for it. It is wrapped in a subquery because the change-person
+// expression is not itself a column name (`user_id IS NOT NULL` has to filter
+// the expression's result). Read as a property, not destructured, so
+// scripts/check-sql.js can still resolve this as static SQL.
+const changePerson = require('./change-person');
+
 const CONTRIBUTOR_IDS_CTE = `
   SELECT id AS app_id, created_by AS user_id
     FROM apps
@@ -29,9 +48,13 @@ const CONTRIBUTOR_IDS_CTE = `
     FROM app_collaborators
    WHERE app_id = ANY($1::int[]) AND status = 'member'
   UNION
-  SELECT app_id, user_id
-    FROM chat_sessions
-   WHERE app_id = ANY($1::int[]) AND status = 'merged' AND user_id IS NOT NULL`;
+  SELECT merged.app_id, merged.user_id
+    FROM (
+      SELECT cs.app_id, ${changePerson.CHANGE_PERSON_SQL} AS user_id
+        FROM chat_sessions cs
+       WHERE cs.app_id = ANY($1::int[]) AND cs.status = 'merged'
+    ) merged
+   WHERE merged.user_id IS NOT NULL`;
 
 // Ranked-list bounds. The largest contributor set in production is 23
 // (block-game-54d305), so the default returns every contributor for every
@@ -52,7 +75,7 @@ async function loadContributors(pool, appIds) {
      SELECT c.app_id, u.id AS user_id, u.username,
             u.usernode_pubkey AS wallet_address
        FROM contributor_ids c
-       JOIN users u ON u.id = c.user_id
+       JOIN users u ON u.id = c.user_id AND u.is_synthetic IS NOT TRUE
       ORDER BY LOWER(u.username)`,
     [appIds]
   );
@@ -78,7 +101,7 @@ async function loadContributorCounts(pool, appIds) {
      )
      SELECT c.app_id, COUNT(*)::int AS cnt
        FROM contributor_ids c
-       JOIN users u ON u.id = c.user_id
+       JOIN users u ON u.id = c.user_id AND u.is_synthetic IS NOT TRUE
       GROUP BY c.app_id`,
     [appIds]
   );
@@ -98,7 +121,7 @@ async function loadContributedAppIds(pool, appIds, userId) {
      )
      SELECT DISTINCT c.app_id
        FROM contributor_ids c
-       JOIN users u ON u.id = c.user_id
+       JOIN users u ON u.id = c.user_id AND u.is_synthetic IS NOT TRUE
       WHERE c.user_id = $2`,
     [appIds, userId]
   );
@@ -149,12 +172,13 @@ async function loadRankedContributors(pool, appId, opts = {}) {
             ) AS is_member,
             COUNT(*) OVER ()::int AS total
        FROM contributor_ids c
-       JOIN users u ON u.id = c.user_id
+       JOIN users u ON u.id = c.user_id AND u.is_synthetic IS NOT TRUE
        JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (
          SELECT COUNT(*)::int AS cnt, MAX(cs.merged_at) AS last_merged_at
            FROM chat_sessions cs
-          WHERE cs.app_id = a.id AND cs.status = 'merged' AND cs.user_id = u.id
+          WHERE cs.app_id = a.id AND cs.status = 'merged'
+           AND ${changePerson.CHANGE_PERSON_SQL} = u.id
        ) m ON true
        LEFT JOIN LATERAL (
          SELECT COUNT(*)::int AS cnt

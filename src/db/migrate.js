@@ -599,6 +599,10 @@ const STAGING_SEEDS = Object.freeze([
   // per project where the capture member has a live change. A fresh staging
   // copy has none, so the section would only have its empty state.
   stagingSeed('seedStagingProfileProjects', async (pool, config) => { await seedStagingProfileProjects(pool); }),
+  // #7189's shots: a project the member made, whose only other "contributor"
+  // was Homeroom bot's merged build for their own request, so App settings
+  // now offers to delete it.
+  stagingSeed('seedStagingBotBuiltDeleteApp', async (pool, config) => { await seedStagingBotBuiltDeleteApp(pool); }),
   stagingSeed('seedStagingPhoneFailures', async (pool, config) => { await seedStagingPhoneFailures(pool); }),
   stagingSeed('seedStagingPlatformMail', async (pool, config) => { await seedStagingPlatformMail(pool); }),
   // #7147's shots: the desktop sidebar keeps ten pinned communities now, not
@@ -744,6 +748,77 @@ async function seedStagingProfileProjects(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging profile projects seed failed', { message: err.message });
+  }
+}
+
+// #7189's shots: a project the shots' member fixture made whose only other
+// "contributor" was Homeroom bot, because the bot built it from a request
+// the member filed. A contributor is a person, so the bot's merged build
+// counts for the member and the member may delete the project: App settings
+// shows the Danger zone instead of "This app has 1 other contributor". A
+// fresh staging copy has no such project (it truncates chat_sessions and
+// nothing there runs a build), so one is seeded. Obviously fake, idempotent
+// by id, slug and branch, and strictly a no-op outside staging. Nothing here
+// is a signal the code reads to decide anything.
+async function seedStagingBotBuiltDeleteApp(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const APP_ID = 900812;
+  const SLUG = 'staging-demo-bot-built';
+  try {
+    const member = (await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    const bot = (await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1")).rows[0];
+    if (!member || !bot) return seedSkipped('no user usernode-capture or homeroom_bot');
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, icon_emoji)
+       VALUES ($1, 'Staging demo bot-built app', $2, 'running', 'private', 'private', $3, '🏁')
+       ON CONFLICT (id) DO NOTHING`,
+      [APP_ID, SLUG, member.id]);
+    // The request the bot built from, asked for by the member.
+    const number = 900099;
+    const title = 'Staging demo: a scoreboard for the race';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. Homeroom bot built this from the request.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [APP_ID, number, title, member.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       VALUES ($1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '3 days')
+       ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [APP_ID, number, member.id, title]);
+    // The bot's merged build: a session authored by the synthetic account,
+    // from that request, so it is the member's change.
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at,
+                                  created_from_issue_number, created_at, last_activity_at)
+       SELECT $1::int, $2::int, 'staging-fixture/bot-built-delete', $3::text, $3::text, 'merged',
+              NOW() - INTERVAL '2 days', $4::int, NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1::int AND branch_name = 'staging-fixture/bot-built-delete')`,
+      [APP_ID, bot.id, title, number]);
+    // Two more of the member's own, so the row reads "Creator · 3 live".
+    for (const [branch, name] of [
+      ['staging-fixture/bot-built-flag', 'Staging demo: a flag for the finish line'],
+      ['staging-fixture/bot-built-laps', 'Staging demo: lap times on the board'],
+    ]) {
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at,
+                                    created_at, last_activity_at)
+         SELECT $1::int, $2::int, $3::text, $4::text, $4::text, 'merged',
+                NOW() - INTERVAL '1 day', NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1::int AND branch_name = $3::text)`,
+        [APP_ID, member.id, branch, name]);
+    }
+    // On the member's Home, so the project is one tile away.
+    await pool.query(
+      `INSERT INTO app_favorites (app_id, user_id, sort_order)
+       VALUES ($1, $2, 3) ON CONFLICT (app_id, user_id) DO UPDATE
+         SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
+      [APP_ID, member.id]);
+  } catch (err) {
+    log.warn('db', 'Staging bot-built delete seeding failed', { message: err.message });
   }
 }
 
@@ -18392,6 +18467,7 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
   seedStagingProfileProjects,
+  seedStagingBotBuiltDeleteApp,
   // #7147: the eleven fake communities, ten pinned, the sidebar's shots need.
   seedStagingPinnedCommunities,
   // #7170: the request in an emoji project the thread header's tile shot needs.
