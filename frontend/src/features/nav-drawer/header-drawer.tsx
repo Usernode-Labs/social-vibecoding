@@ -107,7 +107,7 @@ export function pageLabel(place: string): string {
 
 // The bar's back disc (platform-header.tsx BACK_BTN_CLASS): the Button
 // primitive's `brandTint` with the header's ink, at the disc's 28px.
-const BACK_PLACE = 'nav-drawer-back inline-flex items-center justify-center w-7 h-7 un-touch-target';
+const BACK_CLASS = 'nav-drawer-back inline-flex items-center justify-center w-7 h-7 un-touch-target';
 
 /**
  * Up from a community's place: a page under a place (All items, the bot's
@@ -179,7 +179,7 @@ function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: 
       variant="brandTint"
       size="none"
       ink="brand"
-      className={BACK_PLACE}
+      className={BACK_CLASS}
       data-nav-drawer-back=""
       aria-label={label}
       title={label}
