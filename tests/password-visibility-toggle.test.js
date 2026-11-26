@@ -39,11 +39,11 @@ const ADMIN_DB_EXPORT = read('frontend/src/features/admin/admin-db-export.tsx');
 
 // The screens that hold a password field, and how many each holds.
 const SHELL_FIELDS = {
-  // The sign-in sheet, the one sign-in: the password step (drawn once in
-  // the standard layout and once under a look), the reset link's two, the
-  // app wallet's reset two, and the activation code's one. The email
-  // sign-up's account step lost its two in #4891.
-  'frontend/src/features/auth/sign-in-sheet.tsx': 7,
+  // The sign-in sheet, the one sign-in: the password step, the reset link's
+  // two, the app wallet's reset two, and the activation code's one. The
+  // email sign-up's account step lost its two in #4891, and the password
+  // step's second drawing, under a look, went with the looks in #7209.
+  'frontend/src/features/auth/sign-in-sheet.tsx': 6,
   'frontend/src/features/settings/sections/password.tsx': 3,
   'frontend/src/features/settings/sections/username.tsx': 1,
   // The API-key field is `type="password"` too, and a viewer who cannot read
