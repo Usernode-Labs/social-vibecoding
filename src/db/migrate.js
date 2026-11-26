@@ -513,6 +513,10 @@ const STAGING_SEEDS = Object.freeze([
   // such row for the shots' member fixture, so one is seeded, with the news
   // that the same change went live beside it (that row stays after).
   stagingSeed('seedStagingMergedVoteRow', async (pool, config) => { await seedStagingMergedVoteRow(pool, config); }),
+  // #7216's shots: a request whose bot-built change carries a No vote whose
+  // reason was handed to the bot, so its page has a vote line with a reason
+  // to show beside a Yes that kept its own.
+  stagingSeed('seedStagingVoteReasonOnRequest', async (pool, config) => { await seedStagingVoteReasonOnRequest(pool, config); }),
   // After it: a private thread about that live change, for the shots'
   // member fixture. Since a thread about a change is finished with its
   // change, History has it ("Live") and Needs you does not.
@@ -8939,6 +8943,97 @@ async function seedStagingMergedVoteRow(pool, config) {
   } catch (err) {
     log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
   }
+}
+
+// #7216's shots: a request's thread where a No vote's reason was handed to
+// Homeroom bot. The reason is the voter's own reply in the change's
+// discussion (routes/votes.js postOnProposal) and the vote row names it
+// (`metadata.vote.reasonMessageId`), so the request's page can draw one vote
+// line, "usernode-capture voted no: “…”", in place of the plain message it
+// used to be.
+// A fresh staging copy has no such state (nothing there runs the hand-off),
+// so it is seeded here, obviously fake: the shots' member fixture is the
+// voter and a second fixture account is the Yes that kept its own reason.
+// Idempotent by request number; strictly a no-op outside staging.
+async function seedStagingVoteReasonOnRequest(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const number = 900719;
+  const changeNumber = 900719;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const app = (await tx.query('SELECT id, community_id FROM apps WHERE slug = $1', [config.selfAppSlug])).rows[0];
+    if (!app) { await tx.query('ROLLBACK'); return seedSkipped('no self-app row'); }
+    const people = (await tx.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'homeroom_bot')",
+    )).rows;
+    const member = people.find((row) => row.username === 'usernode-capture');
+    const other = people.find((row) => row.username === 'usernode-capture-admin');
+    const bot = people.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture or homeroom_bot'); }
+    const { rowCount } = await tx.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Staging demo: keep the request list in its order after a refresh',
+               'Staging demo: obviously fake. Its change waits on a vote, and a No came with a reason for Homeroom bot.',
+               $3, NOW() - INTERVAL '4 days', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`,
+      [app.id, number, member.id],
+    );
+    if (!rowCount) { await tx.query('ROLLBACK'); return; }
+    // The feed lists a project the viewer is a MEMBER of.
+    if (app.community_id) {
+      await tx.query(
+        `INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [app.community_id, member.id],
+      );
+    }
+    const change = (await tx.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues,
+          promoted_at, check_state, created_at, last_activity_at)
+       VALUES ($1, $2, 'staging-fixture/vote-reason-on-request',
+               'Staging demo: sort the request list on the server',
+               'Staging demo: sort the request list on the server', $3, 'promoted',
+               ARRAY[$4::int]::int[], NOW() - INTERVAL '1 day', 'passing',
+               NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       RETURNING id`,
+      [app.id, bot.id, changeNumber, number],
+    )).rows[0];
+    const reasonText = 'I do not agree with the approach. Sorting should happen on the server.';
+    const reason = (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, $2, $3, 'message', 'session', $4, $5, NOW() - INTERVAL '20 hours')
+       RETURNING id`,
+      [app.id, member.id, reasonText, change.id, JSON.stringify({ stagingDemo: 'vote-reason-on-request' })],
+    )).rows[0];
+    // The vote row names the reply that carried its reason (#7216).
+    await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, NULL, $2, 'vote', 'session', $3, $4, NOW() - INTERVAL '20 hours' + INTERVAL '20 seconds')`,
+      [app.id, `${member.username} voted no on PR #${changeNumber}: Staging demo: sort the request list on the server`,
+        change.id, JSON.stringify({ vote: { sessionId: change.id, prNumber: changeNumber, reason: null, reasonMessageId: reason.id } })],
+    );
+    // A Yes that kept its own reason on the row, as every vote not handed to
+    // the bot does, and a person's reply that stays a message.
+    if (other) {
+      await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         VALUES ($1, NULL, $2, 'vote', 'session', $3, $4, NOW() - INTERVAL '19 hours')`,
+        [app.id, `${other.username} voted yes: “Small and right.”`, change.id,
+          JSON.stringify({ vote: { sessionId: change.id, prNumber: changeNumber, reason: 'Small and right.' } })],
+      );
+      await tx.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         VALUES ($1, $2, 'Looks fine on my phone. The sort order is the one thing to check.', 'message', 'session', $3, '{}'::jsonb, NOW() - INTERVAL '18 hours')`,
+        [app.id, other.id, change.id],
+      );
+    }
+    await tx.query('COMMIT');
+    log.info('db', 'Staging vote-reason-on-request seeded', { appId: app.id, number, sessionId: change.id });
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging vote-reason-on-request seeding failed', { message: err.message });
+  } finally { tx.release(); }
 }
 
 // #6124: a change renamed before it has a pull request is saved as the name

@@ -211,7 +211,7 @@ test('voteLineTarget and handVoteLine against the full PostgreSQL schema', { tim
     await forgetRequests();
     const target = await dm.voteLineTarget(pool, { sessionId: botChange });
     const handed = await dm.handVoteLine(pool, { user: sam, target, line: 'Sort the list by date' });
-    assert.deepEqual(handed, { ok: true, queued: true });
+    assert.deepEqual(handed, { ok: true, queued: true, messageId: 1 }, 'the reply\'s id comes back (#7216)');
     assert.equal(threadPosts.length, 1);
     assert.equal(threadPosts[0].userId, sam.id, 'his words, under his name');
     assert.equal(threadPosts[0].appId, plantPal.id);

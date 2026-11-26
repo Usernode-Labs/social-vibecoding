@@ -5036,6 +5036,10 @@ const GroupChat = {
       if (m) {
         return {
           ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '',
+          // #7216: a No's reason handed to Homeroom bot is the voter's own
+          // reply, and the vote row names it, so a request's page can join the
+          // two back into one vote line (change-model.ts joinVoteReasons).
+          reasonMessageId: Number(((msg.metadata || msg.meta || {}).vote || {}).reasonMessageId) || null,
           earlier: GroupChat._votedOnEarlierVersion(sessionId, m[1]),
         };
       }

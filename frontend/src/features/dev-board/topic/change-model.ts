@@ -130,7 +130,7 @@ export function changeStream(rows: TranscriptMessage[]): TranscriptMessage[] {
 
 /** The people in the stream: what "N replies" counts. */
 export function changeReplyCount(rows: TranscriptMessage[]): number {
-  return rows.filter((m) => m.kind === 'message' && !m.deleted).length;
+  return rows.filter((m) => m.kind === 'message' && !m.deleted && !m.voteReasonPost).length;
 }
 
 /**
@@ -145,6 +145,152 @@ export function keptOnRequest(msg: TranscriptMessage): boolean {
   if (msg.kind === 'message') return true;
   const line = changeLine(msg);
   if (!line || line.kind === 'notice') return false;
-  if (line.kind === 'vote') return !!(msg.event && msg.event.reason);
+  if (line.kind === 'vote') return !!msg.voteNote || !!(msg.event && msg.event.reason);
   return true;
+}
+
+/** The words a vote's reason is drawn as, escaped for the post's body. */
+function reasonBody(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  return `<p>${escaped.replace(/\n/g, '<br>')}</p>`;
+}
+
+/**
+ * The vote line that goes above its reason's post: the change page's own
+ * wording, without the reason ("evan voted no", or "…on an earlier version").
+ * It carries no time or tag (the post under it does), and `voteNote` keeps it
+ * through `keptOnRequest` after its reason has left the row.
+ */
+function voteNoteOf(vote: TranscriptMessage): TranscriptMessage {
+  return {
+    ...vote,
+    event: vote.event ? { ...vote.event, reason: '' } : vote.event,
+    time: '',
+    timeTitle: '',
+    voteNote: true,
+  };
+}
+
+/**
+ * A vote's reason as the ordinary post it is (#7216, evan): the voter's own
+ * message row, name and avatar, its words the reason. A vote whose reason came
+ * attached to its row (a Yes, or a No that stayed on the change) has no reply
+ * to draw, so its post is made from `event.reason`. It is not a reply of the
+ * request's thread (`voteReasonPost`), so it does not count in "N replies"
+ * nor stand as the newest comment.
+ */
+function voteReasonPost(vote: TranscriptMessage, reason: string): TranscriptMessage {
+  return {
+    ...vote,
+    id: null,
+    kind: 'message',
+    username: vote.event?.actor || vote.username,
+    usernameMissing: false,
+    text: reason,
+    bodyHtml: reasonBody(reason),
+    systemText: '',
+    event: null,
+    eventHref: null,
+    voteRef: null,
+    vote: null,
+    voteRowClass: '',
+    votePhase: undefined,
+    reactions: [],
+    attachments: [],
+    quote: null,
+    unread: false,
+    bookmarked: false,
+    editedTitle: null,
+    flash: false,
+    canEdit: false,
+    showEdit: false,
+    showBookmark: false,
+    showReact: false,
+    voteNote: false,
+    voteReasonPost: true,
+  };
+}
+
+/**
+ * #7216: a vote's reason on a request's thread is that person's ordinary post,
+ * with the change page's vote line above it as its note ("evan voted no"),
+ * never words swallowed into the vote line. This returns the rows the page
+ * draws:
+ *
+ *   - A vote whose reason is on its row (a Yes, or a No not handed to
+ *     Homeroom bot) becomes its note and a post carrying the reason.
+ *   - A No whose reason was handed to the bot as the voter's own reply
+ *     (routes/votes.js, `event.reasonMessageId`) becomes the note and that
+ *     reply, moved up to sit under the note. Older rows with no id pair with
+ *     the voter's own message directly before a No, on the same change,
+ *     written at most two minutes earlier.
+ *   - Every other row is left alone and the same object, so memo()'d rows
+ *     keep their props.
+ */
+export function requestVotePosts(rows: TranscriptMessage[]): TranscriptMessage[] {
+  const indexById = new Map<number, number>();
+  rows.forEach((m, i) => { if (m.id != null) indexById.set(Number(m.id), i); });
+
+  // First pass: which reply carried a handed-off No's reason. A reply is
+  // claimed by one vote only, and the vote's note moves to the reply's place
+  // so the post keeps the order it was written in.
+  const replyAt = new Map<number, TranscriptMessage>();
+  const consumed = new Set<number>();
+  const movedVote = new Set<number>();
+  rows.forEach((vote, i) => {
+    const ev = vote.event;
+    const sessionId = vote.changeOf?.sessionId;
+    if (!sessionId || !ev || ev.type !== 'vote' || !ev.actor || (ev.reason && ev.reason.trim())) return;
+    let found = -1;
+    const wanted = Number(ev.reasonMessageId) || 0;
+    if (wanted > 0) {
+      const at = indexById.get(wanted);
+      const m = at == null ? null : rows[at];
+      if (m && m.kind === 'message' && !m.deleted && m.username === ev.actor
+        && (m.changeOf?.sessionId ?? null) === sessionId && !consumed.has(at as number)) found = at as number;
+    } else if (ev.vote === 'no') {
+      // Older rows: the voter's message directly before the vote.
+      const at = i - 1;
+      const m = at >= 0 ? rows[at] : null;
+      if (m && m.kind === 'message' && !m.deleted && m.username === ev.actor
+        && (m.changeOf?.sessionId ?? null) === sessionId && m.at && vote.at && !consumed.has(at)) {
+        const gap = Date.parse(vote.at) - Date.parse(m.at);
+        if (Number.isFinite(gap) && gap >= 0 && gap <= 120_000) found = at;
+      }
+    }
+    if (found < 0) return;
+    const message = rows[found];
+    const reason = String(message.text || '').trim();
+    if (!reason) return;
+    consumed.add(found);
+    movedVote.add(i);
+    replyAt.set(found, vote);
+  });
+
+  // Second pass: emit, with each reason a note above its post.
+  const out: TranscriptMessage[] = [];
+  rows.forEach((row, i) => {
+    if (movedVote.has(i)) return;
+    if (consumed.has(i)) {
+      const vote = replyAt.get(i);
+      if (vote) out.push(voteNoteOf(vote), row);
+      else out.push(row);
+      return;
+    }
+    const ev = row.event;
+    const sessionId = row.changeOf?.sessionId;
+    if (row.kind !== 'message' && sessionId && ev && ev.type === 'vote' && ev.actor) {
+      const reason = String(ev.reason || '').trim();
+      if (reason) {
+        out.push(voteNoteOf(row), voteReasonPost(row, reason));
+        return;
+      }
+    }
+    out.push(row);
+  });
+  return out;
 }

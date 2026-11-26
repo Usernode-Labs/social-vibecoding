@@ -266,6 +266,15 @@ export interface ProposalEvent {
   vote?: 'yes' | 'no';
   reason?: string;
   /**
+   * #7216: `vote` rows only. A No's reason on one of Homeroom bot's changes is
+   * handed to the bot as the voter's own reply (routes/votes.js), so the vote
+   * row arrives with no reason and this is the id of the reply that carried
+   * it. `requestVotePosts` (../dev-board/topic/change-model.ts) pairs the two
+   * on a request's page. Absent on older rows and on every vote not handed
+   * over.
+   */
+  reasonMessageId?: number | null;
+  /**
    * `vote` rows (#3411): the voter's vote was cast on an earlier version of
    * the proposal and no longer counts in the tally.
    */
@@ -466,6 +475,20 @@ export interface TranscriptMessage {
    * that change. Absent on every other row.
    */
   changeOf?: { sessionId: number | null };
+  /**
+   * #7216: on a request's page, a vote row drawn as the note above the post
+   * that carries the voter's reason ("evan voted no"), not as a line of its
+   * own. Set by change-model.ts `requestVotePosts`; the note carries no time
+   * or change tag, which the post under it has.
+   */
+  voteNote?: boolean;
+  /**
+   * #7216: a post made from a vote's reason that came attached to its row
+   * rather than as a reply (see change-model.ts `requestVotePosts`). Drawn as
+   * an ordinary message, but not a reply of the request's thread: it does not
+   * count in "N replies" and is never the newest comment.
+   */
+  voteReasonPost?: boolean;
   /**
    * #6421: on a request's page, a message written on another request of a
    * merged thread, tagged with that request's number ("on #6212").
