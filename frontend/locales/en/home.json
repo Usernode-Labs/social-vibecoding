@@ -59,14 +59,6 @@
     "text": "Make “{{idea}}”",
     "description": "Button on Home shown when the search matches no app and no community. {{idea}} is what the person typed. Pressing it opens the screen for making a new project, with those words filled in as the idea."
   },
-  "grid.showAll_one": {
-    "text": "Show all {{count}} app",
-    "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
-  },
-  "grid.showAll_other": {
-    "text": "Show all {{count}} apps",
-    "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
-  },
   "grid.showAllCount_one": {
     "text": "Show all {{count}}",
     "description": "Link at the end of the Pinned projects heading on Home: unfolds the grid of project tiles to show the rows folded away. {{count}} is the total number of the viewer's pinned projects. The heading beside it already names them, so it says no noun."
@@ -911,14 +903,6 @@
     "text": "Your communities",
     "description": "Heading on Home over the person's own communities that match what they typed in Home's search field. Shown only while searching: the communities themselves are listed on the Communities page. A community's tile opens its hub."
   },
-  "communities.editLabel": {
-    "text": "Edit Pinned communities",
-    "description": "Accessible name of the Edit button beside the Pinned communities heading on Home under a look of the frame. \"Edit\" is a verb."
-  },
-  "communities.all": {
-    "text": "All communities",
-    "description": "Tile at the end of Pinned communities on Home under a look of the frame. Pressing it also shows the communities the viewer is in but has not pinned; pressing it again hides them."
-  },
   "communities.new": {
     "text": "New community",
     "description": "The control that starts making a new project and its community: the last tile of Joined on the Communities page, and the filled button beside that page's search field on a wide screen."
@@ -1106,21 +1090,5 @@
   "guest.unpinApp": {
     "text": "Unpin {{app}} from Home",
     "description": "Accessible name of the remove badge on an app a visitor pinned on this device. {{app}} is the app's name."
-  },
-  "guest.pinCommunity": {
-    "text": "Pin",
-    "description": "Button on a project's page for a visitor who is not signed in: keeps the community on this device's Home."
-  },
-  "guest.pinnedCommunity": {
-    "text": "Pinned",
-    "description": "The same button once the community is on this device's Home; pressing it again unpins it."
-  },
-  "frame.title": {
-    "text": "Home",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The page title."
-  },
-  "frame.purpose": {
-    "text": "Your apps and your communities.",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the page title, saying what Home holds."
   }
 }

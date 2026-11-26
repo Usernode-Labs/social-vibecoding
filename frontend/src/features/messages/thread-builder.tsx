@@ -42,8 +42,8 @@ import { Button } from '@/components/ui/button';
 import { ChatIcon, CheckIcon, ChevronDownIcon, TerminalIcon } from '@/components/ui/icons';
 import { CLAUDE_CODE_WEB_URL } from '../../lib/claude-code-link';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useMenu } from '../../lib/menu';
+import { useSheet } from '../../lib/sheet';
 import { ChatgptSetupSteps, ClaudeSetupSteps } from '../settings/connector-setup-steps';
 import { ConnectorUrl } from '../settings/connector-url';
 import * as api from './api';
@@ -235,36 +235,21 @@ function PickerBody({ builder, links, menu, onPick }: {
   );
 }
 
-/** Where focus lands when it opens: the row picked now. */
-function focusPicked(panel: HTMLElement | null): void {
-  panel?.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus({ preventScroll: true });
-}
 
 type PickerProps = { builder: Builder; links: BuilderConnections; onPick: (builder: Builder) => void; onClose: () => void };
 
 function PickerSheet({ builder, links, onPick, onClose }: PickerProps): ReactNode {
-  const panel = useRef<HTMLDivElement | null>(null);
-  const [adopted, setAdopted] = useState(false);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    // The kit's own sheet when it is there, as the project picker's is.
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; closeRef.current(); },
-    });
-    setAdopted(!!adoption);
-    focusPicked(panel.current);
-    return () => { if (adoption) adoption.release(); };
-  }, []);
+  // The kit's own sheet when it is there (lib/sheet.ts), focus on the row
+  // picked now.
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose,
+    initialFocus: (el) => el.querySelector<HTMLButtonElement>('[aria-current="true"]'),
+  });
   return (
     <div
       className={adopted ? 'contents' : 'community-switcher-scrim'}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -273,7 +258,6 @@ function PickerSheet({ builder, links, onPick, onClose }: PickerProps): ReactNod
         role="dialog"
         aria-modal="true"
         aria-labelledby="bot-builder-picker-title"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         {adopted ? null : <span className="community-switcher-grab" aria-hidden="true" />}
         <PickerBody builder={builder} links={links} menu={false} onPick={onPick} />
@@ -284,23 +268,15 @@ function PickerSheet({ builder, links, onPick, onClose }: PickerProps): ReactNod
 
 function PickerMenu({ builder, links, anchor, onPick, onClose }: PickerProps & { anchor: HTMLElement | null }): ReactNode {
   const panel = useRef<HTMLDivElement | null>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    focusPicked(panel.current);
-    const onDown = (e: Event) => {
-      const target = e.target as Node | null;
-      if (target && (panel.current?.contains(target) || anchor?.contains(target))) return;
-      closeRef.current();
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [anchor]);
+  // A press outside it or on the chip, Escape, Back, and focus: on the row
+  // picked now, and back to the chip (lib/menu.ts).
+  const { panelProps } = useMenu(true, {
+    trigger: { current: anchor },
+    panel,
+    onClose,
+    keys: 'panel',
+    initialFocus: (el) => el.querySelector<HTMLButtonElement>('[aria-current="true"]'),
+  });
   // Hung above the chip, as the project picker's menu is above its own.
   const box = anchor?.getBoundingClientRect();
   const width = 364;
@@ -319,6 +295,7 @@ function PickerMenu({ builder, links, anchor, onPick, onClose }: PickerProps & {
       role="dialog"
       aria-labelledby="bot-builder-picker-title"
       style={style}
+      {...panelProps}
     >
       <PickerBody builder={builder} links={links} menu onPick={onPick} />
     </div>

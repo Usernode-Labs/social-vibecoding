@@ -11,7 +11,7 @@
  * a ring of the community's colour (lib/community-color.ts) so it never
  * reads as an app. A community's tile opens its hub; an app's tile (Home's
  * Pinned apps) opens the app. Where the page draws a community as a card
- * (the standard look from 768px, the brand look from 1280px), the card is
+ * (from 768px), the card is
  * ../communities/card.tsx, which takes this module's votes number, its edit
  * discs and its door (`openHub`). Beside the tiles, the page's own:
  *
@@ -38,9 +38,9 @@
  * Signed in only. Signed out, the guest Home draws its device's pins with
  * the same tile (features/guest).
  */
-import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, type CSSProperties } from 'react';
 
-import { PlusIcon, SpeechCheckIcon } from '@/components/ui/icons';
+import { PlusIcon } from '@/components/ui/icons';
 
 import { bandWash, useCommunityColor, useIconMainColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
@@ -72,7 +72,6 @@ export function MinusGlyph() {
 }
 const FACE_WRAP = 'relative z-[1] inline-flex';
 export const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
-const ACTION_FACE = 'flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-[18px]';
 
 /** Open a community's hub, as the Communities tab's tile did (the door rule). */
 export function openHub(event: React.MouseEvent<HTMLAnchorElement>, slug: string) {
@@ -226,50 +225,6 @@ export function PinTile({ pin, votes, editing, faded = false, community = false,
       <span className={NAME}>{pin.name}</span>
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
-  );
-}
-
-/**
- * Needs you's tile: a link to the page (`#needs`), so a modified click opens
- * it in a new tab, wearing the votes-waiting number a community's tile wears.
- */
-export function NeedsTile({ count }: { count: number }) {
-  const t = useMessages('home');
-  return (
-    <a
-      href="#needs"
-      id="communities-needs-tile"
-      className={TILE}
-      data-home-needs={String(count)}
-      aria-label={t('home:communities.needsNamed', { count })}
-    >
-      <span className="relative inline-flex">
-        <span className={`${ACTION_FACE} bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300`}>
-          <SpeechCheckIcon className="w-7 h-7" aria-hidden="true" />
-        </span>
-        <span className={VOTES} aria-hidden="true">{capCount(count)}</span>
-      </span>
-      <span className={NAME}>{t('home:communities.needs')}</span>
-    </a>
-  );
-}
-
-export function ActionTile({ label, icon, onClick, dashed = false, muted = false, pressed, id, attrs }: {
-  label: string; icon: ReactNode; onClick: () => void; dashed?: boolean; muted?: boolean; pressed?: boolean; id?: string;
-  attrs?: Record<string, string | undefined>;
-}) {
-  const face = pressed
-    ? `${ACTION_FACE} bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]`
-    : dashed
-      ? (muted
-        ? `home-create-glyph ${ACTION_FACE} border-2 border-dashed transition-colors text-zinc-300 dark:text-zinc-600`
-        : `home-create-glyph ${ACTION_FACE} border-2 border-dashed transition-colors text-zinc-500 dark:text-zinc-400`)
-      : `${ACTION_FACE} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`;
-  return (
-    <button type="button" id={id} className={`${TILE} cursor-pointer`} aria-pressed={pressed} onClick={onClick} {...attrs}>
-      <span className={face}>{icon}</span>
-      <span className={pressed ? `${NAME} text-[color:var(--lit-ink)]` : `${NAME} text-zinc-600 dark:text-zinc-300`}>{label}</span>
-    </button>
   );
 }
 

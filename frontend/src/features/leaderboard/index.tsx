@@ -128,9 +128,9 @@ const SECTION_TABS = [
 // Q21): useScrollFade fades whichever edge has more beyond it and brings the
 // selected tab into view.
 const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
-// `one-seg` (One look, 25 Nov 2026): under the standard look the strip is the
-// shared segmented control, its ink pill sliding to the tab you are on
-// (app.css ONE LOOK · SHARED PARTS); every other look ignores the class.
+// `one-seg` (One look, 25 Nov 2026): the strip is the shared segmented
+// control, its ink pill sliding to the tab you are on (app.css ONE LOOK ·
+// SHARED PARTS).
 const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden one-seg`;
 
 // Me's reading column, which the Kudos pane takes (see its root below). The

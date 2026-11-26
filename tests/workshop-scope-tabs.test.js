@@ -215,7 +215,10 @@ test('#5290: Recent is your pins, then the sidebar\'s five; the search matches e
   const at = SWITCHER.indexOf('data-switcher-community="all"');
   assert.ok(at > SWITCHER.indexOf('data-switcher-section="recent"') && at > SWITCHER.indexOf('data-switcher-results'));
   // ⌘K focuses the search; a press on the header lands on the row you are on.
-  assert.match(SWITCHER, /if \(from === 'shortcut'\) \{\s*panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\)\?\.focus\(\);/);
+  assert.match(SWITCHER, /if \(from === 'shortcut'\) return panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\);/);
+  assert.match(SWITCHER, /return panel\.querySelector<HTMLButtonElement>\('\[aria-current="true"\]'\);/);
+  // The sheet and the menu both focus it on open (lib/sheet.ts, lib/menu.ts).
+  assert.equal((SWITCHER.match(/initialFocus: \(el\) => focusTarget\(el, (st\.)?switcher\)/g) || []).length, 2);
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {

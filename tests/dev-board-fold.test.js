@@ -1827,7 +1827,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check opens `#profile?tab=changes` and reads the history column in the
   // profile, the other opens `#profile?tab=activity` and reads the activity
   // column there. Two routes no existing check opens. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 707: −2 (one look, 26 Nov 2026) the brand look is gone, so the
+  // checks that ran under `skin=brand` run in the standard look: most simply
+  // drop the parameter, Home's challenge checks select its posters, and the
+  // two that read the brand Workshop tab's What happened and Private requests
+  // (drawn nowhere else) went with it. 707 leaves 173 slots.
+  // 707 → 708: +1 (one before & after viewer) a change's verified shots are
+  // the Needs you slider, read on the seeded change 900108 with its two
+  // screens and what was also noticed; no check opened that change's page,
+  // and the only shots check (#4269) reads route captures from before shots.
+  // 708 leaves 172 slots.
+  checkCap.assertPinned(DAPP.tests.length, 708);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

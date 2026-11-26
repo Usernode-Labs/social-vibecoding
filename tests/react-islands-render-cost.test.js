@@ -128,12 +128,13 @@ test('the topic head draws its markup blocks through Html, which keeps the { __h
   const src = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.doesNotMatch(src, /dangerouslySetInnerHTML=\{\{/, 'no inline wrapper left');
   // #4455: the change page's summary and its picture moved to change-head.tsx
-  // (the root post), and Details gained the shots' details.
-  assert.equal((src.match(/<Html /g) || []).length, 9, 'the nine blocks: summaries, the summary’s folded rest, bodies, details, shot details, testing and the tile host');
+  // (the root post), and Details gained the shots' details, which the one
+  // before & after viewer's panel draws (review-flow/shots-panel.tsx).
+  assert.equal((src.match(/<Html /g) || []).length, 8, 'the eight blocks: summaries, the summary’s folded rest, bodies, details, testing and the tile host');
   const change = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(change, /dangerouslySetInnerHTML=\{\{/, 'nor in the change page’s root post');
-  assert.equal((change.match(/<Html /g) || []).length, 2, 'the verified shots and the capture tiles');
-  assert.match(src, /<Html className="usn-visuals-body" html=\{tiles\.tilesHtml\} \/>/);
+  assert.equal((change.match(/<Html /g) || []).length, 1, 'the capture tiles from before shots; verified shots are the viewer\'s');
+  assert.match(src, /<Html className="usn-visuals-body" html=\{tiles\.tilesHtml \|\| ''\} \/>/);
 
   const lib = read('frontend/src/lib/html.tsx');
   assert.match(lib, /return useMemo\(\(\) => \(\{ __html: html \}\), \[html\]\);/);

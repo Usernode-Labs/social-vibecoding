@@ -39,7 +39,7 @@ import { createStore } from '../../lib/plain-store.js';
  *   testHtml: string,
  *   changeTitle: string, changeNumber: number, changePending: boolean,
  *   appName: string, appTile: string, appTileImage: string, selfHosted: boolean,
- *   vote: PreviewVote | null, shotsHtml: string, view: 'preview' | 'shots',
+ *   vote: PreviewVote | null, shots: { shots: unknown, sessionId: number } | null, view: 'preview' | 'shots',
  *   placement: 'full' | 'column' | 'panel', rect: PreviewRect | null, expanded: boolean, wide: boolean,
  *   beside: 'app' | null, liveSpot: { left: number, top: number } | null, noteSeen: boolean,
  *   sessionId: number | null,
@@ -122,11 +122,11 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
    */
   vote: null,
   /**
-   * The change's before and after viewer (AppView.shotsHtml's `thread`
-   * reading, escaped where it is built), or '' when it has no verified shots,
-   * which draws no Preview | Before & after switch.
+   * The change's verified shots and the change they are of, for the one
+   * before & after viewer (../review-flow/shots-viewer.tsx), or null when it
+   * has none, which draws no Preview | Before & after switch.
    */
-  shotsHtml: '',
+  shots: null,
   /** Which side of that switch is showing. */
   view: 'preview',
   /**

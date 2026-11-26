@@ -41,7 +41,6 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const STRIP = 'frontend/src/features/home/widget-strip.tsx';
-const MORE = 'frontend/src/features/home/apps-more.tsx';
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -166,21 +165,16 @@ test('home.js no longer writes either host', () => {
 
 test('the initial chrome renders exactly what the prerendered shell ships', () => {
   const { WidgetStripBody } = loadTsx(STRIP);
-  const { AppsMore } = loadTsx(MORE);
   assert.equal(
     renderToHtml(createElement(WidgetStripBody, { strip: INITIAL_CHROME.strip })),
     '',
     'an inactive strip draws nothing — this is what `return \'\'` meant',
   );
-  assert.equal(
-    renderToHtml(createElement(AppsMore, {})),
-    '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',
-    'the expander ships hidden and empty',
-  );
   // The document the prerender wrote agrees, both ways round.
   const index = read('public/index.html');
-  // The prerendered Home is the standard look's, which is the kit's since 20 Nov
-  // 2026: its grid folds from the heading's own link, so no expander host is drawn.
+  // Home is the kit's since 20 Nov 2026: its grid folds from the heading's own
+  // link, so no expander host is drawn (its component went with the other
+  // looks, 26 Nov 2026).
   assert.doesNotMatch(index, /id="home-apps-more"/);
   assert.match(index, /<section id="home-widget-strip-section" class="hidden px-3 pt-2"><\/section>/);
 });
@@ -298,26 +292,6 @@ test('a tile ✕ removes that tile, and only that tile', () => {
   });
 });
 
-test('"Show all N apps" expands the grid and repaints', () => {
-  withHome((home) => {
-    const { AppsMoreBody } = loadTsx(MORE);
-    assert.equal(
-      renderToHtml(createElement(AppsMoreBody, { moreCount: 0 })),
-      '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',
-      'a zero count is the hidden, empty host — not a button saying "Show all 0 apps"',
-    );
-    const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 9 }));
-    assert.match(html, /Show all 9 apps/);
-    assert.doesNotMatch(html, /class="hidden/);
-
-    const btn = find(inRender(() => AppsMoreBody({ moreCount: 9 })), byId('home-apps-more-btn'));
-    assert.ok(btn, 'the expander button is in the tree');
-    btn.props.onClick();
-    assert.equal(home._appsExpanded, true, 'the click lifts the two-row cap');
-    assert.equal(home.renders, 1, 'and repaints from it');
-  });
-});
-
 
 // ── The panel sections ────────────────────────────────────────────────
 //
@@ -360,12 +334,13 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // …and the island mounts a component for every one of them, so there is no
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
-  for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
+  for (const tag of ['<AppGrid />', '<WidgetStrip />',
     '<HomeCommunityMatches />', '<ChallengesSection />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
   // One Home (#6361): Discover's lane and the continue card left Home; its
   // Communities to join is the directory now.
+  assert.ok(!island.includes('<AppsMore />'), 'the grid folds from its heading: no "Show all N apps" line');
   assert.ok(!island.includes('<DiscoverSection />'), 'no Discover lane on Home');
   assert.ok(!island.includes('<ContinueCard />'), 'no continue card on Home');
   // Create is no host of its own: it is #app-list's trailing tile, rendered by

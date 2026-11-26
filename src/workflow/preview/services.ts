@@ -178,6 +178,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           return {
             ok: true, db, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
             containerId: built.containerId ?? null, imageRef: built.imageRef ?? null, buildRef: built.buildRef ?? null,
+            // The build's step times, for the trace of the checks run that
+            // follows (the server log was their only record).
+            timings: built.timings ?? null,
           };
         } catch (err) {
           if (cancelled(ctx, err) || (err as { code?: string }).code === 'attempt_superseded') {
@@ -353,6 +356,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           workflow: {
             runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
             unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report,
+            // The build this run follows, timed (only the run right after a
+            // build has it): its trace records the build's steps.
+            buildTimings: input.timings ?? null,
           },
         }).catch((err: unknown) => {
           if (!cancelled(ctx, err) && legacy('services/db-retry').handBackOnDrain(err)) {

@@ -12,7 +12,7 @@
 //   - it covers exactly the routes the glass covers, plus a project page the
 //     platform draws while it has no tint;
 //   - its conditions add no weight, so a project's tinted bar still wins;
-//   - only under 768px, and never under a look, the Duo's side strip or (for
+//   - only under 768px, and never under the Duo's side strip or (for
 //     the row's padding) the Duo's top band;
 //   - the phone drawer's untint, laid over a project's bar, is the same blue.
 // The clock half is tests/native-status-bar-tone.test.js; Safari's strip is
@@ -58,8 +58,8 @@ test('the bar is the tab bar\'s token, flat and white-inked, on a phone only', (
   ]) assert.ok(body.includes(decl), decl);
   assert.doesNotMatch(b.slice(b.indexOf('@media')), /#3c7bd8|#122a52/i, 'the token, not its hex');
   // The token's two values are the tab bar's, light and dark.
-  assert.match(CSS, /html:not\(\[data-skin\]\) \{[\s\S]*?--wip-nav-bg: #3c7bd8;/);
-  assert.match(CSS, /html:not\(\[data-skin\]\)\.dark \{\n  --wip-nav-bg: #122a52;\n\}/);
+  assert.match(CSS, /html:root \{[\s\S]*?--wip-nav-bg: #3c7bd8;/);
+  assert.match(CSS, /html:root\.dark \{\n  --wip-nav-bg: #122a52;\n\}/);
 });
 
 test('it covers the glass bar\'s routes, and a project page the platform draws only without its tint', () => {
@@ -68,10 +68,10 @@ test('it covers the glass bar\'s routes, and a project page the platform draws o
   assert.equal(selectors.length, 2);
   const glass = CSS.slice(CSS.indexOf('/* …AND THE HEADER, faked the same way as the tab bar'));
   assert.deepEqual(routesOf(selectors[0]), routesOf(glass), 'the same screens the glass is drawn on');
-  assert.ok(selectors[0].startsWith('html:where(:not([data-skin]):not([data-side-strip])) body:has('),
-    'the standard look, off the Duo\'s side strip; inside :where(), so no weight is added');
+  assert.ok(selectors[0].startsWith('html:where(:not([data-side-strip])) body:has('),
+    'off the Duo\'s side strip; inside :where(), so no weight is added');
   assert.equal(selectors[1],
-    'html:where(:not([data-skin]):not([data-side-strip]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header');
+    'html:where(:not([data-side-strip]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header');
   // Weighing less than the project's bar, which therefore wins wherever the
   // two meet (a project's page zooming out to Home keeps both on show).
   assert.match(CSS, /\nhtml\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{\n  --fake-glass-tint: var\(--community-tint\);/);
@@ -83,7 +83,7 @@ test('the row is centred in the same 52px, except under the Duo\'s top band', ()
   const b = block();
   assert.match(b, /:not\(\[data-top-band\]\):not\(\[data-community-tint\]\)\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\n    padding-bottom: 0\.75rem;\n  \}/);
   assert.match(b, /padding-top: calc\(0\.75rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
-  assert.ok(b.includes('    html.web-browser-chrome:where(:not([data-skin]):not([data-side-strip]):not([data-top-band])) body:has('),
+  assert.ok(b.includes('    html.web-browser-chrome:where(:not([data-side-strip]):not([data-top-band])) body:has('),
     'a browser tab keeps its zero inset (#2509)');
   assert.match(b, /#platform-header\.un-safe-top-extend \{\n      padding-top: 0\.75rem !important;\n    \}/);
   // 12 + 28 + 12: the 8 + 28 + 16 of pt-2/pb-4 (tests/header-height-parity.test.js).
@@ -93,6 +93,6 @@ test('the row is centred in the same 52px, except under the Duo\'s top band', ()
 
 test('the phone drawer\'s untint is the same blue, with the same white ink', () => {
   const b = block();
-  assert.match(b, /html:not\(\[data-skin\]\):not\(\[data-side-strip\]\) \.nav-drawer-untint \{\n    background: var\(--wip-nav-bg\);\n  \}/);
-  assert.match(b, /html:not\(\[data-skin\]\):not\(\[data-side-strip\]\)\[data-nav-drawer\] body \{\n    --nav-brand-ink: #fff;[\s\S]*?--nav-ink: #fff;\n  \}/);
+  assert.match(b, /html:root:not\(\[data-side-strip\]\) \.nav-drawer-untint \{\n    background: var\(--wip-nav-bg\);\n  \}/);
+  assert.match(b, /html:root:not\(\[data-side-strip\]\)\[data-nav-drawer\] body \{\n    --nav-brand-ink: #fff;[\s\S]*?--nav-ink: #fff;\n  \}/);
 });

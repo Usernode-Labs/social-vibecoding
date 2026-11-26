@@ -53,7 +53,7 @@ export const stagingBridge = {
       appTileImage: '',
       selfHosted: false,
       vote: null,
-      shotsHtml: '',
+      shots: null,
       view: 'preview',
       placement: 'full',
       rect: null,
@@ -104,15 +104,17 @@ export const stagingBridge = {
       },
     });
   },
-  /** The before and after viewer's markup (built escaped by AppView.shotsHtml), or ''. */
-  setShots(html) {
-    const shotsHtml = html || '';
-    stagingStore.set(shotsHtml ? { shotsHtml } : { shotsHtml: '', view: 'preview' });
+  /** The change's verified shots for the before and after viewer (`{ shots, sessionId }`), or null. */
+  setShots(source) {
+    const shots = source && typeof source === 'object' && source.shots && typeof source.shots === 'object'
+      && Number(source.sessionId) > 0
+      ? { shots: source.shots, sessionId: Number(source.sessionId) } : null;
+    stagingStore.set(shots ? { shots } : { shots: null, view: 'preview' });
   },
   /** The switch: 'preview' (the running change) or 'shots' (its before and after). */
   setView(view) {
     const st = stagingStore.get();
-    stagingStore.set({ view: view === 'shots' && st.shotsHtml ? 'shots' : 'preview' });
+    stagingStore.set({ view: view === 'shots' && st.shots ? 'shots' : 'preview' });
   },
   /** Where it stands (./placement.ts): `{ placement, rect, wide, beside }`. */
   setPlacement(p) {

@@ -99,10 +99,6 @@
     "text": "Search your communities",
     "description": "Accessible name and tooltip of the small search button beside the Communities heading in the desktop sidebar: opens the list of all the person's communities with its search box ready to type in."
   },
-  "rail.allPlain": {
-    "text": "All communities",
-    "description": "Row under the person's communities in the sidebar of a look of the frame: opens the list of every community they are in."
-  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
@@ -974,18 +970,6 @@
   "header.drawer.toHome": {
     "text": "Back to Home",
     "description": "Accessible name of the back button in the header on a community's Hub on a phone: returns to Home, where the viewer's communities are."
-  },
-  "frame.brand": {
-    "text": "Homeroom",
-    "description": "The product's name beside its mark at the top of the sidebar, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A name: do not translate."
-  },
-  "frame.bot": {
-    "text": "Bot",
-    "description": "Short label of the Homeroom bot tab in the phone's tab bar, when the interface is drawn in one of the frame's looks (an admin's preview). The sidebar says Homeroom bot in full; the bar has room for one short word."
-  },
-  "frame.navigation": {
-    "text": "Homeroom",
-    "description": "Accessible name of the sidebar and of the phone's tab bar as navigation landmarks, when the interface is drawn in one of the frame's looks (an admin's preview). The product's name."
   },
   "change.closedWhy.autoRejected": {
     "text": "It was set aside for now: more No than Yes, and not enough support to carry it.",
