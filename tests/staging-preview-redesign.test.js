@@ -163,14 +163,21 @@ test('bridge: setChange is a patch, so the change\'s name arrives without cleari
 
 test('bridge: the switch offers Before & after only when there are shots', () => {
   const b = bridgeMod.stagingBridge;
-  b.setShots('');
+  b.setShots(null);
   b.setView('shots');
   assert.equal(storeMod.stagingStore.get().view, 'preview', 'nothing to show on that side');
-  b.setShots('<div class="shots-viewer"></div>');
+  // The change's verified shots, which the one before & after viewer draws.
+  const shots = { state: 'verified', claims: [], artifacts: [] };
+  b.setShots({ shots, sessionId: 42 });
+  assert.deepEqual(storeMod.stagingStore.get().shots, { shots, sessionId: 42 });
   b.setView('shots');
   assert.equal(storeMod.stagingStore.get().view, 'shots');
-  b.setShots('');
+  // Anything else is no shots: no string of markup is taken any more.
+  b.setShots('<div class="shots-viewer"></div>');
+  assert.equal(storeMod.stagingStore.get().shots, null);
   assert.equal(storeMod.stagingStore.get().view, 'preview', 'shots gone: back to the preview');
+  b.setShots({ shots, sessionId: 0 });
+  assert.equal(storeMod.stagingStore.get().shots, null, 'they are of a change');
   b.close();
 });
 
@@ -485,8 +492,149 @@ test('placement: reopened from its address, the preview waits for the page\'s co
   }
 });
 
-// ── the change's name, from the start ─────────────────────────────────────
+// ── the layout the address remembers ──────────────────────────────────────
 
+// placement.ts with the detail column and side panel under the test's hand,
+// and the published layout captured. Every call gets a fresh module, so one
+// test's settle timer never reaches into another's.
+function placementHarness({ phone = false, panel = false } = {}) {
+  const entry = { v: null };
+  const p = loadTsx('frontend/src/features/staging/placement.ts', {
+    cache: false,
+    stubs: {
+      './staging-store.js': storeMod,
+      '../ai/detail': {
+        openDetail: (e) => { entry.v = e; },
+        closeDetail: () => { entry.v = null; },
+        detailEntry: () => entry.v,
+        subscribeDetail: () => () => {},
+      },
+      '../side-panel/controller': { isBesideAi: () => false },
+      '../side-panel/store.js': { sidePanelStore: { get: () => ({ open: panel }), subscribe: () => () => {} } },
+    },
+  });
+  const published = [];
+  const saved = {
+    window: globalThis.window,
+    document: globalThis.document,
+    raf: globalThis.requestAnimationFrame,
+    onLayout: storeMod.stagingHandlers.onLayout,
+  };
+  let slot = null;
+  globalThis.window = {
+    matchMedia: (q) => ({ matches: phone && q === p.PHONE_QUERY }),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  globalThis.document = { querySelector: () => slot, getElementById: () => null };
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  storeMod.stagingHandlers.onLayout = (l) => published.push(l);
+  return {
+    p,
+    entry,
+    published,
+    setSlot(rect) { slot = rect ? { getBoundingClientRect: () => rect } : null; },
+    restore() {
+      p.unplacePreview();
+      globalThis.window = saved.window;
+      globalThis.document = saved.document;
+      globalThis.requestAnimationFrame = saved.raf;
+      storeMod.stagingHandlers.onLayout = saved.onLayout;
+    },
+  };
+}
+
+test('address: the layout is written beside the preview, and dropped when it closes', () => {
+  const { AppView, location, writes } = appViewAt({ search: '?ws=needs' });
+  assert.equal(AppView._writePreviewAddress('audit-garden', 9201, 'column'), true);
+  assert.equal(location.search, '?ws=needs&preview=audit-garden/9201&preview-at=column',
+    'beside every other parameter, kept as it was');
+  AppView._writePreviewAddress('audit-garden', 9201, 'column-full');
+  assert.equal(location.search, '?ws=needs&preview=audit-garden/9201&preview-at=column-full',
+    'Full window is written as the layout it is, in place');
+  assert.equal(writes.length, 2, 'replaceState each time: no step for Back');
+  assert.deepEqual({ ...AppView._previewAddressAt('?preview=audit-garden/9201&preview-at=panel-full') },
+    { slug: 'audit-garden', sessionId: 9201, layout: 'panel-full' });
+  assert.deepEqual({ ...AppView._previewAddressAt('?preview=audit-garden/9201&preview-at=sideways') },
+    { slug: 'audit-garden', sessionId: 9201 }, 'an unknown layout is ignored as if absent');
+  AppView._writePreviewAddress(null);
+  assert.equal(location.search, '?ws=needs', 'closing drops the preview and its layout');
+});
+
+test('address: a reload reopens the preview in the layout it was in', () => {
+  const { AppView } = appViewAt({ search: '?preview=audit-garden/9201&preview-at=column-full' });
+  const opened = [];
+  AppView.ensureStaging = (...args) => { opened.push(args); };
+  AppView.appData = null;
+  assert.equal(AppView.restorePreviewFromAddress(), true);
+  assert.equal(opened[0][3].layout, 'column-full', 'the remembered layout reaches the placement');
+});
+
+test('placement: a remembered column is waited for, then docked and expanded as the address said', async () => {
+  const h = placementHarness();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    // The page has drawn its column, but it is still narrow for a moment.
+    // Waiting for it rather than giving up is what a refresh needs.
+    h.setSlot({ left: 1100, top: 64, width: 340, height: 836 });
+    assert.equal(await h.p.placePreview({ sessionId: 9201, settle: true, layout: 'column-full' }), 'full');
+    assert.equal(storeMod.stagingStore.get().placement, 'full', 'the whole window meanwhile');
+    assert.equal(storeMod.stagingStore.get().expanded, false, 'not expanded over the wrong spot');
+    assert.equal(h.entry.v && h.entry.v.kind, 'preview', 'the column stays asked for');
+    h.setSlot({ left: 820, top: 64, width: 620, height: 836 });
+    await wait(400);
+    const st = storeMod.stagingStore.get();
+    assert.equal(st.placement, 'column', 'it reaches the column it was in');
+    assert.deepEqual({ ...st.rect }, { left: 820, top: 64, width: 620, height: 836 });
+    assert.equal(st.expanded, true, 'Full window over it, as it was before the refresh');
+    assert.equal(h.published[h.published.length - 1], 'column-full', 'and the address names it');
+  } finally {
+    h.restore();
+  }
+});
+
+test('placement: a preview link with no layout places exactly as today', async () => {
+  const h = placementHarness();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    // A narrow column measured at once is given up at once, as it always has
+    // been: only a remembered layout keeps waiting for it.
+    h.setSlot({ left: 1100, top: 64, width: 340, height: 836 });
+    assert.equal(await h.p.placePreview({ sessionId: 9201, settle: true }), 'full');
+    assert.equal(storeMod.stagingStore.get().placement, 'full');
+    assert.equal(h.entry.v, null, 'the column is given back straight away');
+    await wait(400);
+    assert.equal(storeMod.stagingStore.get().placement, 'full');
+  } finally {
+    h.restore();
+  }
+});
+
+test('placement: a phone-size reload does not force a column, whatever the address says', async () => {
+  const h = placementHarness({ phone: true });
+  try {
+    assert.equal(await h.p.placePreview({ sessionId: 9201, settle: true, layout: 'column' }), 'full');
+    assert.equal(storeMod.stagingStore.get().placement, 'full');
+    assert.equal(h.entry.v, null, 'no column is asked for on a phone');
+  } finally {
+    h.restore();
+  }
+});
+
+test('placement: a link can ask for the whole window on purpose', async () => {
+  const h = placementHarness();
+  try {
+    h.setSlot({ left: 820, top: 64, width: 620, height: 836 });
+    assert.equal(await h.p.placePreview({ sessionId: 9201, layout: 'full' }), 'full');
+    assert.equal(storeMod.stagingStore.get().placement, 'full');
+    assert.equal(h.entry.v, null, 'no column is opened for it');
+    assert.equal(h.published[h.published.length - 1], 'full');
+  } finally {
+    h.restore();
+  }
+});
+
+// ── the change's name, from the start ─────────────────────────────────────
 test('name: the header names the change at once from the row the Preview press came from', () => {
   const { AppView } = appViewAt();
   // A card's Preview records its change as the card is drawn (_cardPreviewSpec).
@@ -621,7 +769,7 @@ test('not running: the before and after is offered over the loader only when the
   const b = bridgeMod.stagingBridge;
   b.open();
   b.setLoader(true, { title: 'This preview isn’t running right now', offerShots: true });
-  b.setShots('<div class="shots">before / after</div>');
+  b.setShots({ shots: { state: 'verified', claims: [], artifacts: [] }, sessionId: 9201 });
   // Rendered always, like every part of the island; a ref toggles `hidden`.
   assert.match(renderToHtml(createElement(overlay.StagingOverlay, {})),
     /<button type="button" class="hidden staging-link staging-loader-shots">See the before &amp; after instead<\/button>/);

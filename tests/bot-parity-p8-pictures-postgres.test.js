@@ -282,8 +282,8 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     assert.equal(made.ok, true, JSON.stringify(made));
     assert.equal(made.image.contentType, 'image/png');
     assert.equal(asked[asked.length - 1].image_config.aspect_ratio, '16:9');
-    const { rows: [paid] } = await pool.query('SELECT payer_user_id, session_id, purpose FROM homeroom_bot_pictures WHERE session_id = $1', [own.id]);
-    assert.deepEqual([paid.payer_user_id, paid.purpose], [sam.id, 'build'], 'their own session: they pay');
+    const { rows: [paid] } = await pool.query('SELECT payer_user_id, session_id, purpose, counts_toward_cap FROM homeroom_bot_pictures WHERE session_id = $1', [own.id]);
+    assert.deepEqual([paid.payer_user_id, paid.purpose, paid.counts_toward_cap], [sam.id, 'build', true], 'their own session: they pay');
     // The bot's build of Ada's request: Ada's week pays.
     const { rows: [built] } = await pool.query('INSERT INTO chat_sessions (app_id, user_id) VALUES ($1, $2) RETURNING id', [app.id, bot.id]);
     await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 5, $2)', [app.id, ada.id]);
@@ -291,7 +291,9 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, build_session_id) VALUES ($1, 5, 'live', 'ready', TRUE, $2)`,
       [app.id, built.id],
     );
-    assert.deepEqual(await pictures.sessionPayer(pool, built.id), { sessionId: built.id, appId: app.id, payerId: ada.id });
+    assert.deepEqual(await pictures.sessionPayer(pool, built.id), {
+      sessionId: built.id, appId: app.id, payerId: ada.id, firstVersion: false,
+    });
     // A shadow build: nobody pays, so nothing is made.
     const { rows: [shadow] } = await pool.query('INSERT INTO chat_sessions (app_id, user_id) VALUES ($1, $2) RETURNING id', [app.id, bot.id]);
     await pool.query(
@@ -300,6 +302,36 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     );
     const none = await pictures.generateForSession(pool, config, { sessionId: shadow.id, prompt: 'A pear', deps: { ...pictureDeps, homeroomBot: { readSettings: async () => settings } } });
     assert.equal(none.status, 402);
+  });
+
+  // #7118: a first version's build pays for its own two pictures (its logo's
+  // card picture, light and dark), so they are not the maker's week.
+  await t.test('a first version\'s first two pictures are its build\'s; the third counts as before', async () => {
+    const before = await pictures.picturesThisWeek(pool, ada.id);
+    const { rows: [first] } = await pool.query('INSERT INTO chat_sessions (app_id, user_id) VALUES ($1, $2) RETURNING id', [app.id, bot.id]);
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, first_version) VALUES ($1, 7, $2, TRUE)',
+      [app.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, build_session_id) VALUES ($1, 7, 'live', 'ready', TRUE, $2)`,
+      [app.id, first.id],
+    );
+    assert.deepEqual(await pictures.sessionPayer(pool, first.id), {
+      sessionId: first.id, appId: app.id, payerId: ada.id, firstVersion: true,
+    });
+    const deps = { ...pictureDeps, homeroomBot: { readSettings: async () => settings } };
+    for (const [prompt, variant] of [['A plant in a pot', 'light'], ['A plant at night', 'dark'], ['A plant on a shelf', null]]) {
+      const made = await pictures.generateForSession(pool, config, {
+        sessionId: first.id, prompt, aspect: 'wide', ...(variant ? { variant } : {}), deps,
+      });
+      assert.equal(made.ok, true, JSON.stringify(made));
+    }
+    const { rows } = await pool.query(
+      'SELECT counts_toward_cap FROM homeroom_bot_pictures WHERE session_id = $1 ORDER BY id', [first.id],
+    );
+    assert.deepEqual(rows.map((r) => r.counts_toward_cap), [false, false, true], 'the first two are the build\'s');
+    assert.equal(await pictures.picturesThisWeek(pool, ada.id), before + 1, 'only the third uses their week');
   });
 
   // ── P2 and P8 in a design thread ────────────────────────────────────────

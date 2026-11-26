@@ -68,6 +68,64 @@ export function publicReadIsForAnyone(pathname: string): boolean {
   return FOR_ANYONE.some(route => route.test(pathname));
 }
 
+/**
+ * Reads that several parts of the shell ask for at the same moment (request
+ * 7165: one load of Home read the project list eleven times). Readers of one
+ * of these GET addresses share one request while it is on its way, and for
+ * `keep` milliseconds after an ok answer lands a later reader is handed that
+ * answer instead of asking again. `keep: 0` shares only while in flight:
+ * the account check and the version check decide things that must be
+ * current, and the bot's work is re-read on news from a chat socket this
+ * wrapper cannot see.
+ *
+ * Every reader gets its own copy of the response, fenced as any read is.
+ * Nothing is shared across a session boundary (the key carries the
+ * partition and the epoch, and a reset drops everything), a failed answer is
+ * never kept, and a kept answer is dropped by any write to /api/ (when it
+ * starts and again when it answers), by `UsernodeReact.apiCache.forget()`
+ * (a pull to refresh, a frame from the events socket) and by a read made
+ * with `cache: 'reload'`. A route is an exact pathname; its query is part of
+ * the key, so `?scope=joined` and `?demo=1` are answers of their own.
+ */
+export const SHARED_READ_KEEP_MS = 3000;
+export const SHARED_READS = Object.freeze([
+  { route: '/api/apps', keep: SHARED_READ_KEEP_MS },
+  { route: '/api/me/home-pins', keep: SHARED_READ_KEEP_MS },
+  { route: '/api/workshop/counts', keep: SHARED_READ_KEEP_MS },
+  { route: '/api/me/app-allowance', keep: SHARED_READ_KEEP_MS },
+  { route: '/api/ai/tracks', keep: 0 },
+  { route: '/api/auth/me', keep: 0 },
+  { route: '/api/version', keep: 0 },
+].map(entry => Object.freeze(entry)));
+
+/**
+ * Pure: how long a GET of `pathname` is kept after it lands, 0 when it is
+ * shared only while in flight, null when it is not shared at all.
+ */
+export function sharedReadKeep(pathname: string): number | null {
+  const found = SHARED_READS.find(entry => entry.route === pathname);
+  return found ? found.keep : null;
+}
+
+/**
+ * Writes that change nothing a shared read answers: the interface's own
+ * measurements. They are sent while Home opens, and would otherwise drop
+ * every answer the screens mounting beside them were about to share.
+ */
+const WRITES_KEEPING_SHARED_READS = /^\/api\/ui-telemetry\//;
+
+type SharedRead = {
+  /** Sent with `no-store`: never a copy the worker or the browser saved. */
+  strict: boolean;
+  keep: number;
+  controller: AbortController;
+  master: Promise<Response>;
+  waiting: number;
+  settled: boolean;
+  landedAt: number | null;
+  timer: unknown;
+};
+
 export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined,
   secure = typeof location === 'undefined' || location.protocol !== 'http:'): string | null {
   try {
@@ -276,6 +334,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   function reset({ broadcast = false, unlessAnonymous = false } = {}): void {
     boundary++;
     if (!(unlessAnonymous && anonymous())) bumped('epoch');
+    // Whoever reads next is asked about again, whoever that is now.
+    forgetSharedReads();
     observedScope = scope();
     observedNativeEpoch = renewal().epoch;
     if (broadcast) broadcastBoundary();
@@ -413,6 +473,89 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     });
   }
 
+  // ── Shared reads (SHARED_READS) ────────────────────────────────────
+  const sharedReads = new Map<string, SharedRead>();
+  const freeShared = (entry: SharedRead) => {
+    if (entry.timer !== null) {
+      if (typeof win.clearTimeout === 'function') win.clearTimeout(entry.timer);
+      else clearTimeout(entry.timer as any);
+      entry.timer = null;
+    }
+    // The master copy is never read: release what it still buffers.
+    if (entry.landedAt !== null) void entry.master.then(res => res.body?.cancel()).catch(() => {});
+  };
+  const dropShared = (key: string, entry: SharedRead) => {
+    if (sharedReads.get(key) === entry) sharedReads.delete(key);
+    freeShared(entry);
+  };
+  // Readers already waiting on a request keep it; nobody new joins it, and
+  // its answer is not kept.
+  function forgetSharedReads(): void {
+    const entries = [...sharedReads.values()];
+    sharedReads.clear();
+    entries.forEach(freeShared);
+  }
+  /**
+   * One network request for the readers of `key`, and each reader's own
+   * copy of its answer. `own` (a `cache: 'reload'` read) never joins: it
+   * sends, and its answer is the one later readers get. A `strict` reader
+   * never joins a request that may be answered from a saved copy.
+   */
+  async function sharedSend(key: string, keep: number, { strict, own }: { strict: boolean; own: boolean },
+    signal: AbortSignal, make: (signal: AbortSignal) => Request): Promise<Response> {
+    signal.throwIfAborted();
+    let entry = sharedReads.get(key);
+    // By the clock as well as the timer: a page that was frozen or in the
+    // background runs its timers late.
+    if (entry && entry.landedAt !== null && Date.now() - entry.landedAt >= entry.keep) {
+      dropShared(key, entry);
+      entry = undefined;
+    }
+    if (!entry || own || (strict && !entry.strict)) {
+      if (entry) dropShared(key, entry);
+      const controller = new AbortController();
+      const made: SharedRead = { strict, keep, controller, master: null as unknown as Promise<Response>,
+        waiting: 0, settled: false, landedAt: null, timer: null };
+      let sent: Promise<Response>;
+      try { sent = send(make(controller.signal)); } catch (err) { sent = Promise.reject(err); }
+      made.master = sent.then(res => {
+        made.settled = true;
+        if (sharedReads.get(key) !== made) return res;
+        // Only an ok answer is kept. A failure reaches the readers already
+        // waiting, and the next one asks again.
+        if (keep > 0 && res.ok && !res.redirected) {
+          made.landedAt = Date.now();
+          const expire = () => { made.timer = null; dropShared(key, made); };
+          if (typeof win.setTimeout === 'function') made.timer = win.setTimeout(expire, keep);
+          else { made.timer = setTimeout(expire, keep); (made.timer as any)?.unref?.(); }
+        } else {
+          sharedReads.delete(key);
+        }
+        return res;
+      }, err => {
+        made.settled = true;
+        if (sharedReads.get(key) === made) sharedReads.delete(key);
+        throw err;
+      });
+      made.master.catch(() => {}); // each reader hears it through its own wait
+      sharedReads.set(key, made);
+      entry = made;
+    }
+    const joined = entry;
+    joined.waiting++;
+    try {
+      // One reader's abort settles that reader alone (waitForSession).
+      return (await waitForSession(joined.master, signal)).clone();
+    } finally {
+      joined.waiting--;
+      // Nobody is left waiting on a request still on its way: stop it.
+      if (joined.waiting === 0 && !joined.settled) {
+        if (sharedReads.get(key) === joined) sharedReads.delete(key);
+        joined.controller.abort(signal.aborted ? signal.reason : undefined);
+      }
+    }
+  }
+
   // Signed in at either end of a read: a hint cookie or a viewer, when it
   // started or now.
   const signedInNow = () => scope() !== null || currentViewer() != null;
@@ -443,6 +586,11 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const identityRead = req.method === 'GET' && url.pathname === '/api/auth/me';
     const forAnyone = (req.method === 'GET' || req.method === 'HEAD') && publicReadIsForAnyone(url.pathname);
     if (mutation) { reset({ broadcast: true }); }
+    // The app's own write may change what a shared read answers (a pin, a
+    // join, a vote): no reader after it is handed an answer from before it.
+    const write = req.method !== 'GET' && req.method !== 'HEAD'
+      && !WRITES_KEEPING_SHARED_READS.test(url.pathname);
+    if (write) forgetSharedReads();
     // Native restoration installs its HttpOnly cookie outside this document.
     // Wait for that boundary, then confirm its new identity before cache use.
     const restoring = !mutation && renewal().settled;
@@ -473,8 +621,24 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const boundaryBefore = boundary, expectedViewer = currentViewer();
     const confirmsNative = identityRead && !tokenRequest && req.credentials !== 'omit'
       && verifiedNativeEpoch !== before.nativeEpoch;
-    const res = await send(new Request(req, { headers,
-      cache: permitted && req.cache !== 'no-store' ? 'no-cache' : 'no-store' }));
+    const cache = permitted && req.cache !== 'no-store' ? 'no-cache' : 'no-store';
+    const keep = req.method === 'GET' && !tokenRequest && !confirmsNative && req.credentials !== 'omit'
+      ? sharedReadKeep(url.pathname) : null;
+    let res: Response;
+    if (keep === null) {
+      try {
+        res = await send(new Request(req, { headers, cache }));
+      } finally {
+        // Again when the write answers or fails: a read that started while
+        // it was on its way may be from before it, and is not kept.
+        if (write) forgetSharedReads();
+      }
+    } else {
+      const key = [url.pathname + url.search, before.epoch, before.nativeEpoch, before.scope,
+        permitted, req.credentials].join('|');
+      res = await sharedSend(key, keep, { strict: cache === 'no-store', own: req.cache === 'reload' },
+        req.signal, signal => new Request(req, { headers, cache, signal }));
+    }
     // A read whose answer is the same for anyone (PUBLIC_READS_FOR_ANYONE)
     // is never fenced: no session boundary can have changed it.
     if (forAnyone) return res;
@@ -508,6 +672,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   bridge.apiCache = {
     scope,
     reset: (options: { broadcast?: boolean } = {}) => reset({ ...options, unlessAnonymous: true }),
+    /** Drop every shared read: the next reader of each asks the server. */
+    forget: forgetSharedReads,
     setViewer(id: number | string | null, verified = true) {
       const next = id == null ? null : String(id);
       if (viewer !== undefined && next !== viewer) reset({ broadcast: verified });

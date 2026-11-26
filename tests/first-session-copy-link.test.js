@@ -121,7 +121,7 @@ test('the buttons sit where Share link sat: after the note, before the status an
     assert.ok(i >= 0, needle);
     return i;
   };
-  assert.ok(at('When you share, your note also goes in the group chat as your first message.') < at('data-first-session-invite-action="copy"'));
+  assert.ok(at('Your note goes with the link. When you share or copy it, it also goes in the group chat as your first message.') < at('data-first-session-invite-action="copy"'));
   assert.ok(at('data-first-session-invite-action="copy"') < at('data-first-session-invite-action="share"'));
   assert.ok(at('data-first-session-invite-action="share"') < at('Anyone with the link can join until you turn it off.'));
 });
@@ -138,46 +138,54 @@ test('Copy link copies the note and the link, then does what a share does', () =
 
   const src = read(MADE);
   // One "it went out" for both: said on the sheet, the note kept, posted
-  // once when it was shared (notePostable), the made screen told how. The
-  // sheet stays open (#4196).
-  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(how\);\s+onSent\(how\);\s+\}/);
+  // once (notePostable), the made screen told how. The sheet stays open
+  // (#4196).
+  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+onSent\(how\);\s+\}/);
   // The example's note is a message id, read in the language on screen.
   assert.match(src, /const exampleNote = made\.example \? translate\(made\.example\.note\) : null;/);
-  assert.match(src, /const postNote = useCallback\(async \(how: SentHow\) => \{\s+if \(!notePostable\(how, note, exampleNote\)\) return;/);
+  assert.match(src, /const postNote = useCallback\(async \(\) => \{\s+if \(!notePostable\(note, exampleNote\)\) return;/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   const copy = src.slice(src.indexOf('const copyLink = useCallback'), src.indexOf('const tile = '));
   assert.match(share, /await sent\('shared'\);/);
   assert.match(share, /await sent\('copied'\);/);
   assert.match(copy, /await sent\('copied'\);/);
+  // A note typed after the link was made is saved onto it on either press,
+  // and never waited on before the share sheet or the copy.
+  assert.match(share, /if \(held\) void syncNote\(\);/);
+  assert.match(copy, /if \(ready\) void syncNote\(\);/);
+  assert.match(src, /if \(wanted === held\.note\) return;/);
   // The share sheet's own fallback copies the same text, tagged as a copy.
   assert.match(share, /const outcome = await copyText\(inviteText\(note, withVia\(url, 'copied'\)\)\);/);
   assert.match(share, /url: withVia\(url, 'shared'\)/);
   // The copy is started before the press awaits anything: a link already made
   // is copied as it is; one still to make goes in as a promise.
-  assert.match(copy, /const outcome = await copyText\(ready \? inviteText\(note, withVia\(ready, 'copied'\)\)\s+: link\(\)\.then\(\(url\) => \(url \? inviteText\(note, withVia\(url, 'copied'\)\) : null\)\)\);/);
+  assert.match(copy, /const outcome = await copyText\(ready \? inviteText\(note, withVia\(ready\.url, 'copied'\)\)\s+: link\(\)\.then\(\(url\) => \(url \? inviteText\(note, withVia\(url, 'copied'\)\) : null\)\)\);/);
   assert.equal((copy.match(/await /g) || []).length, 2, 'the copy, then the share\'s steps: nothing awaited before the copy, and no pause before the sheet says so');
   // Said on the sheet, which stays: "✓ Copied" on the button for a moment.
   assert.match(copy, /setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);/);
   assert.match(src, /const t = window\.setTimeout\(\(\) => setCopied\(0\), COPIED_MS\);/);
   assert.match(src, /copied \? t\('onboarding:firstSession\.invite\.copied'\) : t\('onboarding:firstSession\.invite\.copyLink'\)/);
   assert.deepEqual([message('onboarding:firstSession.invite.copied'), message('onboarding:firstSession.invite.copyLink')], ['✓ Copied', 'Copy link']);
+  assert.deepEqual(message('onboarding:firstSession.invite.noteHint'), 'Your note goes with the link. When you share or copy it, it also goes in the group chat as your first message.');
   assert.match(src, /const COPIED_MS = 1200;/);
   const { sentStatus } = loadTsx(MADE);
   assert.equal(sentStatus('copied'), 'Link copied. Paste it in your group chat.');
   assert.equal(sentStatus('shared'), '✓ Link shared', 'never "Invite sent": the page cannot know a message went');
 });
 
-// #4196: "Clicking Share link just immediately goes back to the prior screen
-// with ✓ Invite sent." The sheet closed the moment the share sheet resolved.
-test('#4238: the note goes in the group chat only when shared, and only a note they wrote', () => {
-  const { notePostable } = loadTsx(MADE);
-  assert.equal(notePostable('shared', 'Read with us', null), true);
-  assert.equal(notePostable('copied', 'Read with us', null), false, 'a copy may never be pasted');
-  assert.equal(notePostable('shared', 'I\'m making this for us. Click the link to join the app.', null), false, 'the untouched default');
-  assert.equal(notePostable('shared', '  I\'m making this for us. Click the link to join the app.  ', null), false);
-  assert.equal(notePostable('shared', 'Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
-  assert.equal(notePostable('shared', 'Pick one for July', 'Pick a book for June'), true);
-  assert.equal(notePostable('shared', '   ', null), false);
+// #4238: "the note goes in the group chat as your first message". It goes
+// whether the link was shared or copied, and only a note they wrote.
+test('#4238: a note they wrote goes in the group chat whether shared or copied', () => {
+  const { notePostable, storedNote } = loadTsx(MADE);
+  assert.equal(notePostable('Read with us', null), true);
+  assert.equal(notePostable('I\'m making this for us. Click the link to join the app.', null), false, 'the untouched default');
+  assert.equal(notePostable('  I\'m making this for us. Click the link to join the app.  ', null), false);
+  assert.equal(notePostable('Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
+  assert.equal(notePostable('Pick one for July', 'Pick a book for June'), true);
+  assert.equal(notePostable('   ', null), false);
+  // What the sheet compares with the link's own note: as the link stores it.
+  assert.equal(storedNote('  Come  read with us! '), 'Come read with us!');
+  assert.equal(storedNote('  \n\t '), null);
 });
 
 test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
@@ -200,7 +208,7 @@ test('a share: cancelled changes nothing; refused copies instead; a made link is
   const src = read(MADE);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   // A link already made is not waited on, so the press can still open the share sheet.
-  assert.match(share, /const url = linkRef\.current \|\| await link\(\);/);
+  assert.match(share, /const url = held \? held\.url : await link\(\);/);
   // Cancelled: back where it was, the status untouched.
   assert.match(share, /if \(\(err as Error\)\?\.name === 'AbortError'\) return;/);
   assert.match(share, /setBusy\(true\); setError\(null\);\s+try/, 'no status cleared on the way in');
@@ -250,9 +258,11 @@ test('opening the sheet makes no link: one is made only by a press', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
   // The one POST that makes a link is link(), and only the two presses call it.
-  assert.equal((sheet.match(/method: 'POST'/g) || []).length, 2, 'the link, and the note as a chat message');
+  // The three POSTs are the link, the note as a chat message, and the note
+  // saved onto a link made earlier.
+  assert.equal((sheet.match(/method: 'POST'/g) || []).length, 3, 'the link, the note as a chat message, the link\'s own note');
   assert.equal((sheet.match(/\blink\(\)/g) || []).length, 2);
-  assert.match(sheet, /const url = linkRef\.current \|\| await link\(\);/);
+  assert.match(sheet, /const url = held \? held\.url : await link\(\);/);
   assert.match(sheet, /: link\(\)\.then\(/);
   // No effect reaches for it.
   for (const effect of sheet.match(/useEffect\(\(\) => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\);/g) || []) {

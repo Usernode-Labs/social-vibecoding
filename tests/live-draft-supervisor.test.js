@@ -4,8 +4,9 @@
 // counts as a new install, how the app is started, the secret's check), and,
 // against a real little app in a temp directory: requests pass through, the
 // control routes answer only with the secret, an edit restarts the app in
-// place, an edit that breaks it says why and a fix brings it back, and a
-// change to what it installs is refused for a rebuild.
+// place, an edit that breaks it says why and a fix brings it back, a
+// change to what it installs is refused for a rebuild, a build whose command
+// is not installed keeps the edit, and a build that fails puts it back.
 //
 // Run with: node --test tests/live-draft-supervisor.test.js
 
@@ -219,6 +220,53 @@ test('a new dependency is not applied: the preview is built again', async () => 
   // An edit that names no commit leaves the files at none known.
   assert.equal((await status()).head, null);
   assert.equal(await (await fetch(`${base()}/`)).text(), 'version 3');
+});
+
+// The same install as the app's own package.json (dependencies: {}), with a
+// build script or none: only `scripts` differ, so it is not a new install.
+const withBuild = (build) => JSON.stringify({
+  name: 'tiny', scripts: { start: 'node server.js', ...(build ? { build } : {}) }, dependencies: {},
+});
+
+// 24 Nov 2026: an app made from the template compiles Tailwind in
+// a Dockerfile stage of its own and installs the runtime without dev
+// dependencies, so the preview's image has no `tailwindcss`. Every edit's build
+// failed there and was put back; the preview never showed one.
+test('a build whose command is not installed keeps the edit and says so', async () => {
+  const res = await apply([
+    { path: 'package.json', content: withBuild('tailwindcss-not-installed-here --minify') },
+    { path: 'server.js', content: appSource(5) },
+  ], TOKEN, EDIT_HEAD);
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.ok, true);
+  assert.equal(body.buildSkipped, true);
+  assert.match(body.buildLog, /not found/);
+  assert.equal(body.head, EDIT_HEAD);
+  assert.equal(fs.readFileSync(path.join(dir, 'server.js'), 'utf8'), appSource(5));
+  assert.equal(await (await fetch(`${base()}/`)).text(), 'version 5');
+});
+
+test('a build that runs and fails puts the edit back; the app keeps the version before it', async () => {
+  const res = await apply([
+    { path: 'package.json', content: withBuild('node -e "process.exit(2)"') },
+    { path: 'server.js', content: appSource(6) },
+  ]);
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.needsRebuild, true);
+  assert.equal(body.why, 'build');
+  assert.equal(body.buildSkipped, undefined);
+  // Both files are as they were, and the app was never stopped.
+  assert.equal(fs.readFileSync(path.join(dir, 'server.js'), 'utf8'), appSource(5));
+  assert.match(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'), /tailwindcss-not-installed-here/);
+  assert.equal(await (await fetch(`${base()}/`)).text(), 'version 5');
+  assert.equal((await status()).head, EDIT_HEAD);
+  // Back to no build step for the tests after this one.
+  const reset = await apply([{ path: 'package.json', content: withBuild(null) }]);
+  const cleared = await reset.json();
+  assert.equal(cleared.ok, true, JSON.stringify(cleared));
+  assert.equal(cleared.buildSkipped, undefined);
 });
 
 test('files outside the app are refused', async () => {

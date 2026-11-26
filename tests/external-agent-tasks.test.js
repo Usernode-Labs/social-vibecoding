@@ -3040,7 +3040,7 @@ test('the work order explains declared changes for before/after shots, and nothi
     assert.match(order, /blocker/, `${label}: a state that cannot be reached is reported, not declared none`);
     // Most states the copies lacked were new in the proposal itself (22 failed
     // runs and 13 skipped changes, 2026-10-09 to 10-12): it seeds them.
-    assert.match(order, /seed(?:ed)? (?:it )?in this\s+change[\s\S]{0,120}the seed reaches the after copy, the side a new\s+state\s+needs/,
+    assert.match(order, /seed(?:ed)? (?:it )?in this\s+change[\s\S]{0,180}reaches both copies when main's schema can hold it/,
       `${label}: a state the copies lack is seeded in the same change`);
     assert.match(order, /neither reached nor seeded/, `${label}: only then is it a blocker`);
     // What the copies cannot do at all, from the list the bot's build lines
@@ -3257,13 +3257,17 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
 
   assert.equal(result.code, 'import_failed');
   assert.equal(result.retryable, true);
-  assert.equal(result.recovery, 'retry_existing_pr');
+  // #7160: the head is Homeroom's own, so the slug + prNumber retry is
+  // refused; submitting again with the same taskId reuses the PR.
+  assert.equal(result.recovery, 'resubmit_task');
   assert.equal(result.prNumber, 99);
   assert.equal(result.stage, 'visible_changes');
   assert.equal(result.field, 'visibleChanges');
   assert.deepEqual(removed, [], 'the PR head is the recovery handle, not litter');
   assert.match(result.message, /PR #99 remains open/);
-  assert.match(result.message, /slug "recipe-box" and prNumber 99/);
+  assert.match(result.message, /same taskId 31/);
+  assert.match(result.message, /makes no duplicate/);
+  assert.doesNotMatch(result.message, /slug "recipe-box"/);
 });
 
 test('network and server import failures are retryable; deterministic refusals are not', () => {
@@ -5097,4 +5101,91 @@ test('a submission recovers its imported proposal after the import reply or task
   assert.equal(result.proposalId, 81);
   assert.deepEqual(removed, []);
   assert.ok(queries.some((q) => /SET status = 'submitted'/.test(q.sql) && q.params[1] === 81));
+});
+
+// ── #7160 — the retry that works, and a reused order's base ─────────────
+
+test('an import failure with a fork-owned head keeps the slug and prNumber retry', async () => {
+  // No mirror, so the caller's own fork is the head: the slug + prNumber
+  // retry is the one that works there.
+  const gh = baseGh({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => ({
+      number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88',
+      head: { repo: { owner: { login: 'someuser' } } },
+    }),
+  });
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({ ok: false, status: 500, body: { error: 'import broke' } }),
+    }
+  )));
+  assert.equal(result.code, 'import_failed');
+  assert.equal(result.retryable, true);
+  assert.equal(result.recovery, 'retry_existing_pr');
+  assert.match(result.message, /retry with slug "recipe-box" and prNumber 88/);
+  assert.doesNotMatch(result.message, /same taskId/);
+});
+
+const BASE_SHA_OLD = 'a'.repeat(40);
+const BASE_SHA_NEW = 'b'.repeat(40);
+
+function reuseUpdatePool(queries) {
+  const row = {
+    id: 44, user_id: 3, app_id: 7, issue_number: null,
+    fork_owner: 'someuser', fork_repo: 'recipe-box',
+    branch_name: 'session-512', base_sha: BASE_SHA_OLD, brief: 'x', client_id: null,
+    request_key: 'proposal:512', status: 'open', target_session_id: 512, linked_issues: [],
+  };
+  return fakePool([
+    ['SELECT * FROM external_agent_tasks', [row]],
+    ['UPDATE external_agent_tasks SET base_sha', []],
+  ], queries);
+}
+
+test('a reused update work order names the proposal’s moved head, and says it moved', async () => {
+  const queries = [];
+  const gh = baseGh({ getBranchSha: async () => BASE_SHA_NEW });
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool: reuseUpdatePool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, app: APP, origin: ORIGIN, brief: 'x', targetProposal: BOT_PROPOSAL }
+  ));
+  assert.equal(result.ok, true);
+  assert.equal(result.reused, true);
+  assert.equal(result.baseSha, BASE_SHA_NEW);
+  assert.deepEqual(result.baseMoved, { from: BASE_SHA_OLD, to: BASE_SHA_NEW });
+  assert.match(result.guidance[0], /head moved since this work order was first prepared/);
+  assert.match(result.guidance[0], /from aaaaaaa to bbbbbbb/);
+  assert.match(result.guidance[0], new RegExp(`start from ${BASE_SHA_NEW}`));
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks SET base_sha'));
+  assert.ok(update, 'the recorded base is refreshed');
+  assert.deepEqual(update.params, [44, BASE_SHA_NEW, 3]);
+});
+
+test('a reused update work order whose head did not move says nothing and writes nothing', async () => {
+  const queries = [];
+  const gh = baseGh({ getBranchSha: async () => BASE_SHA_OLD });
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool: reuseUpdatePool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, app: APP, origin: ORIGIN, brief: 'x', targetProposal: BOT_PROPOSAL }
+  ));
+  assert.equal(result.baseSha, BASE_SHA_OLD);
+  assert.equal(result.baseMoved, null);
+  assert.doesNotMatch(result.guidance.join('\n'), /head moved since/);
+  assert.ok(!queries.some((q) => q.sql.includes('UPDATE external_agent_tasks SET base_sha')));
+});
+
+test('when the proposal head cannot be read, a reused order keeps its recorded base', async () => {
+  const queries = [];
+  const gh = baseGh({ getBranchSha: async () => { throw new Error('502'); } });
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool: reuseUpdatePool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, app: APP, origin: ORIGIN, brief: 'x', targetProposal: BOT_PROPOSAL }
+  ));
+  assert.equal(result.ok, true);
+  assert.equal(result.baseSha, BASE_SHA_OLD);
+  assert.equal(result.baseMoved, null);
+  assert.doesNotMatch(result.guidance.join('\n'), /head moved since/);
 });

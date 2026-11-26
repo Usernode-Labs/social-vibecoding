@@ -38,7 +38,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
-import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
@@ -78,13 +78,7 @@ import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
 import { holdTopInView, isVotesInViewAsked } from './votes-in-view';
 import { usePanelHead } from '../../side-panel/head-store';
-import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
-import { useFramePage } from '../../frame/frame-page-store';
-import { placeName } from '../workshop/places';
-import { TopicFrameBy, TopicFrameHead, TopicFrameLabel, TopicFrameStatus } from './frame/topic-frame';
-import { TopicTrackStatus } from './frame/topic-track';
-import { useSideStack } from './frame/side-stack';
-import { dotLine, firstSentence, frameStop, threadPillKind, topicBack } from './frame/topic-page';
+import { dotLine } from './topic-page';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -187,14 +181,14 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
   const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
-  usePanelHead({ kind: 'request', pill, menuKey });
-  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
-  // s32): what it is in a small line over its full title, with this menu.
-  // The topic it is filed under rides that line, as it sits under the
-  // standard bar's title. The bar above it carries the trail and the way
-  // back (RequestHead below).
-  const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
+  // #7120: while a vote to close the request is open, the bar says so before
+  // the title, so the page's head reads what the vote is about. The column
+  // beside Homeroom bot's lists draws its title from this same report, since
+  // app.css hides the bar's there.
+  const base = title || r.title;
+  const closing = pill?.key === 'close';
+  const shown = closing ? t('project:topic.request.bar.closeTitle', { title: base }) : base;
+  usePanelHead({ kind: 'request', pill, menuKey, title: closing ? shown : null });
   // 18 Nov 2026: the bar is the thread's head (app.css), as a change's is
   // (./change-head.tsx ChangeBar). 19 Nov 2026: a card that leads with the
   // request's title; the project, the topic, the number and the status are
@@ -212,7 +206,7 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
           <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
         </div>
       ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
-      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>}
+      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{shown}</div>}
       sub={r.category
         ? <div className="messages-thread-sub" data-request-category="">{where}</div>
         : where ? <div className="messages-thread-sub">{where}</div> : null}
@@ -245,11 +239,64 @@ const FOLD_MS = 240;
 const FOLD_EASE = 'cubic-bezier(.32, .72, 0, 1)';
 
 /**
- * The request's words, set apart as a quote and folded at four lines. "Show
- * more" (the hub's own reveal, `.dev-ws-reveal-start`) opens it by
- * animating the text's height between the fold and its full length; reduced
- * motion snaps. Whether there is anything to fold is measured, so a short
- * request has no control under it.
+ * The fewest lines a fold may hide. Folded, the words show four lines and a
+ * "Show more" row under them; a fold that hid one or two lines would stand
+ * as tall as the words whole and save nothing, so up to six lines show in
+ * full and seven or more fold.
+ */
+export const FOLD_HIDES_AT_LEAST = 3;
+
+/**
+ * One line of the words, in pixels: their computed line height (24px in
+ * the card look, 1.5 of the text's own size elsewhere). `normal` is read as
+ * the 1.5 the words are set in.
+ */
+export function wordsLineHeight(style: { lineHeight: string; fontSize: string }): number {
+  const lh = parseFloat(style.lineHeight);
+  const fs = parseFloat(style.fontSize);
+  // A unitless number is a multiple of the font size; a length ends in px.
+  if (Number.isFinite(lh) && lh > 0) return /px$/.test(style.lineHeight.trim()) || !(fs > 0) ? lh : lh * fs;
+  return Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 0;
+}
+
+/**
+ * Pure: does folding at four lines hide enough to be worth a "Show more"?
+ * `hiddenPx` is what the fold leaves out (the words' whole height less
+ * their folded height), `linePx` one line of them. A box with no layout yet
+ * (a section that is shut) measures nothing and does not fold. A pixel of
+ * slack absorbs the rounding of fractional line heights.
+ */
+export function foldHidesEnough(hiddenPx: number, linePx: number): boolean {
+  if (!(linePx > 0) || !(hiddenPx > 0)) return false;
+  return hiddenPx + 1 >= linePx * FOLD_HIDES_AT_LEAST;
+}
+
+/**
+ * Measure the words both ways and say whether they fold, or null while
+ * they have no box. Whole, the paragraphs' last margin falls outside the
+ * box; folded, the clamp's box is its own block, so the gap between them is
+ * the lines and paragraph breaks the fold would hide. The clamp class is put
+ * back as React last rendered it before anything paints.
+ */
+function measureFold(el: HTMLElement): boolean | null {
+  if (typeof window === 'undefined' || !el.getClientRects().length) return null;
+  const had = el.classList.contains('line-clamp-4');
+  if (had) el.classList.remove('line-clamp-4');
+  const whole = el.getBoundingClientRect().height;
+  el.classList.add('line-clamp-4');
+  const folded = el.getBoundingClientRect().height;
+  if (!had) el.classList.remove('line-clamp-4');
+  return foldHidesEnough(whole - folded, wordsLineHeight(window.getComputedStyle(el)));
+}
+
+/**
+ * The request's words, set apart as a quote and folded at four lines when
+ * that hides three lines or more (FOLD_HIDES_AT_LEAST). "Show more" (the
+ * hub's own reveal, `.dev-ws-reveal-start`) opens it by animating the text's
+ * height between the fold and its full length; reduced motion snaps.
+ * Whether there is enough to fold is measured before the first paint, and
+ * again when the words or the column's width change, so words that fit in
+ * six lines show whole, with no clamp and no control under them.
  *
  * Its screenshots (./request-shots.ts): a picture that carries a C
  * comment's pin shows the comment over it, with a button to hide it (#4482);
@@ -303,13 +350,34 @@ export function RequestWords({ html, translate, note }: {
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
-  const [folds, setFolds] = useState(false);
+  // null until measured: the first render keeps the clamp and draws no
+  // control (the server's markup), and the layout effect settles it before
+  // the first paint. false shows the words whole, with no clamp at all, so
+  // no line is ever cut with an ellipsis that nothing opens.
+  const [folds, setFolds] = useState<boolean | null>(null);
   const moving = useRef(false);
   useLayoutEffect(() => {
     const el = text.current;
-    if (!el || open) return;
-    // Clamped, it is shorter than its content exactly when it folds something.
-    setFolds(el.scrollHeight > el.clientHeight + 1);
+    if (!el || open) return undefined;
+    const measure = () => {
+      if (moving.current) return;
+      const next = measureFold(el);
+      if (next !== null) setFolds(next);
+    };
+    measure();
+    // The column's width decides how many lines the words take (a pane
+    // resized, a phone turned, a shut section opened); a translation swaps
+    // the words, which reruns this. The measure puts the clamp back as it
+    // found it, so the observer sees no change of its own making.
+    let width = el.getBoundingClientRect().width;
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const now = el.getBoundingClientRect().width;
+      if (now === width) return;
+      width = now;
+      measure();
+    }) : null;
+    watch?.observe(el);
+    return () => watch?.disconnect();
   }, [words, open]);
   const toggle = () => {
     const el = text.current;
@@ -350,7 +418,7 @@ export function RequestWords({ html, translate, note }: {
     if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
   };
   if (!words && !shots && !translate && !note) return null;
-  const showMore = words && (folds || open);
+  const showMore = words && (folds === true || open);
   const more = showMore ? (
     <button
       type="button"
@@ -367,8 +435,9 @@ export function RequestWords({ html, translate, note }: {
       {/* PlatformMarkdown.render's output, sanitised where it is built. The
           clamp class is React's; the fold writes the node's height only for
           the length of the animation, and puts the clamp back as it ends so
-          React's next render agrees with the DOM. */}
-      {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
+          React's next render agrees with the DOM. Words that do not fold
+          carry no clamp at all. */}
+      {words ? <div ref={text} className={`dev-request-ask-text${open || folds === false ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
       {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
       {note}
       {shots ? <div ref={shotBox} className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
@@ -420,90 +489,6 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
         <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? t('project:topic.request.editor.saving') : t('core:common.save')}</Button>
       </div>
     </form>
-  );
-}
-
-/**
- * Where the request stands: Asked, Spec, Built, Voted in, with the stop it
- * is at marked; one sentence; the claim's lapse in small words; and the one
- * thing this viewer would do next. A step already done gets no fill.
- */
-function RequestStatus({ s, specs, tracked = false, frame = false }: {
-  s: RequestStatusView;
-  specs: RequestSpecCard[];
-  /** Homeroom bot's track card follows, with its own steps (TrackBar): one
-      row of steps on the page, not two that disagree (polish board #12). */
-  tracked?: boolean;
-  /** Under one of the frame's looks: the kit's status card (./frame/topic-frame.tsx). */
-  frame?: boolean;
-}): ReactNode {
-  const t = useMessages('project');
-  const stage = requestStage(s.stage, specs.length);
-  const at = STAGES.findIndex((step) => step.key === stage);
-  // Voted in is the end: every stop is done.
-  const done = stage === 'voted';
-  const version = newestSpecVersion(specs);
-  // Homeroom bot's plan says what it is waiting for in the sentence itself.
-  const specLine = stage === 'spec' && !s.botSays
-    ? (version ? t('project:topic.request.status.specVersionReady', { version }) : t('project:topic.request.status.specReady'))
-    : null;
-  const say = sentences([s.lead, s.note || specLine]);
-  const a = s.action;
-  if (frame) {
-    // In the words' column, after the request: the sentence, the claim's
-    // small words and the one action. Its pill and its five stops are the
-    // context column's Status (RequestHead below), so they are said once.
-    const words = s.closed || say || null;
-    return (
-      <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
-        {words || s.fine || a ? (
-          <TopicFrameStatus
-            big
-            say={words}
-            lead={s.closed ? null : firstSentence(s.lead)}
-            fine={s.fine}
-            action={a ? { label: a.label, title: a.title, disabled: a.disabled, href: a.href, act: a.act?.fn, onClick: () => { if (a.act) call(a.act.fn, a.act.args || []); } } : null}
-          />
-        ) : null}
-      </div>
-    );
-  }
-  return (
-    <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
-      {s.closed || tracked ? null : (
-        <ol className="dev-request-steps">
-          {STAGES.map((step, i) => {
-            const state = done || i < at ? 'done' : i === at ? 'now' : 'next';
-            return (
-              <li key={step.key} className="dev-request-step" data-state={state} aria-current={state === 'now' ? 'step' : undefined}>
-                <span className="dev-request-step-mark">{state === 'done' ? <CheckIcon aria-hidden="true" /> : null}</span>
-                <span className="dev-request-step-label">{t(step.label)}</span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {s.closed || say ? <p className="dev-request-say">{s.closed || say}</p> : null}
-      {s.fine ? <p className="dev-request-fine">{s.fine}</p> : null}
-      {a ? (
-        <div className="dev-request-actions">
-          {a.href ? (
-            <a className="dev-request-primary" href={a.href} title={a.title}>{a.label}</a>
-          ) : (
-            <button
-              type="button"
-              className="dev-request-primary"
-              title={a.title}
-              disabled={!!a.disabled}
-              data-act={a.act?.fn}
-              onClick={() => { if (a.act) call(a.act.fn, a.act.args || []); }}
-            >
-              {a.label}
-            </button>
-          )}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -588,32 +573,10 @@ export function plansByChange(
 }
 
 /**
- * Under one of the frame's looks, with no progress card of Homeroom bot's:
- * the stage as a pill over the kit's five stops (./frame/topic-page.ts
- * frameStop says where a stage lands on them).
- */
-function RequestAt({ s, specs, label }: { s: RequestStatusView; specs: RequestSpecCard[]; label: string }): ReactNode {
-  const t = useMessages('project');
-  const tc = useMessages('changes');
-  const stage = requestStage(s.stage, specs.length);
-  const at = STAGES.findIndex((step) => step.key === stage);
-  const stop = frameStop(stage);
-  return (
-    <TopicFrameStatus
-      label={label}
-      pill={{ word: t(STAGES[at].label), kind: s.action && !s.action.disabled ? 'act' : '' }}
-      at={stop.at}
-      state={stop.state}
-      words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
-    />
-  );
-}
-
-/**
  * The foot of a request's card with no change built for it yet: where it
- * stands, said once, and its one action. It replaces the stepper and the
- * sentence box under the words (RequestStatus) and Homeroom bot's progress
- * card, which the timeline's last step now opens over the card.
+ * stands, said once, and its one action. It replaced the stepper and the
+ * sentence box under the words and Homeroom bot's progress card, which the
+ * timeline's last step now opens over the card.
  */
 function RequestFoot({ s, specs, standing, yours, track, page, echo = '' }: {
   /** The page whose layer Read plan opens (./step-store.ts). */
@@ -693,14 +656,6 @@ function RequestFoot({ s, specs, standing, yours, track, page, echo = '' }: {
 }
 
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
-  // Under one of the frame's looks the page tells the bar its trail (the
-  // Workshop, then this request) and stands its Status in the context
-  // column beside its words (./frame/side-stack.ts says why by measuring).
-  const frame = isFrameSkin(useLiveSkin());
-  const tFrame = useMessages('project');
-  const kicker = tFrame('project:topic.request.bar.title', { number: r.number });
-  useFramePage(frame ? [placeName('workshop'), kicker] : null, topicBack);
-  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-track', '.dev-request-at']);
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
@@ -726,7 +681,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // one, in place of the asker's words, which the timeline's first step
   // still opens whole. Text with no formatting, drawn as paragraphs; text
   // with formatting, through the same renderer as the asker's words (#6962).
-  const summary = !frame && r.summary?.text ? r.summary : null;
+  const summary = r.summary?.text ? r.summary : null;
   const summaryHtml = useMemo(() => (summary ? summaryWords(summary.text) : ''), [summary]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
   // "Edit description" does: the menu's row is a closure in AppView.
@@ -766,6 +721,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     const closeId = layout.close ? layout.close.id : null;
     if (closeId != null && isVotesInViewAsked(`close:${closeId}`)) return undefined;
     if (typeof document === 'undefined') return undefined;
+    // 24 Nov 2026 (mobile 04): nor when a door asked for one of its thread's
+    // messages (the Homeroom bot tab's Reply on an @), which the thread
+    // brings into view and holds there itself (group-chat.js revealInThread).
+    if ((window as unknown as { GroupChat?: { threadRevealAsked?: () => boolean } }).GroupChat?.threadRevealAsked?.()) return undefined;
     return holdTopInView(document.getElementById('gc-thread-scroll'));
   }, [r.number, layout.close?.id]);
   // Once a change is built for it (or a vote to close it is open), the
@@ -786,11 +745,11 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
   );
   // A plan a change in the thread was built from goes with that change.
-  const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
+  const { plans } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
   // discussion. The stream tags each with its change, and the chat hears
   // their live rows for this page too (GroupChat.setThreadMembers).
-  const changeKey = layout.changes.map((c) => `${c.id}:${c.number ?? ''}`).join(',');
+  const changeKey = layout.changes.map((c) => `${c.id}:${c.number ?? ''}:${c.state ?? ''}`).join(',');
   useEffect(() => {
     if (!threadRead.data) return;
     publishRequestChanges(r.number, layout.changes);
@@ -814,9 +773,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   ]);
   const threadMenu = ownAgent || !!threadRead.data?.follow;
   // "How it got here": the thread's big events, beside the card on a wide
-  // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
-  // have their own context column, so they draw none.
-  const rail = frame ? null : host('gc-thread-rail');
+  // page and under it on a narrow one (./thread-rail.tsx).
+  const rail = host('gc-thread-rail');
   // The changes that compete are named by their letter on the ballot, in the
   // timeline as on the card ("Change A built").
   const letters = useMemo(() => {
@@ -854,15 +812,14 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // does not say it again.
   const nowNote = railSteps.find((step) => step.now)?.note || null;
   const echo = nowNote ? (typeof nowNote === 'string' ? nowNote : t(nowNote.id, nowNote.values)) : '';
-  // The standard look and the brand look draw the card the thread design
-  // agreed (./thread-card.tsx), and a step of the timeline opens over it.
-  const cardLook = !frame;
+  // The page draws the card the thread design agreed (./thread-card.tsx),
+  // and a step of the timeline opens over it.
   const page = `request:${r.number}`;
   const openNow = useOpenStep(page);
   useEffect(() => closeStep, [page]);
   // One summary for the request and its one change, as the card credits it:
   // the change's own words are not said again under it.
-  const covers = cardLook && !editing && summary?.basis === 'change';
+  const covers = !editing && summary?.basis === 'change';
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
   // The request's own stored row, for the foot of its one change
   // (./thread-changes.tsx): the page is the request's, so that foot says
@@ -872,16 +829,16 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     () => (standing && !r.status.closed ? { ...standing, mine: yours } : null),
     [standing, r.status.closed, yours],
   );
-  const cardContext = useMemo(() => ({ card: cardLook, page, covers, row }), [cardLook, page, covers, row]);
+  const cardContext = useMemo(() => ({ card: true, page, covers, row }), [page, covers, row]);
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
   /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
   const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
   const openRail = (open: RailOpen) => {
-    if (cardLook && (open.kind === 'request' || open.kind === 'plan' || open.kind === 'track')) {
+    if (open.kind === 'request' || open.kind === 'plan' || open.kind === 'track') {
       openStep(page, open);
       return;
     }
-    if (cardLook && (open.kind === 'checks' || open.kind === 'votes')) {
+    if (open.kind === 'checks' || open.kind === 'votes') {
       // A change on its own holds its votes and tests in a layer; one that
       // competes is voted on in the ballot, so the change itself is opened
       // over the card, where its tests are.
@@ -891,40 +848,24 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
       else showChangeSection(open.changeId);
       return;
     }
-    if (cardLook && open.kind === 'change' && competes(open.changeId)) {
+    if (open.kind === 'change' && competes(open.changeId)) {
       openStep(page, open);
       return;
     }
-    if (open.kind === 'track' || open.kind === 'votes') return;
-    if (open.kind === 'request') {
-      // The request's own words, whole, in the reader a plan opens in.
-      (window as any).UsernodeReact?.detail?.open({
-        kind: 'plan',
-        ref: {},
-        version: null,
-        payload: { title: r.title, markdown: r.bodyMarkdown || '', html: r.bodyHtml },
-      });
-    } else if (open.kind === 'plan') {
-      const card = specs.find((s) => s.key === open.key);
-      if (card) void openRequestSpec(card);
-    } else if (open.kind === 'checks') {
-      call('openTechnicalDetails', [open.changeId]);
-    } else {
-      showChangeSection(open.changeId);
-    }
+    showChangeSection(open.changeId);
   };
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} title={shownTitle} />, bar) : null}
-      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={cardLook ? openNow : null} />, rail) : null}
+      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={openNow} />, rail) : null}
       {images.viewer}
-      <article className={`messages-message dev-request-root${cardLook ? ' dev-thread-card' : ''}`} data-ref-issue={r.number} data-request-root={r.number} data-thread-card={cardLook ? 'request' : undefined}>
+      <article className="messages-message dev-request-root dev-thread-card" data-ref-issue={r.number} data-request-root={r.number} data-thread-card="request">
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
           {(r.asker || '?').charAt(0).toUpperCase()}
         </Avatar>
         <div className="min-w-0 flex-1" {...images.scope}>
-          {cardLook ? <ThreadKicker kind="request" number={r.number} category={r.category} /> : null}
+          <ThreadKicker kind="request" number={r.number} category={r.category} />
           <div className="messages-message-head">
             <span className="messages-message-author">{r.asker}</span>
             {r.askedTime ? <time dateTime={r.askedAt || undefined} title={r.askedTitle}>{r.askedTime}</time> : null}
@@ -961,11 +902,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               ]} />
             </p>
           ) : null}
-          {/* Under a look: "The request" over its card, and who asked and
-              when at the card's top (the head above, which the kit's page
-              puts away with the title). */}
-          {frame ? <TopicFrameLabel>{t('project:frame.topic.theRequest')}</TopicFrameLabel> : null}
-          {frame ? <TopicFrameBy name={r.asker} color={swatchFor(r.asker)} line={r.askedTime || null} title={r.askedTitle} at={r.askedAt} /> : null}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
             // Homeroom bot's summary stands in for the asker's words, which
             // the timeline's first step opens whole.
@@ -986,8 +922,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             />
             )
           )}
-          {cardLook && !editing && summary ? <WordsBy who="bot" basis={summary.basis} />
-            : cardLook && !editing && (r.bodyMarkdown?.trim() || r.bodyHtml) ? <WordsBy who="asker" name={r.asker || null} /> : null}
+          {!editing && summary ? <WordsBy who="bot" basis={summary.basis} />
+            : !editing && (r.bodyMarkdown?.trim() || r.bodyHtml) ? <WordsBy who="asker" name={r.asker || null} /> : null}
           {/* #6680: the viewer's own design thread, linked under the request's
               words (right after "Filed from a design thread…"), which opens it
               in the Homeroom bot column. Nobody else's read carries it, so no
@@ -1017,13 +953,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               ) : null}
             </p>
           ) : null}
-          {(working && !r.status.closed) || cardLook ? null : (
-            <RequestStatus s={r.status} specs={specs} tracked={!!track} frame={frame} />
-          )}
           {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
           {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
-          {track && !working && !frame ? (
+          {track && !working ? (
             // Homeroom bot's progress card (16 Oct 2026, C4, V3) is the
             // content of the timeline's last step: kept in the page, opened
             // over the card. The foot below says the stage and its try.
@@ -1032,30 +965,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                 <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
               </div>
             </StepLayer>
-          ) : null}
-          {/* Under a look the same host, holding its place the same way,
-              has the kit's Status card: what the progress card says, read
-              from the same track (./frame/topic-track.tsx). */}
-          {track && !working && frame ? (
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
-              <TopicTrackStatus track={track} label={t('project:frame.topic.status')} links={trackLinks(track, { request: false })} />
-            </div>
-          ) : null}
-          {/* Under a look, with no progress card: the context column's
-              Status says the stage and its five stops; once a change is
-              built for it, the pill the standard bar wears beside its
-              number. A closed request has neither, as the standard page. */}
-          {frame && !(track && !working) && !r.status.closed && (!working || pill) ? (
-            <div className="dev-request-at" data-request-at={working ? pill?.key : requestStage(r.status.stage, specs.length)}>
-              {working
-                ? <TopicFrameStatus label={t('project:frame.topic.status')} pill={pill ? { word: pill.label, kind: threadPillKind(pill) } : null} />
-                : <RequestAt s={r.status} specs={specs} label={t('project:frame.topic.status')} />}
-            </div>
-          ) : null}
-          {unbuilt.length && !cardLook ? (
-            <div className="messages-object-list dev-request-specs">
-              {unbuilt.map((card) => <SpecCard key={card.key} card={card} />)}
-            </div>
           ) : null}
           {/* #6019: the changes and the vote to close in this request's
               thread, under a rule; then the rest of it as a list. */}
@@ -1067,15 +976,15 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             ) : null}
           </ThreadCardContext.Provider>
           {/* The foot: where a request with no change yet stands, and its action. */}
-          {cardLook && (!working || r.status.closed) ? (
+          {!working || r.status.closed ? (
             <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} page={page} echo={echo} />
           ) : null}
-          {cardLook && openNow?.kind === 'request' ? (
+          {openNow?.kind === 'request' ? (
             <StepLayer open name="request" title={t('project:topic.rail.asked')} sub={r.asker ? t('project:topic.card.layer.requestSub', { name: r.asker }) : null} when={r.askedTime || null} onClose={closeStep}>
               <div className="dev-step-doc" data-step-request="" dangerouslySetInnerHTML={{ __html: r.bodyHtml || '' }} />
             </StepLayer>
           ) : null}
-          {cardLook && planOpen ? (
+          {planOpen ? (
             <StepLayer open name="plan" title={planOpen.title || t('project:topic.rail.planned')} sub={planOpen.by && !planOpen.byUnknown && !planOpen.bySystem ? t('project:topic.card.layer.planBy', { name: planOpen.by }) : null} when={planOpen.time || null} onClose={closeStep}>
               <PlanWords plan={planOpen} />
             </StepLayer>

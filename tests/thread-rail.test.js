@@ -8,8 +8,7 @@
 // tests said, then where the thread stands, which is the standing the server
 // stored and worded. These tests read its steps in words, and hold the three
 // places that draw it: the shell's host between the root post and the
-// replies, the two heads that portal into it (never under one of the frame's
-// looks), and the stylesheet that stands it beside the card on a wide page
+// replies, the two heads that portal into it, and the stylesheet that stands it beside the card on a wide page
 // and folds its earlier steps into a pile on a narrow one.
 
 const test = require('node:test');
@@ -154,6 +153,29 @@ test('up for a vote, approved and going live, live, and closed', () => {
   assert.equal(closed[1].tone, 'muted');
 });
 
+test('#7117 discussion: each update after the first is a step of its own', () => {
+  const { changeRail } = loadTsx(MODEL);
+  const gate = (over = {}) => ({ name: 'Votes', figure: '', tone: 'muted', done: false, note: [], ...over });
+  const input = {
+    id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: null,
+    testing: gate({ name: 'Tested', figure: 'All checks passed', tone: 'done', done: true }),
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: gate({ figure: 'Needs 2 more yes' }),
+  };
+  const updated = changeRail({
+    ...input,
+    updates: [{ at: '2026-11-20T09:00:00Z', by: 'evan', votesKept: false }],
+  });
+  assert.deepEqual(names(updated), ['Built', 'Updated', 'Tested', 'Up for a vote'], 'the update sits after Built');
+  assert.equal(updated[1].at, '2026-11-20T09:00:00Z', 'when it happened');
+  assert.equal(words(updated[1].desc), 'By evan.', 'by whom, when the line records a person');
+  assert.equal(words(updated[1].note), 'Earlier votes were cleared.');
+  const kept = changeRail({ ...input, updates: [{ at: '2026-11-21T09:00:00Z', bot: true, votesKept: true }] });
+  assert.equal(words(kept[1].desc), 'By Homeroom bot.', 'Homeroom made it, and said so without a name');
+  assert.equal(words(kept[1].note), 'Earlier votes still stand.');
+  assert.deepEqual(names(changeRail({ ...input, updates: [] })), ['Built', 'Tested', 'Up for a vote'], 'no updates, no step');
+});
+
 test('several changes are numbered, and each opens its own section', () => {
   const { requestRail } = loadTsx(MODEL);
   const steps = requestRail({
@@ -240,16 +262,15 @@ test('the shell holds the rail between the root post and the replies, on a reque
   assert.match(shell, /<div id="gc-thread-head" \/>[\s\S]{0,600}\{decision \? null : <div id="gc-thread-rail" className="dev-request-rail" \/>\}\s*<div id="gc-thread-messages" \/>/);
 });
 
-test('both heads portal the rail into its host, and never under one of the frame\'s looks', () => {
+test('both heads portal the rail into its host', () => {
   for (const file of ['frontend/src/features/dev-board/topic/request-head.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = read(file);
-    assert.match(src, /const rail = frame \? null : host\('gc-thread-rail'\);/, file);
+    assert.match(src, /const rail = host\('gc-thread-rail'\);/, file);
     // `current`: the step open over the card, which the rail marks (thread-card.tsx).
-    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{cardLook \? openNow : null\} \/>, rail\) : null\}/, file);
+    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{openNow\} \/>, rail\) : null\}/, file);
   }
   const request = read('frontend/src/features/dev-board/topic/request-head.tsx');
-  assert.match(request, /open\.kind === 'plan'[\s\S]{0,160}openRequestSpec\(card\)/, 'a plan opens in the reader it always did');
-  assert.match(request, /call\('openTechnicalDetails', \[open\.changeId\]\)/, 'failed tests open the change\'s details');
+  assert.match(request, /if \(open\.kind === 'request' \|\| open\.kind === 'plan' \|\| open\.kind === 'track'\) \{\s*openStep\(page, open\);/, 'the request, a plan and the track open as a step over the card');
   assert.match(request, /showChangeSection\(open\.changeId\)/, 'a competing change opens its own section');
 });
 
@@ -267,22 +288,31 @@ test('the rail draws its steps, the folded pile, and the links by what they open
   assert.equal(message('project:topic.rail.since', { when: 'Nov 13' }), 'since Nov 13');
 });
 
-test('the stylesheet: beside the card on a wide page, a folded pile on a narrow one, the standard and brand looks only', () => {
+test('the stylesheet: beside the card on a wide page, a folded pile on a narrow one', () => {
   const css = read('public/css/app.css');
   const at = css.indexOf("THE THREAD'S RAIL: \"How it got here\"");
-  // Before the bell's sheet, which is the block that ends at the generated
-  // looks (tests/frame-app.test.js), and so before the brand look too.
-  const next = css.indexOf("/* THE BELL'S SHEET");
-  const brand = css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING');
-  assert.ok(at > 0 && at < next && next < brand, 'the block sits before the brand look, which repaints it');
+  // After the thread page's own block (THE THREAD PAGE, which draws the
+  // cards' paint), and ending at the faces the pages name.
+  const page = css.indexOf('/* ── THE THREAD PAGE: ');
+  const next = css.indexOf('/* ── THE FACES THE PAGES NAME');
+  assert.ok(page > 0 && page < at && at < next, 'the block sits after the thread page\'s block');
   const block = css.slice(at, next);
   assert.match(block, /\.dev-request-rail:empty \{ display: none; \}/);
   assert.match(block, /@media \(max-width: 1179\.98px\) \{\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-pile \{ display: flex; \}\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-step:not\(\[data-rail-now\]\) \{ display: none; \}/);
-  const wide = block.slice(block.indexOf('@media (min-width: 1180px)'));
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
+  // The wide layout is the one `@media (min-width: 1180px)` block and nothing
+  // after it: a later narrow block (the phone's scale) is not part of it.
+  const wideAt = block.indexOf('@media (min-width: 1180px)');
+  let wideDepth = 0;
+  let wideEnd = block.indexOf('{', wideAt);
+  for (; wideEnd < block.length; wideEnd++) {
+    if (block[wideEnd] === '{') wideDepth++;
+    else if (block[wideEnd] === '}' && --wideDepth === 0) break;
+  }
+  const wide = block.slice(wideAt, wideEnd + 1);
+  const scope = 'html:root:not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
   const rules = wide.split('\n').filter((line) => /^\s*html/.test(line));
   assert.ok(rules.length >= 9, 'the wide layout has its rules');
-  for (const line of rules) assert.ok(line.trim().startsWith(scope), `scoped to the two looks, a page, and no open reader: ${line.trim().slice(0, 80)}`);
+  for (const line of rules) assert.ok(line.trim().startsWith(scope), `scoped to a page and no open reader: ${line.trim().slice(0, 80)}`);
   assert.match(wide, /\.dev-request-scroll \{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) var\(--thread-rail-w\);/);
   assert.match(wide, /\.dev-request-rail \{\s*grid-column: 2;\s*grid-row: 1 \/ span 2;\s*align-self: start;\s*position: sticky;/);
   // The cards are cards at every width (a phone's three, a desktop's two
@@ -293,16 +323,103 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   // …on a full page, and in the two side panels (the Workshop's, and the
   // column beside Homeroom bot's list) and beside the open reader, which
   // have a scope of their own.
-  const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
+  const panel = 'html:root :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   for (const line of cards.split('\n').filter((l) => /^html/.test(l))) {
-    const reader = 'html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
+    const reader = 'html:root .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
     assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker')
-      || line.startsWith('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread'),
+      || line.startsWith('html:root #ai-screen .dev-private-thread'),
       `scoped as the wide layout is, or to a side panel: ${line.slice(0, 80)}`);
   }
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
   assert.match(cards, /:is\(#gc-thread-head, #gc-thread-messages, \.dev-request-rail\) \{\s*min-width: 0;\s*border-radius: var\(--thread-card-r\);\s*background: var\(--thread-card\);/);
-  assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+  assert.match(css.slice(page, at), /:where\(#dev-topic-thread\) \.dev-request \{ --thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+});
+
+// #7171: the rail's height cap was written for the wide sticky column, but it
+// applied at every width. Below 1180px the rail is in normal flow, has no
+// `overflow`, and its last step painted over the first reply. The cap now
+// lives only where the rail is sticky.
+test('the narrow rail is not height-capped', () => {
+  const css = read('public/css/app.css');
+
+  // The ranges of every `@media (min-width: 1180px)` block, so what is left
+  // is every rule that applies at any other width.
+  const ranges = [];
+  const header = '@media (min-width: 1180px)';
+  for (let i = 0; ;) {
+    const at = css.indexOf(header, i);
+    if (at < 0) break;
+    const open = css.indexOf('{', at);
+    let depth = 0;
+    let end = open;
+    for (; end < css.length; end++) {
+      if (css[end] === '{') depth++;
+      else if (css[end] === '}' && --depth === 0) break;
+    }
+    ranges.push([at, end + 1]);
+    i = end + 1;
+  }
+  assert.ok(ranges.length > 0, 'the wide layout block exists');
+
+  let outside = '';
+  let from = 0;
+  for (const [start, end] of ranges) {
+    outside += css.slice(from, start);
+    from = end;
+  }
+  outside += css.slice(from);
+
+  assert.doesNotMatch(outside, /\.dev-request-rail[^{]*\{[^}]*max-height/,
+    'no height cap on the rail where it is in normal flow');
+  assert.doesNotMatch(css, /\.dev-request-rail \{ max-height: calc\(100% - var\(--pill-under\)\) !important; \}/);
+
+  const wide = ranges.map(([start, end]) => css.slice(start, end)).join('\n');
+  assert.match(wide, /\.dev-request-rail \{[^}]*max-height: 100%;/, 'the sticky rail keeps its own cap');
+  assert.match(wide, /\.dev-request-rail \{[^}]*max-height: calc\(100% - var\(--pill-top\)\) !important;/, 'and with a card, the pill-aware one');
+});
+
+// #7171: one scale across the three cards on a phone's thread page.
+test("a phone's thread page uses one scale", () => {
+  const css = read('public/css/app.css');
+  const marker = css.indexOf("ONE SCALE ON A PHONE'S THREAD PAGE");
+  assert.ok(marker > 0, 'the phone scale block exists');
+  const open = css.indexOf('@media (max-width: 767.98px) {', marker);
+  assert.ok(open > marker, 'it is a phone block');
+  let depth = 0;
+  let end = open;
+  for (; end < css.length; end++) {
+    if (css[end] === '{') depth++;
+    else if (css[end] === '}' && --depth === 0) break;
+  }
+  const block = css.slice(open, end + 1);
+
+  const value = (selector) => {
+    const at = block.indexOf(selector);
+    assert.ok(at > 0, `the block sets ${selector}`);
+    const rule = block.slice(at, block.indexOf('}', at));
+    const size = /font-size:\s*([^;]+);/.exec(rule);
+    assert.ok(size, `${selector} sets a size`);
+    return size[1].trim();
+  };
+
+  assert.equal(value('.dev-rail-time'), '0.8125rem');
+  assert.equal(value('.dev-rail-title'), '0.75rem');
+  assert.equal(value('.dev-rail-name'), '0.9375rem');
+  assert.equal(value('.dev-thread-foot-head'), '0.9375rem');
+  assert.match(block, /\.messages-thread-name \{ font-size: 1\.125rem;/, "the head's title is the one larger line");
+  assert.match(block, /\.flex > \.truncate \{ font-size: 0\.9375rem; \}/, 'the reply name is the words\' size');
+  assert.match(block, /\.flex > \.shrink-0 \{ font-size: 0\.8125rem; \}/, 'the reply time is the times\' size');
+  assert.match(block, /\.gc-msg-content \{ font-size: 0\.9375rem; line-height: 1\.4; \}/, 'the reply words are 15 over 1.4');
+
+  // No in-between size survives in it.
+  for (const m of block.matchAll(/font-size:\s*([^;]+);/g)) {
+    assert.doesNotMatch(m[1].trim(), /^(12\.5|13\.5|14\.5|15\.5|17)(px|rem|em)$/, `no in-between size: ${m[1].trim()}`);
+  }
+  // Scoped to the page's own thread, so
+  // desktop and the Homeroom bot column are untouched.
+  for (const line of block.split('\n').filter((l) => /^\s*html/.test(l))) {
+    assert.match(line, /^\s*html:root #dev-topic-thread /, `scoped to the thread page: ${line.trim().slice(0, 90)}`);
+  }
 });
 
 // #6807: a change waiting on the bot's fix for a check that is not its own

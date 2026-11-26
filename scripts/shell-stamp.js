@@ -39,6 +39,7 @@ const INPUT_PATHS = [
   'frontend/package.json',
   'frontend/package-lock.json',
   'frontend/scripts/build-shell.mjs',
+  'frontend/scripts/slim-document.cjs',
   'scripts/shell-stamp.js',
   'scripts/language-packs.js',
 ];

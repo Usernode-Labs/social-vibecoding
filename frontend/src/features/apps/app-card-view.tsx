@@ -38,27 +38,42 @@ type AppRecord = Record<string, any>;
  * initial is the letter tile's own quiet placeholder (app.css
  * `.app-icon-wait`), and it goes once the picture is there, so a picture with
  * transparent parts never shows it through them.
+ *
+ * The picture is drawn ABOVE that placeholder (#7129): the placeholder is
+ * absolutely positioned, so a plain img would paint under it and the initial
+ * would sit on the picture whenever the load event never reached React. The
+ * img is `relative` instead, and the placeholder is dropped as soon as the
+ * picture is ready to paint — on load, on the mounted element's own check, or
+ * when decode() resolves.
  */
 function IconImage({ src, letter, eager }: { src: string; letter: string; eager: boolean }): ReactNode {
   const [drawn, setDrawn] = useState(false);
   // An image the browser already holds can finish before React listens for
-  // its load event, so the mounted element is asked as well.
+  // its load event, so the mounted element is asked as well. decode() covers
+  // the load event that never arrives at all: once it resolves the picture is
+  // ready to paint, and a picture that fails leaves this the initial's tile.
   const ref = useCallback((img: HTMLImageElement | null) => {
-    if (img && img.complete && img.naturalWidth > 0) setDrawn(true);
+    if (!img) return;
+    if (img.complete && img.naturalWidth > 0) { setDrawn(true); return; }
+    img.decode().then(() => setDrawn(true), () => {});
   }, []);
   return (
     <>
       {drawn ? null : <span className="app-icon-wait" aria-hidden="true">{letter}</span>}
       {/* w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border,
           so the image fills the border box's content area and stays flush
-          inside the ring instead of being cropped. */}
+          inside the ring instead of being cropped. `relative` (with no
+          offsets, so it moves nothing) puts the picture in the same paint
+          order as the absolutely positioned placeholder, after it in the DOM:
+          the picture is always above the initial (#7129). */}
       <img
         ref={ref}
         src={src}
         alt=""
         loading={eager ? 'eager' : 'lazy'}
+        decoding={eager ? undefined : 'async'}
         draggable="false"
-        className="w-full h-full rounded-xl object-cover"
+        className="relative w-full h-full rounded-xl object-cover"
         onLoad={() => setDrawn(true)}
       />
     </>

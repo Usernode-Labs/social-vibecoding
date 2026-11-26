@@ -56,7 +56,7 @@
 // PlatformUI.transition(fn) and the native kit snapshots the DOM before fn
 // returns. `false` is the shipped state.
 
-import { useRef } from 'react';
+import { type CSSProperties, useRef } from 'react';
 import {
   SECTION_TAB_ACTIVE,
   SECTION_TAB_INACTIVE,
@@ -128,7 +128,10 @@ const SECTION_TABS = [
 // Q21): useScrollFade fades whichever edge has more beyond it and brings the
 // selected tab into view.
 const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
-const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
+// `one-seg` (One look, 25 Nov 2026): the strip is the shared segmented
+// control, its ink pill sliding to the tab you are on (app.css ONE LOOK ·
+// SHARED PARTS).
+const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden one-seg`;
 
 // Me's reading column, which the Kudos pane takes (see its root below). The
 // strip steps into it too while Kudos is showing, so the strip's left edge is
@@ -142,7 +145,13 @@ export function LeaderboardScreen() {
   useVisibilityHiddenClass(screenRef, 'leaderboard-screen', false);
   const { mounted, section } = useLeaderboardSection();
   const stripRef = useRef<HTMLDivElement | null>(null);
-  const stripFade = useScrollFade(stripRef, `${mounted ? 1 : 0}:${section}`);
+  const scrollFade = useScrollFade(stripRef, `${mounted ? 1 : 0}:${section}`);
+  // The segmented control's pill: how many tabs and which is on, once the
+  // tabs are drawn (the prerender's strip is empty, and so has no pill).
+  const onTab = SECTION_TABS.findIndex((s) => s.key === section);
+  const stripFade = mounted && onTab >= 0
+    ? { ...scrollFade, ['--one-seg-n' as string]: String(SECTION_TABS.length), ['--one-seg-i' as string]: String(onTab) } as CSSProperties
+    : scrollFade;
   // A challenge's detail page is a LEVEL of this screen (see
   // ./challenges-pane.tsx): while one is open the platform header is its nav
   // bar, and the screen's own title, tab strip and event bar step aside so the

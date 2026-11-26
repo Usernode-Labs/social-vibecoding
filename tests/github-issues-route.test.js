@@ -1738,3 +1738,46 @@ test('T2.5: in_progress carries the stored row of each change in review', async 
   assert.equal(broken.size, 0);
   assert.equal((await reviewWorkBySession(pool, [{ id: 42, status: 'active' }])).size, 0);
 });
+
+// #7160 — the closed board, and what a closed request's read adds.
+test('#7160: ?state=closed lists closed requests on their own', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?state=closed`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.issues));
+    assert.strictEqual(body.truncatedList, false);
+    assert.ok(body.issues.length >= 1);
+    assert.ok(body.issues.every((i) => i.state === 'closed'), 'only closed requests');
+    assert.ok(body.issues.some((i) => i.number === 142));
+    // None of the open board's composition rides along.
+    assert.ok(!('in_progress' in body.issues[0]));
+    assert.ok(!('bot' in body.issues[0]));
+  } finally {
+    server.close();
+  }
+});
+
+test('#7160: a closed request read names who closed it and why', async () => {
+  const previous = poolQueryHandler;
+  poolQueryHandler = async (sql) => {
+    if (/FROM requests r LEFT JOIN users/.test(String(sql))) {
+      return { rows: [{ state_reason: 'not_planned', username: 'tester' }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(res.status, 200);
+    const { issue } = await res.json();
+    assert.strictEqual(issue.closed_by_username, 'tester');
+    assert.strictEqual(issue.state_reason, 'not_planned');
+  } finally {
+    poolQueryHandler = previous;
+    server.close();
+  }
+});

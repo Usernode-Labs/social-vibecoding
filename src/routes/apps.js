@@ -4339,6 +4339,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         };
       }
       const activity = await communities.activitySummary(pool, app.id);
+      // Top contributors (request 6837): read by whoever this route
+      // answers, as the names of the week's people are. Best-effort: a list
+      // that cannot be read is a hub without the card, never a failed hub.
+      let contributors = null;
+      try {
+        contributors = await communities.contributorsSummary(pool, app.id);
+      } catch (err) {
+        log.warn('apps', 'Could not read contributors', { slug: app.slug, message: err.message });
+      }
       // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
       // closing it to a group) is the visibility PR the settings dialog
       // opens, offered on the hero to the people POST /visibility-pr lets
@@ -4460,8 +4469,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // hasLiveLink.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
-      // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
-      // sent · nobody has joined yet · 7 days left". The links listInvites
+      // WHAT INVITE IS OUT (15 Oct 2026; Share it's line until that card
+      // went on 26 Nov 2026): "Invite link sent · nobody has joined yet ·
+      // 7 days left". The links listInvites
       // shows this viewer (their own, or every link to someone who manages
       // the project), summed: how many are live, who joined through them,
       // who still waits, and when the soonest ends. For a member or someone
@@ -4542,6 +4552,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         channel,
         places: placesPayload,
         activity,
+        contributors,
         can_manage: !!canManage,
         audience_change: pendingAudience ? {
           session_id: pendingAudience.id,

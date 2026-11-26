@@ -427,7 +427,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   }
   // A different revision can still supply cached dependency/launch layers.
   if (completed.length) body.spec.lastBuild = { image: completed[0].status.latestImage };
-  await waitForCheckPool(config);
+  await waitForBatchPool(config);
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {
@@ -3200,9 +3200,9 @@ async function deleteRunCheckJobs(config, { sessionId, previewRunId }) {
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
 // `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id).
-// An early unit suite (`sv-unit-early-…`) is never touched here: it goes
-// with its attempt (preview services retireAttempt).
-async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
+// An early unit suite goes with its attempt unless its exact run is named
+// by the caller holding the suite's queue slot.
+async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false, includeEarly = false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
@@ -3211,7 +3211,8 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spa
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
-        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)
+        && !(includeEarly && previewRunId && name.startsWith(`sv-unit-early-s${sessionId}-`))) return;
     const runId = job.metadata.labels?.['social.usernode.io/preview-run-id'];
     if (previewRunId && runId !== previewRunId) return;
     if (runId && spare(runId)) return;
@@ -3386,11 +3387,66 @@ function checkPlacement(cfg, checkSelector) {
   };
 }
 
+// BUILD_NODE_POOL as { key, value }: where both build lanes (BuildKit Jobs
+// and kpack Builds) run, when it is set. Empty or invalid: null, and builds
+// follow the checks pool as before. On 26 Nov 2026 every build of two days
+// ran on the one checks node; beside several proposals' unit suites a 20 s
+// image build took four minutes, waiting on that node while using a tenth of
+// a core. Builds are light (three cores at most between them that day), so
+// one small node of their own keeps them out of the suites' way.
+function buildNodePool(cfg) {
+  const raw = String(cfg.buildNodePool || '').trim();
+  if (!raw) return null;
+  const match = NODE_POOL_PAIR.exec(raw);
+  if (!match) {
+    if (!warnedNodePools.has(raw)) {
+      warnedNodePools.add(raw);
+      log.warn('kubernetes', 'BUILD_NODE_POOL is not a label key=value; builds keep the checks pool', { value: raw });
+    }
+    return null;
+  }
+  return { key: match[1], value: match[2] };
+}
+
+// Where a build runs: its own pool when BUILD_NODE_POOL names one, required,
+// its taint tolerated; else the required checks pool; else anywhere.
 function batchWorkPlacement(cfg) {
+  const own = buildNodePool(cfg);
+  if (own) {
+    return { nodeSelector: { [own.key]: own.value },
+      tolerations: [{ key: own.key, operator: 'Equal', value: own.value, effect: 'NoSchedule' }] };
+  }
   if (!cfg.checkNodePoolRequired) return {};
   const pool = checkNodePool(cfg);
   return { nodeSelector: { [pool.key]: pool.value },
     tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }] };
+}
+
+// Whether a build pool has a node a build can be scheduled on: Ready,
+// schedulable, and tainted with nothing but the pool's own taint. A build
+// asks for one Pod's room, which the scheduler judges, so this only keeps a
+// build from spending its deadline Pending while the pool is down.
+async function buildPoolCapacity(config, pool) {
+  const cfg = config?.kubernetes || {};
+  if (cfg.checkPoolMetricsUrl) {
+    let url;
+    try { url = new URL('/api/v1/query', cfg.checkPoolMetricsUrl); }
+    catch { throw checkPoolConfigurationError('Invalid check-pool metrics URL'); }
+    if (!['http:', 'https:'].includes(url.protocol)) throw checkPoolConfigurationError('Invalid check-pool metrics URL');
+    url.searchParams.set('query', require('./check-pool').metricsQuery(pool));
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error('Build-pool metrics unavailable');
+    const data = await response.json();
+    if (data.status !== 'success' || data.data?.resultType !== 'vector' || !Array.isArray(data.data.result)) {
+      throw new Error('Invalid build-pool metrics response');
+    }
+    return { available: data.data.result.some((row) => row.metric?.node) };
+  }
+  const nodes = await getClients().core.listNode({ labelSelector: `${pool.key}=${pool.value}` });
+  return { available: (nodes.items || []).some((n) => !n.spec?.unschedulable && !n.metadata?.deletionTimestamp
+    && n.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True')
+    && !(n.spec?.taints || []).some((t) => ['NoSchedule', 'NoExecute'].includes(t.effect)
+      && !(t.effect === 'NoSchedule' && t.key === pool.key && t.value === pool.value))) };
 }
 
 async function checkPoolCapacity(config = null) {
@@ -3478,14 +3534,26 @@ async function reconcileAppResourceProfiles(config, appRows, { maxChanges = 1 } 
   return { examined: deployments.items?.length || 0, changed };
 }
 
-async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000, pollMs = 3000 } = {}) {
+async function waitForCheckPool(config, options = {}) {
   if (!require('./check-pool').required(config)) return;
+  await waitForPool(() => checkPoolCapacity(config), 'The dedicated checks pool is unavailable', options);
+}
+
+// Before a build creates anything: its own pool when BUILD_NODE_POOL names
+// one, else the checks pool, as before.
+async function waitForBatchPool(config, options = {}) {
+  const own = buildNodePool(config?.kubernetes || {});
+  if (!own) return waitForCheckPool(config, options);
+  await waitForPool(() => buildPoolCapacity(config, own), 'The dedicated build pool is unavailable', options);
+}
+
+async function waitForPool(capacity, unavailable, { signal = null, waitMs = 15 * 60 * 1000, pollMs = 3000 } = {}) {
   const deadline = Date.now() + waitMs;
   let reported = false;
   for (;;) {
     signal?.throwIfAborted();
     try {
-      if ((await checkPoolCapacity(config)).available) return;
+      if ((await capacity()).available) return;
     } catch (err) {
       signal?.throwIfAborted();
       if (err.code === 'CHECK_POOL_CONFIG') throw err;
@@ -3497,7 +3565,7 @@ async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000
       }
     }
     if (Date.now() >= deadline) {
-      throw Object.assign(new Error('The dedicated checks pool is unavailable'), { infrastructure: true });
+      throw Object.assign(new Error(unavailable), { infrastructure: true });
     }
     const delayMs = Math.max(1, Math.min(pollMs, deadline - Date.now()));
     await observeCheck(new Promise((resolve) => setTimeout(resolve, delayMs)), signal);
@@ -3506,7 +3574,7 @@ async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
 // unit suite (preview services checks.unitEarly) is `sv-unit-early-…`, which
-// cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
+// session-wide check cleanup leaves to its attempt. `nameSuffix` and
 // `shard` name and label one of a run's capture shards; `cpuRequest` is a
 // shard's smaller share of the scheduler (services/visuals.js
 // CAPTURE_SHARD_CPU_REQUEST).
@@ -3640,9 +3708,11 @@ async function runCheckJob(config, {
   };
   try {
     signal?.throwIfAborted();
-    // Covers early and main-watch Jobs too. Their execution deadlines begin
-    // only once the dedicated pool exists, not while waiting for its return.
-    await create(() => waitForCheckPool(config, { signal }));
+    // Recheck placement immediately before creating resources. An early
+    // suite gives up its spare slot if the pool became unavailable.
+    await create(() => waitForCheckPool(config, {
+      signal, ...(namePrefix === 'sv-unit-early' ? { waitMs: 0 } : {}),
+    }));
     if (inputSecretName) {
       inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
@@ -4281,7 +4351,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
-  batchWorkPlacement, waitForBatchPool: waitForCheckPool,
+  batchWorkPlacement, waitForBatchPool,
   reconcileAppResourceProfiles,
   readProductionForSleep, scaleProductionForSleep, appGateActivity,
   checkPoolCapacity,

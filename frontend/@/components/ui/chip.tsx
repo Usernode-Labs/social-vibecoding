@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
@@ -90,41 +90,37 @@ export function Chip({ className, selected, shape, size, ...props }: ChipProps) 
   );
 }
 
-/**
- * `[-ms-overflow-style:none]` / `[scrollbar-width:none]` / the webkit
- * pseudo-element together hide the scrollbar without killing the scroll — the
- * rail is finger-scrolled on the surface this language targets, and a visible
- * bar under a row of circles reads as a rendering fault.
- */
-export function ChipRail({ className, ...props }: React.ComponentProps<'div'>) {
-  return (
-    <div
-      className={cn(
-        'flex gap-3 overflow-x-auto px-4 py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-        className,
-      )}
-      {...props}
-    />
-  );
-}
+/** How wide a rail's fade is, in CSS pixels. */
+const FADE = 40;
+const RAIL = 'flex gap-3 overflow-x-auto px-4 py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
+
+interface RailEdges { start: boolean; end: boolean }
 
 /**
- * A chip rail that says there is more: the row scrolls as `ChipRail` does, and
- * fades out toward whichever edge has chips past it rather than cutting the
- * last one off against the edge (Evan, 30 Oct: wrapping to a second line read
- * worse). The fade is a mask, so it fades to whatever it sits on, in either
- * theme. Both edges false, as when every chip fits, sets no mask at all.
+ * What makes a sideways row of chips say it scrolls (request 7029, and the
+ * phone audit, request 7164: Needs you's chips "run off the right edge with
+ * no hint that they scroll"). Two things, for any scroller a ref is on:
  *
- * Its user is Home's kind chips (features/home/communities-to-join.tsx). The
- * base classes are `ChipRail`'s own; a caller passes the spacing its surface
- * needs, since the rail sits in the page's gutter. The AI page's project
- * chips (features/ai/lists.tsx) keep their own copy, inside a sheet, whose
- * measurement `tests/rtl-geometry.test.js` pins.
+ * - `edges`, which ends have chips past them, and `style`, the mask that
+ *   fades those ends (the start is the right end in a right-to-left row). It
+ *   is a mask, so it fades to whatever the row sits on,
+ *   in either theme, and it goes when the row is scrolled to that end. A row
+ *   that fits gets none.
+ * - The pressed chip (`aria-pressed="true"`) is brought into view when the
+ *   row is first drawn and whenever another chip is pressed, so a row never
+ *   opens with its own selection off the edge. Only the row is scrolled,
+ *   never the page.
+ *
+ * STATE IN AN EFFECT, NEVER IN THE FIRST RENDER: the first render carries no
+ * mask and no mark, so a prerender and its hydration match. A scroller that
+ * is not one (`display: contents`, as All items' filter chips are from
+ * 640px) measures zero both ways and gets nothing.
  */
-const FADE = 40;
-export function FadeRail({ className, children, style, ...props }: React.ComponentProps<'div'>) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [edges, setEdges] = useState({ start: false, end: false });
+export function useRailFade(ref: RefObject<HTMLElement | null>): { edges: RailEdges; style: CSSProperties | undefined } {
+  const [edges, setEdges] = useState<RailEdges>({ start: false, end: false });
+  const [rtl, setRtl] = useState(false);
+  const shown = useRef<Element | null>(null);
+  const measure = useRef<(() => void) | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
@@ -134,25 +130,71 @@ export function FadeRail({ className, children, style, ...props }: React.Compone
       const start = at > 1;
       const end = at + el.clientWidth < el.scrollWidth - 1;
       setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+      if (start || end) setRtl(getComputedStyle(el).direction === 'rtl');
     };
+    measure.current = sync;
     sync();
     el.addEventListener('scroll', sync, { passive: true });
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
     ro?.observe(el);
-    return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
-  }, []);
+    return () => { measure.current = null; el.removeEventListener('scroll', sync); ro?.disconnect(); };
+  }, [ref]);
+  // After every render, and cheap. A chip that arrives or goes changes what
+  // is past the edge without the row's own box changing, which the observer
+  // above does not see; and the pressed chip is moved only when it is
+  // another one than last time.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    measure.current?.();
+    const pressed = el.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (pressed === shown.current) return;
+    shown.current = pressed;
+    if (!pressed || el.scrollWidth <= el.clientWidth) return;
+    const rail = el.getBoundingClientRect();
+    const chip = pressed.getBoundingClientRect();
+    // Past either end by more than the fade: move it clear of the fade. The
+    // sign of the move is the same in a right-to-left row, where scrollLeft
+    // runs negative.
+    if (chip.left < rail.left) el.scrollLeft -= rail.left + FADE - chip.left;
+    else if (chip.right > rail.right) el.scrollLeft += chip.right - (rail.right - FADE);
+  });
   const mask = edges.start || edges.end
-    ? `linear-gradient(to right, ${edges.start ? 'transparent' : '#000'}, #000 ${FADE}px, #000 calc(100% - ${FADE}px), ${edges.end ? 'transparent' : '#000'})`
+    ? `linear-gradient(to ${rtl ? 'left' : 'right'}, ${edges.start ? 'transparent' : '#000'}, #000 ${FADE}px, #000 calc(100% - ${FADE}px), ${edges.end ? 'transparent' : '#000'})`
     : undefined;
+  return { edges, style: mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined };
+}
+
+/**
+ * The rail a row of chips scrolls in. Chips keep their own width (`shrink-0`
+ * on the chip) with a gap between them, so on a narrow phone they never run
+ * into each other: the row scrolls sideways instead, and fades toward
+ * whichever edge has chips past it rather than cutting the last one off
+ * against the edge (Evan, 30 Oct: wrapping to a second line read worse).
+ * `useRailFade` above is the fade and the pressed chip kept in view.
+ *
+ * `[-ms-overflow-style:none]` / `[scrollbar-width:none]` / the webkit
+ * pseudo-element together hide the scrollbar without killing the scroll — the
+ * rail is finger-scrolled on the surface this language targets, and a visible
+ * bar under a row of circles reads as a rendering fault.
+ *
+ * Its users are Needs you's vote kinds (features/workshop/vote-filter.tsx),
+ * the notification kinds, the share sheet's two rows, Home's kind chips
+ * (features/home/communities-to-join.tsx) and the AI page's History kinds
+ * (features/ai/lists.tsx). A caller passes the spacing its surface needs,
+ * since the rail sits in the page's gutter. The AI page's PROJECT chips
+ * (features/ai/lists.tsx) keep their own copy, inside a sheet, whose
+ * measurement `tests/rtl-geometry.test.js` pins.
+ */
+export function ChipRail({ className, children, style, ...props }: React.ComponentProps<'div'>) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const { edges, style: fade } = useRailFade(ref);
   return (
     <div
       ref={ref}
-      className={cn(
-        'flex gap-3 overflow-x-auto px-4 py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-        className,
-      )}
+      className={cn(RAIL, className)}
       // The first render has no mask, so a prerender and its hydration match.
-      style={mask ? { ...style, maskImage: mask, WebkitMaskImage: mask } : style}
+      style={fade ? { ...style, ...fade } : style}
       data-fade-start={edges.start ? '' : undefined}
       data-fade-end={edges.end ? '' : undefined}
       {...props}
@@ -161,3 +203,9 @@ export function FadeRail({ className, children, style, ...props }: React.Compone
     </div>
   );
 }
+
+/**
+ * The same rail under the name it had while only some rails faded. Every
+ * chip rail fades now (request 7029), so this is `ChipRail`.
+ */
+export const FadeRail = ChipRail;

@@ -434,7 +434,16 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const failing = await orchestrator.compareScreens(pool, { runId: id, verdict: out.verdict }, {
       shotsDiff: { screensFor: async () => { throw new Error('decode'); } },
     });
-    assert.deepEqual(failing, out.verdict, 'a comparison that fails publishes without outlines');
+    // 23 Nov 2026: a comparison that fails publishes without outlines, but
+    // still with a screen for each one the run shot, off the saved PNGs'
+    // headers, and marks nothing unchanged; the machine compares it again.
+    const { screens: fallback, screensFallback, ...rest } = failing;
+    assert.deepEqual(rest, out.verdict, 'the verdict is otherwise the agent\'s own: nothing marked unchanged');
+    assert.equal(screensFallback, true);
+    assert.equal(fallback.length, 1);
+    assert.equal(fallback[0].shot, 'invite-suggestions');
+    assert.deepEqual(fallback[0].regions, [], 'nothing outlined');
+    assert.ok(fallback[0].width > 0 && fallback[0].heightBefore > 0 && fallback[0].heightAfter > 0);
   });
 
   await t.test('cleanup stops only the run\'s own turn, removes its copies and workspace, and keeps trying while any is left', async () => {

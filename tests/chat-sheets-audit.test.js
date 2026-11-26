@@ -21,12 +21,13 @@ function drawerRules() {
 
 test('C03: the phone\'s Messages list keeps the rows\' own type and time', () => {
   const block = drawerRules();
-  assert.doesNotMatch(block, /\.messages-row-name \{ font-size: 15px; font-weight: 400; \}/, 'no 400-weight title');
-  assert.doesNotMatch(block, /\.messages-row-preview \{ font-size: 12px;/, 'no 12px last line');
-  assert.doesNotMatch(block, /\.messages-row-time[^{]*\{ display: none; \}/, 'the time stays');
-  // The house rule the column now inherits: 15 over 13 at 650.
-  assert.match(CSS, /\n\.messages-row-name \{ color: var\(--text-primary\); font-size: 15px; font-weight: 650;/);
-  assert.match(CSS, /\n\.messages-row-preview \{ margin-top: 2px; color: var\(--text-muted\); font-size: 13px;/);
+  // The rows are the shared row (ListRow) on a phone as on a desktop: the
+  // drawer's block draws nothing of them, so it cannot shrink their type or
+  // hide their time.
+  assert.doesNotMatch(block, /\.messages-(conversation-row|row-name|row-preview|row-time)/, 'no row rules in the drawer');
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /<ListRow\s+as="a"\s+href=\{`#messages\/\$\{conversation\.id\}`\}/, 'the shared row');
+  assert.match(screen, /top=\{<time dateTime=\{conversation\.lastActivityAt\} title=\{activity\.title\}>\{activity\.text\}<\/time>\}/, 'the time stays');
 });
 
 test('C06: an empty reply box on a request or a channel shows Send faded, as Messages does', () => {

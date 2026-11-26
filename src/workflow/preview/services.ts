@@ -19,7 +19,7 @@
 
 import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
-import { LeaseLost } from '../kernel/index.ts';
+import { HandedBack, LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
@@ -98,17 +98,26 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   // An attempt's early unit suite, running or finished: its Jobs go.
   const dropUnitEarly = async (sessionId: number, n: number) => {
     if (config.workerRuntime !== 'kubernetes') return;
-    await kubernetes().deleteRunCheckJobs(config, { sessionId, previewRunId: unitEarlyRunId(sessionId, n) });
+    const runId = unitEarlyRunId(sessionId, n);
+    if (config.kubernetes?.checkNodePoolRequired) {
+      await kubernetes().cancelPreviewChecks(config, sessionId, runId, { includeEarly: true });
+      await legacy('services/check-runs').finish(pool, runId);
+    }
+    await kubernetes().deleteRunCheckJobs(config, { sessionId, previewRunId: runId });
   };
   // Every claim of a run (its check_runs rows, by the run's key): their Jobs
   // cancelled, finished or not, and their rows gone.
   const clearRun = async (sessionId: number, runKey: string) => {
     const { rows } = await pool.query(
-      `SELECT run_id FROM check_runs WHERE session_id = $1 AND manifest->>'runKey' = $2`, [sessionId, runKey]);
+      `SELECT run_id, manifest->>'unitRunId' AS unit_run_id
+        FROM check_runs WHERE session_id = $1 AND manifest->>'runKey' = $2`, [sessionId, runKey]);
     for (const r of rows) {
       if (config.captureRuntime === 'kubernetes') {
         await kubernetes().cancelPreviewChecks(config, sessionId, r.run_id);
         await kubernetes().deleteRunCheckJobs(config, { sessionId, previewRunId: r.run_id });
+        if (r.unit_run_id && config.kubernetes?.checkNodePoolRequired) {
+          await kubernetes().cancelPreviewChecks(config, sessionId, r.unit_run_id, { includeEarly: true });
+        }
       }
       await legacy('services/check-runs').finish(pool, r.run_id);
     }
@@ -169,6 +178,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           return {
             ok: true, db, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
             containerId: built.containerId ?? null, imageRef: built.imageRef ?? null, buildRef: built.buildRef ?? null,
+            // The build's step times, for the trace of the checks run that
+            // follows (the server log was their only record).
+            timings: built.timings ?? null,
           };
         } catch (err) {
           if (cancelled(ctx, err) || (err as { code?: string }).code === 'attempt_superseded') {
@@ -221,9 +233,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     // only while fewer unit suites run than the checks queue lets runs go at
     // once, so a burst of builds cannot fill the worker namespace's quota
     // ahead of the runs the queue admits. EARLY_UNIT_SUITE=0 turns it off.
-    // A required batch pool admits whole runs, not speculative early suites:
-    // those would bypass its shared budget. Their suite runs after the build,
-    // inside the admitted checks run instead.
+    // In the required pool the early suite must first reserve a whole slot
+    // from the same queue as capture. Busy or unavailable pools fall back to
+    // the unit suite started by checks.run.
     [WORK.unitEarly]: {
       // Its Jobs outlive a lost claim, and a retry finds them.
       maxAttempts: 2,
@@ -232,7 +244,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       async run({ input, signal }): Promise<Json> {
         const off = ['0', 'false', 'off'].includes(String(process.env.EARLY_UNIT_SUITE ?? '1').trim().toLowerCase());
         const unitSuite = legacy('services/unit-suite');
-        if (off || config.kubernetes?.checkNodePoolRequired || config.workerRuntime !== 'kubernetes'
+        const required = config.kubernetes?.checkNodePoolRequired === true;
+        if (off || (required && config.captureRuntime !== 'kubernetes') || config.workerRuntime !== 'kubernetes'
           || !unitSuite.isEnabled()) return { started: false, why: 'off' };
         // Only while its attempt is still being built: once it serves, its
         // checks run is under way and runs a suite of its own if it finds
@@ -245,9 +258,12 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const k = kubernetes();
         const jobs = await k.findCheckJobs(config, { sessionId: input.sessionId, previewRunId: runId });
         if (jobs.unitSuites?.length || jobs.unitSuite) return { started: true, runId, joined: true };
-        const cap = legacy('services/checks-queue').maxConcurrentRuns();
-        const running = await k.countRunningUnitSuiteJobs(config);
-        if (running === null || (cap > 0 && running >= cap)) return { started: false, why: 'busy', running, cap };
+        const queue = legacy('services/checks-queue');
+        if (!required) {
+          const cap = queue.maxConcurrentRuns();
+          const running = await k.countRunningUnitSuiteJobs(config);
+          if (running === null || (cap > 0 && running >= cap)) return { started: false, why: 'busy', running, cap };
+        }
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         const repo = repoOf(a?.repo_url);
         if (!row || !repo) return { started: false, why: 'gone' };
@@ -261,13 +277,32 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           commitSha: input.head, trigger: input.trigger ?? null,
         });
         if (reusable) return { started: false, why: 'reused' };
+        let stopHeartbeat = () => {};
+        if (required) {
+          const granted = await queue.reserveEarlyUnitSlot(config, pool, {
+            runId, sessionId: Number(input.sessionId), appId: Number(input.appId), attempt: input.n, commitSha: input.head,
+          }).catch(() => false);
+          if (!granted) return { started: false, why: 'no_spare_slot' };
+          stopHeartbeat = legacy('services/check-runs').startHeartbeat(pool, runId);
+        }
         // `commitSha`: this item follows the suite to its end, so its pass is
         // recorded for reuse, for the commit it judged.
-        await unitSuite.maybeRunUnitSuite({
-          config, pool, appId: input.appId, sessionId: input.sessionId, repoOwner: repo.owner, repoName: repo.repo,
-          ref: input.head, prNumber: Number(row.pr_number) || null,
-          signal, previewRunId: runId, jobNamePrefix: 'sv-unit-early', commitSha: input.head, strict: true,
-        }).catch(() => null);
+        try {
+          await unitSuite.maybeRunUnitSuite({
+            config, pool, appId: input.appId, sessionId: input.sessionId, repoOwner: repo.owner, repoName: repo.repo,
+            ref: input.head, prNumber: Number(row.pr_number) || null,
+            signal, previewRunId: runId, jobNamePrefix: 'sv-unit-early', commitSha: input.head, strict: true,
+          }).catch(() => null);
+          if (required && !signal.aborted) {
+            // If capture adopted the slot, the old row is already gone.
+            // Terminal Jobs stay readable, and any orphan Pod must stop
+            // before we give an unadopted slot back.
+            await k.cancelPreviewChecks(config, input.sessionId, runId, { includeEarly: true });
+            await legacy('services/check-runs').finish(pool, runId);
+          }
+        } finally {
+          stopHeartbeat();
+        }
         return { started: true, runId };
       },
     },
@@ -308,12 +343,28 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         if (!awake.ok) return { outcome: 'blocked', reason: awake.detail, platformFault: true };
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const report: { uiAffecting?: boolean } = {};
+        // A run whose process drains (a release replaced it) and that could
+        // not get a database connection on its small pools is handed back,
+        // not settled: the process that replaced this one claims it at once,
+        // and its claim collects what the Jobs wrote, or runs it again in the
+        // place in line this one had (above), as for a claim whose process
+        // went. Its check_runs row, its place, is kept for that. Where it
+        // cannot be handed back, it is the platform's error it would have
+        // been (visuals.databaseBusyResult).
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {
           trigger: input.trigger,
           workflow: {
             runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
             unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report,
+            // The build this run follows, timed (only the run right after a
+            // build has it): its trace records the build's steps.
+            buildTimings: input.timings ?? null,
           },
+        }).catch((err: unknown) => {
+          if (!cancelled(ctx, err) && legacy('services/db-retry').handBackOnDrain(err)) {
+            throw new HandedBack(err, visuals().databaseBusyResult() as Json);
+          }
+          throw err;
         });
         const out = (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Record<string, Json>;
         return (report.uiAffecting ? { ...out, uiUndeclared: String(input.head).toLowerCase() } : out) as Json;

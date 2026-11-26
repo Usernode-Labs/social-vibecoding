@@ -53,7 +53,7 @@
 import { useEffect, useState } from 'react';
 import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from 'react';
 
-import { GroupedList, ListRow, SectionHeader, rowSeparator } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import {
   AppWindowIcon, BellIcon, BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon,
   CompassIcon, DescriptionIcon, EyeIcon, GlobeIcon, InfoCircleIcon, LightBulbIcon, LinkIcon, LockIcon,
@@ -63,10 +63,8 @@ import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
-import { useFramePage } from '../frame/frame-page-store';
 import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
 import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
-import { navStore } from '../nav/nav-store.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 interface FilterPart {
@@ -541,6 +539,22 @@ const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
 // #5995: a row's count, in muted words; a settled state gets no colour.
 const NAV_STATUS = 'ui-row-meta shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
 const MENU_STATUS = 'ui-row-meta shrink-0 text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
+
+/**
+ * A phone menu row's second line: its count first ("9 connected"), then the
+ * line that says what is behind it, joined by a middle dot. Nothing when the
+ * row has neither. The count is a span of its own so the declared checks and
+ * tests still find `data-settings-nav-status`.
+ */
+function menuSubtitle(item: MenuItem): ReactNode {
+  if (!item.status) return item.subtitle || undefined;
+  return (
+    <>
+      <span data-settings-nav-status="">{item.status}</span>
+      {item.subtitle ? <span>{` · ${item.subtitle}`}</span> : null}
+    </>
+  );
+}
 // The "Beta" label: a small grey pill, no accent (colour is for actions).
 const BETA_TAG = 'ui-pill shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
 
@@ -890,41 +904,40 @@ export function SettingsMobileMenu() {
               {/* #5997: a folded group is its heading alone. */}
               {group.folded ? null : (
               <GroupedList className="mx-0">
-                {group.items.map((item, place) => {
+                {group.items.map((item) => {
                   const Glyph = glyphFor(item.icon);
-                  const row = (
+                  return (
                   <ListRow
                     key={item.key}
                     as="button"
-                    // In the pin wrapper below, the wrapper draws the hairline.
-                    inset={group.key ? 'none' : 'text'}
+                    // The row is the whole width of the card, so its press
+                    // fill (ListRow's `active:` ground) runs edge to edge and
+                    // the card's radius clips it (phone review S9). It used
+                    // to share a wrapper with the pin, which cut the fill
+                    // short of the bookmark and a few points in from the
+                    // card's edge.
+                    inset="text"
                     data-settings-nav={item.key}
-                    className={group.key ? cn(MENU_ROW, 'min-w-0 flex-1') : MENU_ROW}
+                    data-settings-row={group.key ? item.key : undefined}
+                    className={MENU_ROW}
                     // #5997: the page's glyph, in the row's muted grey.
                     leading={Glyph ? <Glyph className="h-5 w-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" /> : undefined}
-                    // ListRow bolds its title for the rows it was built for, where
-                    // the title is a subject with a subtitle under it. These are
-                    // short menu entries, most with no second line, so bold made
-                    // the whole menu read as a stack of headings.
-                    titleClassName="font-normal"
+                    // The row's name at the list rows' own weight, as on the
+                    // You page (phone review #62): these are the same rows,
+                    // each a page with a line under it.
                     title={item.label}
-                    // #5995: the few rows whose name does not say what is behind
-                    // it carry one muted line (Settings.SUBTITLES); the rest none.
-                    subtitle={item.subtitle || undefined}
-                    // #5995: how much is set up ("2 linked"), or a "Beta" label,
-                    // before the chevron. Nothing when there is nothing to say.
-                    trailing={item.tag || item.status ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
+                    // #5995: how much is set up ("2 linked") and, for the few
+                    // rows whose name does not say what is behind it, one
+                    // muted line (Settings.SUBTITLES). Both UNDER the name
+                    // (phone review #62): beside it, the count, the chevron
+                    // and a bookmark left the name about 105pt and cut it.
+                    subtitle={menuSubtitle(item)}
+                    // A "Beta" label is the one thing left on the trailing
+                    // edge, before the chevron.
+                    trailing={item.tag ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
                     onClick={() => navClick(item.key)}
                   />
                   );
-                  // #5997: the pin (and a pinned row's arrows) beside the row,
-                  // always shown on a phone, where nothing hovers.
-                  return group.key ? (
-                    <div key={item.key} className={cn('relative flex items-center pe-1', rowSeparator({ inset: 'text' }))} data-settings-row={item.key}>
-                      {row}
-                      <RowControls item={item} place={place} count={group.items.length} hostId="settings-mobile-menu-host" phone />
-                    </div>
-                  ) : row;
                 })}
               </GroupedList>
               )}
@@ -963,31 +976,70 @@ export function SettingsPageTitle() {
 }
 
 /**
- * THE BAR'S TRAIL UNDER A LOOK (looks v2, s56 to s73). The frame's bar reads
- * a page's own breadcrumb from ../frame/frame-page-store.ts; Settings says
- * "You › Settings" on the phone's list of sections and "Settings › <page>"
- * wherever a section is open (a phone's bar shows the last word alone). The
- * arrow stays the shell's own back button, whose target settings.js keeps
- * (`_syncChrome`: the list from a section on a phone, You otherwise).
- * Published only while the screen is up; the standard header never reads it.
- * Draws nothing.
+ * THE PAGE'S BOOKMARK ON A PHONE (phone review #62, 23 Nov 2026). Each row of
+ * the phone's menu used to carry its own 44px bookmark (and a pinned row two
+ * arrows), which with the count and the chevron left the row's name about
+ * 105pt. The bookmark is on the page it pins instead, at the page's top
+ * right: "Pin to the top", or "Pinned" once it is, and on a pinned page the
+ * two arrows that move it among the pinned pages. Below lg only; the sidebar
+ * keeps its row controls. Nothing until the nav's first paint, and nothing
+ * for a page outside a group that pins (the descriptor's `key`).
  */
-const pressBack = () => { document.getElementById('back-btn')?.click(); };
+const PAGE_PIN = 'flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-[0.8125rem] font-medium text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-700/60';
 
-export function SettingsFrameCrumb() {
+export function SettingsPagePin() {
   const t = useMessages('settings');
-  const tCore = useMessages('core');
-  // The router's last revealed screen: Settings does not publish through the visibility store.
-  const shown = (useStoreState(navStore) as { screen: string | null }).screen === 'settings-screen';
-  const { desktop, mobile } = useStoreState(settingsNavStore) as NavState;
-  let page = '';
+  const { desktop } = useStoreState(settingsNavStore) as NavState;
+  let found: { item: NavItem; group: NavGroup; place: number } | null = null;
   for (const group of desktop || []) {
-    const hit = group.items.find((item) => item.active);
-    if (hit) { page = hit.label; break; }
+    const place = group.items.findIndex((item) => item.active);
+    if (place >= 0) { found = { item: group.items[place], group, place }; break; }
   }
-  const settings = t('settings:screen.title');
-  // `mobile` is the level-1 menu's descriptor: set only while the list is the page.
-  const crumb = !shown || !desktop ? null : mobile || !page ? [tCore('core:tabs.me'), settings] : [settings, page];
-  useFramePage(crumb, crumb ? pressBack : null);
-  return null;
+  if (!found || !found.group.key) return null;
+  const { item, group, place } = found;
+  const page = item.label;
+  const PinGlyph = item.pinned ? BookmarkSolidIcon : BookmarkIcon;
+  const label = item.pinned ? t('settings:nav.pin.remove', { page }) : t('settings:nav.pin.add', { page });
+  return (
+    <div className="settings-page-pin lg:hidden -mt-1 mb-2 flex items-center justify-end gap-1" data-settings-row={item.key} data-settings-page-pin="">
+      {item.pinned ? (
+        <>
+          <button
+            type="button"
+            data-settings-control="up"
+            className={cn(CONTROL, CONTROL_PHONE)}
+            aria-label={t('settings:nav.pin.up', { page })}
+            title={t('settings:nav.pin.up', { page })}
+            disabled={place <= 0}
+            onClick={() => settingsApi()?._movePinned(item.key, -1)}
+          >
+            <ChevronUpIcon className={CONTROL_GLYPH_PHONE} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            data-settings-control="down"
+            className={cn(CONTROL, CONTROL_PHONE)}
+            aria-label={t('settings:nav.pin.down', { page })}
+            title={t('settings:nav.pin.down', { page })}
+            disabled={place >= group.items.length - 1}
+            onClick={() => settingsApi()?._movePinned(item.key, 1)}
+          >
+            <ChevronDownIcon className={CONTROL_GLYPH_PHONE} aria-hidden="true" />
+          </button>
+        </>
+      ) : null}
+      <button
+        type="button"
+        data-settings-control="pin"
+        data-settings-pin={item.pinned ? 'on' : 'off'}
+        className={PAGE_PIN}
+        aria-label={label}
+        aria-pressed={!!item.pinned}
+        onClick={() => settingsApi()?._setPinned(item.key, !item.pinned)}
+      >
+        <PinGlyph className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span>{item.pinned ? t('settings:nav.pin.pageRemove') : t('settings:nav.pin.pageAdd')}</span>
+      </button>
+    </div>
+  );
 }

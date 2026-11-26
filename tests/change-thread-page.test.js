@@ -122,7 +122,7 @@ test('ChangeRows: "N replies", then Messages rows and quiet lines in the order t
   assert.ok(at('data-change-event="submitted"') < at('data-change-event="preview"'));
   assert.ok(at('data-change-event="preview"') < at('data-change-event="vote"'));
   assert.ok(at('data-change-event="vote"') < at('Looks good on my phone.'));
-  assert.match(html, /<b>snait<\/b> asked for approval<span class="dev-request-event-time"[^>]*> · 1:36 PM<\/span>/);
+  assert.match(html, /<b>snait<\/b> asked for approval<span class="dev-request-event-time"[^>]*>1:36 PM<\/span>/);
   assert.match(html, /The preview is ready · <button type="button" class="dev-request-event-link">Try it<\/button>/);
   assert.match(html, /<b>cilokman<\/b> voted yes on an earlier version/);
   assert.match(html, /<b>jo<\/b> voted no<span class="dev-change-event-reason">: “Not yet”<\/span>/, 'a vote\'s reason, quoted after it');
@@ -306,7 +306,9 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(css, /\.dev-change-gate\[data-done="true"\] \.dev-change-bar-fill\[data-state="done"\] \{ background: var\(--state-ok\); \}/);
   assert.match(css, /\.dev-change-gate\[data-tone="done"\] \.dev-change-gate-figure \{ color: var\(--state-ok\); font-weight: 600; \}/);
   assert.match(css, /\.dev-change-gate-check \{[^}]*color: var\(--state-ok\);/);
-  assert.match(css, /\.dev-change-shots \.shots-stage \{ margin: 0 8px; aspect-ratio: 4 \/ 5; \}/, 'a taller frame on a phone');
+  // The older viewer's 4:5 stage on a phone is gone with it: the one before
+  // & after viewer (review-flow/shots-viewer.tsx) sizes its picture to the screen.
+  assert.doesNotMatch(css, /\.dev-change-shots \.shots-stage/);
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 

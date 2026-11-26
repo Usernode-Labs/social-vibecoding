@@ -3096,11 +3096,11 @@ function buildVisibleChangesLines(locale = null) {
   'for something and wait for its reply. Start from a state that already holds the reply: a ready-made state the',
   'tool\'s answer lists, or a message the app\'s staging seed writes.',
   'When a fresh staging copy lacks the state a change shows, add an idempotent, obviously fake staging seed for it in',
-  'this same change: it reaches the after copy, which is the side a new state needs. Seed rows for the shots\' own',
+  'this same change: it reaches both copies when main\'s schema can hold it, and a seed that needs a table or column',
+  'main lacks reaches the after copy only. Seed rows for the shots\' own',
   'accounts (usernode-capture is the member) and fake people, never a signal your code reads to decide something,',
-  'and a reply as the stored message, never asked for. A change to a state that already existed needs it on both',
-  'copies, which a seed in this change cannot give: make it with hints.setup steps, or say in your summary that its',
-  'seed must merge first, in its own change.',
+  'and a reply as the stored message, never asked for. A change to a state that already existed can be seeded in its',
+  'own change too when main\'s schema can hold it; otherwise make it with hints.setup steps.',
   ...copyLimitsLines(),
   ];
 }
@@ -3526,6 +3526,32 @@ const ONE_LOOK_DESIGN_SWAP = Object.freeze([
   ],
 ]);
 
+/**
+ * #7118: a first version gives the app its own logo and card picture, so its
+ * tile on Home and its card are its own from the first day. The logo is drawn
+ * from the icon style every app's tile follows (app-conventions.md); the card
+ * picture is the picture model's wide one, in both looks, and
+ * services/first-version-pictures.js applies it on the first deploy after the
+ * merge. Pure.
+ */
+const FIRST_VERSION_PICTURES_LINES = Object.freeze([
+  '',
+  'As part of this first version, give the app its own two pictures:',
+  '1. Its logo, in the platform conventions\' "Icon style: one set on the home screen". Pick the one Lucide glyph the',
+  '   app is about and the palette hue it is for, paste the glyph into the style\'s template SVG, and render it with',
+  '   `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`. Write `brand/ICON.md` naming the glyph and the hue, and',
+  '   set `dapp.json`\'s `icon` block to `{ "image": "brand/icon.png", "emoji": <the emoji it has now>, "color": <the',
+  '   hue\'s From hex> }`, keeping the emoji as the fallback. It is the app\'s icon from its first deploy, in place of',
+  '   the plain emoji tile.',
+  '2. Its card picture, the wide picture a project\'s card shows in Discover and on Home. Make it from the app\'s name',
+  '   and what it does: one simple scene of its subject, no words, letters or numbers in it, the subject in the middle',
+  '   with room at the edges, because the card crops it:',
+  '   `usernode-image "<the app\'s subject, a simple scene, no words or letters, subject centred with room at the edges>" --aspect wide --variant light --out brand/card.png`',
+  '   then the same with `--variant dark --out brand/card-dark.png`, so the card has its picture in both looks.',
+  'Keep both pictures under `brand/`, which the app never serves. If `usernode-image` refuses or fails, go on without',
+  'the card picture and say so in your summary; the logo is drawn from the template and does not depend on it.',
+]);
+
 function firstVersionDesignLines(starter = null, { oneLook = false } = {}) {
   const s = starterOf(starter);
   const base = oneLook
@@ -3814,6 +3840,7 @@ function buildPrompt({
     ...fromPlanLines(fromPlan),
     ...((on('starter_inline') || on('one_go')) && starterSnapshot ? starterLines(starterSnapshot, { claudeMdLoaded }) : []),
     ...(firstVersion ? firstVersionDesignLines(starter, { oneLook }) : []),
+    ...(firstVersion ? FIRST_VERSION_PICTURES_LINES : []),
     ...(firstVersion ? startingScreensLines(startingScreens) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
     ...(firstVersion ? (on('lean_plan') ? LEAN_PLAN_ORDER_LINES : FIRST_VERSION_ORDER_LINES) : []),
@@ -6374,6 +6401,7 @@ module.exports = {
   specScopeLines,
   specDesignBrief,
   firstVersionDesignLines,
+  FIRST_VERSION_PICTURES_LINES,
   FIRST_VERSION_SIZE_LINES,
   FIRST_VERSION_ORDER_LINES,
   APP_SERVER_LINES,

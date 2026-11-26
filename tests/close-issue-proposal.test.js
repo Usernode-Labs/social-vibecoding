@@ -13,6 +13,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+// What a vm-realm object looks like as a plain value.
+const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // ── Mock pool ───────────────────────────────────────────────────────────
 // First matching [regex, rows] handler wins; every call is recorded.
@@ -579,4 +585,82 @@ test('shouldCreateGithubTwin: false for close_issue and secret_change, true othe
   assert.equal(shouldCreateGithubTwin('close_issue'), false);
   assert.equal(shouldCreateGithubTwin('secret_change'), false);
   assert.equal(shouldCreateGithubTwin('general'), true);
+});
+
+// ── #6988: the close dialog's entry point ────────────────────────────────
+//
+// The request page's ⋯ row, the folded pill and the bot's expired-offer
+// button all reach AppView.promptCloseIssue. It used to return silently when
+// the page had not recorded appData yet (the side panel's column), so the
+// row only closed the menu. This runs the real app-view.js in a vm.
+
+const APP_VIEW_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
+  'utf8',
+);
+
+function loadAppView({ appData = null, currentApp = null, dialogs = {}, toasts = [] } = {}) {
+  const sandbox = {
+    console,
+    relTime: () => 'just now',
+    App: { user: { id: 1 }, currentApp, currentSubTab: null },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
+      body: { appendChild: () => {} },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    alert: () => {},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener: () => {},
+    localStorage: { getItem: () => null, setItem: () => {} },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
+  sandbox.PlatformUI = { toast: (...args) => toasts.push(args) };
+  sandbox.UsernodeReact = { dialogs };
+  vm.createContext(sandbox);
+  vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  const AppView = sandbox.__AppView;
+  AppView.appData = appData;
+  return { AppView, sandbox };
+}
+
+test('#6988: promptCloseIssue opens the dialog with the reason, from App.currentApp when appData is absent', () => {
+  const opened = [];
+  const { AppView } = loadAppView({
+    currentApp: 'cool-app',
+    dialogs: { closeIssue: { open: (payload) => opened.push(payload), close() {}, isOpen: () => false } },
+  });
+  AppView.promptCloseIssue(37, 'It already works.');
+  assert.deepEqual(plain(opened), [{ issueNumber: 37, reason: 'It already works.', slug: 'cool-app' }],
+    'the request number, the bot\'s reason and the project the side frame is on');
+  AppView.appData = { slug: 'page-app' };
+  AppView.promptCloseIssue(38);
+  assert.deepEqual(plain(opened[1]), { issueNumber: 38, reason: '', slug: 'page-app' },
+    'the page\'s own appData wins, and a row with no reason opens an empty box');
+});
+
+test('#6988: promptCloseIssue says so instead of returning silently when the dialog cannot open', () => {
+  const toasts = [];
+  const { AppView } = loadAppView({ currentApp: 'cool-app', toasts });
+  AppView.promptCloseIssue(37);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0][0], /Couldn’t open the close form.*Reload and try again/);
+  assert.deepEqual(plain(toasts[0][1]), { error: true });
+});
+
+test('#6988: the dialog prefills from an object payload and files on the payload\'s slug', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'close-issue.tsx'),
+    'utf8',
+  );
+  assert.match(src, /reasonRef\.current\.value = next\.reason/, 'the reason box starts with the bot\'s reason');
+  assert.match(src, /slugRef\.current \|\| appData\?\.slug \|\| app\?\.currentApp/, 'the payload slug comes first');
+  assert.match(src, /fetch\(`\/api\/apps\/\$\{slug\}\/issues`/, 'the vote is filed on that slug');
+  assert.match(src, /setError\(t\('dialogs:closeIssue\.error\.noApp'\)\)/, 'no silent return when there is nowhere to file');
 });

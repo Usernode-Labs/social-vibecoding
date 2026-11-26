@@ -43,30 +43,67 @@
   //   4. It tells the shell it opened: `{ __usernode_offline_cache: 'open',
   //      fresh }`, fresh being whether this copy is of the live build. The
   //      shell frames the app the old way if it never hears this.
+  //   5. Online, once the app has loaded, the files it ran on are checked
+  //      against the app (checkFiles below), and the frame reloads once
+  //      onto any that changed. Step 3 alone could leave a device on a new
+  //      page with an old file for 30 days: it fetches only the files it
+  //      remembered, and what it fetches while a new build is replacing the
+  //      old one may be the old build's. Seen on 25 Nov 2026: a new page
+  //      drew a new control with no styling over the screens.css it kept,
+  //      and no reload replaced it.
+  //
+  // Anywhere else an app loads this bridge, step 5 alone runs: a frame the
+  // shell opened the old way, with the token in its address (a view-private
+  // project, or one whose cacheable address is off), or the app on its own
+  // domain. Until 25 Nov 2026 the gate kept those apps' files 30 days too,
+  // with no refresh at all, so a private project showed its new page over
+  // its old files after every change; a browser still holding such a copy
+  // heals on its next open. Only the apps' copy (/usernode-bridge/v1/) does
+  // this: Homeroom's own pages load /usernode-bridge.js and are never checked.
   (function () {
-    try {
-      if (!(window.parent && window.parent !== window)) return;
-    } catch (_) { return; }
+    var framed;
+    try { framed = !!(window.parent && window.parent !== window); } catch (_) { framed = true; }
     var hash;
     try { hash = String(location.hash || ""); } catch (_) { return; }
-    if (hash.indexOf("#un-") !== 0) return;
-    var own;
-    try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
-    var page = String(location.href).split("#")[0];
-    var origin = location.origin;
-    var refresh = own.get("un-refresh") === "1";
+    var cacheable = framed && hash.indexOf("#un-") === 0;
+    var appsCopy = false;
+    try { appsCopy = /\/usernode-bridge\/v1\/bridge\.js(?:[?#]|$)/.test(String(document.currentScript.src || "")); } catch (_) { /* unknown: not checked */ }
+    if (!cacheable && !appsCopy) return;
+    var own = null;
+    if (cacheable) {
+      try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
+    }
+    var origin;
+    try { origin = location.origin; } catch (_) { return; }
+    // The address a check is recorded under. At the cacheable address, the
+    // page as the shell opened it (its build in the query). Anywhere else,
+    // without what changes on every open of the same page: the token
+    // (renewed every 45 minutes), the gate's retry marker and the theme.
+    var page = cacheable ? String(location.href).split("#")[0] : pageKey();
+    var refresh = cacheable && own.get("un-refresh") === "1";
     var FILES_KEY = "usernode:offline-files";
     var MAX_FILES = 200;
 
-    try {
-      var query = new URLSearchParams(location.search);
-      var token = own.get("un-token");
-      if (token) query.set("token", token);
-      var theme = own.get("un-theme");
-      if (theme) query.set("un-theme", theme);
-      var qs = query.toString();
-      history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
-    } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+    function pageKey() {
+      try {
+        var u = new URL(String(location.href));
+        u.hash = "";
+        ["token", "__ua", "un-theme"].forEach(function (k) { u.searchParams.delete(k); });
+        return u.toString();
+      } catch (_) { return null; }
+    }
+
+    if (cacheable) {
+      try {
+        var query = new URLSearchParams(location.search);
+        var token = own.get("un-token");
+        if (token) query.set("token", token);
+        var theme = own.get("un-theme");
+        if (theme) query.set("un-theme", theme);
+        var qs = query.toString();
+        history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
+      } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+    }
 
     // A file of this app's own, as the browser keeps it: no data reads, no
     // platform paths, never an address that carries the token.
@@ -96,7 +133,7 @@
       try { localStorage.setItem(FILES_KEY, JSON.stringify(list.slice(0, MAX_FILES))); } catch (_) { /* full: kept as far as it goes */ }
     }
     try {
-      if (typeof PerformanceObserver === "function") {
+      if (cacheable && typeof PerformanceObserver === "function") {
         new PerformanceObserver(function (entries) {
           remember(entries.getEntries().map(function (e) { return e.name; }));
         }).observe({ type: "resource", buffered: true });
@@ -107,7 +144,105 @@
       try { window.parent.postMessage({ __usernode_offline_cache: "open", fresh: !!fresh }, "*"); } catch (_) { /* parent gone */ }
     }
 
-    if (!refresh) { say(true); return; }
+    // ── 5. The files this load ran on, checked against the app ──────────
+    //
+    // Each file is read from the cache as the page got it, then asked for
+    // again with that copy's validator (`cache: "no-cache"`: a conditional
+    // request, answered 304 with no body when nothing changed, and the gate
+    // keeps a 304's 30-day lifetime). A validator that moved means the app
+    // now serves another copy, which that answer has just put in the cache:
+    // the frame reloads once onto it, marked `un-checked` so the reload
+    // itself checks nothing. At most once per address in CHECK_EVERY_MS
+    // (each build's page has its own address, so a new build is checked at
+    // once), never offline, and a file with no validator, or a check that
+    // fails, counts as unchanged.
+    var CHECKED_KEY = "usernode:offline-checked";
+    var CHECK_EVERY_MS = 10 * 60 * 1000;
+    var CHECK_AFTER_LOAD_MS = 2000;
+    var MAX_CHECKED = 60;
+    // Data an app reads with fetch or XHR is not a file it runs on.
+    var NOT_FILES = { fetch: 1, xmlhttprequest: 1, beacon: 1 };
+    // The platform's shared files (this one among them) are kept
+    // stale-while-revalidate, so they bring themselves up to date behind
+    // every load; a platform release must not reload every open app.
+    var SHARED_RE = /^\/usernode-(?:bridge|native|tailwind)\//;
+
+    function ranOn() {
+      var names = [];
+      try {
+        var entries = performance.getEntriesByType("resource");
+        for (var i = 0; i < entries.length; i++) {
+          if (!NOT_FILES[entries[i].initiatorType]) names.push(entries[i].name);
+        }
+      } catch (_) { names = readFiles(); }
+      var out = [];
+      for (var j = 0; j < names.length && out.length < MAX_CHECKED; j++) {
+        var k = keepable(names[j]);
+        if (!k || out.indexOf(k) !== -1) continue;
+        try { if (SHARED_RE.test(new URL(k).pathname)) continue; } catch (_) { continue; }
+        out.push(k);
+      }
+      return out;
+    }
+    function validatorOf(res) {
+      try {
+        if (!res || !res.ok || !res.headers) return null;
+        return res.headers.get("etag") || res.headers.get("last-modified") || null;
+      } catch (_) { return null; }
+    }
+    function moved(u) {
+      return fetch(u, { cache: "force-cache", credentials: "same-origin" }).then(function (kept) {
+        var before = validatorOf(kept);
+        if (!before) return false;
+        return fetch(u, { cache: "no-cache", credentials: "same-origin" }).then(function (now) {
+          var after = validatorOf(now);
+          return !!after && after !== before;
+        });
+      }).catch(function () { return false; });
+    }
+    function checkedRecently() {
+      try {
+        var last = JSON.parse(localStorage.getItem(CHECKED_KEY));
+        return !!last && last.page === page && typeof last.at === "number"
+          && Date.now() - last.at < CHECK_EVERY_MS;
+      } catch (_) { return false; }
+    }
+    function checkFiles() {
+      try { if (navigator.onLine === false) return; } catch (_) { /* no navigator: try */ }
+      if (checkedRecently()) return;
+      var recorded = false;
+      try {
+        localStorage.setItem(CHECKED_KEY, JSON.stringify({ page: page, at: Date.now() }));
+        recorded = true;
+      } catch (_) { /* unbounded: at the cacheable address the flag below still stops a second reload */ }
+      // Anywhere else nothing marks the reload but that record, so with no
+      // storage it is not checked at all rather than risk reloading again.
+      if (!cacheable && !recorded) return;
+      var files = ranOn();
+      if (!files.length) return;
+      Promise.all(files.map(moved)).then(function (changed) {
+        if (!changed.some(Boolean)) return;
+        try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* gone */ }
+        if (!cacheable) {
+          // The same address again; the record above keeps the reload from
+          // checking a second time.
+          location.reload();
+          return;
+        }
+        own.delete("un-refresh");
+        own.set("un-checked", "1");
+        location.replace(page + "#" + own.toString());
+      });
+    }
+    function checkAfterLoad() {
+      if (!page || (own && own.get("un-checked") === "1")) return;
+      try {
+        window.addEventListener("load", function () { setTimeout(checkFiles, CHECK_AFTER_LOAD_MS); }, { once: true });
+      } catch (_) { /* no events: unchecked, as before */ }
+    }
+
+    if (!cacheable) { checkAfterLoad(); return; }
+    if (!refresh) { say(true); checkAfterLoad(); return; }
     say(false);
     try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* no document yet */ }
     var files = readFiles();

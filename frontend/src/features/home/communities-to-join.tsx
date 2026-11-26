@@ -26,7 +26,8 @@
  * the rest under "More communities" whenever Featured is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
- * Popular or Most active; most active until somebody picks another), so no
+ * Popular, Most active or A to Z; most active until somebody picks another),
+ * so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
  * it is not drawn. No heading while searching, or with nothing featured:
@@ -43,7 +44,6 @@ import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
-import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
 import { CommunityCardSkeleton, LEAD_MAX, useLeadCount } from '../communities/card';
 import { Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
@@ -55,7 +55,7 @@ import { rankCommunities } from './use-home-query';
 export const JOIN_PAGE = 8;
 
 /** The sorts the "More communities" control offers, in the order it shows them. */
-export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
+export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
 /** The cards' grid (app.css `.cm-grid`), and the larger first row's. */
@@ -67,7 +67,7 @@ export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, emptyLine, ids }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -81,17 +81,17 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   onRetry?: () => void;
   /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
   headingAction?: ReactNode;
+  /** Drawn when a search matches nothing. Home's own search answers that itself; the visitor's page has only this list, and was left blank. */
+  emptyLine?: ReactNode;
   /** The section's and its Featured label's ids where it is drawn a second time in the document (the Communities page): Home's own stay Home's. */
   ids?: { section: string; featured: string };
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
-  // Standard (WIP), lib/skin.ts: Featured is a row of Home's own there, so its label says of what.
-  // The standard look's too since 20 Nov 2026 (isKitHome), on its signed-in
-  // pages (Home, and the Communities page): the visitor's landing draws this
-  // same list, and keeps the standard drawing of it.
-  const live = useLiveSkin();
-  const wip = live === 'wip' || (isKitHome(live) && signedIn);
+  // Featured is a row of Home's own on the signed-in pages (Home, and the
+  // Communities page), so its label says of what: the visitor's landing
+  // draws this same list, and keeps the plain drawing of it.
+  const wip = signedIn;
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
@@ -108,7 +108,17 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const holdFeatured = wip && !apps && !failed && !query;
   const leadCount = useLeadCount(probe);
   const lead = useMemo(() => featured.slice(0, leadCount), [featured, leadCount]);
+  // One look (25 Nov 2026): on the standard look's signed-in pages Featured
+  // is one grid of covers of one size (app.css, ONE LOOK), so every featured
+  // community is in the first grid; each card is still drawn as it is signed
+  // out, the first row's marked larger, so the card is one card everywhere.
+  const firstGrid = wip ? featured : lead;
   const leadStyle = { ['--cm-lead-cols' as string]: String(leadCount) } as CSSProperties;
+  // One featured community where the row has room for more is the whole row,
+  // a wide card, not one card beside an empty half page (phone review, 23 Nov
+  // 2026, the Duo unfolded sideways). Its picture is a band (app.css).
+  const lone = lead.length === 1 && leadCount > 1;
+  const shownLeadStyle = lone ? ({ ['--cm-lead-cols' as string]: '1' } as CSSProperties) : leadStyle;
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
     // rest, in the chosen sort, the featured ones left out because Featured
@@ -154,7 +164,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     return () => { io.disconnect(); if (timer) window.clearTimeout(timer); };
   }, [more, shown]);
 
-  if (query && !list.length) return null;
+  if (query && !list.length) return emptyLine ?? null;
   const sortMenu = (
     <Select
       variant="plain"
@@ -203,18 +213,20 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         // list: its place is held while the directory is read, by its larger
         // first row's cards, so the rows under it do not move when they land.
         <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
-          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featuredAppsCommunities')}</h3>
+          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
           {probeGrid}
           <div className={GRID} data-cm-grid="lead" style={leadStyle}>
-            {Array.from({ length: leadCount }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
+            {/* One look: a row of covers, at least two across (app.css). */}
+            {Array.from({ length: Math.max(2, leadCount) }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
           </div>
         </div>
       ) : null}
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
           <h3 id={featuredId} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
-            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
-              : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
+            {/* One name for one thing on Home (phone review, 23 Nov 2026): the
+                row is Featured in every look, not "Featured apps / communities". */}
+            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) }) : t('home:join.featured')}
           </h3>
           {probeGrid}
           {/* The first few featured communities are drawn larger, a row of
@@ -227,16 +239,17 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             aria-labelledby={featuredId}
             data-home-join-lead={lead.length}
             data-cm-grid="lead"
+            data-cm-lone={lone ? '' : undefined}
             className={GRID}
-            style={leadStyle}
+            style={shownLeadStyle}
           >
-            {lead.map((app, i) => (
+            {firstGrid.map((app, i) => (
               <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">
-                <Card app={app} eager={i < LEAD_MAX} featured lead />
+                <Card app={app} eager={i < LEAD_MAX} featured lead={i < lead.length} />
               </div>
             ))}
           </div>
-          {featured.length > lead.length ? (
+          {featured.length > firstGrid.length ? (
             <div
               role="list"
               aria-labelledby={featuredId}

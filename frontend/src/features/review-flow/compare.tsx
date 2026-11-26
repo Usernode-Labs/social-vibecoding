@@ -97,6 +97,24 @@ export function lensBox(point: { x: number; y: number }, size: { w: number; h: n
   };
 }
 
+/**
+ * The two strips a before/after picture keeps clear of the screenshot
+ * (phone review #27, 23 Nov 2026): each side's caption on a solid strip
+ * across its top, and the switch on one across its foot. Printed over the
+ * picture under a shade, "IF IT PASSES · AFTER" collided with the
+ * screenshot's own heading and the switch covered a line of it, so neither
+ * could be read. The screen is placed in the room between them
+ * (`withinStrips`, and model.ts openPlace), so nothing of it is under
+ * either strip; what overhangs a framed screen is covered by them.
+ */
+export const CAP_STRIP = 30;
+export const FOOT_STRIP = 64;
+
+/** Pure: a placement for the room between the strips, from one for `h` minus both. */
+export function withinStrips(place: Placement): Placement {
+  return { ...place, ty: place.ty + CAP_STRIP };
+}
+
 export function CompareSlider({ screen, pair, ground, width, height, marks, near = true, place: given = null, veil = null, onTouch, captions = null }: {
   screen: ReviewScreen | null;
   /** An older change's capture pair, with no regions: drawn whole. */
@@ -123,8 +141,11 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const after = screen ? screen.after.url : pair?.after || null;
   const canCompare = !!before && !!after;
 
+  // A page that framed the screen placed it between the strips itself.
   const place: Placement | null = screen && W > 0
-    ? given || placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen))
+    ? given || (canCompare
+      ? withinStrips(placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: Math.max(1, height - CAP_STRIP - FOOT_STRIP) }, densityOf(screen)))
+      : placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen)))
     : null;
   const stops = screen && place ? seamStops(screen, place, W) : [];
 
@@ -336,7 +357,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
 
   const layerStyle = (sat: number): CSSProperties => (place
     ? { width: screen!.width, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})`, transformOrigin: '0 0', filter: sat >= 0.999 ? 'none' : `grayscale(${(1 - sat).toFixed(3)})` }
-    : { width: '100%', filter: sat >= 0.999 ? 'none' : `grayscale(${(1 - sat).toFixed(3)})` });
+    : { width: '100%', ...(canCompare ? { top: CAP_STRIP } : null), filter: sat >= 0.999 ? 'none' : `grayscale(${(1 - sat).toFixed(3)})` });
 
   // The dim rides the layer's own transform, so it is on from the first frame
   // of a move and never trails it; it comes on at once and fades out.
@@ -411,6 +432,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       ref={rootRef}
       className={`rf-compare${dragging ? ' rf-dragging' : ''}${canCompare ? '' : ' rf-compare-still'}`}
       style={{ width: W, height, background: ground }}
+      data-rf-strips={canCompare ? '' : undefined}
       role={canCompare ? 'slider' : 'img'}
       aria-label={canCompare ? t('communities:review.compare.label') : t('communities:review.alt.after')}
       aria-valuemin={canCompare ? 0 : undefined}
@@ -448,6 +470,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       ) : null}
       {canCompare ? (
         <>
+          <span className="rf-foot" style={{ opacity: marks ? 1 : 0 }} aria-hidden="true" />
           <span className="rf-seam" style={{ transform: `translateX(${shown.toFixed(2)}px)`, opacity: marks ? 1 : 0 }} aria-hidden="true" />
           <button
             type="button"

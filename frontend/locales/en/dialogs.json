@@ -320,7 +320,7 @@
     "description": "Heading of the dialog for proposing a new display name for an app."
   },
   "rename.current": {
-    "text": "Current app name:<0>{{name}}</0>",
+    "text": "Current app name: <0>{{name}}</0>",
     "description": "Line under the rename dialog's heading. {{name}} is the app's present name; the numbered tag sets it in a different typeface and must stay around it."
   },
   "rename.newName": {
@@ -332,7 +332,7 @@
     "description": "Greyed example text inside the empty new-name field of the rename dialog."
   },
   "rename.hint": {
-    "text": "3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits<0>dapp.json</0>; the rename applies once the PR is voted in and merged.",
+    "text": "3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits <0>dapp.json</0>; the rename applies once the PR is voted in and merged.",
     "description": "Help text under the new-name field of the rename dialog. PR means a pull request on GitHub. dapp.json is a file name and stays as it is, inside its numbered tag."
   },
   "rename.submit": {
@@ -427,9 +427,13 @@
     "text": "Proposal failed: {{reason}}",
     "description": "Error in the close-issue dialog when the request could not be sent. {{reason}} is the browser's own description of what went wrong."
   },
+  "closeIssue.error.noApp": {
+    "text": "Couldn’t tell which project this request belongs to. Reload and try again.",
+    "description": "Error in the close-issue dialog when it has neither a project from the page nor one from the request that opened it, so there is nowhere to file the vote."
+  },
   "allowance.title": {
-    "text": "App allowance",
-    "description": "Label at the left of the allowance box shown in the make, import and Make your own forms: how many apps this person may still create."
+    "text": "App slots",
+    "description": "Label at the left of the allowance box shown in the make, import and Make your own forms, and the title of the App slots card on the viewer's profile: how many apps this person may still create. A \"slot\" is room for one app; the same words as the App slots row on the profile."
   },
   "allowance.checking": {
     "text": "Checking…",
@@ -1876,16 +1880,16 @@
     "description": "Error under the invite field of the \"Members & approvals\" dialog when the person's Privacy setting allows invitations only from people who share a project with them."
   },
   "members.collaborators.heading": {
-    "text": "Collaborators",
-    "description": "Label above the list of people who may build changes for the app, in the \"Members & approvals\" dialog of an app."
+    "text": "Members",
+    "description": "Label above the list of the people in the app's community who may build changes for it, in the \"Members & approvals\" dialog of an app. The same word as the dialog's title."
   },
   "members.collaborators.empty": {
     "text": "No collaborators yet.",
     "description": "Shown in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app when nobody has been invited."
   },
   "members.collaborators.loadFailed": {
-    "text": "Failed to load members: {{reason}}",
-    "description": "Error in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+    "text": "Couldn't load the members.",
+    "description": "Shown in place of the Members list of the \"Members & approvals\" dialog of an app when it could not be read, after a few tries. A \"Try again\" button follows it."
   },
   "members.collaborators.tag.creator": {
     "text": "creator",
@@ -1894,6 +1898,10 @@
   "members.collaborators.tag.invited": {
     "text": "invited",
     "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person was invited and has not accepted yet. Lower case."
+  },
+  "members.collaborators.tag.offered": {
+    "text": "offered to build",
+    "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person is already in the project and was offered the right to build it, which they have not taken up yet. Lower case."
   },
   "members.collaborators.revoke": {
     "text": "Revoke",
@@ -1922,10 +1930,6 @@
   "members.collaborators.removeFailed": {
     "text": "Remove failed: {{reason}}",
     "description": "Brief message at the bottom of the screen when removing a collaborator or withdrawing an invitation failed. {{reason}} is the server's explanation or a short technical reason."
-  },
-  "members.governance.heading": {
-    "text": "Proposal approvals",
-    "description": "Heading of the section of the \"Members & approvals\" dialog of an app that sets who may approve proposals and how many approvals one needs."
   },
   "members.governance.who": {
     "text": "Who can approve proposals",
@@ -2052,8 +2056,8 @@
     "description": "Shown in the \"Approvers\" section of the \"Members & approvals\" dialog of an app when nobody has been invited as an approver."
   },
   "members.approvers.loadFailed": {
-    "text": "Failed to load approvers: {{reason}}",
-    "description": "Error in the \"Approvers\" section of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+    "text": "Couldn't load the approvers.",
+    "description": "Shown in place of the Approvers list of the \"Members & approvals\" dialog of an app when it could not be read, after a few tries. A \"Try again\" button follows it."
   },
   "members.approvers.tag.invited": {
     "text": "invited",
@@ -2116,8 +2120,12 @@
     "description": "Shown in the \"App admins\" section of the \"Members & approvals\" dialog of an app when the app has no admins. To force-merge is to apply a proposal without waiting for the vote."
   },
   "members.appAdmins.loadFailed": {
-    "text": "Failed to load app admins: {{reason}}",
-    "description": "Error in the \"App admins\" section of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+    "text": "Couldn't load the app admins.",
+    "description": "Shown in place of the App admins list of the \"Members & approvals\" dialog of an app when it could not be read, after a few tries. A \"Try again\" button follows it."
+  },
+  "members.retry": {
+    "text": "Try again",
+    "description": "Button beside a list of the \"Members & approvals\" dialog of an app that could not be loaded: reads the list again."
   },
   "members.appAdmins.remove": {
     "text": "Remove",
@@ -2722,6 +2730,10 @@
   "feedback.mode.hint": {
     "text": "Click on the page to comment",
     "description": "Small line beside the Form / Comment switch at the top of the \"Suggest an improvement\" dialog: in comment mode a click on the page leaves the comment there."
+  },
+  "feedback.mode.hintTouch": {
+    "text": "Tap the page to comment",
+    "description": "The same small line beside the Form / Comment switch of the \"Suggest an improvement\" dialog on a touch screen: in comment mode a tap on the page leaves the comment there."
   },
   "topics.title": {
     "text": "Topics",

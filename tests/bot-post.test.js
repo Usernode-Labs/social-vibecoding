@@ -25,7 +25,7 @@ test('a request\'s thread hears only its question or plan, built and up for a vo
     assert.equal(botPost.isFailure('issue', kind), true, kind);
   }
   assert.equal(botPost.familyOf('issue', 'live'), 'live');
-  for (const kind of ['reply', 'going_ahead', 'held_by_person', 'followup_working']) assert.equal(botPost.familyOf('issue', kind), 'answer', kind);
+  for (const kind of ['reply', 'going_ahead', 'held_by_person', 'followup_working', 'followup_ended']) assert.equal(botPost.familyOf('issue', kind), 'answer', kind);
   // Anything else is recorded, never a message there.
   for (const kind of ['looking', 'held_builds_per_app', 'followup_answer', 'checks_retry', 'milestone', '']) {
     assert.equal(botPost.allowed('issue', kind), false, kind || '(none)');

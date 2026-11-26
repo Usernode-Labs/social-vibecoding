@@ -303,6 +303,130 @@
     "text": "A proposal counts when it is accepted and goes live this week: a change you made, or a change built for a request you filed, whoever built it. A change an admin forced live does not count. Counts run on a schedule, so a new one shows here a little later.",
     "description": "Under the progress rail on the Get a proposal accepted challenge's page: the plain-language rule the scorer pays by."
   },
+  "challenges.items.heading.feedback": {
+    "text": "Your reports",
+    "description": "Heading over the list of the viewer's own reports on the Send useful feedback challenge's page, when the challenge is not weekly."
+  },
+  "challenges.items.heading.feedbackWeek": {
+    "text": "Your reports this week",
+    "description": "Heading over the list of the viewer's own reports on the weekly Send useful feedback challenge's page."
+  },
+  "challenges.items.heading.proposals": {
+    "text": "Your proposals",
+    "description": "Heading over the list of the viewer's own changes on the Get a proposal accepted challenge's page, when the challenge is not weekly."
+  },
+  "challenges.items.heading.proposalsWeek": {
+    "text": "Your proposals this week",
+    "description": "Heading over the list of the viewer's own changes on the weekly Get a proposal accepted challenge's page."
+  },
+  "challenges.items.empty.feedback": {
+    "text": "You haven't sent a report this week.",
+    "description": "The list on the feedback challenge's page when the viewer sent no report in the challenge's current period."
+  },
+  "challenges.items.empty.proposals": {
+    "text": "You haven't got a proposal up this week.",
+    "description": "The list on the proposal challenge's page when the viewer has no change up for a vote or accepted in the challenge's current period."
+  },
+  "challenges.items.error": {
+    "text": "Couldn't load this list.",
+    "description": "The viewer's own reports or proposals list on a challenge's page when the read failed; the page offers a retry."
+  },
+  "challenges.items.word.counted": {
+    "text": "Counted",
+    "description": "The word on a row of the viewer's reports list: the report is in the ledger and its points are paid."
+  },
+  "challenges.items.word.grading": {
+    "text": "Still grading",
+    "description": "The word on a row of the viewer's reports list: the report can count, and the next scheduled count grades it."
+  },
+  "challenges.items.word.notCounted": {
+    "text": "Not counted",
+    "description": "The word on a row of the viewer's reports list: the report cannot count, for the reason on the grey line."
+  },
+  "challenges.items.word.upForVote": {
+    "text": "Up for vote",
+    "description": "The word on a row of the viewer's proposals list: the change is waiting for the group to vote on it."
+  },
+  "challenges.items.word.goingLive": {
+    "text": "Going live",
+    "description": "The word on a row of the viewer's proposals list: the change was accepted and is being released."
+  },
+  "challenges.items.word.live": {
+    "text": "Live",
+    "description": "The word on a row of the viewer's proposals list: the change was accepted and is live."
+  },
+  "challenges.items.word.closed": {
+    "text": "Closed",
+    "description": "The word on a row of the viewer's proposals list: the change ended without going live."
+  },
+  "challenges.items.feedback.counted": {
+    "text": "Graded {{points}} of {{max}}: {{reason}}",
+    "description": "The grey line under a Counted report. {{points}} is what the report earned and {{max}} the most a report can earn, both written out; {{reason}} is the grader's one-sentence explanation."
+  },
+  "challenges.items.feedback.grading": {
+    "text": "Graded at the next count.",
+    "description": "The grey line under a report that is still grading: the next scheduled count will grade it."
+  },
+  "challenges.items.feedback.own_project": {
+    "text": "It's about a project you made.",
+    "description": "The grey line under a Not counted report: the report is about a project the viewer made, so it is a note to themselves."
+  },
+  "challenges.items.feedback.solo": {
+    "text": "Only you are in this project.",
+    "description": "The grey line under a Not counted report: the report is about a project only the viewer can see, so nobody else is there to read it."
+  },
+  "challenges.items.feedback.too_short": {
+    "text": "Too short to act on.",
+    "description": "The grey line under a Not counted report: the report is under the length that can be acted on."
+  },
+  "challenges.items.feedback.duplicate": {
+    "text": "A copy of a report you already sent.",
+    "description": "The grey line under a Not counted report: the same words were already sent as an earlier report."
+  },
+  "challenges.items.feedback.over_target_one": {
+    "text": "This week's {{count}} report is already counted.",
+    "description": "The grey line under a Not counted report: the challenge counts this many reports already. For one report."
+  },
+  "challenges.items.feedback.over_target_other": {
+    "text": "This week's {{count}} reports are already counted.",
+    "description": "The grey line under a Not counted report: the challenge counts this many reports already."
+  },
+  "challenges.items.proposal.counted": {
+    "text": "Counted: +{{points}} pts.",
+    "description": "The grey line under a proposal that earned the challenge's points. {{points}} is the points, written out."
+  },
+  "challenges.items.proposal.pending_count": {
+    "text": "Counts at the next count.",
+    "description": "The grey line under a proposal that went live and the next scheduled count will pay for."
+  },
+  "challenges.items.proposal.needs_accept": {
+    "text": "Counts once it's accepted and live.",
+    "description": "The grey line under a proposal still up for a vote, or accepted but not live yet."
+  },
+  "challenges.items.proposal.forced": {
+    "text": "An admin put it live without a vote, so it doesn't count.",
+    "description": "The grey line under a proposal an admin forced live: the challenge pays only for changes the group accepted."
+  },
+  "challenges.items.proposal.closed": {
+    "text": "Closed without going live, so it doesn't count.",
+    "description": "The grey line under a proposal that ended without going live."
+  },
+  "challenges.items.proposal.over_target_one": {
+    "text": "This week's {{count}} proposal is already counted.",
+    "description": "The grey line under a proposal the challenge will not pay for because it already has its full count this week. For one proposal."
+  },
+  "challenges.items.proposal.over_target_other": {
+    "text": "This week's {{count}} proposals are already counted.",
+    "description": "The grey line under a proposal the challenge will not pay for because it already has its full count this week."
+  },
+  "challenges.items.proposal.forRequest": {
+    "text": "Built for your request.",
+    "description": "The start of the grey line under a proposal that was built for a request the viewer filed, rather than by the viewer."
+  },
+  "challenges.items.subtitle": {
+    "text": "{{project}} · {{reason}}",
+    "description": "The grey line under a row of the viewer's reports or proposals: the project it is about, then how it stands."
+  },
   "challenges.invites.heading": {
     "text": "Your invites",
     "description": "Heading of the per-person invite list on the Invite 3 people challenge's page, before What counts."
@@ -652,16 +776,16 @@
     "description": "Line at the top of the Standings tab for a viewer who is not signed in: a link to the Challenges tab. The first tag holds a separator, in lighter ink; the second is the link. Keep the arrow."
   },
   "standings.showNonPodium": {
-    "text": "Show non-podium users",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking."
+    "text": "Show everyone",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone."
   },
   "standings.showNonPodiumCount_one": {
-    "text": "Show non-podium users ({{count}})",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+    "text": "Show everyone ({{count}} more)",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone. {{count}} is how many more people that adds."
   },
   "standings.showNonPodiumCount_other": {
-    "text": "Show non-podium users ({{count}})",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+    "text": "Show everyone ({{count}} more)",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone. {{count}} is how many more people that adds."
   },
   "standings.column.rank": {
     "text": "Rank",
@@ -744,23 +868,23 @@
     "description": "Shown in place of a participant's activities under the Standings table when the row carries nothing to look them up by."
   },
   "drill.epoch.heading": {
-    "text": "Epoch breakdown",
+    "text": "Blocks, round by round",
     "description": "Heading in a participant's details under the Standings table, over their block production epoch by epoch. An epoch is a fixed period of the network's time."
   },
   "drill.epoch.loading": {
-    "text": "Loading epoch breakdown…",
+    "text": "Loading blocks…",
     "description": "Shown in a participant's details under the Standings table while their epoch-by-epoch record is being fetched."
   },
   "drill.epoch.empty": {
-    "text": "No epoch data for this event.",
+    "text": "No blocks recorded for this event.",
     "description": "Shown in a participant's details under the Standings table when there is no epoch-by-epoch record."
   },
   "drill.epoch.failed": {
-    "text": "Could not load the epoch breakdown.",
+    "text": "Could not load the blocks.",
     "description": "Error shown in a participant's details under the Standings table when their epoch-by-epoch record could not be fetched and the server gave no reason."
   },
   "drill.epoch.perEvent": {
-    "text": "The epoch breakdown is per event. Pick a single event above to see it.",
+    "text": "Blocks are counted for one event at a time. Pick a single event above to see them.",
     "description": "Shown in a participant's details under the Standings table when the whole season is chosen. \"Above\" is the event drop-down."
   },
   "drill.epoch.noWallet": {
@@ -768,7 +892,7 @@
     "description": "Shown in place of the epoch-by-epoch record under the Standings table when the participant has no wallet address."
   },
   "drill.epoch.column.epoch": {
-    "text": "Epoch",
+    "text": "Round",
     "description": "Column heading in the epoch-by-epoch table of a participant's details: the epoch's number."
   },
   "drill.epoch.column.wonSlots": {

@@ -2133,12 +2133,35 @@ test('App permissions reads in the muted ink and its empty lists say what will a
     grants: read('frontend/src/features/settings/grants-list.tsx'),
     blockedApps: read('frontend/src/features/settings/sections/blocked-apps.tsx'),
   };
+  // One component draws all three, so the style is one by construction
+  // (the test after this one renders it).
+  const kinds = { appPermissions: 'device', grants: 'ai', blockedApps: 'blocked' };
   for (const [key, src] of Object.entries(lists)) {
-    assert.match(src, new RegExp(`<p className="text-sm text-zinc-500 dark:text-zinc-400">\\s*\\{t\\('settings:${key}\\.empty'\\)\\}`),
+    assert.ok(src.includes(`<PermissionsEmpty kind="${kinds[key]}">{t('settings:${key}.empty')}</PermissionsEmpty>`),
       `${key}'s empty line is one style across the page`);
     assert.match(message(`settings:${key}.empty`), /appears here.*(revoke|unblock) it at any time\./,
       `${key}'s empty line says what will appear and that it can be undone`);
   }
+});
+
+// #6512 item 1: an empty list is a small glyph and its sentence, the same
+// on all three lists. The glyph is decoration in the muted ink (nothing here
+// asks for the person, so no accent), and the sentence keeps the muted ink
+// the page reads in, in light and dark.
+test('an empty App permissions list is a small glyph beside its sentence (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView',
+    { phase: 'ready', apps: [] });
+  assert.match(html, /^<div data-role="permissions-empty" data-kind="device" class="flex items-start gap-2\.5"><svg class="mt-0\.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400"[^>]*aria-hidden="true"[^>]*>/);
+  assert.match(html, /<\/svg><p class="min-w-0 text-sm text-zinc-500 dark:text-zinc-400">No apps can use your camera, microphone, location, screen or devices yet\. When you allow an app one of these, it appears here and you can revoke it at any time\.<\/p><\/div>$/);
+  const ai = grantRows({ phase: 'ready', grants: [] });
+  assert.match(ai, /^<div data-role="permissions-empty" data-kind="ai" class="flex items-start gap-2\.5"><svg /);
+  assert.notEqual(ai.match(/ d="[^"]+"/)[0], html.match(/ d="[^"]+"/)[0], 'each list has its own glyph');
+  const empty = read('frontend/src/features/settings/permissions-empty.tsx');
+  assert.doesNotMatch(empty, /violet-|--accent|--lit-/, 'no accent on a list with nothing in it');
+  assert.match(empty, /device: CameraIcon,\s*ai: SparklesIcon,\s*blocked: NoSymbolIcon,/);
+  // The Blocked apps list fetches for itself; its loading line is the same ink.
+  assert.ok(read('frontend/src/features/settings/sections/blocked-apps.tsx')
+    .includes(`<p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.loading')}</p>`));
 });
 
 // #6512 item 11: a plain line under the capabilities that see or hear the
@@ -2840,7 +2863,11 @@ assert.ok(dotTextSrc, 'settings.js defines dotText');
 const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
 // #6479: and the module's `inZone`, which adds the picked time zone; the
 // harness has none picked, so it hands the options back as they came.
-const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options);
+// And `stamp`, the module's one way to write an instant (phone review #126).
+const stampOf = (value) => new Date(value).toLocaleString(undefined, {
+  year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+});
+const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', 'stamp', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options, stampOf);
 const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),

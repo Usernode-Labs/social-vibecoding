@@ -69,7 +69,13 @@ const RULE_TABLE = [
   ['the token in the query', { method: 'GET', url: '/?un-theme=dark&token=abc', status: 200 }, null],
   ['the token first', { method: 'GET', url: '/?token=abc', status: 200 }, null],
   ['a write', { method: 'POST', url: '/', status: 200 }, null],
-  ['not a 200', { method: 'GET', url: '/', status: 304 }, null],
+  // A 304 answers the bridge's check of a kept copy: the browser takes its
+  // Cache-Control onto that copy, so it keeps the copy's 30 days.
+  ['a 304, with express\'s default', { method: 'GET', url: '/app.js', status: 304, cacheControl: 'public, max-age=0' }, FRESH],
+  ['a 304 for data', { method: 'GET', url: '/api/chores', status: 304 }, null],
+  ['a 304 at the token address', { method: 'GET', url: '/?token=abc', status: 304 }, null],
+  ['not found', { method: 'GET', url: '/gone.js', status: 404 }, null],
+  ['a redirect', { method: 'GET', url: '/', status: 302 }, null],
   ['a 401 page', { method: 'GET', url: '/', status: 401 }, null],
   ['sets a cookie', { method: 'GET', url: '/', status: 200, setCookie: ['a=1'] }, null],
   ['no-store', { method: 'GET', url: '/', status: 200, cacheControl: 'no-store' }, null],
@@ -125,11 +131,17 @@ test('the gate applies the rule only when the platform\'s answer asks for it', a
     res.end('ok');
   });
   const app = http.createServer((req, res) => {
-    const headers = { 'content-type': 'text/plain', 'cache-control': 'public, max-age=0', expires: '0' };
+    const headers = { 'content-type': 'text/plain', 'cache-control': 'public, max-age=0', expires: '0', etag: 'W/"4-1"' };
     if (req.url.startsWith('/mine')) headers['cache-control'] = 'no-store';
     if (req.url.startsWith('/cookie')) headers['set-cookie'] = ['x=1; Path=/'];
     // An app cannot hand the visitor a platform-only header.
     headers['x-usernode-cache'] = 'app';
+    // The bridge's check: a conditional request for an unchanged file.
+    if (req.headers['if-none-match'] === 'W/"4-1"') {
+      delete headers['content-type'];
+      res.writeHead(304, headers);
+      return res.end();
+    }
     res.writeHead(200, headers);
     res.end('page');
   });
@@ -154,6 +166,175 @@ test('the gate applies the rule only when the platform\'s answer asks for it', a
   assert.equal((await get(gatePort, '/mine')).headers['cache-control'], 'no-store', 'the app\'s own no-store');
   assert.equal((await get(gatePort, '/cookie')).headers['cache-control'], 'public, max-age=0', 'a cookie-setting answer');
   assert.equal((await get(gatePort, '/plain')).headers['cache-control'], 'public, max-age=0', 'the platform did not ask');
+
+  // The bridge's check of a kept copy reaches the app as a conditional
+  // request, and its 304 keeps the copy's 30 days.
+  const unchanged = await get(gatePort, '/app.js', { 'if-none-match': 'W/"4-1"' });
+  assert.equal(unchanged.statusCode, 304);
+  assert.equal(unchanged.headers.etag, 'W/"4-1"', 'the validator crosses the gate both ways');
+  assert.equal(unchanged.headers['cache-control'], FRESH);
+  assert.equal(unchanged.headers.expires, undefined);
+  const unchangedData = await get(gatePort, '/api/list', { 'if-none-match': 'W/"4-1"' });
+  assert.equal(unchangedData.statusCode, 304);
+  assert.equal(unchangedData.headers['cache-control'], 'public, max-age=0', 'data keeps the app\'s own header');
+});
+
+// ── Each build's files at addresses of their own (25 Nov 2026) ──────────
+//
+// The bridge's file check could not heal Firefox, which keeps a page's own
+// <link>/<script> loads apart from the bridge's fetches: the check compared
+// its own current copies and the page drew the old CSS and JS forever. Now
+// the gate puts the app's live build on the addresses of its pages' files,
+// so no browser asks for a kept copy of an older build's file again.
+
+const V = 'abcdef123456';
+const REWRITE_TABLE = [
+  // [what, html, expected]
+  ['a stylesheet', '<link rel="stylesheet" href="/screens.css">', `<link rel="stylesheet" href="/screens.css?un-v=${V}">`],
+  ['attributes in any order, bare rel', '<link href="/a.css" rel=stylesheet>', `<link href="/a.css?un-v=${V}" rel=stylesheet>`],
+  ['upper-case tag and attributes', '<LINK REL="Stylesheet" HREF="/a.css">', `<LINK REL="Stylesheet" HREF="/a.css?un-v=${V}">`],
+  ['a query and a fragment kept', '<link rel="stylesheet" href="/a.css?x=1#f">', `<link rel="stylesheet" href="/a.css?x=1&un-v=${V}#f">`],
+  ['single quotes', "<script src='/app.js'></script>", `<script src='/app.js?un-v=${V}'></script>`],
+  ['a bare relative script', '<script type=module src=app.js></script>', `<script type=module src="app.js?un-v=${V}"></script>`],
+  // A bare value runs to whitespace or `>`, `=` included, as browsers read it.
+  ['a bare address with = in its query', '<link rel=stylesheet href=/a.css?x=1#f>', `<link rel=stylesheet href="/a.css?x=1&un-v=${V}#f">`],
+  ['a bare address right before >', '<script src=/app.js></script>', `<script src="/app.js?un-v=${V}"></script>`],
+  ['preload and modulepreload', '<link rel="preload" as="script" href="/a.js"><link rel="modulepreload" href="./m.js">',
+    `<link rel="preload" as="script" href="/a.js?un-v=${V}"><link rel="modulepreload" href="./m.js?un-v=${V}">`],
+  ['an older version replaced', `<script src="/app.js?q=2&un-v=000000000000"></script>`, `<script src="/app.js?q=2&un-v=${V}"></script>`],
+  ['an icon is not a file the page runs on', '<link rel="icon" href="/i.png">', '<link rel="icon" href="/i.png">'],
+  ['another site', '<script src="https://cdn.example/x.js"></script><link rel="stylesheet" href="//cdn.example/a.css">',
+    '<script src="https://cdn.example/x.js"></script><link rel="stylesheet" href="//cdn.example/a.css">'],
+  ['data: and blob:', '<script src="data:text/javascript,1"></script><link rel="stylesheet" href="blob:x">',
+    '<script src="data:text/javascript,1"></script><link rel="stylesheet" href="blob:x">'],
+  ['the platform\'s shared files', '<script src="/usernode-bridge/v1/bridge.js"></script><link rel="stylesheet" href="/usernode-native/v1/native.css">',
+    '<script src="/usernode-bridge/v1/bridge.js"></script><link rel="stylesheet" href="/usernode-native/v1/native.css">'],
+  ['data and the gate\'s paths', '<script src="/api/config.js"></script><script src="/__usernode_x.js"></script>',
+    '<script src="/api/config.js"></script><script src="/__usernode_x.js"></script>'],
+  ['a data-src is not a src', '<script data-src="/x.js"></script>', '<script data-src="/x.js"></script>'],
+  ['an inline script\'s text is not markup', '<script>var s = "<script src=/x.js>";</script>', '<script>var s = "<script src=/x.js>";</script>'],
+  ['nor a style\'s or a comment\'s', '<style>/* <link rel=stylesheet href=/x.css> */</style><!-- <script src="/c.js"></script> -->',
+    '<style>/* <link rel=stylesheet href=/x.css> */</style><!-- <script src="/c.js"></script> -->'],
+];
+
+test('the page rewrite: each same-site file the page loads gets the build, and nothing else changes', () => {
+  for (const [what, html, want] of REWRITE_TABLE) {
+    assert.equal(offlineCache.versionAssetUrls(html, V), want, what);
+  }
+  const page = `<!doctype html><html><head><meta charset="utf-8"><title>Café — list</title>
+<link rel="stylesheet" href="/tailwind.css"><link rel="stylesheet" href="/screens.css">
+<script src="/usernode-bridge/v1/bridge.js"></script></head>
+<body><div id="t" class="toggle">Table</div><script src="/app.js"></script></body></html>`;
+  const once = offlineCache.versionAssetUrls(page, V);
+  assert.equal(once.replace(new RegExp(`\\?un-v=${V}`, 'g'), ''), page, 'only the addresses change');
+  assert.equal((once.match(/un-v=/g) || []).length, 3);
+  assert.equal(offlineCache.versionAssetUrls(offlineCache.versionAssetUrls(page, '000000000000'), V), once, 'run again, it replaces its own');
+  assert.equal(offlineCache.versionAssetUrls(page, ''), page, 'no version, no change');
+  assert.equal(offlineCache.versionAssetUrls(page, '"><script>'), page, 'nothing but a short build is ever written');
+  assert.equal(offlineCache.assetVersion('ABCDEF1234567890abcdef'), V);
+  assert.equal(offlineCache.assetVersion('x y'), '');
+});
+
+test('a page request is a document or a frame, or a GET that asks for HTML', () => {
+  const is = (method, headers) => offlineCache.isPageRequest({ method, headers });
+  assert.equal(is('GET', { 'sec-fetch-dest': 'document' }), true);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'iframe' }), true);
+  assert.equal(is('GET', { accept: 'text/html,application/xhtml+xml' }), true);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'style', accept: 'text/css,*/*' }), false);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'script', accept: '*/*' }), false);
+  assert.equal(is('HEAD', { 'sec-fetch-dest': 'document' }), false);
+  assert.equal(is('POST', { accept: 'text/html' }), false);
+});
+
+test('the gate versions an app page\'s file addresses by the build the platform names', async (t) => {
+  const zlib = require('node:zlib');
+  const { createGate } = require('../scripts/app-gate');
+  const PAGE = '<!doctype html><html><head><link rel="stylesheet" href="/screens.css"><script src="/usernode-bridge/v1/bridge.js"></script></head><body><script src="/app.js"></script></body></html>';
+  const WANT = PAGE.replace('/screens.css', `/screens.css?un-v=${V}`).replace('/app.js', `/app.js?un-v=${V}`);
+  const platform = http.createServer((req, res) => {
+    const uri = req.headers['x-forwarded-uri'] || '/';
+    const headers = { 'x-usernode-upstream': 'app-a', 'x-usernode-cache': 'app' };
+    if (!uri.startsWith('/plain')) headers['x-usernode-asset-version'] = 'ABCDEF1234567890';
+    res.writeHead(200, headers);
+    res.end('ok');
+  });
+  const seen = [];
+  const app = http.createServer((req, res) => {
+    seen.push({ url: req.url, headers: { ...req.headers } });
+    const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=0', etag: 'W/"page-1"', 'last-modified': 'Wed, 25 Nov 2026 10:00:00 GMT' };
+    // An app cannot hand the visitor the platform's version header.
+    headers['x-usernode-asset-version'] = 'evil';
+    if (req.headers['if-none-match'] === 'W/"page-1"') { res.writeHead(304, headers); return res.end(); }
+    if (req.url.startsWith('/screens.css')) {
+      res.writeHead(200, { 'content-type': 'text/css', 'cache-control': 'public, max-age=0' });
+      return res.end('.t{color:red}');
+    }
+    let body = Buffer.from(PAGE);
+    if (req.url.startsWith('/big')) body = Buffer.from(PAGE + ' '.repeat(2 * 1024 * 1024 + 10));
+    if (req.url.startsWith('/gz')) { body = zlib.gzipSync(body); headers['content-encoding'] = 'gzip'; }
+    if (req.url.startsWith('/br')) { body = zlib.brotliCompressSync(body); headers['content-encoding'] = 'br'; }
+    if (req.url.startsWith('/zz')) headers['content-encoding'] = 'compress';
+    headers['content-length'] = String(body.length);
+    res.writeHead(200, headers);
+    return res.end(body);
+  });
+  const platformPort = await listen(platform);
+  const appPort = await listen(app);
+  const gate = createGate({
+    platformUrl: `http://127.0.0.1:${platformPort}`,
+    resolveUpstream: () => ({ host: '127.0.0.1', port: appPort }),
+    anonCacheMs: 0,
+    log: { error() {}, warn() {} },
+  });
+  const gatePort = await listen(gate);
+  t.after(async () => { await close(gate); await close(app); await close(platform); });
+
+  const fetchPage = (url, headers = {}) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: gatePort, path: url, method: 'GET',
+      headers: { host: 'a.apps.example', ...headers } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ res, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const doc = { 'sec-fetch-dest': 'iframe', 'if-none-match': 'W/"page-1"', 'if-modified-since': 'Wed, 25 Nov 2026 10:00:00 GMT',
+    'accept-encoding': 'gzip, br', 'x-usernode-asset-version': 'forged' };
+
+  const page = await fetchPage('/?token=abc', doc);
+  assert.equal(page.res.statusCode, 200, 'asked for whole, never a 304 that brings back a kept page');
+  assert.equal(page.body.toString(), WANT);
+  assert.equal(page.res.headers['content-length'], String(Buffer.byteLength(WANT)));
+  assert.equal(page.res.headers.etag, undefined, 'the app\'s validators named other bytes');
+  assert.equal(page.res.headers['last-modified'], undefined);
+  assert.equal(page.res.headers['x-usernode-asset-version'], undefined, 'never reaches the visitor');
+  const asked = seen.at(-1).headers;
+  assert.equal(asked['if-none-match'], undefined);
+  assert.equal(asked['if-modified-since'], undefined);
+  assert.equal(asked['accept-encoding'], 'identity');
+  assert.equal(asked['x-usernode-asset-version'], undefined, 'never forwarded to the app');
+
+  for (const enc of ['gz', 'br']) {
+    const packed = await fetchPage(`/${enc}`, doc);
+    assert.equal(packed.body.toString(), WANT, `${enc}: unpacked and rewritten`);
+    assert.equal(packed.res.headers['content-encoding'], undefined, `${enc}: sent plain`);
+  }
+  const odd = await fetchPage('/zz', doc);
+  assert.equal(odd.body.toString(), PAGE, 'an encoding it cannot unpack goes out as the app sent it');
+  assert.equal(odd.res.headers['content-encoding'], 'compress');
+  const big = await fetchPage('/big', doc);
+  assert.equal(big.body.length, Buffer.byteLength(PAGE) + 2 * 1024 * 1024 + 10, 'too big: passed through whole');
+  assert.ok(!big.body.toString().includes('un-v='));
+
+  const css = await fetchPage('/screens.css?un-v=abcdef123456', { 'sec-fetch-dest': 'style', 'if-none-match': 'x' });
+  assert.equal(css.body.toString(), '.t{color:red}', 'a file is never rewritten');
+  assert.equal(seen.at(-1).headers['if-none-match'], 'x', 'and keeps its conditional request');
+  assert.equal(css.res.headers['cache-control'], offlineCache.APP_CACHE_CONTROL, 'a versioned address keeps the 30 days');
+
+  const plain = await fetchPage('/plain', doc);
+  assert.equal(plain.res.statusCode, 304, 'no version from the platform: the page and its 304 as before');
+  assert.equal(seen.at(-1).headers['if-none-match'], 'W/"page-1"');
 });
 
 // ── The platform's access answer ─────────────────────────────────────────
@@ -161,8 +342,13 @@ test('the gate applies the rule only when the platform\'s answer asks for it', a
 // Hosts under the apps domain parse with no database work (app-access.parseAppHost).
 const DOMAIN = require('../src/services/caddy').USERNODE_APPS_DOMAIN;
 const ACCESS_APPS = {
-  offapp: { id: 301, runtime_name: 'sv-app-301-offapp', offline: true },
-  optout: { id: 302, runtime_name: 'sv-app-302-optout', offline: false },
+  offapp: { id: 301, runtime_name: 'sv-app-301-offapp', offline: true, main_sha: 'ABCDEF1234567890abcdef1234567890abcdef12' },
+  optout: { id: 302, runtime_name: 'sv-app-302-optout', offline: false, main_sha: '1111111111111111111111111111111111111111' },
+  // Two people's frames found its page did not open at the cacheable address
+  // on its live build: the shell frames it the old way until it deploys again.
+  refused: { id: 303, runtime_name: 'sv-app-303-refused', offline: true, refused: true, main_sha: '2222222222222222222222222222222222222222' },
+  // Never deployed yet: no live build to version its files by.
+  fresh: { id: 304, runtime_name: 'sv-app-304-fresh', offline: true, main_sha: null },
 };
 const accessPool = {
   queries: [],
@@ -179,9 +365,10 @@ const accessPool = {
     if (/SELECT staging_runtime_name FROM chat_sessions/.test(sql)) {
       return { rows: [{ staging_runtime_name: 'sv-preview-301-s42' }] };
     }
-    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off FROM apps WHERE id = \$1/.test(sql)) {
+    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off,[\s\S]*offline_cache_off_sha[\s\S]*AS refused,\s*main_sha, self_hosted\s+FROM apps WHERE id = \$1/.test(sql)) {
       const app = Object.values(ACCESS_APPS).find((a) => a.id === params[0]);
-      return { rows: [{ off: app ? app.offline === false : null }] };
+      return { rows: [{ off: app ? app.offline === false : null, refused: app ? app.refused === true : null,
+        main_sha: app ? app.main_sha : null, self_hosted: false }] };
     }
     throw new Error(`offline-apps-cache stub: unexpected query: ${sql}`);
   },
@@ -241,6 +428,57 @@ test('the access answer asks the gate to cache a production app, only with the s
   res = await ask(`offapp--s42.${DOMAIN}`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('x-usernode-cache'), null, 'a preview runs unmerged code');
+
+  // Framed the old way on its live build, where the bridge's refresh never
+  // runs: its files keep the app's own headers.
+  res = await ask(`refused.${DOMAIN}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-usernode-cache'), null, 'the cacheable address is off on its live build');
+});
+
+// 25 Nov 2026: each build's files at addresses of their own. The answer
+// names the app's live build for the gate to version its pages' file
+// addresses by: every production app while the switch is on, the opted-out
+// and the old-way ones included (a version is harmless where nothing is kept
+// long, and heals a copy kept before), never a preview or an app not yet
+// deployed.
+test('the access answer names a production app\'s live build for its file addresses', async (t) => {
+  const prevSignin = process.env.APP_HOST_SIGNIN;
+  process.env.APP_HOST_SIGNIN = 'off';
+  t.after(() => { if (prevSignin == null) delete process.env.APP_HOST_SIGNIN; else process.env.APP_HOST_SIGNIN = prevSignin; });
+  const { ask } = await accessServer(t);
+  const VERSION = offlineCache.VERSION_HEADER;
+
+  withEnv(t, null);
+  assert.equal((await ask(`offapp.${DOMAIN}`)).headers.get(VERSION), null, 'switch off: no version');
+
+  process.env.APP_OFFLINE_CACHE = 'on';
+  assert.equal((await ask(`offapp.${DOMAIN}`)).headers.get(VERSION), 'abcdef123456', 'its main_sha, short and lower-case');
+  assert.equal((await ask(`optout.${DOMAIN}`)).headers.get(VERSION), '111111111111', 'an opted-out app too');
+  assert.equal((await ask(`refused.${DOMAIN}`)).headers.get(VERSION), '222222222222', 'one framed the old way too');
+  assert.equal((await ask(`fresh.${DOMAIN}`)).headers.get(VERSION), null, 'no live build yet');
+  assert.equal((await ask(`offapp--s42.${DOMAIN}`)).headers.get(VERSION), null, 'a preview runs unmerged code');
+});
+
+// 25 Nov 2026: a private project showed its new page over its old
+// screens.css after every change. The shell frames a view-private app with
+// the token in its address (forApp is false for it), where the bridge's
+// refresh never runs, yet the gate kept its files 30 days. The gate now
+// asks forApp's question: the view-private half is read off the host's
+// visibility, which a request the gate lets through for a private app
+// already carries.
+test('the gate never keeps a view-private app\'s files, nor one framed the old way on its build', () => {
+  const gate = read('src/services/edge-gate.js');
+  const decision = gate.slice(gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP') - 700,
+    gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP'));
+  assert.match(decision, /isProduction && offlineCache\.enabled\(\)/);
+  assert.match(decision, /appAccess\.offlineCacheFacts\(pool, vis\.appId\)/);
+  assert.match(decision, /cacheApp && !vis\.viewPrivate && !facts\.off/);
+  const access = read('src/services/app-access.js');
+  assert.match(access, /offline_cache_off_sha IS NOT NULL AND lower\(offline_cache_off_sha\) = lower\(main_sha\)\) AS refused/,
+    'switched off on its live build, as offlineCache.refusedOnThisBuild reads it');
+  assert.equal(offlineCache.forApp({ view_visibility: 'private', manifest_snapshot: {} }, { APP_OFFLINE_CACHE: 'on' }), false,
+    'the shell\'s side of the same rule');
 });
 
 // ── The shared files ─────────────────────────────────────────────────────
@@ -293,17 +531,33 @@ function memoryStorage(initial = {}) {
   };
 }
 
-function runBridge({ href, standalone = false, files = null, pageOk = true, entries = [] }) {
+// `resources`: what Resource Timing lists for this load ({ name,
+// initiatorType }), or null for a browser without it. `served`: per file,
+// the validator of the copy kept (`kept`, what `cache: "force-cache"` reads)
+// and of the app's current one (`now`, what `cache: "no-cache"` answers);
+// null for none, 'fail' for a request that fails. `checked`: the stored
+// record of the last check. `script`: the address this bridge was loaded
+// from (the apps' copy by default; null for none). `storageBroken`: storage
+// refuses every write. The load event and its timer run on fireLoad().
+function runBridge({
+  href, standalone = false, files = null, pageOk = true, entries = [],
+  resources = null, served = {}, online = true, checked = null, script, storageBroken = false,
+}) {
   const url = new URL(href);
   const posted = [];
   const fetched = [];
   const replaced = [];
+  const reloads = [];
+  const listeners = {};
+  const timers = [];
   const style = { visibility: '' };
   const parent = { postMessage(msg, origin) { posted.push({ msg, origin }); } };
   const location = {
     href: url.href, origin: url.origin, pathname: url.pathname, search: url.search, hash: url.hash,
     replace(to) { replaced.push(to); },
+    reload() { reloads.push(location.href); },
   };
+  const scriptSrc = script === undefined ? `${url.origin}/usernode-bridge/v1/bridge.js` : script;
   const history = {
     state: null,
     replaceState(_s, _t, to) {
@@ -312,13 +566,21 @@ function runBridge({ href, standalone = false, files = null, pageOk = true, entr
       location.href = next.href;
     },
   };
-  const storage = memoryStorage(files ? { 'usernode:offline-files': JSON.stringify(files) } : {});
+  const stored = {};
+  if (files) stored['usernode:offline-files'] = JSON.stringify(files);
+  if (checked) stored['usernode:offline-checked'] = JSON.stringify(checked);
+  const storage = memoryStorage(stored);
+  if (storageBroken) storage.setItem = () => { throw new Error('QuotaExceededError'); };
   let observer = null;
-  const win = { };
+  const win = {
+    addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+  };
   win.parent = standalone ? win : parent;
   const context = {
     window: win, location, history, localStorage: storage, URL, URLSearchParams, JSON, Promise, String, Array,
-    document: { documentElement: { style } },
+    document: { documentElement: { style }, currentScript: scriptSrc === null ? null : { src: scriptSrc } },
+    navigator: { onLine: online },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); },
     PerformanceObserver: class {
       constructor(fn) { this.fn = fn; observer = this; }
       observe() { this.fn({ getEntries: () => entries.map((name) => ({ name })) }); }
@@ -326,11 +588,24 @@ function runBridge({ href, standalone = false, files = null, pageOk = true, entr
     fetch: (u, opts) => {
       fetched.push({ u, opts });
       if (u === url.href.split('#')[0]) return Promise.resolve({ ok: pageOk });
+      const file = served[u];
+      if (file) {
+        const v = opts && opts.cache === 'no-cache' ? file.now : file.kept;
+        if (v === 'fail') return Promise.reject(new TypeError('Failed to fetch'));
+        return Promise.resolve({ ok: true, headers: { get: (h) => (h === 'etag' ? v : null) } });
+      }
       return Promise.resolve({ ok: true });
     },
   };
+  if (resources) context.performance = { getEntriesByType: (type) => (type === 'resource' ? resources : []) };
   vm.runInNewContext(BLOCK, context);
-  return { location, posted, fetched, replaced, style, storage, observer };
+  // The page's load event, then the timer it sets, then the checks' answers.
+  const fireLoad = async () => {
+    for (const fn of listeners.load || []) fn();
+    for (const t of timers.splice(0)) t.fn();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+  return { location, posted, fetched, replaced, reloads, style, storage, observer, listeners, timers, fireLoad };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // Values built inside the vm have its realm's prototypes: compare as JSON.
@@ -399,6 +674,205 @@ test('it does nothing outside the shell or at an ordinary address', () => {
   const ordinary = runBridge({ href: 'https://chores.apps.example/?token=t&un-theme=dark#/route' });
   assert.equal(ordinary.posted.length, 0);
   assert.equal(ordinary.location.hash, '#/route', 'an app\'s own # route is left alone');
+});
+
+// ── The check of the files a load ran on (25 Nov 2026) ───────────────────
+//
+// A device showed a project's new page over the screens.css it kept from
+// before the change, for good: the refresh on a new build is the only thing
+// that replaced a file, and it fetches only what it remembered. Online, once
+// the app has loaded, the bridge now asks the app for each file this load
+// used, with the kept copy's validator, and reloads once onto any that moved.
+
+const SITE = 'https://chores.apps.example';
+const PAGE = `${SITE}/?un-build=abc123`;
+const RAN_ON = [
+  { name: `${SITE}/app.js`, initiatorType: 'script' },
+  { name: `${SITE}/screens.css`, initiatorType: 'link' },
+  { name: `${SITE}/api/chores`, initiatorType: 'fetch' },
+  { name: `${SITE}/chores.json`, initiatorType: 'xmlhttprequest' },
+  { name: `${SITE}/usernode-bridge/v1/bridge.js`, initiatorType: 'script' },
+  { name: `${SITE}/usernode-native/v1/native.css`, initiatorType: 'link' },
+  { name: 'https://fonts.example/a.woff2', initiatorType: 'css' },
+  { name: `${SITE}/logo.png`, initiatorType: 'img' },
+];
+const STALE_CSS = {
+  [`${SITE}/app.js`]: { kept: 'W/"10-a"', now: 'W/"10-a"' },
+  [`${SITE}/screens.css`]: { kept: 'W/"20-old"', now: 'W/"24-new"' },
+  [`${SITE}/logo.png`]: { kept: 'W/"30-a"', now: 'W/"30-a"' },
+};
+const checks = (b) => b.fetched.filter((f) => f.opts && (f.opts.cache === 'force-cache' || f.opts.cache === 'no-cache'));
+const checkedFiles = (b) => [...new Set(checks(b).map((f) => f.u))].sort();
+
+test('online, after load, a file the app now serves differently brings one reload that checks nothing', async () => {
+  const b = runBridge({ href: `${PAGE}#un-token=tok1&un-theme=light`, resources: RAN_ON, served: STALE_CSS });
+  assert.equal(msgs(b), JSON.stringify([{ __usernode_offline_cache: 'open', fresh: true }]));
+  await flush();
+  assert.equal(checks(b).length, 0, 'nothing is asked for while the app is still loading');
+  assert.equal((b.listeners.load || []).length, 1);
+  await b.fireLoad();
+  assert.ok(b.timers.length === 0, 'the timer ran');
+  assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/logo.png`, `${SITE}/screens.css`],
+    'the app\'s own files: no data reads, no shared platform files, nothing from another site');
+  for (const u of checkedFiles(b)) {
+    const modes = checks(b).filter((f) => f.u === u).map((f) => f.opts.cache);
+    assert.deepEqual(modes, ['force-cache', 'no-cache'], `${u}: the kept copy, then the app's, once each`);
+  }
+  assert.deepEqual(b.replaced, [`${PAGE}#un-token=tok1&un-theme=light&un-checked=1`],
+    'one reload of the same address, marked so the reload checks nothing');
+  assert.equal(b.style.visibility, 'hidden', 'the old styling is not shown while it reloads');
+  const last = JSON.parse(b.storage.getItem('usernode:offline-checked'));
+  assert.equal(last.page, PAGE);
+  assert.equal(typeof last.at, 'number');
+});
+
+test('nothing changed, nothing reloads', async () => {
+  const same = {
+    [`${SITE}/app.js`]: { kept: 'W/"10-a"', now: 'W/"10-a"' },
+    [`${SITE}/screens.css`]: { kept: 'W/"24-new"', now: 'W/"24-new"' },
+  };
+  const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: same });
+  await b.fireLoad();
+  assert.ok(checks(b).length > 0);
+  assert.equal(b.replaced.length, 0);
+  assert.equal(b.style.visibility, '');
+});
+
+test('the reload it made, an open offline, and a second open within ten minutes check nothing', async () => {
+  const again = runBridge({ href: `${PAGE}#un-token=tok1&un-checked=1`, resources: RAN_ON, served: STALE_CSS });
+  await again.fireLoad();
+  assert.equal((again.listeners.load || []).length, 0, 'the reload it made');
+  assert.equal(checks(again).length, 0);
+  assert.equal(again.replaced.length, 0);
+
+  const offline = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, online: false });
+  await offline.fireLoad();
+  assert.equal(checks(offline).length, 0, 'offline');
+
+  const soon = runBridge({
+    href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, checked: { page: PAGE, at: Date.now() - 60_000 },
+  });
+  await soon.fireLoad();
+  assert.equal(checks(soon).length, 0, 'this address was checked a minute ago');
+
+  const later = runBridge({
+    href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, checked: { page: PAGE, at: Date.now() - 11 * 60_000 },
+  });
+  await later.fireLoad();
+  assert.equal(later.replaced.length, 1, 'eleven minutes later it checks again');
+
+  const newBuild = runBridge({
+    href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS,
+    checked: { page: `${SITE}/?un-build=old999`, at: Date.now() - 60_000 },
+  });
+  await newBuild.fireLoad();
+  assert.equal(newBuild.replaced.length, 1, 'a new build\'s page is its own address, checked at once');
+});
+
+test('a file with no validator, or a check that fails, counts as unchanged', async () => {
+  const unknown = {
+    [`${SITE}/app.js`]: { kept: null, now: 'W/"11-b"' },
+    [`${SITE}/screens.css`]: { kept: 'W/"20-old"', now: 'fail' },
+    [`${SITE}/logo.png`]: { kept: 'fail', now: 'W/"31-b"' },
+  };
+  const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: unknown });
+  await b.fireLoad();
+  assert.equal(b.replaced.length, 0);
+  assert.equal(b.style.visibility, '');
+});
+
+test('a refresh does not also check, and the open after it does', async () => {
+  const refreshing = runBridge({
+    href: `${PAGE}#un-token=tok1&un-refresh=1`, resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`],
+  });
+  await flush(); await flush();
+  assert.equal((refreshing.listeners.load || []).length, 0);
+  assert.deepEqual(refreshing.replaced, [`${PAGE}#un-token=tok1`], 'the refresh reloads as before');
+  // That reload is an ordinary open: it checks, and catches the file the
+  // refresh never remembered.
+  const after = runBridge({ href: refreshing.replaced[0], resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`] });
+  await after.fireLoad();
+  assert.deepEqual(after.replaced, [`${PAGE}#un-token=tok1&un-checked=1`]);
+});
+
+test('without Resource Timing it checks the files it remembered', async () => {
+  const b = runBridge({
+    href: `${PAGE}#un-token=tok1`,
+    files: [`${SITE}/screens.css`, `${SITE}/usernode-bridge/v1/bridge.js`, `${SITE}/app.js`],
+    served: STALE_CSS,
+  });
+  await b.fireLoad();
+  assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/screens.css`]);
+  assert.equal(b.replaced.length, 1);
+});
+
+// ── The same check anywhere else an app loads the bridge (25 Nov 2026) ───
+//
+// A private project is framed with the token in its address, where steps 1
+// to 4 never run, and the gate kept its files 30 days anyway: its new page
+// showed over its old screens.css after every change. The gate no longer
+// keeps them, and a browser still holding such a copy heals on its next
+// open: step 5 runs in a frame opened the old way and on the app's own
+// domain too, reloading in place.
+
+const OLD_WAY = `${SITE}/?token=tok1&__ua=1&un-theme=dark`;
+
+test('a frame opened the old way checks the files it ran on and reloads once in place', async () => {
+  const b = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS });
+  assert.equal(b.posted.length, 0, 'it says nothing to the shell: that is the cacheable address\'s');
+  assert.equal(b.location.search, '?token=tok1&__ua=1&un-theme=dark', 'the address is left as it is');
+  assert.equal(b.observer, null, 'nothing is remembered for a refresh');
+  await b.fireLoad();
+  assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/logo.png`, `${SITE}/screens.css`]);
+  assert.equal(b.reloads.length, 1, 'one reload, of the same address');
+  assert.equal(b.replaced.length, 0);
+  assert.equal(b.style.visibility, 'hidden');
+  assert.equal(JSON.parse(b.storage.getItem('usernode:offline-checked')).page, `${SITE}/`,
+    'recorded without the token, the retry marker or the theme');
+});
+
+test('the app on its own domain is checked the same way', async () => {
+  const b = runBridge({ href: `${SITE}/list?view=week`, standalone: true, resources: RAN_ON, served: STALE_CSS });
+  await b.fireLoad();
+  assert.equal(b.reloads.length, 1);
+  assert.equal(JSON.parse(b.storage.getItem('usernode:offline-checked')).page, `${SITE}/list?view=week`);
+  const same = runBridge({
+    href: `${SITE}/list?view=week`, standalone: true, resources: RAN_ON,
+    served: { [`${SITE}/app.js`]: { kept: 'W/"10-a"', now: 'W/"10-a"' } },
+  });
+  await same.fireLoad();
+  assert.ok(checks(same).length > 0);
+  assert.equal(same.reloads.length, 0, 'nothing changed, nothing reloads');
+});
+
+test('the reload it made checks nothing, whatever new token it carries', async () => {
+  const again = runBridge({
+    href: `${SITE}/?token=tok2&un-theme=dark`, resources: RAN_ON, served: STALE_CSS,
+    checked: { page: `${SITE}/`, at: Date.now() - 5_000 },
+  });
+  await again.fireLoad();
+  assert.equal(checks(again).length, 0);
+  assert.equal(again.reloads.length, 0);
+});
+
+test('outside the cacheable address, no storage means no check rather than a reload loop', async () => {
+  const b = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS, storageBroken: true });
+  await b.fireLoad();
+  assert.equal(checks(b).length, 0);
+  assert.equal(b.reloads.length, 0);
+});
+
+test('Homeroom\'s own pages, which load the unversioned copy, are never checked', async () => {
+  for (const href of [`${SITE}/`, OLD_WAY]) {
+    const b = runBridge({ href, standalone: href === `${SITE}/`, resources: RAN_ON, served: STALE_CSS, script: `${SITE}/usernode-bridge.js` });
+    await b.fireLoad();
+    assert.equal((b.listeners.load || []).length, 0, href);
+    assert.equal(checks(b).length, 0, href);
+    assert.equal(b.reloads.length + b.replaced.length, 0, href);
+  }
+  const unknown = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS, script: null });
+  await unknown.fireLoad();
+  assert.equal(checks(unknown).length, 0, 'a bridge that cannot tell where it was loaded from checks nothing');
 });
 
 // ── The shell ────────────────────────────────────────────────────────────

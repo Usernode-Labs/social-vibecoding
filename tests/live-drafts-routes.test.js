@@ -6,7 +6,8 @@
 // app is another self-hosted one; writes are refused unless the Homeroom
 // page itself sent them; and each write hands the service (stood in for
 // here, src/services/live-drafts.js has its own suite) the person and the
-// thread or draft it names.
+// thread or draft it names (and, 24 Nov 2026, the proposal a draft starts
+// from).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -34,7 +35,11 @@ test('the live drafts routes', async (t) => {
   Object.assign(liveDrafts, {
     forThread: async ({}, { userId, rootId }) => (userId === 7 && rootId === 9 ? draftRow : null),
     enabled: async () => true,
-    open: async (_p, _c, args) => { calls.push(['open', args.user.id, args.rootId]); return { status: 200, body: { ok: true } }; },
+    // 24 Nov 2026: and the proposal it starts from, when one is named.
+    open: async (_p, _c, args) => {
+      calls.push(['open', args.user.id, args.rootId, ...(args.proposalNumber ? [args.proposalNumber] : [])]);
+      return { status: 200, body: { ok: true } };
+    },
     propose: async (_p, _c, args) => { calls.push(['propose', args.user.id, args.draftId, args.title]); return { status: 200, body: { ok: true } }; },
     close: async (_p, args) => { calls.push(['close', args.user.id, args.draftId]); return { status: 200, body: { ok: true } }; },
     // 20 Nov 2026 (C): Update proposal.
@@ -95,5 +100,17 @@ test('the live drafts routes', async (t) => {
     assert.deepEqual([preview.ok, preview.synced], [true, true]);
     assert.equal((await call('POST', '/api/live-drafts/3/preview', { user: 8 })).status, 404, 'not theirs');
     assert.deepEqual(calls, [['open', 7, 9], ['propose', 7, 3, 'Bigger button'], ['update', 7, 3], ['close', 7, 3], ['sync']]);
+  });
+
+  // 24 Nov 2026: a draft can start from a proposal, named by its PR number;
+  // the service reads it in the thread's project (live-drafts.js open).
+  await t.test('open: a proposal named by its PR number goes to the service; anything else is refused', async () => {
+    calls.length = 0;
+    assert.equal((await call('POST', '/api/live-drafts', { body: { rootId: 9, proposal: 142 } })).status, 200);
+    assert.equal((await call('POST', '/api/live-drafts', { body: { rootId: 9, proposal: '143' } })).status, 200);
+    const bad = await call('POST', '/api/live-drafts', { body: { rootId: 9, proposal: 'x' } });
+    assert.deepEqual([bad.status, (await bad.json()).error], [400, 'bad_proposal']);
+    assert.equal((await call('POST', '/api/live-drafts', { body: { rootId: 9, proposal: -1 } })).status, 400);
+    assert.deepEqual(calls, [['open', 7, 9, 142], ['open', 7, 9, 143]]);
   });
 });

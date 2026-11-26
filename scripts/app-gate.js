@@ -48,6 +48,7 @@
 const http = require('http');
 const https = require('https');
 const net = require('net');
+const zlib = require('zlib');
 const { URL } = require('url');
 // Dependency-free, like this file: the rule for offline apps' cache headers.
 const offlineCache = require('../src/services/offline-cache');
@@ -80,13 +81,16 @@ const HOP_BY_HOP = new Set([
 ]);
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
-const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep'];
+const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep', 'x-usernode-asset-version'];
 // What a refusal may carry back to the visitor. `set-cookie` is what makes
 // the sign-in hop work at all: the redirect that starts it sets the state
 // cookie, and the callback's sets the access cookie (every value, when
 // there are several). The frame door page (src/services/edge-gate.js) comes
-// with its own Content-Security-Policy, which says who may frame it.
-const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy'];
+// with its own Content-Security-Policy, which says who may frame it. A 401
+// on an app's agent path names, in WWW-Authenticate, where an assistant may
+// ask for a token (src/services/app-agent-oauth.js): without it a client
+// cannot find the approval page.
+const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy', 'www-authenticate'];
 
 function cleanHeaders(headers) {
   const out = {};
@@ -108,6 +112,72 @@ function forwardedFor(req) {
   const prior = typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'] : '';
   const ip = clientIp(req);
   return prior ? `${prior}, ${ip}` : ip;
+}
+
+// ── Each build's files at addresses of their own ─────────────────────────
+//
+// When the platform's answer names the app's live build
+// (offlineCache.VERSION_HEADER), an app's page goes out with that build on
+// the addresses of its own files (offlineCache.versionAssetUrls), so a
+// browser never draws a copy it kept of an older build's file. The page is
+// asked for whole (no If-None-Match or If-Modified-Since: a 304 would bring
+// back a kept page holding the old addresses) and plain (identity, so most
+// apps send nothing to unpack); one larger than PAGE_REWRITE_MAX_BYTES, in
+// an encoding this cannot unpack, or that cannot be unpacked, goes out as
+// the app sent it.
+const PAGE_REWRITE_MAX_BYTES = 2 * 1024 * 1024;
+
+function unpack(body, encoding) {
+  const e = String(encoding || '').trim().toLowerCase();
+  if (!e || e === 'identity') return body;
+  if (e === 'gzip' || e === 'x-gzip') return zlib.gunzipSync(body);
+  if (e === 'br') return zlib.brotliDecompressSync(body);
+  if (e === 'deflate') {
+    try { return zlib.inflateSync(body); } catch { return zlib.inflateRawSync(body); }
+  }
+  return null;
+}
+
+// Rewrites a page from `upRes` into `res`, or passes it through as it came.
+function sendVersionedPage(upRes, res, status, headers, version) {
+  const chunks = [];
+  let size = 0;
+  const passThrough = () => {
+    res.writeHead(status, headers);
+    for (const chunk of chunks) res.write(chunk);
+    upRes.pipe(res);
+  };
+  const onData = (chunk) => {
+    chunks.push(chunk);
+    size += chunk.length;
+    if (size > PAGE_REWRITE_MAX_BYTES) {
+      upRes.removeListener('data', onData);
+      upRes.removeListener('end', onEnd);
+      passThrough();
+    }
+  };
+  const onEnd = () => {
+    const body = Buffer.concat(chunks);
+    let page = null;
+    try { page = unpack(body, headers['content-encoding']); } catch { page = null; }
+    if (!page) {
+      res.writeHead(status, headers);
+      return res.end(body);
+    }
+    // Read and written byte for byte: only the ASCII of an address changes,
+    // whatever the page's charset.
+    const out = Buffer.from(offlineCache.versionAssetUrls(page.toString('latin1'), version), 'latin1');
+    const next = { ...headers, 'content-length': String(out.length) };
+    delete next['content-encoding'];
+    // The validators named the app's own bytes, not these.
+    delete next.etag;
+    delete next['last-modified'];
+    res.writeHead(status, next);
+    return res.end(out);
+  };
+  upRes.on('data', onData);
+  upRes.on('end', onEnd);
+  upRes.on('error', () => res.destroy());
 }
 
 // A request whose answer cannot depend on who is asking: no gate cookie, no
@@ -256,7 +326,18 @@ function createGate({
     headers['x-forwarded-for'] = forwardedFor(req);
     headers['x-forwarded-proto'] = String(req.headers['x-forwarded-proto'] || 'https');
     headers['x-forwarded-host'] = String(req.headers.host || '');
+    if (assetVersionOf(decision) && offlineCache.isPageRequest(req)) {
+      delete headers['if-none-match'];
+      delete headers['if-modified-since'];
+      headers['accept-encoding'] = 'identity';
+    }
     return headers;
+  }
+
+  // The live build the platform's answer names for this app's file
+  // addresses, in the one form the gate writes into a page; '' for none.
+  function assetVersionOf(decision) {
+    return offlineCache.assetVersion(decision.headers[offlineCache.VERSION_HEADER]);
   }
 
   function relayRefusal(res, decision) {
@@ -376,8 +457,14 @@ function createGate({
       // platform's own paths and anything on a preview are never pages.
       const robots = searchRobots.appHostRobots({ host: req.headers.host, url: req.url });
       if (robots) headers['x-robots-tag'] = searchRobots.withRobots(headers['x-robots-tag'], robots);
+      const version = assetVersionOf(decision);
+      if (version && req.method === 'GET' && upRes.statusCode === 200
+        && /^\s*text\/html\b/i.test(String(headers['content-type'] || ''))) {
+        return sendVersionedPage(upRes, res, 200, headers, version);
+      }
       res.writeHead(upRes.statusCode || 502, headers);
       upRes.pipe(res);
+      return undefined;
     });
     proxied.on('error', (err) => {
       endActivity();

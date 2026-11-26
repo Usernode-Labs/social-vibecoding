@@ -498,7 +498,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // No estimate yet: where it is, and no promise of a time.
   assert.equal(testing({ check_state: 'pending', check_phase: 'testing', checks_progress: { ran: 1, expected: 4 } }).figure, 'Checking it');
   // A queued run says where it is in line.
-  assert.match(testing({ check_state: 'pending', check_phase: 'queued', checks_progress: { queue: { ahead: 2 } } }).note[0], /\(2 ahead\)$/);
+  assert.match(testing({ check_state: 'pending', check_phase: 'queued', checks_progress: { queue: { ahead: 2 } } }).note[0], /\(2 ahead\)\.$/,
+    'its place in line opens the note as a sentence (23 Nov 2026)');
   // #4502: the deferred status explains the actual admission reason; the
   // native disclosure can open with a pointer, touch, or keyboard.
   const deferred = { ...PR, check_state: 'pending', check_phase: 'deferred' };
@@ -1089,13 +1090,16 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
     artifacts: [{ storyId: 's1', viewport: 'desktop', side: 'base', variant: 'context', url: url('a') },
       { storyId: 's1', viewport: 'desktop', side: 'head', variant: 'context', url: url('b') }] };
   const verified = render(av, { ...PR, shots }).page;
-  // `data-thread-picture`: under the card look it is read as one picture (thread-card.test.js).
-  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified" data-thread-picture="" data-thread-chips="" style="[^"]*"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
-  assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
-  assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
-  assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');
-  assert.doesNotMatch(verified, /shots-view-meta|Open a preview|Taken on the exact|Screenshots ready|Screenshot details|Take the screenshots again/);
-  const shot = av.shotsHtml(shots, { sessionId: 4090, details: true });
+  // The one before & after viewer (review-flow/shots-viewer.tsx), the Needs
+  // you page's slider, read as one picture (thread-card.test.js); the steps
+  // and the screen size are Shot details' (Details), not the card's.
+  assert.match(verified, /<section class="dev-change-shots dev-thread-picture shots-one" data-change-shots="verified" data-thread-picture="" data-thread-compare="0" data-shots="1" data-shots-state="verified" aria-label="Before and after">/);
+  assert.match(verified, /<li class="shots-change" data-shots-n="1" data-shots-change="s1">[\s\S]*The preview waits for sign-in/);
+  assert.doesNotMatch(verified, /shots-viewer|popover|shots-view-meta|Open a preview|Taken on the exact|Screenshots ready|Screenshot details|Take the screenshots again/);
+  // The viewer reads the shots themselves, as every surface does.
+  assert.deepEqual(plain(av._changeShotsView('proposal', { ...PR, shots }).source), { shots, sessionId: 4090 });
+  const { ShotDetails } = loadTsx('frontend/src/features/review-flow/shots-panel.tsx');
+  const shot = renderToHtml(createElement(ShotDetails, { source: { shots, sessionId: 4090 } }));
   assert.match(shot, /<strong>The preview waits for sign-in<\/strong>[\s\S]*Desktop · seen as a member[\s\S]*Open a preview/);
   assert.match(shot, /Taken on the exact before and after builds of this change/);
   const menu = (item) => { const v = av._topicViewFor('proposal', item); return av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label); };
@@ -1379,7 +1383,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(open.figure, 'Needs 1 more yes');
   assert.equal(open.tone, 'ask');
   assert.deepEqual(open.segments, [{ weight: 1, pct: 100, state: 'moving' }, { weight: 1, pct: 0, state: 'moving' }]);
-  assert.deepEqual(open.note, ['Any of the 3 approvers can give it.', 'cilokman’s yes was on an earlier version.']);
+  assert.deepEqual(open.note, ['Any of the 3 approvers can approve it.', 'cilokman’s yes was on an earlier version.']);
   // The viewer has voted: the figure is no longer an ask.
   assert.equal(votes({ ...PR, my_vote: 'yes' }).tone, 'muted');
   // Reached, while testing runs: the names, and that it waits on testing.
@@ -1396,7 +1400,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(yours(['jo'], { ...PR, status: 'merged' }), 'jo said yes.');
   // A vote a newer push retired: the reader's own reads "Your".
   const earlier = votes(PR, { yesNames: [], earlierYes: ['Builder', 'cilokman'], earlierNo: ['Builder'], approvers: 3 });
-  assert.deepEqual(earlier.note, ['Any of the 3 approvers can give it.', 'Your yes was on an earlier version.',
+  assert.deepEqual(earlier.note, ['Any of the 3 approvers can approve it.', 'Your yes was on an earlier version.',
     'cilokman’s yes was on an earlier version.', 'Your no was on an earlier version.']);
   assert.ok(v.body.thread.votes, 'every change page has its Votes card');
   // The roster keeps the names the card reads.
@@ -1529,9 +1533,13 @@ test('after a new commit the Before and after card keeps the previous version\'s
     artifacts: [{ storyId: 's1', viewport: 'desktop', side: 'base', variant: 'context', url: url('a') },
       { storyId: 's1', viewport: 'desktop', side: 'head', variant: 'context', url: url('b') }] };
   const taking = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [], previous } }).page;
-  assert.match(taking, /<section class="dev-change-shots" data-change-shots="previous"[^>]*><p class="dev-change-shots-line dev-change-shots-previous-line" data-shots-previous="exploring" role="status"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>These are from the previous version\. New screenshots are being taken and will replace them\.<\/span><\/p>/);
-  assert.match(taking, /<section data-shots="1" data-shots-state="previous" aria-label="Before and after" class="dev-change-shots-body">/);
-  assert.match(taking, /src="\/api\/apps\/example\/proposals\/4090\/shots\/b{32}"/, 'the previous version\'s after shot is the picture');
+  assert.match(taking, /<div class="dev-change-shots-previous" data-change-shots="previous"><p class="dev-change-shots-line dev-change-shots-previous-line" data-shots-previous="exploring" role="status"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>These are from the previous version\. New screenshots are being taken and will replace them\.<\/span><\/p>/);
+  assert.match(taking, /<section class="dev-change-shots dev-thread-picture shots-one" data-change-shots="previous"[^>]* data-shots-state="previous" aria-label="Before and after">/);
+  // The previous version's after shot is the picture.
+  const kept = av._changeShotsView('proposal', { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [], previous } }).source;
+  assert.equal(kept.shots.previousVersion, true);
+  const { readShots } = loadTsx('frontend/src/features/review-flow/shots-model.ts');
+  assert.equal(readShots(kept.shots, { sessionId: kept.sessionId }).screens[0].pair.after, url('b'));
   assert.doesNotMatch(taking, /Taking the screenshots\. They show up here when they are ready\./, 'no empty well');
   // This version's failed: the picture stays, with why this version has none,
   // and its author's retake.
@@ -1568,15 +1576,21 @@ test('a failed run offers its author or an admin Take the screenshots again on t
   assert.match(authored, /data-change-shots="failed"[\s\S]*<button type="button" class="gc-vote-btn" data-shots-retake="1"[^>]*>Take the screenshots again<\/button>/);
   assert.doesNotMatch(render(av, { ...PR, user_id: 7, shots: failed }).page, /data-shots-retake/);
   // Details: the failed run's own block (what happened and why) replaces the
-  // dead link to shots tied to a revision that has none.
-  const details = av.shotsHtml(failed, { sessionId: 4090, details: true, canRetake: true });
+  // dead link to shots tied to a revision that has none. Its words are
+  // AppView's (_shotsStateCopy), read through `window`.
+  const { ShotDetails } = loadTsx('frontend/src/features/review-flow/shots-panel.tsx');
+  globalThis.window = { AppView: av };
+  let details;
+  try {
+    details = renderToHtml(createElement(ShotDetails, { source: { shots: failed, sessionId: 4090 }, canRetake: true }));
+  } finally { delete globalThis.window; }
   assert.match(details, /Couldn’t take the screenshots/);
   assert.match(details, /data-shots-retake="1"/);
   // The two mounts pass the same answer through.
   assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
-    /av\.shotsHtml\(row\.shots, \{ sessionId: id, details: true, canRetake: !!av\._canRetakeShots\?\.\(row\) \}\)/);
+    /shots=\{row\?\.shots \? \{ source: \{ shots: row\.shots, sessionId: id \}, canRetake: !!av\?\._canRetakeShots\?\.\(row\) \} : null\}/);
   assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
-    /av\.shotsHtml\(session\.shots, \{ sessionId: Number\(id\), details: true, canRetake: !!av\._canRetakeShots\?\.\(session\) \}\)/);
+    /shots=\{session\?\.shots \? \{ source: \{ shots: session\.shots, sessionId: Number\(id\) \}, canRetake: !!av\?\._canRetakeShots\?\.\(session\) \} : null\}/);
 });
 
 // #6807 (evan): "should a change be in 'ask again' state in this case?" A

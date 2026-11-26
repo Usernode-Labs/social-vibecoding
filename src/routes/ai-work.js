@@ -7,15 +7,17 @@ const threadReads = require('../services/thread-reads');
 const aiWork = require('../services/ai-work');
 const aiHistory = require('../services/ai-history');
 const aiSearch = require('../services/ai-search');
+const threadMentions = require('../services/thread-mentions');
+const aiVisits = require('../services/ai-visits');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { appChatReadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
+const { appChatReadLimiter, appChatLoadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // GET /api/ai/work (#6019 follow-up): what the AI tab's main view lists
 // beside the Needs you feed, for the signed-in person (services/ai-work.js).
-//   → { private: PrivateRow[], needs: Row[], next: Row[], waiting: Row[], live: Row[] }
+//   → { private: PrivateRow[], needs: Row[], next: Row[], waiting: Row[], live: Row[], named: NamedRow[] }
 //
 // `?demo=1` on staging adds a few obviously fake rows of each kind, so the
 // view's declared checks and its before & after shots have something to
@@ -197,7 +199,7 @@ function aiWorkRoutes(config = {}) {
   //
   // `?demo=1` on staging reads the demo's own chat, made first if it is not
   // there yet, as the tab's other reads of it do.
-  router.get('/api/ai/where', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+  router.get('/api/ai/where', appChatLoadLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
@@ -291,7 +293,7 @@ function aiWorkRoutes(config = {}) {
   // project at all is the app-access check's. ?demo=1 on staging: none (the
   // demo's mock rows are the viewer's by their author, which the filter
   // reads first).
-  router.get('/api/apps/:slug/threads/yours', appChatReadLimiter, async (req, res) => {
+  router.get('/api/apps/:slug/threads/yours', appChatLoadLimiter, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
@@ -320,6 +322,80 @@ function aiWorkRoutes(config = {}) {
       return res.json(await aiWork.tracksFor(pool, { user: req.user, also: typeof req.query.also === 'string' ? req.query.also : '' }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the viewer\'s tracks', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Homeroom mobile polish, item 05 (24 Nov 2026): the list's visits, which
+  // say what is new since the last one (services/ai-visits.js). A browser's
+  // writes, not a connector's: on no list (services/cli-api-policy.js is
+  // fail-closed), same-origin only, never cached.
+  //
+  // POST /api/ai/visit { visit? } — the tab is showing the list. `visit` is
+  // the token this browser tab had before a reload, if any.
+  //   → { visit, since: ISO | null, seen: { needs, busy, done } | null }
+  // POST /api/ai/visit/seen { visit, seen, left? } — what the list has in
+  // view now, while it is up or (`left`) as it leaves. → { ok: true }; 400
+  // when `seen` is not one.
+  // POST /api/ai/visit/opened { visit, band, identity, standing } — a row
+  // was opened, so the last visit's record learns it was seen and its dot
+  // goes for the rest of the visit (24 Nov 2026, #7121). → { ok: true }; 400
+  // when the token, band, identity or standing is not one.
+  //
+  // `?demo=1` on staging answers a last visit 70 minutes ago that saw every
+  // demo row but three (ai-visits.js demoVisit), whatever the fixture account
+  // did before, and records nothing, so every shot of the page shows the marks.
+  router.post('/api/ai/visit', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') {
+        const { DEMO_NEEDS_FEED } = require('./workshop-overview');
+        const mine = await demoPrivate(pool, req.user);
+        return res.json(aiVisits.demoVisit({
+          feed: DEMO_NEEDS_FEED,
+          work: demoWork(),
+          privateRoots: mine.map((p) => p.rootId),
+        }));
+      }
+      const body = req.body || {};
+      return res.json(await aiVisits.openVisit(pool, { userId: req.user.id, token: body.visit ?? null }));
+    } catch (err) {
+      log.error('ai-work', 'Failed to open a visit to the Homeroom bot list', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/ai/visit/seen', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true });
+      const body = req.body || {};
+      const noted = await aiVisits.noteVisit(pool, {
+        userId: req.user.id, token: body.visit, seen: body.seen, left: body.left === true,
+      });
+      if (!noted) return res.status(400).json({ error: 'A visit token and what the list holds are required' });
+      return res.json(noted);
+    } catch (err) {
+      log.error('ai-work', 'Failed to note a visit to the Homeroom bot list', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/ai/visit/opened', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true });
+      const body = req.body || {};
+      const noted = await aiVisits.noteOpened(pool, {
+        userId: req.user.id, token: body.visit, band: body.band, identity: body.identity, standing: body.standing,
+      });
+      if (!noted) return res.status(400).json({ error: 'A visit token, band, identity and standing are required' });
+      return res.json(noted);
+    } catch (err) {
+      log.error('ai-work', 'Failed to note a row opened in the Homeroom bot list', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -370,6 +446,34 @@ function aiWorkRoutes(config = {}) {
       return res.json({ ok: true, unread: moved.unread });
     } catch (err) {
       log.error('ai-work', 'Failed to mark a thread read', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 24 Nov 2026 (mobile 04): Dismiss on a Needs you row for a thread somebody
+  // named the viewer in with @ (services/thread-mentions.js). It waves off
+  // every @ of them in that thread so far; a newer one brings the row back.
+  // Body: { thread_id }. Per person and per thread, and neither the bell's
+  // read mark nor the thread's read cursor. Waving something off is not
+  // taking part, so there is no join gate; the thread must be this app's.
+  router.post('/api/apps/:slug/threads/mentions/dismiss', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const raw = req.body && req.body.thread_id != null ? Number(req.body.thread_id) : NaN;
+      // ?demo=1 on staging names mock rows with negative ids: nothing to keep.
+      if (IS_STAGING && req.query.demo === '1' && Number.isInteger(raw) && raw < 0) return res.json({ ok: true });
+      if (!Number.isInteger(raw) || raw <= 0) return res.status(400).json({ error: 'Invalid thread' });
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { rows } = await pool.query('SELECT id FROM threads WHERE id = $1 AND app_id = $2', [raw, app.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Thread not found' });
+      await threadMentions.dismiss(pool, { userId: req.user.id, threadId: raw });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('ai-work', 'Failed to dismiss a thread\'s @', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

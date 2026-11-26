@@ -73,6 +73,15 @@ export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTML
  */
 export const PLANE_FILL = 'bg-[color:var(--dc-sheet-solid)]';
 
+/**
+ * A CARD THAT IS NOT A LIST, in the list's own recipe: the plane colour, the
+ * 20px radius and the one inset hairline below. The You page drew its hero,
+ * stat cards and "This week" as `rounded-2xl` plane cards with no hairline
+ * beside lists that had one, so half its cards had an edge and half did not
+ * (phone review #99, 23 Nov 2026). One literal, here, beside the list's.
+ */
+export const PLANE_CARD = 'rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+
 /*
  * ONE HAIRLINE AND A 20px RADIUS (AGENTS.md, "Type and colour"). Figure and
  * ground still do the separating; the hairline is what keeps the card's edge
@@ -180,7 +189,7 @@ export interface ListRowProps
   /**
    * Extra classes for the title line, merged over its defaults.
    *
-   * The default is a 650 weight at 15px, which is right for the rows this
+   * The default is a 600 weight at 16px (15px from 768px), which is right for the rows this
    * primitive was built for — a conversation, an app, a notification — where
    * the title is the row's subject and a subtitle sits under it. A settings MENU is the
    * other kind of grouped list: every row is one word, there are no subtitles,
@@ -191,6 +200,16 @@ export interface ListRowProps
   /** Optional layout hooks; defaults retain the standard single-line row. */
   contentClassName?: string;
   subtitleClassName?: string;
+}
+
+/**
+ * Whether a caller's classes for a line set a size of their own. Then the
+ * line is that size at every width: the desktop's step down (`md:`) is the
+ * default ramp's, and left in it would outrank the caller's size from 768px,
+ * because tailwind-merge keeps a breakpoint's class beside a plain one.
+ */
+function ownSize(extra?: string): boolean {
+  return !!extra && !cn('text-base', extra).split(' ').includes('text-base');
 }
 
 /**
@@ -220,6 +239,11 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       className={cn(
         'ui-lrow relative flex w-full items-center gap-4 px-4 py-3.5 text-start',
         (props.onClick || as === 'button' || as === 'a') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
+        // A row that names the page open beside its list (a conversation in
+        // the Messages column) is lit in the "where you are" tint, as the
+        // sidebar's current row is (AGENTS.md, "One accent"). Only `page`:
+        // `step` and `true` mark other things on other lists.
+        'aria-[current=page]:bg-[color:var(--lit-tint)]',
         rowSeparator({ inset: depth }),
         className,
       )}
@@ -228,13 +252,18 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     >
       {leading}
       <div className={cn('ui-lrow-tx min-w-0 flex-1', contentClassName)}>
-        {/* 15 OVER 13 (AGENTS.md, "Type and colour"). The title was 17px
+        {/* 16 OVER 14 ON A PHONE, 15 OVER 13 FROM 768px (AGENTS.md, "Type
+            and colour"; the design review of 25 Nov 2026). The title was 17px
             bold over a 15px subtitle: the size of a heading, on every row,
             so a list of five rows read as five headings and the one real
-            heading above them had nothing left to be louder with. 15px at
-            650 is the row's subject; 13px grey is the fact under it. */}
+            heading above them had nothing left to be louder with. Then it
+            was 15/650 over 13 everywhere, which on a phone read small beside
+            the system's own lists. Now the row's subject is 16px at 600 and
+            the fact under it 14px grey on a phone, a step down each at a
+            desktop's reading distance. */}
         <div className={cn(
-          'ui-lrow-t truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100',
+          'ui-lrow-t truncate text-base font-semibold leading-[1.3125rem] text-zinc-900 dark:text-zinc-100',
+          ownSize(titleClassName) ? null : 'md:text-[0.9375rem] md:leading-5',
           titleClassName,
         )}>{title}</div>
         {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
@@ -242,7 +271,11 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
             Discover rows' and the Me screen's meta lines. zinc-400 is 6.0 and
             5.2, and is still the quiet line under a bold title. */}
         {subtitle ? (
-          <div className={cn('ui-lrow-s mt-0.5 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
+          <div className={cn(
+            'ui-lrow-s mt-0.5 truncate text-sm leading-[1.1875rem] text-zinc-500 dark:text-zinc-400',
+            ownSize(subtitleClassName) ? null : 'md:text-[0.8125rem] md:leading-[1.125rem]',
+            subtitleClassName,
+          )}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (
@@ -255,3 +288,49 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     </Tag>
   );
 });
+
+/**
+ * THE ROW'S TRAILING FACTS: a short line level with the title (a time, "2h")
+ * and, under it, an optional one level with the subtitle (a count, "2 new").
+ * The Messages inbox drew this pair by hand inside its own row, the time at
+ * the end of the name's line and the count at the end of the preview's; as
+ * the row's `trailing` it is the same two facts in one column, so the title
+ * and the subtitle keep the row's whole width to truncate in.
+ *
+ * Each line keeps its line's height (the title's and the subtitle's, at
+ * both sizes), and the second is drawn even when it is empty, so the first
+ * always sits on the title's line rather than drifting to the row's middle
+ * when there is no count. `tone` says which line asks to be read: `strong`
+ * puts the first in the ink (something new since you last looked), `quiet`
+ * leaves both grey. The second line is grey and semibold either way: new to
+ * read, not waiting on you (AGENTS.md, "One accent").
+ */
+const rowMetaTop = cva(
+  'ui-lrow-mt whitespace-nowrap text-sm leading-[1.3125rem] tabular-nums md:text-[0.8125rem] md:leading-5',
+  {
+    variants: {
+      tone: {
+        quiet: 'text-zinc-500 dark:text-zinc-400',
+        strong: 'font-semibold text-zinc-900 dark:text-zinc-100',
+      },
+    },
+    defaultVariants: { tone: 'quiet' },
+  },
+);
+
+export interface ListRowMetaProps extends VariantProps<typeof rowMetaTop> {
+  /** The fact level with the title: usually a `<time>` with its whole instant in `title`. */
+  top?: React.ReactNode;
+  /** The fact level with the subtitle, or nothing (its line is kept). */
+  bottom?: React.ReactNode;
+  className?: string;
+}
+
+export function ListRowMeta({ top, bottom, tone, className }: ListRowMetaProps) {
+  return (
+    <span className={cn('ui-lrow-m flex shrink-0 flex-col items-end', className)}>
+      <span className={rowMetaTop({ tone })}>{top}</span>
+      <span className="ui-lrow-mb mt-0.5 min-h-[1.1875rem] whitespace-nowrap text-sm font-semibold leading-[1.1875rem] text-zinc-500 md:min-h-[1.125rem] md:text-[0.8125rem] md:leading-[1.125rem] dark:text-zinc-400">{bottom}</span>
+    </span>
+  );
+}

@@ -401,8 +401,8 @@ test('#6270: a stand-in word is not an answer, and a short real one is', () => {
 });
 
 test('#6270: the last round is warned and can queue the change, and reading is capped', () => {
-  assert.equal(voice.MAX_ROUNDS, 8);
-  assert.equal(voice.MAX_READS_PER_TURN, 4);
+  assert.equal(voice.MAX_ROUNDS, 12);
+  assert.equal(voice.MAX_READS_PER_TURN, 8);
   const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
   const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
   assert.match(prompt, /even when they say it partly as a question/);
@@ -702,8 +702,9 @@ test('which attached pictures a turn sends, and what a file\'s line says, are th
     '[Homeroom: they attached the picture desktop.png, which you cannot see: your model reads text only.]');
   assert.equal(mayor.attachedLine(shot, { imageInput: true, withId: false }),
     '[Homeroom: they attached the picture desktop.png. Only the newest pictures are shown.]');
+  // #7136: a file that is not a picture says it can go on to a build.
   assert.equal(mayor.attachedLine({ id: 'f2', kind: 'markdown', filename: 'notes.md' }, { imageInput: true, withId: false }),
-    '[Homeroom: they attached the file notes.md, which you cannot open.]');
+    '[Homeroom: they attached the file notes.md. You cannot open it, but a request filed from this thread can carry it to its build.]');
   // #6251: in its own chat the id stays on the line.
   assert.equal(mayor.attachedLine(shot, { imageInput: false }),
     '[Homeroom: they attached the picture desktop.png (id f1), which you cannot see: your model reads text only.]');

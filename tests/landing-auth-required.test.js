@@ -173,6 +173,53 @@ test('a public app without a launch URL does not open an empty viewer', async ()
   assert.equal(h.historyEntries.length, 0);
 });
 
+// #7128: Open from a public project's page kept no Homeroom bar around the
+// app for a visitor, because an account-required app was sent to #signup. A
+// guest-ready app now loads in the viewer as a guest, with the bar's back.
+test('a signed-out visitor opens a guest-ready app in the viewer, as a guest and with no token', async () => {
+  const h = harness();
+  await h.open({
+    slug: 'game-corner',
+    name: 'Game Corner',
+    url: 'https://game-corner.example/?mode=compact#today',
+    requires_login: true,
+    guest_ready: true,
+  });
+  assert.deepEqual(h.tokenMints, [], 'a guest needs no app identity');
+  assert.deepEqual(h.remembered, [], 'not sent to the sign-in sheet');
+  assert.equal(h.location.hash, '#landing', 'not routed to #signup');
+  assert.equal(h.frame.src, 'https://game-corner.example/?mode=compact#today',
+    'the app is loaded at its own address with no token');
+  assert.equal(h.historyEntries.length, 1);
+  assert.equal(h.historyEntries[0].svAnonAppViewer, true);
+  assert.deepEqual(h.domReads, ['app-viewer', 'auth-landing-scroll', 'app-viewer-frame']);
+});
+
+for (const [label, value] of [
+  ['false', false],
+  ['missing', undefined],
+  ['a malformed string', 'true'],
+]) {
+  test(`an account-required app whose guest_ready is ${label} still routes a signed-out visitor to signup`, async () => {
+    const app = { slug: 'guest-app', name: 'Guest app', url: 'https://app.example/', requires_login: true, guest_ready: value };
+    const h = harness();
+    await h.open(app);
+    assert.deepEqual(h.remembered, ['/app/guest-app']);
+    assert.equal(h.location.hash, '#signup');
+    assert.equal(h.frame.src, 'about:blank');
+    assert.deepEqual(h.tokenMints, []);
+    assert.equal(h.historyEntries.length, 0);
+  });
+}
+
+// The bar an open app keeps: the back chevron closes the viewer (and so
+// returns to the project page still under it), and the title is the app.
+test('the open app keeps the bar, and its back closes the viewer', () => {
+  assert.match(source, /const showBack = !!openApp \|\| appDiscover;/);
+  assert.match(source, /const onBack = useCallback\(\(\) => \{\s+if \(st\.openSlug\) \{ live\.current\.closeLandingApp\(\); return; \}/);
+  assert.match(source, /const headerTitle = openApp \? openApp\.name \|\| openApp\.slug/);
+});
+
 // #3257 follow-up: the guest viewer's frame URL carries the platform theme
 // the way the signed-in app frame's does (AppView.buildAppIframeSrc), so an
 // app that follows it paints in the viewer's Homeroom theme from the first

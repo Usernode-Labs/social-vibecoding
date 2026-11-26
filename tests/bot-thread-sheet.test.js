@@ -51,7 +51,7 @@ test('the alone head opens on the bot\'s round face', () => {
 test('a flat row is the named row, never a bubble', () => {
   assert.match(row, /flat = false,/);
   assert.match(row, /\n\s*flat\?: boolean;/);
-  assert.match(row, /const sided = !flat && !frame && kind !== 'channel'/,
+  assert.match(row, /const sided = !flat && kind !== 'channel'/,
     'flat turns the side off, as a channel row never had one');
   assert.equal((messages.match(/flat=\{sheet\}/g) || []).length, 2,
     'the root message and every reply in the thread are flat');
@@ -60,13 +60,15 @@ test('a flat row is the named row, never a bubble', () => {
 test('20 Nov 2026: the sheet is a public thread\'s page, drawn by the public thread\'s rules', () => {
   // #6863's own copy (three 446px cards, the replies scrolling inside the
   // middle one, its own head rules) is gone: a thread alone in the bot tab's
-  // column is drawn on ../group-chat/thread-page.tsx under the standard and
-  // brand looks, and app.css draws it from the public thread's rules.
+  // column is drawn on ../group-chat/thread-page.tsx, and app.css draws it
+  // from the public thread's rules.
   assert.doesNotMatch(css, /\.messages-reply-pane\[data-bot-sheet\]/, 'no rules of the sheet\'s own');
-  assert.match(messages, /const page = sheet && !frameLook;/, 'a frame look keeps its own thread');
+  assert.match(messages, /const page = sheet;/);
   assert.match(messages, /data-thread-page-host=\{page \? '' : undefined\}/);
   assert.match(css, /#ai-screen \.messages-layout\[data-bot-threads\] > \.messages-reply-pane\[data-thread-page-host\] \{\s+background: transparent;/,
     'the pane draws no sheet: the page lies on the column\'s ground, as a request\'s does');
+  assert.match(css, /:is\(\.dev-ws-side, \.in-side-panel body, \.gc-tab-body:has\(> \.gc-spec-side-panel-open\)\) #dev-topic-thread \.dev-request:has\(\.dev-request-rail:not\(:empty\)\) \.dev-request-sheet \{ background: transparent; \}/,
+    'a public thread\'s page in a panel paints no ground either, as the private pane does');
   assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-replies\] \.messages-message \{ padding: 8px 16px; gap: 12px; \}/,
     'the replies card\'s rows are the flat named rows');
   assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-post\] \.messages-message > :first-child:not\(\.min-w-0\) \{ display: none; \}/,

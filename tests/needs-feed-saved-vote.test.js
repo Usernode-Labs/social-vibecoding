@@ -79,3 +79,40 @@ function body(src, start, end) {
 
 
 // ── #6101: a change that merged under the card ─────────────────────────
+
+
+// ── #6990: a group decision's saved vote leaves the Communities feed ──
+//
+// The sidebar's badge is dropped by Notifications.refresh(), but the
+// Communities Needs you list kept the decision until a reload, so the two
+// disagreed. The feed now hears the same saved vote (cards-store.ts
+// govVoteSavedStore) and takes the item out with its counts.
+
+test('a saved group decision leaves the Communities Needs you feed at once', async () => {
+  const cards = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
+  const screen = loadTsx('frontend/src/features/workshop/index.tsx', {
+    stubs: { '../dev-board/card/cards-store': cards },
+  });
+  const feed = [
+    { kind: 'governance', id: 9, title: 'Close it', number: null },
+    { kind: 'proposal', id: 41, title: 'A change', number: 12, epoch: 2 },
+  ];
+  globalThis.fetch = async (url) => (String(url).includes('needs-feed')
+    ? { ok: true, json: async () => ({ items: feed, max: 0 }) }
+    : { ok: true, json: async () => ({ counts: {} }) });
+  try {
+    screen.workshopStore.set({ open: true, feed });
+    cards.publishGovVoteSaved(9, 'yes');
+    assert.deepEqual(
+      screen.workshopStore.get().feed.map((i) => i.id),
+      [41],
+      'the decision leaves; the change still waiting stays',
+    );
+    // A read issued before the vote and landing after it cannot bring it back.
+    await screen.workshopController.refreshNeeds();
+    assert.deepEqual(screen.workshopStore.get().feed.map((i) => i.id), [41],
+      'the answered key strips it from every later read too');
+  } finally {
+    delete globalThis.fetch;
+  }
+});

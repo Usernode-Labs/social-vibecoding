@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
-import { needsYouSentence, pinnedSections } from './admin-workspace.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Operations overview — the console's landing section (#admin, #admin/overview).
@@ -50,24 +49,85 @@ interface OverviewData {
   orphanWorkers?: Array<{ name: string; appSlug?: string; uptimeSeconds?: number; sessionArchived?: boolean }>;
   llmToday?: { totalSpendCents: number; users?: Array<{ username: string; costCents: number }> };
 }
+interface AnalyticsData { users?: { total?: number }; appsTotal?: number; prs?: { promoted_all_time?: number }; wau?: number }
+interface ModerationCase { id: number; target_type: string; target_label?: string; report_count: number; reasons?: string[]; created_at: string }
+interface RecentUser { id: number; username: string; is_admin: boolean; created_at: string }
+interface RecentApp { slug: string; name: string; creator?: string | null; users?: number; members?: number; status?: string; lastActiveAt?: string | null }
 
-const TILE = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
-const TILE_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
 const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1';
-const ROW = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800';
 const MUTED_SM = 'text-xs text-zinc-500 dark:text-zinc-400';
+
+// A date nobody can read two ways: "11 Nov 2026", never 11/11/2026.
+const DAY = { day: 'numeric', month: 'short', year: 'numeric' } as const;
+function dayWords(at?: string | null): string {
+  const t = Date.parse(at || '');
+  return Number.isNaN(t) ? '—' : new Date(t).toLocaleDateString(undefined, DAY);
+}
+
+// The console's own icon for a section, the one its menu row wears. The
+// markup is a literal from AdminConsole.NAV_ICONS, never data.
+function SectionIcon({ of: key, className }: { of: string; className: string }) {
+  const svg = typeof window === 'undefined' ? '' : ((window as any).AdminConsole?.NAV_ICONS?.[key] || '');
+  return <span className={className} aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+const goTo = (key: string) => (window as any).AdminConsole?.goTo?.(key);
+
+// A project's status pill: green only while it runs, plain otherwise.
+const STATUS_TONE: Record<string, string> = { running: 'admin-pill is-ok', failed: 'admin-pill is-bad', error: 'admin-pill is-bad' };
 
 function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [cases, setCases] = useState<ModerationCase[] | null>(null);
+  const [users, setUsers] = useState<RecentUser[] | null>(null);
+  const [apps, setApps] = useState<RecentApp[] | null>(null);
+  const [growth, setGrowth] = useState<Array<{ wk: string; new_users: number }> | null>(null);
+  const [caseCount, setCaseCount] = useState<number | null>(null);
+  const [caseOverflow, setCaseOverflow] = useState(false);
+  // Which reads failed on the last load, by what they fill. A part that did
+  // not load says so; it never stays on "Loading…" and never shows a zero.
+  const [failed, setFailed] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
   // status.gather can take a moment; the tiles show em-dashes until it lands,
   // and only this section blocks — never the whole page.
   const load = useCallback(async () => {
-    const { data: payload } = await (window as any).AdminConsole.fetchJson('/api/admin/overview');
-    if (!alive.current || !payload || typeof payload !== 'object') return;
-    setData(payload);
+    const fetchJson = (window as any).AdminConsole.fetchJson;
+    setBusy(true);
+    const [o, a, m, u, c, g] = await Promise.all([
+      fetchJson('/api/admin/overview'),
+      fetchJson('/api/admin/analytics/overview'),
+      fetchJson('/api/admin/moderation?status=new'),
+      fetchJson('/api/admin/users'),
+      fetchJson('/api/admin/apps-usage?days=30'),
+      fetchJson('/api/admin/analytics/growth'),
+    ]);
+    if (!alive.current) return;
+    setBusy(false);
+    const missing: string[] = [];
+    if (o?.data && typeof o.data === 'object') setData(o.data); else missing.push('platform health');
+    if (a?.data) setAnalytics(a.data); else missing.push('the figures');
+    if (Array.isArray(m?.data?.cases)) {
+      setCases(m.data.cases.slice(0, 3));
+      setCaseCount(m.data.next ? 50 : m.data.cases.length);
+      setCaseOverflow(!!m.data.next);
+      const count = m.data.cases.length;
+      const badge = document.querySelector<HTMLElement>('[data-admin-moderation-count]');
+      if (badge) { badge.textContent = m.data.next ? `${count}+` : String(count); badge.hidden = count === 0; }
+    } else { setCases((was) => was || []); missing.push('the moderation queue'); }
+    if (Array.isArray(u?.data)) {
+      setUsers(u.data.slice().sort((left: RecentUser, right: RecentUser) =>
+        (Date.parse(right.created_at) || 0) - (Date.parse(left.created_at) || 0)).slice(0, 3));
+    } else { setUsers((was) => was || []); missing.push('recent members'); }
+    if (Array.isArray(c?.data?.apps)) {
+      setApps(c.data.apps.slice().sort((left: RecentApp, right: RecentApp) =>
+        (Date.parse(right.lastActiveAt || '') || 0) - (Date.parse(left.lastActiveAt || '') || 0)).slice(0, 3));
+    } else { setApps((was) => was || []); missing.push('recent projects'); }
+    if (Array.isArray(g?.data?.weeks)) setGrowth(g.data.weeks.slice(-8)); else missing.push('the weekly chart');
+    setFailed(missing);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -78,37 +138,36 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   const spenders = (llm.users || []).slice(0, 5);
   const anyDetail = stuck.length || orphans.length || spenders.length;
 
+  // Platform health: apps wedged while being made, today's AI spend, and
+  // workers whose session is gone. The ids are the ones declared checks read.
   const ops = (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Operations</h2>
-        <button id="admin-refresh-overview" type="button" className={`${AdminUI.btn.link} text-xs`}
-          onClick={load}>Refresh</button>
+    <section className="admin-dashboard-panel admin-ops-panel">
+      <div className="admin-dashboard-section-head">
+        <div><h2>Platform health</h2><p>Apps stuck while being made, today's AI spend, and workers left running.</p></div>
+        <button id="admin-refresh-overview" type="button" onClick={load} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh'}</button>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <div className={TILE}>
-          <div className={TILE_LABEL}>Stuck apps</div>
-          <div id="admin-overview-stuck" className="text-2xl font-bold mt-1">{data ? stuck.length : '—'}</div>
+      <div className="admin-ops-tiles">
+        <div className="admin-ops-tile">
+          <small>Stuck apps</small>
+          <strong id="admin-overview-stuck">{data ? stuck.length : '—'}</strong>
         </div>
-        <div className={TILE}>
-          <div className={TILE_LABEL}>LLM spend today</div>
-          <div id="admin-overview-llm" className="text-2xl font-bold mt-1">
-            {data ? `$${(llm.totalSpendCents / 100).toFixed(2)}` : '—'}
-          </div>
+        <div className="admin-ops-tile">
+          <small>AI spend today</small>
+          <strong id="admin-overview-llm">{data ? `$${(llm.totalSpendCents / 100).toFixed(2)}` : '—'}</strong>
         </div>
-        <div className={TILE}>
-          <div className={TILE_LABEL}>Orphan workers</div>
-          <div id="admin-overview-orphan" className="text-2xl font-bold mt-1">{data ? orphans.length : '—'}</div>
+        <div className="admin-ops-tile">
+          <small>Workers left running</small>
+          <strong id="admin-overview-orphan">{data ? orphans.length : '—'}</strong>
         </div>
       </div>
       <div id="admin-overview-details" className="space-y-3 text-sm">
-        {!data ? <p className={AdminUI.loading}>Loading…</p> : null}
+        {!data && busy ? <p className={AdminUI.loading}>Loading…</p> : null}
         {stuck.length ? (
           <div>
             <div className={GROUP_LABEL}>Stuck apps</div>
-            <ul className="space-y-1">
+            <ul className="admin-ops-rows">
               {stuck.map((a) => (
-                <li key={a.slug} className={ROW}>
+                <li key={a.slug}>
                   <span>
                     <span className="font-mono">{a.slug}</span>
                     <span className={MUTED_SM}>{` (${a.dbStatus}, by ${a.createdBy || '—'})`}</span>
@@ -121,10 +180,10 @@ function OverviewSection({ compact }: { compact?: boolean }) {
         ) : null}
         {orphans.length ? (
           <div>
-            <div className={GROUP_LABEL}>Orphan workers</div>
-            <ul className="space-y-1">
+            <div className={GROUP_LABEL}>Workers left running</div>
+            <ul className="admin-ops-rows">
               {orphans.map((w) => (
-                <li key={w.name} className={ROW}>
+                <li key={w.name}>
                   <span>
                     <span className="font-mono">{w.name}</span>
                     <span className={MUTED_SM}>
@@ -139,10 +198,10 @@ function OverviewSection({ compact }: { compact?: boolean }) {
         ) : null}
         {spenders.length ? (
           <div>
-            <div className={GROUP_LABEL}>Top LLM spenders today</div>
-            <ul className="space-y-1">
+            <div className={GROUP_LABEL}>Top AI spenders today</div>
+            <ul className="admin-ops-rows">
               {spenders.map((u) => (
-                <li key={u.username} className="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+                <li key={u.username}>
                   <span>{u.username}</span>
                   <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">{`$${(u.costCents / 100).toFixed(2)}`}</span>
                 </li>
@@ -151,84 +210,83 @@ function OverviewSection({ compact }: { compact?: boolean }) {
           </div>
         ) : null}
         {data && !anyDetail ? (
-          <p className={MUTED_SM}>All clear: no stuck apps, no orphan workers, no LLM spend recorded today.</p>
+          <p className="admin-dashboard-muted">All clear: no stuck apps, no workers left running, no AI spend recorded today.</p>
         ) : null}
       </div>
-    </div>
+    </section>
   );
 
-  if (compact) return ops;
+  const shortCuts = [
+    ['overview', 'Dashboard'], ['reports', 'Moderation'], ['users', 'Users'],
+    ['apps', 'Content'], ['analytics', 'Analytics'],
+  ];
+  const moderation = <section className="admin-dashboard-panel admin-moderation-panel">
+    <div className="admin-dashboard-section-head"><h2>Moderation queue</h2><button type="button" data-admin-section="reports" onClick={() => goTo('reports')}>View all →</button></div>
+    {cases === null ? <p className={AdminUI.loading}>Loading reports…</p> : cases.length ? <div className="admin-queue-rows">
+      {cases.map((item) => <button type="button" className="admin-queue-row" key={item.id} onClick={() => { location.hash = `#admin/reports/${item.id}`; }}>
+        <SectionIcon of={item.target_type === 'user' ? 'users' : item.target_type === 'app' ? 'apps' : 'reports'} className="admin-queue-mark" />
+        <span className="admin-queue-copy"><strong>{item.target_label || `${item.target_type.replace('_', ' ')} report`}</strong><small>{(item.reasons || []).join(', ').replaceAll('_', ' ') || 'Needs review'} · {item.report_count} {item.report_count === 1 ? 'report' : 'reports'}</small></span>
+        <span className="admin-queue-age">{dayWords(item.created_at)}</span><span className="admin-queue-action">Review</span>
+      </button>)}
+    </div> : <div className="admin-dashboard-empty"><SectionIcon of="status" className="admin-dashboard-empty-mark" /><p>{failed.includes('the moderation queue') ? 'The queue did not load.' : 'Nothing to review. New reports show up here.'}</p></div>}
+  </section>;
+  const chartValues = (growth || []).map((item) => Number(item.new_users) || 0);
+  const chartMax = Math.max(1, ...chartValues);
+  const chartPoints = chartValues.map((value, index) => `${chartValues.length < 2 ? 0 : index * 100 / (chartValues.length - 1)},${36 - (value / chartMax) * 31}`).join(' ');
+  const chartTotal = chartValues.reduce((sum, value) => sum + value, 0);
+  const recentTables = <div className="admin-records-grid">
+    <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Users</h2><p>Newest accounts</p></div><button type="button" onClick={() => goTo('users')}>View all →</button></div>
+      <div className="admin-record-table"><div className="admin-record-head"><span>User</span><span>Joined</span><span>Role</span></div>
+        {users === null ? <p className={AdminUI.loading}>Loading users…</p> : users.length ? users.map((u) => <div className="admin-record-row" key={u.id}><span className="admin-record-person"><i>{u.username.slice(0, 1).toUpperCase()}</i><b>@{u.username}</b></span><span>{dayWords(u.created_at)}</span><span><em className={u.is_admin ? 'admin-pill is-admin' : 'admin-pill'}>{u.is_admin ? 'Admin' : 'Member'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent members') ? 'The list did not load.' : 'No accounts yet.'}</p>}
+      </div>
+    </section>
+    <section className="admin-dashboard-panel"><div className="admin-dashboard-section-head"><div><h2>Content</h2><p>Recently active projects</p></div><button type="button" onClick={() => goTo('apps')}>View all →</button></div>
+      <div className="admin-record-table"><div className="admin-record-head"><span>Project</span><span>Creator</span><span>Status</span></div>
+        {apps === null ? <p className={AdminUI.loading}>Loading projects…</p> : apps.length ? apps.map((app) => <div className="admin-record-row" key={app.slug}><span className="admin-record-person"><SectionIcon of="apps" className="admin-record-mark" /><b>{app.name}</b></span><span>{app.creator ? `@${app.creator}` : '—'}</span><span><em className={STATUS_TONE[app.status || ''] || 'admin-pill'}>{app.status || 'unknown'}</em></span></div>) : <p className="admin-dashboard-muted">{failed.includes('recent projects') ? 'The list did not load.' : 'No projects yet.'}</p>}
+      </div>
+    </section>
+  </div>;
+  const metrics: Array<[string, number | null | undefined, string, string]> = [
+    ['Users', analytics?.users?.total, 'users', 'sky'], ['Projects', analytics?.appsTotal, 'apps', 'green'],
+    ['Cases to review', caseCount, 'reports', 'yellow'], ['Active this week', analytics?.wau, 'analytics', 'sky'],
+  ];
+  const dashboard = <div id="admin-dashboard">
+    <header className="admin-dashboard-heading"><div><h1>Admin Dashboard</h1><p>Manage users, content, and community health on Homeroom.</p></div>
+      <button type="button" className="admin-dashboard-refresh" onClick={load} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+    </header>
+    <nav className="admin-mobile-shortcuts" aria-label="Admin areas">{shortCuts.map(([key, label]) => <button type="button" key={key} data-admin-section={key} onClick={() => goTo(key)} aria-current={key === 'overview' ? 'page' : undefined}>{label}</button>)}</nav>
+    {failed.length ? <p id="admin-dashboard-error" role="alert" className="admin-dashboard-alert">
+      <span>{`Some of this page did not load: ${failed.join(', ')}. What is shown is what arrived.`}</span>
+      <button type="button" onClick={load} disabled={busy}>Try again</button>
+    </p> : null}
+    <section className="admin-metric-grid" aria-label="Admin overview">
+      {metrics.map(([label, value, key, tone]) => <button type="button" className={`admin-metric-card ${tone}`} data-admin-section={key} onClick={() => goTo(key)} key={label}>
+        <SectionIcon of={key} className="admin-metric-icon" />
+        <span><strong>{value == null ? '—' : `${Number(value).toLocaleString()}${key === 'reports' && caseOverflow ? '+' : ''}`}</strong><small>{label}</small></span>
+      </button>)}
+    </section>
+    <div className="admin-dashboard-columns">{moderation}<section className="admin-dashboard-panel admin-health-panel"><div className="admin-dashboard-section-head"><div><h2>Community analytics</h2><p>New accounts each week, last eight weeks</p></div><button type="button" data-admin-section="analytics" onClick={() => goTo('analytics')}>View details →</button></div>
+      {growth === null ? <p className="admin-dashboard-muted">{failed.includes('the weekly chart') ? 'The chart did not load.' : 'Loading the chart…'}</p> : <div className="admin-analytics-chart" role="img" aria-label={`New accounts by week for the last eight weeks: ${chartValues.join(', ')}`}><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polygon points={`0,40 ${chartPoints} 100,40`} /><polyline points={chartPoints} /></svg><div><span>8 weeks ago</span><span>This week</span></div></div>}
+      <div className="admin-health-stat"><span>New accounts in eight weeks</span><strong>{growth === null ? '—' : chartTotal.toLocaleString()}</strong></div>
+      <div className="admin-health-stat"><span>Weekly active users</span><strong>{analytics?.wau == null ? '—' : Number(analytics.wau).toLocaleString()}</strong></div>
+    </section></div>
+    {recentTables}
+    {ops}
+    <section className="admin-quick-actions"><h2>Quick actions</h2><div>
+      {([['reports', `Review queue${caseCount ? ` (${caseCount}${caseOverflow ? '+' : ''})` : ''}`], ['users', 'Manage users'], ['apps', 'Manage content'], ['settings', 'Admin settings']] as Array<[string, string]>)
+        .map(([key, label]) => <button type="button" key={key} data-admin-section={key} onClick={() => goTo(key)}><SectionIcon of={key} className="admin-quick-icon" /><span>{label}</span><i aria-hidden="true">›</i></button>)}
+    </div></section>
+  </div>;
 
-  const consoleApi = (window as any).AdminConsole;
-  const visible: Section[] = consoleApi?._visibleSections?.() || [];
-  const pinned: Section[] = pinnedSections(visible);
-  const groups: Array<{ name: string; items: Section[] }> = (consoleApi?._groupedSections?.() || [])
-    .map((g: { name: string; items: Section[] }) => ({ ...g, items: g.items.filter((x) => x.key !== 'overview') }))
-    .filter((g: { items: Section[] }) => g.items.length);
-  const sentence = needsYouSentence(data);
-  const needs = (stuck.length + orphans.length) > 0;
+  if (compact) return <div className="admin-mobile-dashboard">{dashboard}</div>;
 
   return (
-    <div id="admin-home" className="space-y-10 pb-4">
-      <header>
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Admin home</h1>
-        <p id="admin-home-status" className={`mt-1 text-sm ${needs ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
-          {sentence || 'Checking what needs you…'}
-        </p>
-      </header>
-      {ops}
-      {pinned.length ? (
-        <section aria-labelledby="admin-home-pinned-title">
-          <h2 id="admin-home-pinned-title" className={HOME_LABEL}>Pinned</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pinned.map((x) => (
-              <SectionCard key={x.key} section={x} large />
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <section aria-labelledby="admin-home-all-title">
-        <h2 id="admin-home-all-title" className={HOME_LABEL}>All sections</h2>
-        <div className="space-y-8">
-          {groups.map((g) => (
-            <div key={g.name} data-admin-home-group={g.name}>
-              <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3">{g.name}</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {g.items.map((x) => <SectionCard key={x.key} section={x} />)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+    <div id="admin-home" className="pb-4">
+      {dashboard}
     </div>
   );
 }
 
-interface Section { key: string; label: string; group?: string }
-
-const HOME_LABEL = 'text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-4';
-
-// One card per section, a real <button> carrying data-admin-section like
-// every other way into a section. Its glyph is the chassis's own NAV_ICONS
-// entry: a static string in this bundle, never anything a server sent.
-function SectionCard({ section, large }: { section: Section; large?: boolean }) {
-  const icon = (window as any).AdminConsole?.NAV_ICONS?.[section.key] || '';
-  return (
-    <button
-      type="button"
-      data-admin-section={section.key}
-      onClick={() => (window as any).AdminConsole?.goTo?.(section.key)}
-      className={`${AdminUI.card} flex items-center gap-4 w-full text-start ${large ? 'p-5' : 'px-4 py-3'} transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500`}
-    >
-      <span className={`flex items-center justify-center shrink-0 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 ${large ? 'w-11 h-11' : 'w-9 h-9'}`}
-        dangerouslySetInnerHTML={{ __html: icon }} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{section.label}</span>
-        {large && section.group ? <span className="block text-xs text-zinc-500 dark:text-zinc-400">{section.group}</span> : null}
-      </span>
-    </button>
-  );
-}
 
 let host: Element | null = null;
 

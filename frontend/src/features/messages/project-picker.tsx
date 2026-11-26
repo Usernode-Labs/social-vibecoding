@@ -34,9 +34,9 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronDownIcon, SearchIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMenu } from '../../lib/menu';
+import { useSheet } from '../../lib/sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { useCommunityColor } from '../../lib/community-color';
 import { navStore } from '../nav/nav-store.js';
@@ -102,26 +102,24 @@ export function ProjectChip({ slug, open, onOpen }: {
   // Read through the store so a name that arrives after the pick is drawn.
   const st = useStoreState(communityScopeStore);
   const info = slug ? st.info[slug] || null : null;
-  const color = useCommunityColor(info ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug } : null);
   const name = info ? info.name : t('messages:newThread.anyProject');
-  const style = info ? ({ '--project-ink': color } as CSSProperties) : undefined;
   return (
     <button
       type="button"
-      className="messages-project-chip"
+      // One look (25 Nov 2026): a menu chip, the shared part, its lead word quiet.
+      className="messages-project-chip one-chip"
       data-bot-new-thread-project={slug || ''}
       data-picked={info ? '' : undefined}
-      style={style}
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={t('messages:newThread.projectChip', { project: name })}
-      title={t('messages:newThread.projectChip', { project: name })}
       onClick={(event) => onOpen(event.currentTarget)}
     >
-      {info ? <Tile info={info} className="messages-project-chip-tile" /> : (
-        <span className="messages-project-chip-tile messages-project-chip-any" aria-hidden="true"><Squares2X2Icon /></span>
-      )}
-      <span className="messages-project-chip-name">{name}</span>
+      {/* Phone review S13: "About: Any project" says it in words, so no
+          tile stands for it; a picked project still shows its own. */}
+      {info ? <Tile info={info} className="messages-project-chip-tile" /> : null}
+      {/* Phone review S13: it says what it picks ("About: Homeroom", "With:
+          Homeroom bot"), and those words are its name for a screen reader. */}
+      <span className="messages-project-chip-name"><RichMessage id="messages:newThread.projectChip" values={{ project: name }} components={[<span className="messages-project-chip-label one-chip-lead" />]} /></span>
       <ChevronDownIcon className="messages-project-chip-chev" aria-hidden="true" />
     </button>
   );
@@ -260,34 +258,19 @@ function PickerBody({ slug, menu, onPick }: { slug: string | null; menu: boolean
   );
 }
 
-/** Where focus lands when it opens: the row picked now. */
-function focusPicked(panel: HTMLElement | null): void {
-  panel?.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus({ preventScroll: true });
-}
 
 function PickerSheet({ slug, onPick, onClose }: { slug: string | null; onPick: (slug: string | null) => void; onClose: () => void }): ReactNode {
-  const panel = useRef<HTMLDivElement | null>(null);
-  const [adopted, setAdopted] = useState(false);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    // The kit's own sheet when it is there, as "Your communities" is shown.
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; closeRef.current(); },
-    });
-    setAdopted(!!adoption);
-    focusPicked(panel.current);
-    return () => { if (adoption) adoption.release(); };
-  }, []);
+  // The kit's own sheet when it is there (lib/sheet.ts), focus on the row
+  // picked now.
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose,
+    initialFocus: (el) => el.querySelector<HTMLButtonElement>('[aria-current="true"]'),
+  });
   return (
     <div
       className={adopted ? 'contents' : 'community-switcher-scrim'}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -296,7 +279,6 @@ function PickerSheet({ slug, onPick, onClose }: { slug: string | null; onPick: (
         role="dialog"
         aria-modal="true"
         aria-labelledby="bot-project-picker-title"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         {adopted ? null : <span className="community-switcher-grab" aria-hidden="true" />}
         <PickerBody slug={slug} menu={false} onPick={onPick} />
@@ -312,23 +294,15 @@ function PickerMenu({ slug, anchor, onPick, onClose }: {
   onClose: () => void;
 }): ReactNode {
   const panel = useRef<HTMLDivElement | null>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    focusPicked(panel.current);
-    const onDown = (e: Event) => {
-      const target = e.target as Node | null;
-      if (target && (panel.current?.contains(target) || anchor?.contains(target))) return;
-      closeRef.current();
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [anchor]);
+  // A press outside it or on the chip, Escape, Back, and focus: on the row
+  // picked now, and back to the chip (lib/menu.ts).
+  const { panelProps } = useMenu(true, {
+    trigger: { current: anchor },
+    panel,
+    onClose,
+    keys: 'panel',
+    initialFocus: (el) => el.querySelector<HTMLButtonElement>('[aria-current="true"]'),
+  });
   // Hung ABOVE the chip, which sits over the message box near the foot of
   // the window: its bottom edge 8px over the chip, as wide as the
   // switcher's menu, kept inside the window and no taller than the room.
@@ -349,6 +323,7 @@ function PickerMenu({ slug, anchor, onPick, onClose }: {
       role="dialog"
       aria-labelledby="bot-project-picker-title"
       style={style}
+      {...panelProps}
     >
       <PickerBody slug={slug} menu onPick={onPick} />
     </div>

@@ -5,8 +5,10 @@
  *   Needs you   what waits on you: the Needs you feed for the threads you
  *               are in (GET /api/workshop/needs-feed?in=threads), each with
  *               one pill for what you owe; then Homeroom bot's plans waiting
- *               for your Build it; then your private threads, with a lock on
- *               the tile.
+ *               for your Build it; then (24 Nov 2026, mobile 04) the threads
+ *               somebody named you in with @ that you have not answered or
+ *               dismissed, with Reply and Dismiss; then your private
+ *               threads, with a lock on the tile.
  *   In progress yours being worked on, soonest first: the bot reading it, a
  *               change being made or fixed, merging, going live.
  *   Waiting     yours with nothing to do on the row: other people's votes, a
@@ -143,6 +145,37 @@ export interface AiThread {
    * folded away. Set by the page, never by the server.
    */
   moved?: boolean;
+  /**
+   * 24 Nov 2026 (mobile 04): a thread you only wrote in or were named in,
+   * not one you asked for, built or follow (services/ai-work.js shapeThread).
+   * In progress draws it below your own. Absent from an older server.
+   */
+  tookPart?: boolean;
+}
+
+/**
+ * 24 Nov 2026 (mobile 04): a thread somebody named you in with @ in the last
+ * week, which you have not answered (written in after it) or dismissed, and
+ * which has not finished (services/thread-mentions.js). One a thread: the
+ * newest @ that stands.
+ */
+export interface AiNamed {
+  threadId: number;
+  number: number | null;
+  kind: string;
+  title: string | null;
+  app: AiApp | null;
+  change: { id: number; number: number | null } | null;
+  /** The thread's page: its request's, its change's or its decision's. */
+  href: string;
+  /** When you were named. */
+  at: string | null;
+  /** Who named you, by username; null when it was Homeroom bot (`byBot`) or an account since removed. */
+  by: string | null;
+  byBot?: boolean;
+  /** The message that named you, which Reply opens the thread at; null for an @ in a request's own text. */
+  messageId: number | null;
+  unread?: number;
 }
 
 export interface AiWork {
@@ -152,6 +185,8 @@ export interface AiWork {
   next: AiThread[];
   waiting: AiThread[];
   live: AiThread[];
+  /** 24 Nov 2026 (mobile 04): the threads somebody named you in (absent from an older server). */
+  named?: AiNamed[];
 }
 
 /** One card of the Needs you feed, as much of it as a row needs. */
@@ -269,15 +304,12 @@ export interface WorkRow {
    * day). A private thread's last activity; absent from an older server.
    */
   at: string | null;
+  /**
+   * 24 Nov 2026 (mobile 04): a thread somebody named you in: the message
+   * Reply opens it at (null for an @ in a request's own text), and Dismiss.
+   */
+  named?: { messageId: number | null } | null;
 }
-
-/**
- * How many rows each project shows in a section before its own Show more
- * (./lists.tsx groups every section's rows by project). Needs you shows the
- * most: it is what you came for. Waiting & in progress is ONE section of the
- * work under way and the work waiting, so it keeps the same three.
- */
-export const GROUP_FIRST = { needs: 5, busy: 3, live: 3 } as const;
 
 /** Pure: rows under their project, once each, in the order the projects first come. */
 export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: AiApp | null; items: T[] }[] {
@@ -355,16 +387,24 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  * movedSince). PR 6792 was promoted with the tab open, went from In progress
  * to Waiting under three changes going live, and was folded behind Show more
  * until its checks failed: a change of yours that just moved read as gone.
+ *
+ * Mobile polish 05 (24 Nov 2026): nor is a row that is new since your last
+ * visit (`isNew`, ./visit.ts), in the same bands.
+ *
+ * #7138: In progress folds new rows after its first few, and lifts only the
+ * row you are on and one that moved (`liftFresh` `'moved'`). A new row is
+ * still marked and counted, but it no longer grows the band above Show more.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean; isNew?: boolean }>(items: T[], first: number, open: boolean, liftFresh: boolean | 'moved' = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones, the
   // ones that just moved and the one you are on. They keep their order; the
-  // rest folds away.
+  // rest folds away. In `'moved'` mode only a row that just moved is lifted.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved) && i >= first) lifted.add(i); });
+    if (liftFresh === 'moved') items.forEach((row, i) => { if (row.moved && i >= first) lifted.add(i); });
+    else if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved || row.isNew) && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
@@ -440,45 +480,6 @@ export function freshByProject(rows: { app: AiApp | null; unread?: number }[]): 
   return counts;
 }
 
-/**
- * Pure: a group's rows with the new ones first (a stable sort: equally new
- * rows keep the order they came in), so Needs you opens on what changed.
- */
-export function freshFirst<T extends { fresh?: boolean }>(lines: T[]): T[] {
-  return [...(lines || [])].sort((a, b) => Number(!!b.fresh) - Number(!!a.fresh));
-}
-
-/**
- * Pure (14 Nov 2026, request #6672: "Private chats are always at the bottom of
- * Needs you, even if they're the most recent active thread"). `byProject`
- * places a project where its first row first comes, and Needs you's rows
- * arrive votes and plans first, private chats last, so a project whose only
- * row is a fresh private chat sat at the bottom however recently you were
- * talking in it. This lifts those groups: the ones with something new first,
- * then each by its newest row's readable time, newest first. A group with no
- * readable time keeps today's place after the dated ones, and rows inside a
- * group keep the order they came in.
- */
-export function recentGroupsFirst<T extends { app: AiApp | null; fresh?: boolean; at?: string | null }>(lines: T[]): T[] {
-  const groups = byProject(lines).map((group, i) => {
-    let newest: number | null = null;
-    let fresh = false;
-    for (const row of group.items) {
-      if (row.fresh) fresh = true;
-      const at = new Date(String(row.at || '')).getTime();
-      if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
-    }
-    return { items: group.items, fresh, newest, i };
-  });
-  groups.sort((a, b) => {
-    if (a.fresh !== b.fresh) return a.fresh ? -1 : 1;
-    if ((a.newest === null) !== (b.newest === null)) return a.newest === null ? 1 : -1;
-    if (a.newest !== null && b.newest !== null && a.newest !== b.newest) return b.newest - a.newest;
-    return a.i - b.i;
-  });
-  return groups.flatMap((group) => group.items);
-}
-
 /** How many projects the filter shows as chips before its More (./lists.tsx). */
 export const RAIL_PROJECTS = 3;
 
@@ -544,6 +545,12 @@ export function railProjects(ranked: ProjectTally[], picked: string[]): AiApp[] 
   return [...past, ...ranked.slice(0, RAIL_PROJECTS)].map((p) => p.app);
 }
 
+/**
+ * 24 Nov 2026 (mobile 04): the pill of a thread somebody named you in. Its
+ * verb, at the end of a row on the three bands, is Reply (./lines.ts VERBS).
+ */
+export const NAMED_PILL = 'messages:ai.pill.named';
+
 const PILLS: Record<string, string> = {
   proposal: 'messages:ai.pill.vote',
   governance: 'messages:ai.pill.vote',
@@ -586,7 +593,7 @@ function needKind(work: WorkState): string {
   if (work.why === 'needs_detail') return 'detail';
   // T2.10 (19 Nov 2026): a person verdict says what it waits on, from the
   // cause the server stored (services/bot-stop-cause.js handBackOf): never
-  // "Needs Reply" to a requester whose decision it is not.
+  // "Needs reply" to a requester whose decision it is not.
   if (work.why === 'decide' && work.cause && DECIDE_KINDS[work.cause]) return DECIDE_KINDS[work.cause];
   return 'decide';
 }
@@ -707,13 +714,16 @@ export function owedKeys(needs: NeedItem[] | null): Set<string> {
   return owed;
 }
 
+/** What a thread is keyed by against the feed: an In progress row's, or an @ row's (AiNamed). */
+type Keyed = Pick<AiThread, 'app' | 'kind' | 'number' | 'change'>;
+
 /** Pure: the request a thread's row is numbered by, or null for a change's own thread, which is numbered by its change. */
-function threadRequest(t: AiThread): number | null {
+function threadRequest(t: Keyed): number | null {
   return t.kind === 'change' ? null : t.number || null;
 }
 
 /** Pure: whether a thread is one the feed already lists, by its request's number or its change's. */
-function isOwed(owed: Set<string>, t: AiThread): boolean {
+function isOwed(owed: Set<string>, t: Keyed): boolean {
   if (!t.app) return false;
   const request = threadRequest(t);
   const change = t.change?.number || (t.kind === 'change' ? t.number : null);
@@ -762,8 +772,52 @@ function listedKeys(needs: NeedItem[] | null, work: AiWork | null): Set<string> 
 }
 
 /**
+ * Pure (24 Nov 2026, mobile 04): the threads somebody named you in that get
+ * a Needs you row of their own. One row a thread: a thread that already has
+ * one (a vote it owes you, the bot's question, a plan waiting for Build it, a
+ * fix of yours) keeps that row, which opens the same thread.
+ */
+export function namedRows(needs: NeedItem[] | null, work: AiWork | null): AiNamed[] {
+  const owed = owedKeys(needs);
+  const taken = new Set<number>();
+  for (const item of needs || []) if (Number(item.threadId) > 0) taken.add(Number(item.threadId));
+  for (const t of work?.needs || []) if (!isOwed(owed, t)) taken.add(t.threadId);
+  return (work?.named || []).filter((n) => !taken.has(n.threadId) && !isOwed(owed, n));
+}
+
+/** Pure (mobile 04): the threads Needs you holds for an @, by id, which no other list draws while it stands. */
+function namedThreads(needs: NeedItem[] | null, work: AiWork | null): Set<number> {
+  return new Set(namedRows(needs, work).map((n) => n.threadId));
+}
+
+/**
+ * Pure (mobile 04): the lists less the @ rows dismissed on this page (by
+ * thread, with the moment of the @ that was dismissed), so a row leaves at
+ * once and a read already on its way cannot bring it back. A newer @ in the
+ * same thread is not dismissed. Hands back the same lists when nothing is.
+ */
+export function withoutDismissed(work: AiWork | null, dismissed: ReadonlyMap<number, string | null>): AiWork | null {
+  if (!work?.named?.length || !dismissed.size) return work;
+  const kept = work.named.filter((n) => {
+    if (!dismissed.has(n.threadId)) return true;
+    const at = new Date(String(dismissed.get(n.threadId) || '')).getTime();
+    const now = new Date(String(n.at || '')).getTime();
+    return Number.isFinite(at) && Number.isFinite(now) && now > at;
+  });
+  return kept.length === work.named.length ? work : { ...work, named: kept };
+}
+
+/** Pure (mobile 04): who named you, as a row's words take it: a username, Homeroom bot, or somebody. */
+function namedWho(n: AiNamed): { values: Record<string, string>; nested?: Record<string, Phrase> } {
+  if (n.byBot) return { values: {}, nested: { who: { id: 'messages:ai.named.bot' } } };
+  if (n.by) return { values: { who: n.by } };
+  return { values: {}, nested: { who: { id: 'messages:ai.named.somebody' } } };
+}
+
+/**
  * Pure: Needs you, in order: the feed's cards, the bot's plans waiting for
- * Build it, then your private threads. #6680 (15 Nov 2026): a design thread
+ * Build it, then the threads somebody named you in (mobile 04), then your
+ * private threads. #6680 (15 Nov 2026): a design thread
  * filed as a request, or posted as its plan, keeps its own "Only you" row
  * even when that request also has a row in a list (a vote in Needs you, In
  * progress, Waiting, Live this week). The two are separate things: the
@@ -845,6 +899,33 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       threadId: t.threadId,
       unread: Math.max(0, Number(t.unread) || 0),
       at: t.at,
+    });
+  }
+  // 24 Nov 2026 (mobile 04): somebody named you with @ and you have not
+  // answered or dismissed it. A courtesy rather than a decision, so the one
+  // Needs you row that can be waved off (Dismiss); Reply opens the thread at
+  // the message that named you. "Sam named you · Homeroom · #6994".
+  for (const n of namedRows(needs, work)) {
+    const who = namedWho(n);
+    const onGithub = n.kind === 'change' && !!n.app?.changesOnGithub;
+    const project = n.app?.name || n.app?.slug || '';
+    rows.push({
+      key: `named:${n.threadId}`,
+      title: n.title || '',
+      app: n.app,
+      who: 'all',
+      sub: n.number
+        ? { id: onGithub ? 'messages:ai.row.namedPr' : 'messages:ai.row.named', values: { ...who.values, project, number: n.number }, ...(who.nested ? { nested: who.nested } : {}) }
+        : { id: 'messages:ai.row.namedBare', values: { ...who.values, project }, ...(who.nested ? { nested: who.nested } : {}) },
+      pill: { id: NAMED_PILL },
+      // A phone shows who named you under the title.
+      why: { id: 'messages:ai.why.named', values: who.values, ...(who.nested ? { nested: who.nested } : {}) },
+      href: n.href,
+      rootId: null,
+      threadId: n.threadId,
+      unread: Math.max(0, Number(n.unread) || 0),
+      at: n.at,
+      named: { messageId: n.messageId ?? null },
     });
   }
   for (const p of work?.private || []) {
@@ -946,7 +1027,10 @@ export function threadWhy(t: AiThread): Phrase | null {
 export function inProgress(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
   const filed = filedThreads(work);
-  return (work?.next || []).filter((t) => !isOwed(owed, t)).map((t) => withThread(filed, t));
+  // Mobile 04: a thread Needs you holds for an @ is there alone until you
+  // answer or dismiss it; then it is back here.
+  const named = namedThreads(needs, work);
+  return (work?.next || []).filter((t) => !isOwed(owed, t) && !named.has(t.threadId)).map((t) => withThread(filed, t));
 }
 
 /**
@@ -958,7 +1042,8 @@ export function inProgress(needs: NeedItem[] | null, work: AiWork | null): AiThr
 export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
   const filed = filedThreads(work);
-  return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
+  const named = namedThreads(needs, work);
+  return (work?.waiting || []).filter((t) => !isOwed(owed, t) && !named.has(t.threadId)).map((t) => {
     const row = withThread(filed, t);
     if (row.work.line?.code !== 'held_waiting' || !row.app) return row;
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
@@ -1145,10 +1230,14 @@ export function shortWords(t: AiThread): Phrase {
  */
 export function heroWords(needs: number, next: number, fresh = 0): Phrase | null {
   const anyFresh = fresh > 0;
-  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.bothFresh', values: { needs, fresh, next, count: fresh } };
-  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.needsFresh', values: { needs, fresh, count: fresh } };
-  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
-  if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
+  // Phone review #22: "Needs you: 24" here beside "10 to vote" on a hub and
+  // "17 decisions" in the menu read as one count disagreeing with itself. It
+  // is the threads that ask something of you across every project, and says
+  // so ("24 threads need you"); the plural form follows that number.
+  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.threadsBothFresh', values: { needs, fresh, next, count: needs } };
+  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.threadsNeedsFresh', values: { needs, fresh, count: needs } };
+  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.threadsBoth', values: { needs, next, count: needs } };
+  if (needs > 0) return { id: 'messages:ai.hero.threadsNeeds', values: { needs, count: needs } };
   if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
   return null;
 }

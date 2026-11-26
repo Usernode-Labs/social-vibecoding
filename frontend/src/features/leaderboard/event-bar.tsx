@@ -71,7 +71,7 @@ type HeroView =
     statusLabel: string;
     statusClass: string;
     description: string | null;
-    /** The whole line: the dates, and how many take part when that is known. */
+    /** The event's dates. */
     dates: string;
     /** Whole-season standings — the selection is the season aggregate. */
     seasonNote: boolean;
@@ -114,9 +114,14 @@ function Hero({ hero }: { hero: HeroView }) {
     <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{hero.name}</h2>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${hero.statusClass}`}>
-          {hero.statusLabel}
-        </span>
+        {/* A season carries no chip (phone review #109): its name and the
+            whole-season note under the dates already say what it is, and a
+            lowercase "season" pill beside "Season 2" said it a third time. */}
+        {hero.statusLabel ? (
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${hero.statusClass}`}>
+            {hero.statusLabel}
+          </span>
+        ) : null}
       </div>
       {hero.description ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{hero.description}</p>

@@ -158,7 +158,7 @@ async function recordForBotProposal({ pool, config, sessionId, specHtml: html = 
     if (detail && typeof detail === 'object' && detail.intent) return { source: 'build' };
     const derived = declarationFromSpec(html);
     if (!derived) return { source: null, reason: 'no_changes_in_spec' };
-    await state.recordIntent(pool, sessionId, derived);
+    await state.recordIntent(pool, sessionId, derived, { by: 'homeroom:spec' });
     return { source: 'spec', intent: derived };
   } catch (err) {
     return { source: null, reason: 'error', error: err.message };

@@ -88,6 +88,30 @@ test('a request\'s bar is the same head, its name kept beside its category for t
   assert.match(html, /<span class="dev-thread-exits" data-thread-exits="">/);
 });
 
+test('while a vote to close is open the bar reads "Close: " before the title (#7120)', () => {
+  const r = {
+    number: 9107, title: 'Staging demo: a request', category: 'Project workflows', menuKey: null,
+    status: { closed: false, stage: 'asked' },
+  };
+  const close = { tier: 2, key: 'close', label: 'Vote to close', tone: 'neutral', yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  const html = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: close, threadMenu: true })));
+  const closing = message('project:topic.request.bar.closeTitle', { title: 'Staging demo: a request' });
+  assert.ok(closing.startsWith('Close: '), 'the prefix is "Close:" and one space');
+  assert.ok(html.includes(`dev-request-bar-title">${closing}</div>`), 'the bar\'s title carries the prefix');
+  // The pill stays where it was.
+  assert.match(html, /data-request-status="close"/);
+  // A translated title is wrapped in the same prefix.
+  const translated = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: close, title: 'Demo de staging : une demande' })));
+  assert.ok(translated.includes(`dev-request-bar-title">${message('project:topic.request.bar.closeTitle', { title: 'Demo de staging : une demande' })}</div>`));
+  // A close vote competing with a change ('choosing'), and every other pill
+  // (no pill at all), keep the plain title.
+  for (const pill of [{ ...close, key: 'choosing', label: 'Choosing' }, null]) {
+    const plain = withProject(() => renderToHtml(createElement(RequestBar, { r, pill, threadMenu: true })));
+    assert.ok(plain.includes('dev-request-bar-title">Staging demo: a request</div>'), `plain title for ${pill ? pill.key : 'no pill'}`);
+    assert.ok(!plain.includes('Close: '), 'no prefix');
+  }
+});
+
 test('the discs do what the panel they are in offers: the Workshop\'s own actions, or the top window\'s panel', () => {
   const { act } = EXITS;
   const ws = EXITS;
@@ -130,17 +154,16 @@ test('the bot column steps its header aside for a request\'s or a change\'s page
   const src = read('frontend/src/features/side-panel/side-panel.tsx');
   assert.match(src, /const ownPill = s\.route && \/\\\/dev\\\/\(issues\|changes\|proposals\|sessions\)\\\/\\d\+\/\.test\(s\.route\) \? '' : undefined;/);
   assert.match(src, /data-thread-pill=\{ownPill\}/);
-  assert.match(CSS, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] > \.side-panel-head \{ display: none; \}/,
-    'only under the looks whose page draws the pill: the frame\'s looks keep the column\'s row and its ×');
+  assert.match(CSS, /html:root body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] > \.side-panel-head \{ display: none; \}/,
+    'the page draws the pill, so the column\'s own row is put away');
   // 19 Nov 2026: and the column starts on the list's top line in the
   // standard look too, so the head card stands level with the bot's own.
-  assert.match(CSS, /@media \(min-width: 768px\) \{\s+html:not\(\[data-skin\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] \{\s+top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) \+ \.5rem\);/);
+  assert.match(CSS, /@media \(min-width: 768px\) \{\s+html:root body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] \{\s+top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) \+ \.5rem\);/);
 });
 
 test('app.css: the head floats over the scroller, the panels draw no sheet, the card starts at its words', () => {
   const at = CSS.indexOf('ONE THREAD, ONE HEADER (18 Nov 2026)');
   assert.ok(at > 0);
-  assert.ok(at < CSS.indexOf('/* looks:begin'), 'outside the generated looks section');
   const block = CSS.slice(at);
   assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{\s+display: block !important;\s+position: absolute;/);
   // 19 Nov 2026: a card, the cards' 20px corners and edge, its tile and ⋯
@@ -167,7 +190,7 @@ test('app.css: the head floats over the scroller, the panels draw no sheet, the 
   assert.match(block, /\.dev-request:has\(\.dev-thread-card\) \.dev-thread-kicker \{ display: none; \}/);
   assert.match(block, /:is\(\.dev-ws-side, html\.in-side-panel\.side-panel-beside-ai\) \.dev-thread-exits,\n#ai-screen \.dev-private-thread \.dev-thread-exits \{ display: inline-flex; \}/,
     'the discs show only in a panel, and in the bot tab\'s column');
-  assert.match(block, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.dev-ws-side \{\s+background: transparent;\s+box-shadow: none;/);
+  assert.match(block, /html:root \.dev-ws-side \{\s+background: transparent;\s+box-shadow: none;/);
   assert.match(block, /\.dev-ws-side:has\(\.dev-thread-card\) > \.dev-ws-side-bar \{ display: none; \}/);
 });
 
@@ -214,7 +237,7 @@ test('app.css: the halves layout draws its edge only while the detail is open', 
 
 test('the grip shows for a pointer that moved onto the line, never one the line arrived under, and at rest on touch', () => {
   assert.match(CSS, /@media \(hover: hover\) \{\s+:is\(\.split-handle\[data-armed\], \.side-panel-divider\):hover::before \{ opacity: \.5; \}/);
-  assert.match(CSS, /@media \(hover: none\), \(pointer: coarse\) \{\s+:is\(\.split-handle, html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.side-panel-divider\)::before \{ opacity: \.5; \}/,
+  assert.match(CSS, /@media \(hover: none\), \(pointer: coarse\) \{\s+:is\(\.split-handle, html:root \.side-panel-divider\)::before \{ opacity: \.5; \}/,
     'the at-rest grip on touch matches the hide rule\'s selector weight, or it is out-specified');
   assert.doesNotMatch(CSS, /@media \(pointer: coarse\) \{\s+:is\(\.split-handle, \.side-panel-divider\)::before \{ opacity: \.5; \}/,
     'the lighter selector never beat the hide rule, so it must not come back');
@@ -322,14 +345,12 @@ test('the head measures itself while full and tightens once the thread scrolls (
   const noop = fitThreadHead({ closest: () => null, getBoundingClientRect: () => ({ height }) });
   assert.equal(typeof noop, 'function');
   // 20 Nov 2026: every head is the one card (thread-head.tsx), which fits
-  // itself; both bars draw it only where they draw a head (not under a
-  // frame look), and a private thread with the bot draws it too.
+  // itself; both bars draw it, and a private thread with the bot draws it too.
   const card = read('frontend/src/features/dev-board/topic/thread-head.tsx');
   assert.match(card, /const head = useRef<HTMLElement>\(null\);\s+useThreadHeadFit\(head, true\);/);
   assert.match(card, /<header \{\.\.\.attrs\} ref=\{head\} className="messages-thread-header">/);
   for (const file of [CHANGE, REQUEST]) {
     const src = read(file);
-    assert.match(src, /if \(frame\) return <TopicFrameHead /);
     assert.match(src, /<ThreadHeadCard\s+lead=\{<ThreadShowList \/>\}\s+tile=\{<ThreadBarTile \/>\}/,
       'the way back to the list leads, then the tile (#6973)');
     assert.doesNotMatch(src, /useThreadHeadFit\(/, 'the card fits itself');
@@ -343,13 +364,22 @@ test('on a wide page the head is the thread column\'s, and the timeline stands l
   const bar = one.match(/:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{[^}]*\}/);
   assert.ok(bar, 'the head\'s bar rule');
   assert.doesNotMatch(bar[0], /margin-inline-end/, 'the bar takes the wide layout\'s end margin');
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
+  const scope = 'html:root:not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
   const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   assert.match(CSS, new RegExp(`${esc(scope)} \\.dev-request-bar \\{ margin-inline-end: calc\\(var\\(--thread-rail-w\\) \\+ var\\(--thread-rail-gap\\)\\); \\}`));
   // The timeline rises from under the head's height to the head's top line, and sticks there.
   assert.match(CSS, new RegExp(`${esc(scope)}:has\\(\\.dev-thread-card\\) \\.dev-request-rail \\{\\s+--rail-rise: calc\\(var\\(--pill-top\\) - var\\(--pill-under\\)\\);\\s+top: var\\(--rail-rise\\);\\s+margin-top: var\\(--rail-rise\\);\\s+max-height: calc\\(100% - var\\(--pill-top\\)\\) !important;`));
   // The grip between the two columns runs from the same top line.
   assert.match(CSS, /\.dev-request-rail-divider \{\s+display: block;\s+position: absolute;\s+z-index: 4;\s+top: var\(--pill-top\);/);
+});
+
+test('the project\'s tile centres its emoji or letter at the tile\'s own size (#7170)', () => {
+  for (const cls of ['dev-thread-bar-tile', 'dev-thread-kicker-tile']) {
+    assert.match(CSS, new RegExp(`\\.${cls} \\{[^}]*display: grid; place-items: center;`), `${cls} centres its content`);
+    assert.match(CSS, new RegExp(`\\.${cls} \\{[^}]*line-height: 1;`), `${cls} draws one line`);
+  }
+  assert.match(CSS, /\.app-icon-tile:is\(\.dev-thread-bar-tile, \.dev-thread-kicker-tile\) > span:not\(\.app-icon-wait\) \{ font-size: inherit; line-height: 1; \}/,
+    'the emoji follows the tile\'s size instead of its own 30px');
 });
 
 test('the head eases between its sizes and is measured only once it has settled (20 Nov 2026)', async () => {
@@ -405,7 +435,7 @@ test('the head eases between its sizes and is measured only once it has settled 
 test('a private thread with the bot is drawn on the public thread\'s page, from the same rules (20 Nov 2026)', () => {
   const messages = read('frontend/src/features/messages/index.tsx');
   // The page and the head are the public thread's own components.
-  assert.match(messages, /const page = sheet && !frameLook;/);
+  assert.match(messages, /const page = sheet;/);
   assert.match(messages, /<ThreadPage\s+kind="private"/);
   assert.match(messages, /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}\s+tile=\{<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar="">/);
   assert.match(messages, /<div className="messages-thread-sub" data-private-thread-sub="">/, 'the lock line is the small line\'s part that gives way first');

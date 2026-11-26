@@ -597,7 +597,9 @@ test('get_request separates "not on the board" from "could not read the board"',
     const missing = await open.handlers.get('get_request')({ slug: 'recipe-box', number: 9 });
     assert.equal(missing.isError, true);
     assert.equal(missing.structuredContent.code, 'no_access');
-    assert.match(missing.structuredContent.message, /not open on this app/);
+    // #7160: a number missing from the open board is read on its own route
+    // first (it may be closed); only a 404 there answers this.
+    assert.match(missing.structuredContent.message, /no request #9 on this app/i);
 
     // Bad input is refused here, not sent to the platform as a path segment.
     const bad = await open.handlers.get('get_request')({ slug: 'Recipe Box', number: 4 });
@@ -3276,6 +3278,35 @@ test('proposal shaping returns the platform hash route', () => {
   assert.equal(orphan.webPath, null);
 });
 
+// #7158: the deferred next step told an agent to sync the change "from its
+// page", where there is no such button, and Homeroom resolves the conflict on
+// its own. All three readers of it (Homeroom bot, the coding agent in the
+// change, an outside agent) are told what Homeroom does instead.
+test('#7158 — a deferred change says Homeroom resolves the conflict, never to sync it from its page', () => {
+  const table = SRC.slice(SRC.indexOf('const CHANGE_NEXT_STEP_WORDS'), SRC.indexOf('function changeNextStep'));
+  const deferred = [...table.matchAll(/deferred: '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(deferred.length, 3, 'agent_mayor, worker_read and external');
+  for (const words of deferred) {
+    assert.match(words, /Homeroom resolves the conflict on its own/, words);
+    assert.doesNotMatch(words, /from its page/, words);
+  }
+  assert.doesNotMatch(table, /Syncing it with main from its page/);
+});
+
+// #7158: a change can read "5 of 1" by every yes cast and still wait for an
+// approver's yes, because the rule counts approvers (routes/sessions.js
+// qualified_yes_count). The connector reports the count the rule uses.
+test('#7158 — the yes count a connector reads is the one the rule decides by', () => {
+  const proposal = tools.shapeProposal({
+    id: 58, app_slug: 'recipe-box', status: 'promoted', yes_count: 5, qualified_yes_count: 1, votes_required: 1,
+  }, ORIGIN);
+  assert.equal(proposal.yesVotes, 1, 'the rule\'s count, not every yes');
+  // No qualified tally on the row (no approver roster): the raw count stands.
+  const raw = tools.shapeProposal({ id: 59, app_slug: 'recipe-box', status: 'promoted', yes_count: 2 }, ORIGIN);
+  assert.equal(raw.yesVotes, 2);
+  assert.equal(tools.shapeProposal({ id: 60, app_slug: 'recipe-box' }, ORIGIN).yesVotes, null);
+});
+
 test('tools reach the platform over loopback with the caller’s own token', () => {
   assert.match(SRC, /PLATFORM_INTERNAL_URL/, 'calls go to the in-cluster platform URL');
   assert.match(SRC, /callPlatform\(baseUrl, accessToken,/,
@@ -5844,6 +5875,99 @@ test('#2136 — a work order that revises a proposal names its pull request, and
   }
 });
 
+// WHICH ADDRESS A PERSON IS GIVEN. `link` is the proposal's page on Homeroom
+// and `prUrl` the pull request on GitHub. The output schema says "Link people
+// here, never to prUrl" on `link`, but an agent acts on the result, which
+// carries the two addresses and none of the schema's words: one reported a
+// proposal it had just submitted with the GitHub address. So nextStep says
+// it, with the address, wherever an answer has both.
+test('an answer that carries both addresses says which one a person is given', async () => {
+  const says = (step, link) => {
+    assert.ok(link, 'the answer has a Homeroom page');
+    assert.ok(step.includes(` When you tell the user about it, link its page on Homeroom, ${link}: that is where they read it and vote. `
+      + 'Do not link the GitHub pull request (prUrl).'), step);
+  };
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  const answers = [];
+  svc.submitWork = async () => answers.shift();
+  const call = async (args) => {
+    const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('submit_work')(args);
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    // A new proposal, an update to one, and work that was already submitted.
+    answers.push({ ok: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const first = await call({ taskId: 88, branch: 'my-branch' });
+    assert.match(first.link, /\/app\/recipe-box\/dev\/changes\/2151$/);
+    assert.notEqual(first.link, first.prUrl);
+    says(first.nextStep, first.link);
+    // After "tap Yes on it on Homeroom", so the two sentences about the
+    // person read together.
+    assert.ok(first.nextStep.indexOf('tap Yes on it on Homeroom.') < first.nextStep.indexOf(' When you tell the user about it'));
+
+    answers.push({
+      ok: true, updated: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151',
+      appSlug: 'recipe-box', votesCleared: 2, submittedVia: 'update_branch', targetKind: 'proposal',
+      previewRebuilding: true, externalAgent: 'claude_code_web',
+    });
+    const update = await call({ proposalId: 4223, branch: 'my-fix' });
+    says(update.nextStep, update.link);
+
+    answers.push({ ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const again = await call({ taskId: 88, branch: 'my-branch' });
+    says(again.nextStep, again.link);
+
+    // No pull request, no second address: nothing to choose between.
+    answers.push({ ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: null, prUrl: null, appSlug: 'recipe-box', externalAgent: 'claude_code_web' });
+    const bare = await call({ taskId: 88, branch: 'my-branch' });
+    assert.doesNotMatch(bare.nextStep, /When you tell the user about it/);
+  } finally { svc.submitWork = realSubmit; }
+
+  // get_proposal: on every status that has a pull request, merged included.
+  for (const status of ['promoted', 'merged']) {
+    const shaped = tools.shapeProposal({
+      id: 4223, app_slug: 'recipe-box', status, pr_number: 2151, pr_url: 'https://github.com/o/r/pull/2151',
+      check_state: 'passing', test_results: [],
+    }, ORIGIN);
+    assert.equal(shaped.link, `${ORIGIN}/app/recipe-box/dev/changes/2151`);
+    says(shaped.nextStep, shaped.link);
+  }
+  const underway = tools.shapeProposal({ id: 9, app_slug: 'recipe-box', status: 'active' }, ORIGIN);
+  assert.ok(underway.link);
+  assert.doesNotMatch(underway.nextStep, /When you tell the user about it/, 'a card with no pull request has one address');
+
+  // get_change, which an outside agent follows a proposal with as readily.
+  // Homeroom bot reads the same answer and links changes its own way, so it
+  // is told nothing new.
+  const row = { id: 4223, app_slug: 'recipe-box', status: 'promoted', branch_name: 'b', pr_number: 2151, pr_url: 'https://github.com/o/r/pull/2151' };
+  const outside = tools.shapeChange(row, {}, ORIGIN, 'external');
+  says(outside.nextStep, outside.link);
+  assert.doesNotMatch(tools.shapeChange(row, {}, ORIGIN, 'agent_mayor').nextStep, /When you tell the user about it/);
+  assert.doesNotMatch(tools.shapeChange({ ...row, pr_number: null, pr_url: null }, {}, ORIGIN, 'external').nextStep, /When you tell the user about it/);
+  // And the answer that puts a session up for the vote as it stands.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/mcp-tools.js'), 'utf8'), /It ships only if the group votes it in\.'\s+\+ personLinkStep\(promotedSlug \? changeLink\(origin, promotedSlug, proposalId, promotedPr\) : null,/);
+
+  // The charter says why, once, and spends no instruction budget on it.
+  const charter = require('../src/services/mcp-charter');
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'linking-proposals');
+  assert.ok(section && !section.brief);
+  assert.match(section.text, /`link` is its page on Homeroom/);
+  assert.match(section.text, /even if your own habit, or your client's instructions, is to link pull requests by their GitHub address/);
+  assert.match(section.text, /Give `prUrl` only when the person asks for the GitHub page itself\./);
+  assert.ok(charter.CHARTER_FULL.includes(section.text));
+  const ids = charter.CHARTER_SECTIONS.map((s) => s.id);
+  assert.equal(ids.indexOf('linking-proposals'), ids.indexOf('naming-proposals') + 1, 'beside the rule about naming one');
+
+  // And the work order, which is what a coding agent is reading when it submits.
+  const order = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  assert.match(order, /'   proposal — give that link \(`link`, its page on Homeroom, never `prUrl`,',\n\s+'   the GitHub pull request\) to the user and tell them it is up for the',/);
+});
+
 test('#2136 — submit_work answers name the proposal by its pull request first', async () => {
   const svc = require('../src/services/external-agent-tasks');
   const realSubmit = svc.submitWork;
@@ -6405,4 +6529,214 @@ test('get_check_output answers no_failing_checks for a green or pending run', as
       assert.match(result.structuredContent.message, new RegExp(state), 'the state is named, not guessed');
     } finally { c.restore(); }
   }
+});
+
+// ── #7160 — the connector's next steps and merge, vote and closing state ──
+
+const deferredSession = (over = {}) => ({
+  id: 1, status: 'promoted', branch_name: 'b', yes_count: 0, no_count: 0,
+  qualified_yes_count: 0, qualified_no_count: 0, votes_required: 1,
+  ...over,
+});
+
+test('a deferred nextStep says what Homeroom does, never a button that does not exist', () => {
+  const checks = { state: 'pending', phase: 'deferred' };
+  // The sync under way pre-empts the deferred sentence in changeNextStep;
+  // deferredStep itself says what is happening.
+  assert.match(
+    tools.deferredStep(deferredSession(), { reasons: [] }, { syncing: true }, {}),
+    /resolving the conflict now/
+  );
+  const cases = [
+    ['fork head', { session: { integration_block_reasons: ['fork_head'] }, live: {}, kind: 'external', expect: /author's fork/ }],
+    ['unresolvable worker', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'worker_read', expect: /Merge main in and resolve the conflict in this turn/ }],
+    ['unresolvable external', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'external', expect: /A new revision that resolves it is needed/ }],
+    ['unresolvable mayor', { session: { integration_block_reasons: ['unresolvable'] }, live: {}, kind: 'agent_mayor', expect: /It needs a revision that resolves it/ }],
+    ['checks fail', { session: { integration_block_reasons: ['checks_failing'] }, live: {}, kind: 'agent_mayor', expect: /checks still fail/ }],
+    ['awaiting approval', { session: { integration_block_reasons: ['awaiting_approval'], yes_count: 5, approval_policy: 'invited' }, live: {}, kind: 'agent_mayor', expect: /0 of 1 yes votes.*5 more yes votes are advisory/ }],
+    ['default', { session: {}, live: {}, kind: 'agent_mayor', expect: /Homeroom resolves the conflict on its own/ }],
+  ];
+  for (const [label, c] of cases) {
+    const session = deferredSession(c.session);
+    const next = tools.changeNextStep(session, checks, c.live, c.kind);
+    assert.match(next, c.expect, label);
+    assert.doesNotMatch(next, /sync it with main from its page/i, `${label} names no such button`);
+  }
+  // A back-off says when Homeroom tries again, with the last try's words.
+  const backed = tools.changeNextStep(deferredSession({
+    proposal_lane: { backoff: { until: new Date(Date.now() + 3600_000).toISOString(), failures: 1 },
+      last_sync: { message: 'another turn already owns this session' } },
+  }), checks, {}, 'agent_mayor');
+  assert.match(backed, /another turn already owns this session/);
+  assert.match(backed, /tries again on its own after/);
+});
+
+test('approver votes are split from advisory ones beside the rule they answer', () => {
+  const invited = tools.shapeChange(deferredSession({
+    check_state: 'passing', yes_count: 5, qualified_yes_count: 0, qualified_no_count: 0, votes_required: 1,
+    approval_policy: 'invited',
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(invited.approval, {
+    approverYes: 0, approverNo: 0, required: 1, advisoryYes: 5, advisoryNo: 0,
+    whoMayApprove: 'approvers', groups: [],
+  });
+  assert.equal(invited.yesVotes, 5, 'the raw tally is unchanged');
+  assert.match(invited.nextStep, /It has 0 of 1 yes votes from the people who can approve/);
+  assert.match(invited.nextStep, /5 more yes votes are advisory/);
+
+  const rules = tools.shapeChange(deferredSession({
+    yes_count: 2, qualified_yes_count: 2, votes_required: 2, approval_mode: 'rules', approval_groups: ['maintainers', 'leads', 'maintainers'],
+  }), null, ORIGIN, 'agent_mayor');
+  assert.equal(rules.approval.whoMayApprove, 'groups');
+  assert.deepEqual(rules.approval.groups, ['maintainers', 'leads']);
+
+  const locked = tools.shapeChange(deferredSession({ app_locked: true }), null, ORIGIN, 'agent_mayor');
+  assert.equal(locked.approval.whoMayApprove, 'admins');
+
+  // Before the rule is worked out there is nothing to report.
+  const early = tools.shapeChange(deferredSession({ qualified_yes_count: undefined }), null, ORIGIN, 'agent_mayor');
+  assert.equal(early.approval, null);
+});
+
+test('mergeLane reports the lane reasons, the last sync, back-off and conflict files', () => {
+  const shaped = tools.shapeChange(deferredSession({
+    integration_block_reasons: ['awaiting_approval', 'unresolvable'],
+    integration_conflict_paths: ['src/a.js', 'src/b.js'],
+    integration_resolved_epoch: 3,
+    approval_epoch: 3,
+    proposal_lane: {
+      last_sync: { reason: 'conflict', outcome: 'unresolvable', message: 'could not merge', at: '2026-11-18T09:00:00.000Z' },
+      backoff: { until: '2026-11-18T10:00:00.000Z', failures: 2 },
+    },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(shaped.mergeLane.reasons, ['awaiting_approval', 'unresolvable']);
+  assert.deepEqual(shaped.mergeLane.conflictFiles, ['src/a.js', 'src/b.js']);
+  assert.equal(shaped.mergeLane.freeResolutionSpent, true);
+  assert.equal(shaped.mergeLane.lastSync.reason, 'conflict');
+  assert.equal(shaped.mergeLane.lastSync.outcome, 'unresolvable');
+  assert.match(shaped.mergeLane.lastSync.message, /could not merge/);
+  assert.equal(shaped.mergeLane.lastSync.at, '2026-11-18T09:00:00.000Z');
+  assert.deepEqual(shaped.mergeLane.backoff, { until: '2026-11-18T10:00:00.000Z', failures: 2 });
+
+  // Not spent when the resolution was for an older epoch; null when nothing
+  // is recorded at all.
+  const older = tools.shapeMergeLane({ integration_resolved_epoch: 2, approval_epoch: 3 });
+  assert.equal(older.freeResolutionSpent, false);
+  assert.equal(tools.shapeMergeLane({}).freeResolutionSpent, null);
+  // Conflict files fall back to the last sync's own list.
+  const fromSync = tools.shapeMergeLane({ proposal_lane: { last_sync: { conflict_files: ['x/y.js'] } } });
+  assert.deepEqual(fromSync.conflictFiles, ['x/y.js']);
+});
+
+test('a change says when and by whom its shots declaration was made', () => {
+  const shots = {
+    state: 'not_required', required: false, impact: 'none', rationale: null, claims: [],
+    baseSha: null, headSha: null, failureCode: null, failureReason: null, repairAvailable: false,
+    planHash: null, verifiedReason: null, overriddenBy: null, overriddenAt: null, overrideReason: null,
+  };
+  const turn = tools.shapeChange(deferredSession({
+    shots, shots_declared: { at: '2026-11-24T12:00:00.000Z', by: 'turn:homeroom_bot_follow_up' },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(turn.shots.declaration, {
+    at: '2026-11-24T12:00:00.000Z', by: { kind: 'turn', name: 'homeroom_bot_follow_up' },
+  });
+
+  const person = tools.shapeChange(deferredSession({
+    shots, shots_declared: { at: '2026-11-24T12:00:00.000Z', by: 'user:ada' },
+  }), null, ORIGIN, 'agent_mayor');
+  assert.deepEqual(person.shots.declaration.by, { kind: 'person', name: 'ada' });
+
+  const homeroom = tools.shapeDeclaration({ at: 'x', by: 'homeroom:spec' });
+  assert.deepEqual(homeroom.by, { kind: 'homeroom', name: 'spec' });
+  assert.equal(tools.shapeDeclaration(null), null);
+});
+
+test('get_check_output finds a stored name that ends in a space, given it with or without', async () => {
+  for (const check of ['Board shows the snap toggle', 'Board shows the snap toggle ']) {
+    const c = checkOutputConnector([
+      { name: 'Board shows the snap toggle ', path: '/dev', status: 'fail', failureReason: 'not found' },
+    ]);
+    try {
+      const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check });
+      assert.equal(result.isError, undefined, `"${check}" finds the stored name`);
+      assert.match(result.structuredContent.check.name, /Board shows the snap toggle/);
+    } finally { c.restore(); }
+  }
+});
+
+test('get_request reads a closed request and says how it closed', async () => {
+  const results = {
+    merged: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: null, closed_via: null, state_reason: 'completed',
+        addressed_by: { state: 'merged', sessionId: 12, prNumber: 5 } },
+    },
+    vote: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: null, closed_via: 'vote', state_reason: 'not_planned', addressed_by: null },
+    },
+    hand: {
+      issue: { number: 9, title: 'Done', body: 'long body', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z',
+        closed_by_username: 'ada', closed_via: null, state_reason: 'not_planned', addressed_by: null },
+    },
+  };
+  for (const [label, body] of Object.entries(results)) {
+    const c = connector((method, pathname) => {
+      if (pathname === '/api/apps/recipe-box/github-issues') return { issues: [] };
+      if (pathname === '/api/apps/recipe-box/github-issues/9') return body;
+      throw new Error(`unexpected ${pathname}`);
+    });
+    try {
+      const res = await c.handlers.get('get_request')({ slug: 'recipe-box', number: 9, includeImages: false });
+      const out = res.structuredContent;
+      assert.equal(out.state, 'closed', label);
+      assert.equal(out.inProgress, null, `${label}: nobody is working on a closed request`);
+      assert.equal(out.closing.at, '2026-11-10T09:00:00.000Z', label);
+      if (label === 'merged') {
+        assert.equal(out.closing.how, 'merged_change');
+        assert.deepEqual(out.closing.change, { proposalId: 12, prNumber: 5 });
+      } else if (label === 'vote') {
+        assert.equal(out.closing.how, 'vote');
+        assert.equal(out.closing.change, null);
+      } else {
+        assert.equal(out.closing.how, 'by_hand');
+        assert.equal(out.closing.by, 'ada');
+      }
+    } finally { c.restore(); }
+  }
+});
+
+test('list_requests takes closed ones on request, and a cursor stays tied to its state', async () => {
+  const c = connector((method, pathname) => {
+    if (pathname === '/api/apps/recipe-box/github-issues?state=closed') {
+      return { issues: [
+        { number: 3, title: 'Closed one', state: 'closed', closedAt: '2026-11-10T09:00:00.000Z' },
+      ], truncatedList: false };
+    }
+    if (pathname === '/api/apps/recipe-box/github-issues') {
+      return { issues: [{ number: 4, title: 'Open one', state: 'open' }], truncatedList: false };
+    }
+    throw new Error(`unexpected ${pathname}`);
+  });
+  try {
+    const closed = (await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'closed' })).structuredContent;
+    assert.equal(closed.returned, 1);
+    assert.equal(closed.totalOpen, null);
+    assert.equal(closed.totalClosed, 1);
+    assert.equal(closed.requests[0].closedAt, '2026-11-10T09:00:00.000Z');
+
+    const all = (await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'all' })).structuredContent;
+    assert.equal(all.returned, 2);
+    assert.equal(all.totalOpen, 1);
+    assert.equal(all.totalClosed, 1);
+    assert.equal(all.requests[1].state, 'closed');
+
+    const open = (await c.handlers.get('list_requests')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(open.totalClosed, null, 'the default stays open only');
+
+    const cursor = tools.encodeRequestCursor(0, tools.requestPageKey('recipe-box', 'titles', '', 'open'));
+    const mismatch = await c.handlers.get('list_requests')({ slug: 'recipe-box', state: 'closed', cursor });
+    assert.equal(mismatch.isError, true);
+    assert.equal(mismatch.structuredContent.code, 'invalid_request');
+  } finally { c.restore(); }
 });

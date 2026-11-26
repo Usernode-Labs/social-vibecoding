@@ -300,8 +300,8 @@
     "description": "Title shown in the header bar, and as the browser tab's title, on the History tab of the leaderboard screen: what earned the viewer's challenge points and when."
   },
   "title.profile": {
-    "text": "Profile",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. A noun."
+    "text": "You",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. The same word as the tab bar's \"You\" tab that opens it, so the tab and the page it opens agree."
   },
   "title.allApps": {
     "text": "Discover",
@@ -334,6 +334,14 @@
   "title.messages": {
     "text": "Messages",
     "description": "Title shown in the header bar, and as the browser tab's title, on the Messages screen, which lists the person's conversations with people and agents."
+  },
+  "docTitle.place": {
+    "text": "{{project}} · {{place}}",
+    "description": "The browser tab's title on a project's page. {{project}} is the project's name and {{place}} is the place on show there: Hub, Needs you, Workshop, or a channel such as #general. The project comes first because a tab cuts its title off at the end."
+  },
+  "docTitle.item": {
+    "text": "{{title}} · {{project}}",
+    "description": "The browser tab's title on the page of a request, a change or a decision. {{title}} is that item's own title, cut short when it is long, and {{project}} is the name of the project it belongs to."
   },
   "title.appNotAvailable": {
     "text": "App not available",

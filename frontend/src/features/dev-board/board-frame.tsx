@@ -139,11 +139,15 @@ const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 // card list first was a second, different loading state in front of theirs.
 const DEV_BODY_PLACE_INITIAL = { __html: '<div id="dev-workshop"></div>' };
 
-/** Whether the page opens on a place that draws its own loading shape. */
+/**
+ * Whether the page opens on a place that draws its own loading shape. 24 Nov
+ * 2026: the Workshop tab too, whose front page draws its own parts while the
+ * board is read (workshop/front-page.tsx).
+ */
 function opensOnOwnShape(): boolean {
   try {
     const tab = (window as any).AppView?._workshopTab?.();
-    return tab === 'status' || isChannelPlace(tab);
+    return tab === 'workshop' || tab === 'status' || isChannelPlace(tab);
   } catch {
     return false;
   }
@@ -334,7 +338,8 @@ function CodePauseNotice(): ReactNode {
   const s = useStoreState<CodePauseState>(codePauseStore);
   if (!s.paused) return null;
   return (
-    <Alert variant="notice" density="compact" data-code-pause="github">
+    // The title carries the whole sentence: from 900px the notice is one line in the top bar, cut with an ellipsis where it does not fit.
+    <Alert variant="notice" density="compact" data-code-pause="github" title={t('project:codePause.notice')}>
       <span>{t('project:codePause.notice')}</span>
     </Alert>
   );

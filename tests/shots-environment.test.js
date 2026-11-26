@@ -242,7 +242,7 @@ test('each paired reset serializes clones and adds the same fixtures to both rev
     assert.ok(progress.includes('deploy_hosted_app_fixture'));
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
-      .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
+      .update(`source-fingerprint\nchange-seeds:2ed27c1421e6+${fixtures.FULL_ADMIN_PROFILE}`
         + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}`
         + `+${fixtures.INVITED_FIRST_VISIT_PROFILE}+${fixtures.INVITED_LISTED_PROFILE}`
         + `+${fixtures.INVITE_LINK_PROFILE}`
@@ -427,4 +427,134 @@ test('a before-side image that runs as root is started as the conventional app u
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/shots-environment.js'), 'utf8');
   assert.match(src, /const deployed = await deployShotsRuntime\(config, \{/, 'both shots sides deploy through the fallback');
   assert.doesNotMatch(src, /await applicationRuntime\.deploy\(config, \{\n\s+app: pair\.app,/);
+});
+
+test('the self app\'s reset writes the change\'s seeds into the before copy, names a seed it cannot hold, and removes the runner', async () => {
+  const original = {
+    remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
+    clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
+    fullAdmin: fixtures.ensureFullAdminIdentity, hostedApp: fixtures.ensureHostedAppFixture,
+    invitedCan: fixtures.canInstallInvitedFixtures, invited: fixtures.ensureInvitedFixtures,
+    inspectDemo: demoStates.inspectDemoStates, fetch: global.fetch,
+  };
+  const runId = '5'.repeat(32);
+  const slug = 'usernode-2d5619';
+  const pair = {
+    app: { slug }, runId, sessionId: 45,
+    preparedSource: { fingerprint: 'source-fingerprint' },
+    sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
+      dbName: dbManager.shotsDbName(slug, runId, side), runtimeName: `shots-${side}`,
+      sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
+      imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: {},
+      ...(side === 'head' ? { hasBeforeSeedRunner: true } : {}),
+    }])),
+  };
+  const deployed = [];
+  const removed = [];
+  try {
+    runtime.remove = async (_config, ref) => { removed.push(ref.runtimeName); };
+    runtime.deploy = async (_config, spec) => { deployed.push(spec); return { runtimeName: spec.runtimeName }; };
+    runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
+    dbManager.cloneFromPreparedSource = async () => ({ password: 'disposable' });
+    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
+    fixtures.ensureFullAdminIdentity = async () => ({ id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users' });
+    fixtures.ensureHostedAppFixture = async () => ({ id: fixtures.HOSTED_APP_PROFILE, persona: 'member', path: '/#' });
+    fixtures.canInstallInvitedFixtures = async () => false;
+    fixtures.ensureInvitedFixtures = async () => [];
+    demoStates.inspectDemoStates = async () => [];
+    // The seed runner's /result, and the hosted fixture's health probe, both
+    // answer from here.
+    global.fetch = async () => ({
+      ok: false,
+      status: 200,
+      text: async () => JSON.stringify({
+        version: 1,
+        applied: ['seedStagingLandingDirectory'],
+        leftOut: [{ name: 'seedNeedsNewTable', why: 'schema' }],
+      }),
+    });
+    const deployment = await environment.resetPair({
+      selfAppSlug: slug,
+      appRuntime: 'kubernetes',
+      kubernetes: { captureImage: `capture@sha256:${'c'.repeat(64)}`, appDomain: 'apps.example.invalid', platformDomain: 'example.invalid' },
+    }, pair);
+    const seeds = deployed.filter((spec) => spec.command?.[0] === 'node'
+      && spec.command?.[1] === 'scripts/shots-before-seeds.js');
+    assert.equal(seeds.length, 1, 'one seed runtime for the pair');
+    assert.equal(seeds[0].imageRef, 'image-head', 'the change\'s own image runs the seeds');
+    assert.equal(seeds[0].env.DATABASE_URL,
+      `postgres://fixture@db/${pair.sides.base.dbName}`, 'pointed at the before copy');
+    assert.equal(seeds[0].env.SHOTS_SEED_SLUG, slug);
+    assert.equal(seeds[0].env.SHOTS_SEED_RUN_ID, runId);
+    assert.equal(seeds[0].internalOnly, true);
+    assert.deepEqual(deployment.beforeSeeds, {
+      ran: true,
+      applied: ['seedStagingLandingDirectory'],
+      leftOut: [{ name: 'seedNeedsNewTable', why: 'schema' }],
+    });
+    assert.ok(removed.includes(`${pair.sides.head.runtimeName}-seeds`), 'the runner is removed');
+    assert.equal(pair.seedsDeployment, null);
+  } finally {
+    runtime.remove = original.remove;
+    runtime.deploy = original.deploy;
+    runtime.appOrigin = original.appOrigin;
+    dbManager.cloneFromPreparedSource = original.clone;
+    dbManager.connectionUrl = original.connectionUrl;
+    fixtures.ensureFullAdminIdentity = original.fullAdmin;
+    fixtures.ensureHostedAppFixture = original.hostedApp;
+    fixtures.canInstallInvitedFixtures = original.invitedCan;
+    fixtures.ensureInvitedFixtures = original.invited;
+    demoStates.inspectDemoStates = original.inspectDemo;
+    global.fetch = original.fetch;
+  }
+});
+
+test('a child app\'s reset never runs the before-copy seed runner', async () => {
+  const original = {
+    remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
+    clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
+  };
+  const runId = '6'.repeat(32);
+  const slug = 'family-chores';
+  const pair = {
+    app: { slug }, runId, sessionId: 46,
+    preparedSource: { fingerprint: 'source-fingerprint' },
+    sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
+      dbName: dbManager.shotsDbName(slug, runId, side), runtimeName: `shots-${side}`,
+      sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
+      imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: { USERNODE_ENV: 'staging' },
+      hasBeforeSeedRunner: true,
+    }])),
+  };
+  const commands = [];
+  try {
+    runtime.remove = async () => {};
+    runtime.deploy = async (_config, spec) => { commands.push(spec.command || []); return { runtimeName: spec.runtimeName }; };
+    runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
+    dbManager.cloneFromPreparedSource = async () => ({ password: 'disposable' });
+    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
+    const deployment = await environment.resetPair({ selfAppSlug: 'usernode-2d5619', appRuntime: 'kubernetes' }, pair);
+    assert.ok(!commands.some((command) => command.includes('scripts/shots-before-seeds.js')),
+      'a child app has no shared seed step to run');
+    assert.equal(deployment.beforeSeeds, null);
+  } finally {
+    runtime.remove = original.remove;
+    runtime.deploy = original.deploy;
+    runtime.appOrigin = original.appOrigin;
+    dbManager.cloneFromPreparedSource = original.clone;
+    dbManager.connectionUrl = original.connectionUrl;
+  }
+});
+
+test('#7172: a seed result may carry outcomes, and an unreadable one is refused', () => {
+  const base = { version: 1, applied: ['seedA'], leftOut: [] };
+  assert.deepEqual(environment.validSeedsResult(base), { ran: true, applied: ['seedA'], leftOut: [] },
+    'an older head image without outcomes still validates');
+  const outcomes = [{ name: 'seedA', outcome: 'skipped', reason: 'no project staging-demo-pin-1' }];
+  assert.deepEqual(environment.validSeedsResult({ ...base, outcomes }).outcomes, outcomes);
+  assert.equal(environment.validSeedsResult({ ...base, outcomes: [{ name: 'seedA', outcome: 'exploded', reason: 'x' }] }), null);
+  assert.equal(environment.validSeedsResult({ ...base, outcomes: [{ name: 'x', outcome: 'skipped', reason: 'x' }] }), null,
+    'a seed name must be a real one');
+  assert.equal(environment.validSeedOutcomes([{ name: 'seedA', outcome: 'wrote' }]), null,
+    'a seed that wrote is not a note');
 });

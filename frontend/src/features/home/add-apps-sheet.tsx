@@ -18,7 +18,7 @@
 
 import { useState } from 'react';
 
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, XIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 
@@ -70,14 +70,15 @@ function audienceWords(audience: unknown): string {
 
 function RowIcon({ icon }: { icon: IconView }) {
   if (icon.kind === 'image') {
-    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
+    return <img src={icon.src} alt="" loading="lazy" decoding="async" draggable={false} className="w-full h-full object-cover" />;
   }
   if (icon.kind === 'emoji') return <span className="text-2xl leading-none">{icon.emoji}</span>;
   return <>{icon.letter}</>;
 }
 
-function AddAppsSheet({ onBrowse }: { onBrowse: () => void }) {
+function AddAppsSheet({ onBrowse, onClose }: { onBrowse: () => void; onClose: () => void }) {
   const t = useMessages('home');
+  const tc = useMessages('core');
   // One snapshot per opening; nothing re-renders the lists behind the
   // viewer's presses except their own.
   const [lists] = useState(() => addSheetLists(home()?._apps));
@@ -131,21 +132,41 @@ function AddAppsSheet({ onBrowse }: { onBrowse: () => void }) {
   });
 
   const empty = !lists.yours.length && !lists.popular.length;
+  // PHONE REVIEW, 23 Nov 2026. The kit's sheet body is not a scroller, so
+  // two long lists ran 2,693px down an 812px sheet and a swipe did nothing:
+  // only the first ten of Your other apps could be reached. The lists scroll
+  // in a box of their own under the title (app.css, "PIN TO HOME"), and a
+  // close button stands at the title's end. The body's 16px is the one edge:
+  // no padding of the content's own, and the heading and the list drop the
+  // inset they bring for a page.
   return (
-    <div data-add-apps-sheet="" className="px-4 pb-5">
-      <h2 className="pt-3 text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">
-        {t('home:addSheet.title')}
-      </h2>
+    <div data-add-apps-sheet="" className="pb-1">
+      <div className="flex items-center gap-2 pt-1">
+        <h2 className="min-w-0 flex-1 text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">
+          {t('home:addSheet.title')}
+        </h2>
+        <button
+          type="button"
+          data-add-apps-close=""
+          className="-me-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-500/10 dark:text-zinc-400 un-touch-target"
+          aria-label={tc('core:common.close')}
+          title={tc('core:common.close')}
+          onClick={onClose}
+        >
+          <XIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </div>
+      <div data-add-apps-scroll="">
       {lists.yours.length ? (
         <>
-          <SectionHeader>{t('home:addSheet.yours')}</SectionHeader>
-          <GroupedList>{rows(lists.yours)}</GroupedList>
+          <SectionHeader className="px-0 pt-3">{t('home:addSheet.yours')}</SectionHeader>
+          <GroupedList className="mx-0">{rows(lists.yours)}</GroupedList>
         </>
       ) : null}
       {lists.popular.length ? (
         <>
-          <SectionHeader>{t('home:addSheet.popular')}</SectionHeader>
-          <GroupedList>{rows(lists.popular)}</GroupedList>
+          <SectionHeader className="px-0">{t('home:addSheet.popular')}</SectionHeader>
+          <GroupedList className="mx-0">{rows(lists.popular)}</GroupedList>
         </>
       ) : null}
       {empty ? (
@@ -164,6 +185,7 @@ function AddAppsSheet({ onBrowse }: { onBrowse: () => void }) {
           </div>
         </>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -191,6 +213,7 @@ export function openAddAppsSheet(): void {
   const leave = () => { finish(); handle?.dismiss(); };
   mountLegacyPortal(panel, (
     <AddAppsSheet
+      onClose={leave}
       onBrowse={() => {
         // One Home (#6361): the directory is Home's own Communities to join.
         leave();

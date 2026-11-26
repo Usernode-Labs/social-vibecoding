@@ -1,10 +1,8 @@
 import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
-import { Av as KitAv, Tile as KitTile } from '@/components/ui/kit';
 import { matchRanges } from '../ai/search';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { messageStamp } from '../../lib/timestamp';
 import { requestHue } from './bot-request';
 import { dotText } from './bot-shared';
@@ -185,7 +183,7 @@ export function swatchFor(name: string): string {
  * `square` for a person speaking in a conversation — the list, the thread's
  * title row and the named rows of a group — and `circle` for a person in a
  * roster, which is what the dialogs show. A square wears the person's swatch
- * with white initials; a circle keeps the accent tint the dialogs had.
+ * with white initials; so does a circle (phone review #119).
  */
 /**
  * B5: how a sender or a peer is named. The Homeroom bot by its name ("Homeroom
@@ -209,15 +207,6 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   shape?: 'circle' | 'square';
 }) {
   const label = title || user?.username || 'Conversation';
-  // Under one of the frame's looks a face is the kit's: a circle in the
-  // person's own colour, the bot's the Homeroom tile (the tour's av()).
-  // Its sizes are the kit's three: 24, 32 and 40.
-  const frame = isFrameSkin(useLiveSkin());
-  if (frame) {
-    const px = size === 'sm' ? 24 : size === 'lg' ? 40 : 32;
-    if (user?.bot) return <KitTile size={px} src={BOT_AVATAR} name={label} />;
-    return <KitAv size={px} name={label} initials={initials(label)} src={user?.avatarUrl} color={swatchFor(label)} />;
-  }
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';
   const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
@@ -225,7 +214,7 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
     return <img src={BOT_AVATAR} alt="" className={`${sizeClass} ${radius} object-cover shrink-0`} data-bot-avatar="" />;
   }
   if (user?.avatarUrl) {
-    return <img src={user.avatarUrl} alt="" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
+    return <img src={user.avatarUrl} alt="" loading="lazy" decoding="async" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
   }
   if (square) {
     return (
@@ -234,8 +223,11 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
       </span>
     );
   }
+  // Phone review #119 (23 Nov 2026): a circle is the person's own colour
+  // with white initials too, as the hub's faces and the About pane's are; it
+  // was the accent's pale tint, a third drawing of the same person.
   return (
-    <span aria-hidden="true" className={`${sizeClass} rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 font-semibold flex items-center justify-center shrink-0`}>
+    <span aria-hidden="true" className={`${sizeClass} rounded-full text-white font-semibold flex items-center justify-center shrink-0`} style={{ backgroundColor: swatchFor(label) }}>
       {initials(label)}
     </span>
   );
@@ -298,7 +290,7 @@ function ObjectIcon({ object }: { object: SharedObjectCard }) {
   if (app && object.iconUrl) {
     return (
       <span className="messages-object-icon overflow-hidden" data-object-icon="image">
-        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable="false" />
+        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" />
       </span>
     );
   }
@@ -412,9 +404,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false, onOpen 
     : <div className="messages-object-card">{body}</div>;
 }
 
-export function fileSize(bytes: number): string {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+// #7136: a byte formatter is shared with the request draft's list of files,
+// so it lives in lib/file-size.ts. It is still exported here for the chat
+// surfaces that already import it from this module.
+export { fileSize } from '../../lib/file-size';

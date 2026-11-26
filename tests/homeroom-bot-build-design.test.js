@@ -308,9 +308,9 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
     // A state new in the change is seeded in it: the after copy is the side
     // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
-    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches the after copy, which is the side a new state needs\./);
+    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches both copies when main's schema can hold it, and a seed that needs a table or column main lacks reaches the after copy only\./);
     assert.match(declare.replace(/\n/g, ' '), /fake people, never a signal your code reads to decide something, and a reply as the stored message, never asked for\./);
-    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed needs it on both copies, which a seed in this change cannot give/);
+    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed can be seeded in its own change too when main's schema can hold it; otherwise make it with hints\.setup steps\./);
     // What the copies cannot do at all, from the one shared list, and the
     // two ways out (18 Nov 2026: 31% of the platform's own shots runs failed,
     // most on one of these).
@@ -318,8 +318,12 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     assert.match(declare.replace(/\n/g, ' '), /either seed it in this same change \(stored rows or a stored message, in the app's staging seed \(its IS_STAGING block; for Homeroom itself, the staging seeds in src\/db\/migrate\.js\)\) or declare impact "none" with a reason that names what the copies cannot do/);
     // And the order its spec ranked the work in.
     const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
-      'the record, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
+    // #7118: and its own logo and card picture, made with the first version.
+    const pictures = live.FIRST_VERSION_PICTURES_LINES.join('\n');
+    assert.ok(first.includes(pictures) && !other.includes('brand/card.png'));
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${pictures}\n`, '').replace(`${progress}\n`, '')
+      .replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
+      'the record, the pictures, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
@@ -500,15 +504,10 @@ test('the copies\' limits name each thing the shots cannot reach, and the two wa
     /a controlled failure covers one API GET, never a POST, PUT or DELETE/,
     /there is no native phone app, so anything only its bridge shows cannot be shown/,
     /two requests cannot be made to race/,
-    // 18 Nov 2026 (PR 6812): a look is reached by its address, never by the admins' menu.
-    /Settings › Experimental › Look is shown to admins only, so a change made for a particular look is declared with that look's \?skin=<look> in its start path \(such as \?skin=brand or \?skin=wip\), never through that menu/,
   ]) assert.match(text, limit);
-  // The looks named are exactly the ones the Look menu and the head's pin take.
-  const skinTs = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/lib/skin.ts'), 'utf8');
-  const menu = JSON.parse(/export const MENU_SKINS = (\[[^\]]*\])/.exec(skinTs)[1].replace(/'/g, '"'));
-  assert.deepEqual([...copyLimits.LOOK_SKINS], menu);
-  const head = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/head.html'), 'utf8');
-  assert.ok(head.includes(`const SKINS = [${copyLimits.LOOK_SKINS.map((s) => `'${s}'`).join(', ')}];`), 'the head pins the same looks by ?skin=');
+  // Homeroom has one look, so the limits name no look and no ?skin= address.
+  assert.doesNotMatch(text, /Experimental › Look|\?skin=/);
+  assert.equal(copyLimits.LOOK_SKINS, undefined);
   assert.match(text, /Before you declare a change, check that the copies can reach its state\./);
   assert.match(text, /Never declare a state the copies cannot reach\./);
   // A work order keeps AGENTS.md's own rule for what can be neither reached

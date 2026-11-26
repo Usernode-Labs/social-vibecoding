@@ -9,20 +9,18 @@
  *
  * The same presentation as ./feedback-sheet.tsx, for the same reasons:
  * rendered inside #profile-root while `friendsOpen` is set, and handed to the
- * native kit's MODAL by lib/kit-surface.ts, because `.un-modal` is a real
+ * native kit's MODAL by lib/sheet.ts, because `.un-modal` is a real
  * scroller and a list of friends can be longer than the screen. With no kit
  * the card simply stays where React put it, at the top of the screen. The
  * root and card class strings are constants (the kit writes onto them), and
- * the card is brought home in the layout-effect cleanup, before React
- * removes it.
+ * the Sheet brings the card home before React removes it.
  */
 
-import { useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { useMessages } from '../../lib/i18n/react';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import { FriendsSection, type FriendsSectionView } from './friends-section';
 import { Profile } from './profile.js';
 
@@ -41,35 +39,10 @@ export function FriendsSheet({ view, pendingId, status }: {
   status: string;
 }): ReactNode {
   const t = useMessages('profile');
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Hand the card to the native kit, exactly once, and put it back before
-  // React ever tries to remove it. Same shape as ./feedback-sheet.tsx.
-  useIsomorphicLayoutEffect(() => {
-    const contentEl = panelRef.current;
-    const flagEl = rootRef.current;
-    if (!contentEl || !flagEl) return;
-    let adoption: KitAdoption | null = null;
-    adoption = adoptKitSurface({
-      kind: 'modal',
-      contentEl,
-      adoptedOn: flagEl,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => {
-        if (!adoption) return;
-        adoption = null;
-        Profile._dismissFriends();
-      },
-    });
-    return () => {
-      if (!adoption) return;
-      const handle = adoption;
-      adoption = null;
-      handle.release();
-    };
-  }, []);
+  // Lifted into the kit's modal while it is mounted; Escape, Back, the
+  // backdrop and focus are the Sheet's (lib/sheet.ts).
+  const { rootRef, panelRef } = useSheet({ kind: 'modal', onClose: () => Profile._dismissFriends() });
 
   return (
     <div id="profile-friends-root" ref={rootRef} className={ROOT_CLASS}>

@@ -37,6 +37,13 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 
 const { getTemplateFiles } = require('../src/services/template');
+const { waitFor } = require('./lib/wait-for');
+
+// A request, or a step, that stops answering fails here in seconds and names
+// itself, instead of holding the file open until the suite's own bound kills
+// it with no clue which app or wait stalled.
+const REQUEST_MS = 15000;
+const SUBTEST_MS = 60000;
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const APP_ID = '77';
@@ -82,9 +89,11 @@ function liveOf(app, tok) {
     else if (waiter.test(msg)) { const w = waiter; waiter = null; w.resolve(msg); }
   });
   const opened = new Promise((resolve, reject) => {
-    ws.once('open', resolve);
-    ws.once('unexpected-response', (_req, res) => reject(Object.assign(new Error('refused'), { status: res.statusCode })));
-    ws.once('error', (err) => reject(err));
+    const timer = setTimeout(() => reject(new Error('live connection did not open within 15 s')), REQUEST_MS);
+    const settle = (fn) => (value) => { clearTimeout(timer); fn(value); };
+    ws.once('open', settle(resolve));
+    ws.once('unexpected-response', (_req, res) => settle(reject)(Object.assign(new Error('refused'), { status: res.statusCode })));
+    ws.once('error', settle(reject));
   });
   opened.catch(() => {});
   return {
@@ -111,13 +120,75 @@ const isView = (test = () => true) => (m) => m.t === 'view' && test(m.view);
  * live-updates.js): the stream's status and type, how many `change` events
  * it has had, `until(check)` to wait for more, and `close()`. A stream the
  * server ends, or a server that goes away, just ends it.
+ *
+ * `until` is told what the stream read, rather than asking it on a timer:
+ * the reading loop re-checks it after every chunk and once at the end, so no
+ * fixed poll and no machine's speed decides how long it waits. Only the
+ * opening request has a deadline, so a server that never answers the headers
+ * fails here instead of holding the suite open.
  */
 async function listen(app, tok) {
   const controller = new AbortController();
-  const res = await fetch(`${app.base}/api/changes${tok ? `?token=${encodeURIComponent(tok)}` : ''}`, { signal: controller.signal });
+  let answered = false;
+  const headers = setTimeout(() => { if (!answered) controller.abort(); }, REQUEST_MS);
+  let res;
+  try {
+    res = await fetch(`${app.base}/api/changes${tok ? `?token=${encodeURIComponent(tok)}` : ''}`, { signal: controller.signal });
+  } catch (err) {
+    if (!answered && err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error('GET /api/changes did not answer within 15 s');
+    }
+    throw err;
+  } finally {
+    answered = true;
+    clearTimeout(headers);
+  }
   let text = '';
   let ended = false;
-  const reading = (async () => {
+  let reading = null;
+  let s = null;
+  const waiters = new Set();
+  // What every waiter asked, against what has been read so far. A wait whose
+  // stream ends first fails at once instead of holding to its deadline.
+  const settle = () => {
+    for (const w of [...waiters]) {
+      let holds;
+      try { holds = w.check(s); } catch (err) { waiters.delete(w); w.reject(err); continue; }
+      if (holds) { waiters.delete(w); w.resolve(); }
+      else if (ended) {
+        waiters.delete(w);
+        w.reject(new Error(`the stream ended before what it waited for; the stream had: ${JSON.stringify(text)}`));
+      }
+    }
+  };
+  s = {
+    status: res.status,
+    type: res.headers.get('content-type'),
+    text: () => text,
+    ended: () => ended,
+    events: () => (text.match(/^event: change$/gm) || []).length,
+    until(check, ms = 5000) {
+      if (check(s)) return Promise.resolve();
+      if (ended) {
+        return Promise.reject(new Error(`the stream ended before what it waited for; the stream had: ${JSON.stringify(text)}`));
+      }
+      return new Promise((resolve, reject) => {
+        let timer;
+        const w = {
+          check,
+          resolve: () => { clearTimeout(timer); resolve(); },
+          reject: (err) => { clearTimeout(timer); reject(err); },
+        };
+        timer = setTimeout(() => {
+          waiters.delete(w);
+          reject(new Error(`not in time; the stream had: ${JSON.stringify(text)}`));
+        }, ms);
+        waiters.add(w);
+      });
+    },
+    close: () => { controller.abort(); return reading; },
+  };
+  reading = (async () => {
     try {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -125,25 +196,12 @@ async function listen(app, tok) {
         const { value, done } = await reader.read();
         if (done) break;
         text += decoder.decode(value, { stream: true });
+        settle();
       }
     } catch { /* closed here, or the server went away */ }
     ended = true;
+    settle();
   })();
-  const s = {
-    status: res.status,
-    type: res.headers.get('content-type'),
-    text: () => text,
-    ended: () => ended,
-    events: () => (text.match(/^event: change$/gm) || []).length,
-    async until(check, ms = 5000) {
-      const end = Date.now() + ms;
-      while (!check(s)) {
-        if (Date.now() > end) throw new Error(`not in time; the stream had: ${JSON.stringify(text)}`);
-        await new Promise((r) => setTimeout(r, 20));
-      }
-    },
-    close: () => { controller.abort(); return reading; },
-  };
   return s;
 }
 
@@ -249,14 +307,29 @@ async function boot(dir, dbUrl, env, extra = {}) {
     if (as) headers['x-usernode-token'] = as;
     if (now) headers['x-usernode-now'] = now;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const res = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    let res;
+    try {
+      // The timeout covers the body read of a `raw` answer too: it is the
+      // same request, read right after.
+      res = await fetch(base + url, {
+        method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(REQUEST_MS),
+      });
+    } catch (err) {
+      if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        throw new Error(`${method} ${url} did not answer within 15 s\n${out}`);
+      }
+      throw err;
+    }
     if (raw) return res;
     return { status: res.status, data: await res.json().catch(() => null) };
   }
   return { call, stop, base, output: () => out };
 }
 
-test('every ready-made app runs: seeds in staging only, serves its screen, refuses strangers, works, and drains', { timeout: 240000 }, async (t) => {
+// Below the suite's own file bound (--test-timeout=180000), so a stall fails
+// here and the t.after cleanup still runs: every running server stopped, its
+// database dropped, its directory removed.
+test('every ready-made app runs: seeds in staging only, serves its screen, refuses strangers, works, and drains', { timeout: 170000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -336,7 +409,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
   const demo = (rows, key = 'name') => rows.filter((r) => String(r[key]).startsWith('Staging demo')).length;
 
-  await t.test('a tier list: anyone adds, each ranks, the group\'s tier is where the average lands', async () => {
+  await t.test('a tier list: anyone adds, each ranks, the group\'s tier is where the average lands', { timeout: SUBTEST_MS }, async () => {
     await run('tier-list-restaurants', '/api/items', (d) => demo(d.items), async (app) => {
       const seeded = (await app.call('GET', '/api/items', { as: ada })).data;
       assert.deepEqual(seeded.items.find((i) => i.id === 900001).tier, 'S', 'the group\'s S row has an item');
@@ -366,6 +439,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       await presence.until((x) => x.events() >= 1);
       const arrivals = presence.events();
       assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      // fixed wait: nothing is sent, so there is no event; four of the stream's 100 ms batches
       await new Promise((r) => setTimeout(r, 400));
       assert.equal(presence.events(), arrivals, 'a repeat check-in says nothing');
       assert.deepEqual((await app.call('GET', '/api/presence', { as: grace })).data, { here: ['ada'], more: 0 });
@@ -499,7 +573,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a grocery list: Todo List\'s rules for one shared list', async () => {
+  await t.test('a grocery list: Todo List\'s rules for one shared list', { timeout: SUBTEST_MS }, async () => {
     // Production has no staging rows, so its first visitor is offered the
     // examples instead; a staging list already has rows, so it is not.
     const staged = (d) => {
@@ -638,7 +712,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a chore list: always one person\'s or taking turns round the project\'s members, moving on every Monday', async () => {
+  await t.test('a chore list: always one person\'s or taking turns round the project\'s members, moving on every Monday', { timeout: SUBTEST_MS }, async () => {
     await run('chore-list', '/api/chores', (d) => demo(d.chores), async (app) => {
       const thursday = '2026-10-08T12:00:00Z';
       const nextMonday = '2026-10-12T09:00:00Z';
@@ -694,7 +768,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a lending library: who has it now, asking for it, handing it on, and back with its owner', async () => {
+  await t.test('a lending library: who has it now, asking for it, handing it on, and back with its owner', { timeout: SUBTEST_MS }, async () => {
     await run('lending-library', '/api/things', (d) => demo(d.things), async (app) => {
       const seeded = (await app.call('GET', '/api/things', { as: ada })).data.things;
       assert.ok(seeded.some((x) => !x.atHome), 'one with somebody else');
@@ -741,7 +815,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a potluck planner: who brings what by course, coming up by "now"', async () => {
+  await t.test('a potluck planner: who brings what by course, coming up by "now"', { timeout: SUBTEST_MS }, async () => {
     await run('potluck-planner', '/api/potlucks', (d) => demo(d.upcoming, 'title'), async (app) => {
       const seeded = (await app.call('GET', '/api/potlucks', { as: ada })).data;
       const demoPotluck = seeded.upcoming.find((p) => p.id === 900001);
@@ -807,7 +881,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   // own count of finished sessions (its table is staging:private), which
   // the staging conventions keep out of a preview: a preview's Today card
   // starts empty, which is the honest state for it.
-  await t.test('a study timer: one count per person, a retried session counts once, the day where the person is', async () => {
+  await t.test('a study timer: one count per person, a retried session counts once, the day where the person is', { timeout: SUBTEST_MS }, async () => {
     const dir = writeRepo('study-timer');
     dirs.push(dir);
 
@@ -879,7 +953,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal(await app.stop(), 0, app.output());
   });
 
-  await t.test('a group poll: options from anyone, ticks or one pick, closing by time or by hand, and the winner kept', async () => {
+  await t.test('a group poll: options from anyone, ticks or one pick, closing by time or by hand, and the winner kept', { timeout: SUBTEST_MS }, async () => {
     const polls = (d) => d.open.concat(d.decided);
     await run('poll-dinner', '/api/polls', (d) => demo(polls(d), 'question'), async (app) => {
       const get = async (as = ada, now) => (await app.call('GET', '/api/polls', { as, now })).data;
@@ -995,7 +1069,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('find a time: suggested times, everyone\'s marks, the best rising, the starter setting it, and past by "now"', async () => {
+  await t.test('find a time: suggested times, everyone\'s marks, the best rising, the starter setting it, and past by "now"', { timeout: SUBTEST_MS }, async () => {
     // The dates mode: game night and the trip. The book club finds a weekly
     // time instead (below).
     await run('find-a-time-game-night', '/api/plans', (d) => demo(d.plans), async (app) => {
@@ -1137,7 +1211,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
   // Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time?
   // Not just a few times to choose between?"
-  await t.test('find a weekly time: everyone marks the hours of every week, and the hour most can make is named', async () => {
+  await t.test('find a weekly time: everyone marks the hours of every week, and the hour most can make is named', { timeout: SUBTEST_MS }, async () => {
     const fakes = (d) => d.people.filter((p) => p.username.startsWith('staging-demo-')).length;
     await run('find-a-time-book-club', '/api/week', fakes, async (app) => {
       const get = async (as = ada) => (await app.call('GET', '/api/week', { as })).data;
@@ -1214,7 +1288,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   // events of its own kind. Its events are counted by their names.
   const sheets = (d) => demo(d.upcoming.concat(d.past));
 
-  await t.test('a sign-up sheet: slots with a size, one spot each, a full slot closes, coming up by "now"', async () => {
+  await t.test('a sign-up sheet: slots with a size, one spot each, a full slot closes, coming up by "now"', { timeout: SUBTEST_MS }, async () => {
     await run('signup-shifts', '/api/events', sheets, async (app) => {
       const get = async (as, now) => (await app.call('GET', '/api/events', { as, now })).data;
       // The seed: a sheet coming up with five slots of different sizes, some
@@ -1301,7 +1375,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('who\'s coming: going, maybe or can\'t with a note, and who has not said from the member list', async () => {
+  await t.test('who\'s coming: going, maybe or can\'t with a note, and who has not said from the member list', { timeout: SUBTEST_MS }, async () => {
     await run('signup-rsvp', '/api/events', sheets, async (app) => {
       const get = async (as, now) => (await app.call('GET', '/api/events', { as, now })).data;
       // The seed: an event coming up that fake people answered every way.
@@ -1355,7 +1429,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a group challenge: logged by hand, a leaderboard and a group goal, a fresh start every month', async () => {
+  await t.test('a group challenge: logged by hand, a leaderboard and a group goal, a fresh start every month', { timeout: SUBTEST_MS }, async () => {
     const seededLately = (d) => d.lately.filter((e) => /^Staging demo /.test(e.note || '')).length;
     await run('challenge-miles', '/api/challenge', seededLately, async (app) => {
       // The staging seed: this month's board, goal bar and Lately, from made-up
@@ -1477,7 +1551,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     }
   }
 
-  await t.test('a board game: the lobby, turns over the live connection, a roll made for somebody away, a winner kept', async () => {
+  await t.test('a board game: the lobby, turns over the live connection, a roll made for somebody away, a winner kept', { timeout: SUBTEST_MS }, async () => {
     const roomCount = (d) => d.players.length + d.leaders.length;
     await run('game-board', '/api/room', roomCount, async (app) => {
       await refusesStrangers(app);
@@ -1535,7 +1609,21 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     const leaders = (await a.next(isView((x) => x.leaders.length === 1))).view.leaders;
     assert.deepEqual(leaders.map((l) => [l.username, l.wins, l.played]), [['ada', 1, 1]]);
     a.close();
-    await new Promise((r) => setTimeout(r, 600)); // the room saves a moment after a change
+    // Nothing on the live connection says "saved": the room's own database is
+    // the event to wait on. The save happens a moment after the change
+    // (SAVE_DELAY_MS), and the result is a separate insert, so both are read
+    // until they are there. Ended before stop(), so the database cleanup's
+    // DROP ... WITH (FORCE) has nothing extra to kill.
+    const saved = new Pool({ connectionString: db, connectionTimeoutMillis: 2000 });
+    try {
+      await waitFor(async () => {
+        const room = await saved.query("SELECT state->>'phase' AS phase FROM game_rooms");
+        const results = await saved.query("SELECT count(*) FROM game_results WHERE username = 'ada'");
+        return room.rows.some((r) => r.phase === 'over') && Number(results.rows[0].count) >= 1;
+      }, { label: 'the finished room and its result saved', timeoutMs: 10000 });
+    } finally {
+      await saved.end();
+    }
     assert.equal(await prod.stop(), 0, prod.output());
     prod = await boot(dir, db, 'production', env);
     const back = (await prod.call('GET', '/api/room', { as: ada })).data;
@@ -1544,7 +1632,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal(await prod.stop(), 0);
   });
 
-  await t.test('trivia: questions about each other, the answer hidden until it shows, scored live', async () => {
+  await t.test('trivia: questions about each other, the answer hidden until it shows, scored live', { timeout: SUBTEST_MS }, async () => {
     const roomCount = (d) => d.players.length + d.leaders.length;
     await run('game-trivia', '/api/room', roomCount, async (app) => {
       await refusesStrangers(app);
@@ -1593,7 +1681,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('the space game: a run ticks live, ships fly by their own page, and the run is kept when it ends', async () => {
+  await t.test('the space game: a run ticks live, ships fly by their own page, and the run is kept when it ends', { timeout: SUBTEST_MS }, async () => {
     await run('game-space', '/api/room', (d) => d.leaders.length, async (app) => {
       await refusesStrangers(app);
       const a = liveOf(app, ada);
@@ -1645,7 +1733,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('the block world: always on, every block sent to everyone as it is placed, and checked', async () => {
+  await t.test('the block world: always on, every block sent to everyone as it is placed, and checked', { timeout: SUBTEST_MS }, async () => {
     await run('game-blocks', '/api/room', (d) => (d.game ? d.game.count : 0), async (app) => {
       await refusesStrangers(app);
       const a = liveOf(app, ada);

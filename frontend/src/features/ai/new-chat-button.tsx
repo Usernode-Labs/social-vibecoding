@@ -31,7 +31,8 @@ export function NewChatButton({ onOpen }: { onOpen: () => void }): ReactNode {
       variant="pillAccent"
       size="icon"
       ink="solid"
-      className="inline-flex h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 text-[15px] font-semibold [&>svg]:h-[18px] [&>svg]:w-[18px]"
+      // One look (25 Nov 2026): the page's main action, the sun disc with the sticker edge (app.css, SHARED PARTS).
+      className="inline-flex h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 text-[15px] font-semibold [&>svg]:h-[18px] [&>svg]:w-[18px] one-fab"
       title={t('messages:newThread.start')}
       data-bot-new-thread=""
       data-ai-new-chat=""

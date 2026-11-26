@@ -26,13 +26,15 @@ export type BotVerifyRequired = {
   code: 'bot_verify_required';
   error?: string;
   signals?: string[];
+  /** How old both GitHub and X must be, when github_x_age is one of the signals. */
+  minAccountAgeDays?: number;
 };
 
 export function isBotVerifyRequired(body: unknown): body is BotVerifyRequired {
   return !!body && typeof body === 'object' && (body as { code?: unknown }).code === 'bot_verify_required';
 }
 
-type Ask = (signals?: readonly string[]) => Promise<boolean>;
+type Ask = (signals?: readonly string[], opts?: { minAccountAgeDays?: number }) => Promise<boolean>;
 
 function askOf(win: any): Ask | null {
   const ask = win?.UsernodeReact?.verifyIdentity?.askForBot;
@@ -66,7 +68,8 @@ export function installBotVerifyRequired(win: any = typeof window !== 'undefined
     if (!isBotVerifyRequired(body)) return res;
     const ask = askOf(win);
     if (!ask) return res;
-    const verified = await ask(Array.isArray(body.signals) ? body.signals : undefined).catch(() => false);
+    const opts = Number.isInteger(body.minAccountAgeDays) ? { minAccountAgeDays: body.minAccountAgeDays } : undefined;
+    const verified = await ask(Array.isArray(body.signals) ? body.signals : undefined, opts).catch(() => false);
     return verified ? send(again, init) : res;
   };
   win.__botVerifyRequiredInstalled = true;

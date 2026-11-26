@@ -327,6 +327,9 @@ config:
   # built. Main-watch's run of main has one slot besides these. 0 turns the
   # queue off. See the chart README.
   checksMaxConcurrentRuns: 4
+  # Allow one proposal-only overflow slot during mixed main-watch load.
+  # Requires a four-proposal cap and a dedicated pool that fits five shared slots.
+  checksProposalOverflowPilot: false
   # A dedicated node pool for check Jobs, as the pool nodes' label key=value
   # (for example "usernodelabs.org/node-pool=cpu-heavy"). Checks tolerate a
   # NoSchedule taint with the same pair and prefer those nodes, falling back
@@ -336,6 +339,11 @@ config:
   # Require the pool instead of spilling checks onto app-serving nodes. The
   # checks queue waits for a ready pool; configure a valid label pair first.
   checkNodePoolRequired: false
+  # A node pool of the build lanes' own (kpack and BuildKit), as its nodes'
+  # label key=value (for example "usernodelabs.org/node-pool=build"), required
+  # and its NoSchedule taint tolerated. Empty keeps builds on the checks pool.
+  # See the chart README.
+  buildNodePool: ""
   # Prometheus with kube-state-metrics node labels/readiness/capacity. Empty
   # uses the Kubernetes node API, which requires separate operator-granted RBAC.
   checkPoolMetricsUrl: ""

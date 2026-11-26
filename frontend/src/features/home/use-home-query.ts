@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from 'react';
 
-import { rankSearch, searchKey } from '../../lib/search-rank.js';
+import { rankSearch } from '../../lib/search-rank.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { gridStore, type HomeGridState } from './grid-store';
 
@@ -84,9 +84,9 @@ export function rankCommunities<T extends { name?: string | null; slug: string; 
   ) as T[];
 }
 
-/** Does a community's name or slug match the search? */
-export function matchesQuery(query: string, ...fields: Array<string | null | undefined>): boolean {
-  if (!query) return true;
-  const q = searchKey(query);
-  return fields.some((f) => typeof f === 'string' && searchKey(f).includes(q));
-}
+/**
+ * Does a community's name, slug or line match the search? The shell's one
+ * matcher (lib/search-rank.js), so "cafe" finds a community called Café here
+ * exactly as it finds an app called Café in the grid beside it.
+ */
+export { matchesSearch as matchesQuery } from '../../lib/search-rank.js';

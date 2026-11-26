@@ -138,12 +138,13 @@ test('one entry point reaches all three surfaces', () => {
     path.join(root, 'frontend/src/features/home/home-panels.js'), 'utf8');
   // The bar's link is drawn by the React block (#1191); home-panels.js keeps
   // the destination, which is the half that owns the hash.
-  const ui = fs.readFileSync(
-    path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
+  const sections = fs.readFileSync(
+    path.join(root, 'frontend/src/features/home/panels/sections.tsx'), 'utf8');
   // The Semi design: the link reads "See all" (named "See all challenges")
   // and is a real link to the screen's Challenges tab, one tab from the
-  // standings. It replaced #1916's "Open challenges".
-  assert.match(ui, /href="#leaderboard\/challenges"\s+className="home-panel-see-all[^"]*"\s+aria-label=\{t\('home:challenges\.seeAll\.label'\)\}/,
+  // standings. It replaced #1916's "Open challenges". The kit draws it (its
+  // WipHeadMore, the heading's own link).
+  assert.match(sections, /<WipHeadMore direction="right" href="#leaderboard\/challenges" label=\{t\('home:challenges\.seeAll\.label'\)\}/,
     'the area\u2019s heading carries the link');
   assert.equal(message('home:challenges.seeAll.label'), 'See all challenges');
   assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,

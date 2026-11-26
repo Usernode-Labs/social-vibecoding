@@ -39,8 +39,8 @@
  * (the arrow only there and under keyboard focus, so a screen of cards at
  * rest carries no repeated marker); a press gives under the finger; and the
  * picture grows into the project page's band as it opens (./card-morph.ts).
- * A community with no picture of its own wears one of the brand kit's
- * backgrounds, always the same one (../communities/card.tsx `cardScene`).
+ * A community with no picture of its own draws its icon as the picture, on
+ * a wash of its colour (../communities/card.tsx, the card with no picture).
  *
  * Above the grid: the kinds of app the directory has. What an account adds
  * is the hero's to say
@@ -58,6 +58,7 @@ import { ArrowRightShortIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
+import { matchesSearch } from '../../lib/search-rank.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { CommunitiesToJoin } from '../home/communities-to-join';
 import { CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
@@ -211,7 +212,7 @@ export function Card({ app, eager, featured = false, lead = false }: {
           <ProjectLink
             slug={app.slug}
             data-guest-card-link=""
-            className="cm-card-name outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
+            className="cm-card-name inline-flex min-h-11 items-center outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
           >
             {app.name}
           </ProjectLink>
@@ -320,7 +321,7 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   const all = apps || [];
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
   const q = query.trim();
-  const matches = (app: GuestApp) => !q || [app.name, app.slug, app.description].some((f) => typeof f === 'string' && f.toLowerCase().includes(q.toLowerCase()));
+  const matches = (app: GuestApp) => matchesSearch(q, app.name, app.slug, app.description);
   const pinnedApps = device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
   const pinnedCommunities = device.communities.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
   const open = onOpenInside || (() => {});
@@ -425,6 +426,11 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
+            emptyLine={(
+              <p data-guest-empty="" role="status" className="px-2 py-10 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
+                {t('auth:guest.empty')}
+              </p>
+            )}
             headingAction={searchShown ? null : (
               <button
                 type="button"

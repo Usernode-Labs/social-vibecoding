@@ -28,7 +28,15 @@
 // by either revision under test, so a state a proposal adds here reaches
 // shots only once it has merged. Data a proposal needs for its own shots
 // belongs in its staging seeds (src/db/migrate.js), which each side runs for
-// its own revision.
+// its own revision. For Homeroom itself, the run also applies a change's own
+// seeds to the OTHER copy once both have booted (seed-other-copy.js), so
+// that data is on both copies when main's schema can hold it; a seed it
+// cannot hold is rolled back there and stays after-only, with a stated
+// reason. A seeded request shows in its project's list and at its own
+// address whenever the project has no repository; in a project that has one,
+// a copy without GitHub opens the request's page but keeps the fixture list.
+// A seed that writes nothing is named on the run with its reason. A child
+// app has no shared seed step, so its copies keep their own.
 
 const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');
@@ -75,6 +83,17 @@ const IDS = Object.freeze({
   updateRunningProposal: 990884,
   approvedSyncingProposal: 990885,
   voteAfterUpdateProposal: 990886,
+  // 25 Nov 2026 (#7137): a public project whose app answers a guest, so a
+  // signed-out visitor's project page shows Open.
+  guestProjectApp: 990889,
+  // 25 Nov 2026 (#7145): a live draft's working session and the change it is
+  // proposed as. The draft row itself takes its own serial id.
+  liveDraftSession: 990887,
+  liveDraftProposal: 990888,
+  // 22 Nov 2026 (#6989): a request's own open vote to close it. 990889 is
+  // #7137's guest project app, which took the next id while this was being
+  // reviewed.
+  closeVote: 990890,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -123,9 +142,24 @@ const FIRST_VERSION_NAME = '[shots fixture] Book club';
 const ACCESS_APP_SLUG = 'shots-demo-member-walking-club';
 const ACCESS_APP_NAME = '[shots fixture] Walking club';
 const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-walking-club';
+// #7137: a public project whose app answers a guest, so a signed-out
+// visitor's page shows Open. The staging seed's own guest-ready project
+// (#7128) is new, so a change based on an earlier revision would miss it on
+// the before copy; this state writes its own on both.
+const GUEST_PROJECT_SLUG = 'shots-demo-guest-puzzle-club';
+const GUEST_PROJECT_NAME = '[shots fixture] Puzzle club';
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
+// The open vote to close that request, on the same mock: the staging seeds'
+// #general demo accounts propose it and vote against it, so the member's own
+// vote is still owed. The reason is what the card draws under the proposer's
+// name.
+const CLOSE_VOTE = Object.freeze({
+  reason: 'Dark mode stays on after a refresh now, so this looks done.',
+  proposer: 'staging-demo-general-lin',
+  other: 'staging-demo-general-ada',
+});
 // #6251: the picture the seeded request draft carries, so the shots show the
 // thumbnail the real draft copies from the person's message. An obviously
 // fake screenshot (240x144, grey bars on a card), its own 32-hex id.
@@ -133,6 +167,14 @@ const DRAFT_PICTURE_ID = 'd62510000000000000000000000000a1';
 // The draft's own copy of it, as offer() copies the person's picture onto
 // the message the draft is drawn in.
 const DRAFT_PICTURE_COPY_ID = 'd62510000000000000000000000000a2';
+// #7136: a file the seeded draft carries onto its request, so the shots show
+// the "Files it carries" panel the real draft draws. An obviously fake zip
+// (its name says so), its own 32-hex id, 4 KB of placeholder bytes.
+const DRAFT_FILE_ID = 'd62510000000000000000000000000b1';
+const DRAFT_FILE = Buffer.concat([
+  Buffer.from('PK\x03\x04', 'latin1'),
+  Buffer.alloc(4092, 0x20),
+]);
 const DRAFT_PICTURE = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAPAAAACQCAIAAAC5w3GfAAABkElEQVR42u3dsQnAIBBAUXcNZGKLDCCkFrR3BpvkOB+8BdRf3mFp7YU0iitA0CBoEDQIGkGDoEHQIGgQNIIGQYOgQdAgaAQNggZBg6BB0AgaBA2CBkGDoEke9BiTw113j2zrLIJG0Aha0Aha0Aha0AgaQQsawtkOutYHviRoBC1oBA2CBkEjaEEjaEEjaBA0CBpBCxpBCxpBg6BB0Aha0Aga0m+sgKBB0CBoBO0WEDQIGgQNgkbQIGgQNMQJ2sdhRxE0ghY0ghY0ghY0gha0oAWNoAWNoAWNoAWNoAUtaEEjaEEjaEEjaEEjaG8saEEjaEEjaEEjaEEjaARt6xsEDYJG0CBoEDQIGgSNoEHQIGgQNAgaQYOgwTw05qEFjaAFjaAFLWhBI2hBI2hBI2hBI2hBC1rQCFrQCFrQCFrQCFrQghY0ghY0ghY0ghY0gkbQgkbQgkbQtr6x9Q2CBkGDoEHQCBoEDYIGQYOgETQIGgQNggbz0GaLBS1oQQsaQQta0Aha0Aha0IIWtKAFjaD/sQBl3hrNhMhZTgAAAABJRU5ErkJggg==',
   'base64',
@@ -206,6 +248,7 @@ const TAKEN_SQL = Object.freeze({
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
   apps: 'SELECT COUNT(*)::int AS taken FROM apps WHERE id = ANY($1::bigint[])',
   conversations: 'SELECT COUNT(*)::int AS taken FROM conversations WHERE id = ANY($1::bigint[])',
+  issues: 'SELECT COUNT(*)::int AS taken FROM issues WHERE id = ANY($1::bigint[])',
 });
 async function idsFree(client, table, ids) {
   const { rows } = await client.query(TAKEN_SQL[table], [ids]);
@@ -1295,8 +1338,15 @@ const STATES = [
       // by the same pure function the real draft uses.
       const extras = {
         attachmentIds: [DRAFT_PICTURE_ID],
+        // #7136: and one file that is not a picture, which the draft lists by
+        // name and size and its build can save.
+        fileIds: [DRAFT_FILE_ID],
+        files: [{ id: DRAFT_FILE_ID, name: 'demo-site.zip', size: DRAFT_FILE.length }],
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
+        // What the draft leaves undecided, its own short list (its pane
+        // lists it beside the words: request-draft-pane.tsx).
+        undecided: ['Whether a week starts on Monday or on Sunday'],
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
         chatHref: '#homeroom-bot',
       };
@@ -1346,6 +1396,15 @@ const STATES = [
          ON CONFLICT DO NOTHING`,
         [DRAFT_PICTURE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_PICTURE.length, DRAFT_PICTURE]
       );
+      // #7136: the file they attached in the same message, as the chat keeps
+      // it: a chip under their words, which the draft carries.
+      await client.query(
+        `INSERT INTO conversation_message_attachments
+           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+         VALUES ($1, $2, $3, $4, 'binary', 'demo-site.zip', 'application/zip', $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [DRAFT_FILE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_FILE.length, DRAFT_FILE]
+      );
       // And the copy offer() writes onto the draft message, so the bot's
       // reply draws the thumbnail under its text too.
       await client.query(
@@ -1366,7 +1425,7 @@ const STATES = [
       const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Files it carries (demo-site.zip, 4 KB), Where (the insights page), Related (#6230 One detail column for plans and designs, build together), Still undecided (one question) and Done when (two checks), and File it (filled) and Not now waiting for your answer. A tap on the drafted request's card opens the whole draft beside the thread. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path,
         }],
       };
@@ -1456,6 +1515,134 @@ const STATES = [
     },
   },
   {
+    // 25 Nov 2026 (#7145): a live draft open in the column beside the
+    // member's thread with Homeroom bot. A proposal changed how the draft
+    // looks in that column, and no copy starts with one: only asking the bot
+    // opens a draft, and no copy has a model. The rows are the staging live
+    // draft seed's (src/db/migrate.js seedStagingLiveDraftThread) written in
+    // the demo-state style, on the platform project every copy has: the
+    // member's ask and the bot's replies, the draft's two edits, the later
+    // one not in its proposal yet, and the draft up for a vote. The address
+    // opens the thread with the draft in the column (`…/design`, which
+    // botDetailAt reads). Nothing builds in a copy, so the preview may read
+    // as starting: the thread and the column are what the state is for.
+    id: 'shots-demo-member-bot-live-draft-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      apps: ['id', 'name', 'slug'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
+      chat_sessions: ['id', 'app_id', 'user_id', 'status', 'is_headless', 'linked_issues', 'session_title',
+        'branch_name', 'promoted_at', 'last_activity_at'],
+      live_drafts: ['id', 'app_id', 'user_id', 'private_thread_id', 'root_message_id', 'session_id', 'state',
+        'base_sha', 'head_sha', 'edits', 'live_state', 'proposal_session_id', 'proposed_head_sha', 'proposed_at',
+        'created_at', 'updated_at'],
+      live_draft_edits: ['draft_id', 'commit_sha', 'summary', 'paths', 'created_at'],
+    },
+    free: async (client, ctx) => await messagesFree(client,
+      ['shots-fixture-hrbot-live-draft-ask', 'shots-fixture-hrbot-live-draft-done',
+        'shots-fixture-hrbot-live-draft-again', 'shots-fixture-hrbot-live-draft-saved'])
+      && botChatFree(client, ctx)
+      && idsFree(client, 'chat_sessions', [IDS.liveDraftSession, IDS.liveDraftProposal]),
+    async install(client, ctx) {
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT slug, name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!app) throw new Error('The live draft fixture lost the platform app.');
+      const name = app.name || app.slug;
+      // Fake commits: a copy has no repository to compare them to.
+      const sha = (c) => c.repeat(40);
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-live-draft-ask', '{}'::jsonb, NOW() - INTERVAL '40 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id,
+          '[shots fixture] Can you make the project list look more like a phone app\'s list?']
+      );
+      const reply = async (senderId, content, key, minutesAgo, metadata) => {
+        const { rows: [row] } = await client.query(
+          `INSERT INTO conversation_messages
+             (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW() - make_interval(mins => $7))
+           RETURNING id`,
+          [chat.conversationId, senderId, content, ask.id, key, metadata, minutesAgo]
+        );
+        return row.id;
+      };
+      const botMeta = JSON.stringify({ homeroomBot: { kind: 'chat' } });
+      await reply(chat.botId,
+        '[shots fixture] Done in the preview: each project is one white row with its last change in grey under its name.',
+        'shots-fixture-hrbot-live-draft-done', 37, botMeta);
+      await reply(ctx.member.id,
+        '[shots fixture] Now line the rows up with the search box above them.',
+        'shots-fixture-hrbot-live-draft-again', 6, '{}');
+      const saved = await reply(chat.botId,
+        '[shots fixture] Done in the preview: the rows now share the search box\'s edges. That change is saved on '
+        + 'the draft and is not in the proposal yet: Update proposal in the preview\'s header puts it there, which '
+        + 'clears its votes.',
+        'shots-fixture-hrbot-live-draft-saved', 5, botMeta);
+      await client.query('UPDATE conversations SET updated_at = GREATEST(updated_at, NOW() - INTERVAL \'5 minutes\') WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        `UPDATE conversation_members SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3)
+          WHERE conversation_id = $1 AND user_id = $2`,
+        [chat.conversationId, ctx.member.id, saved]
+      );
+      const path = await listThread(client, ctx, chat,
+        { rootId: ask.id, kind: 'ask', appId: ctx.appId, readTo: saved });
+      const { rows: [thread] } = await client.query(
+        'SELECT id FROM private_threads WHERE root_message_id = $1', [ask.id]);
+      if (!thread) throw new Error('The live draft fixture lost its thread.');
+      // The draft's working session, as asking the bot opens one, and the
+      // change it was proposed as: no pull request and no preview, which a
+      // copy cannot make.
+      const { rows: [session] } = await client.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, last_activity_at)
+         VALUES ($1, $2, $3, 'paused', FALSE, '{}', $4, 'shots-fixture/live-draft', NOW())
+         RETURNING id`,
+        [IDS.liveDraftSession, ctx.appId, ctx.member.id, `[shots fixture] Live draft of ${name}`]
+      );
+      const { rows: [proposal] } = await client.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, promoted_at,
+            last_activity_at)
+         VALUES ($1, $2, $3, 'promoted', FALSE, '{}', '[shots fixture] Project rows like a phone app',
+                 'shots-fixture/live-draft-proposal', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes')
+         RETURNING id`,
+        [IDS.liveDraftProposal, ctx.appId, ctx.member.id]
+      );
+      const { rows: [draft] } = await client.query(
+        `INSERT INTO live_drafts
+           (app_id, user_id, private_thread_id, root_message_id, session_id, state, base_sha, head_sha, edits,
+            live_state, proposal_session_id, proposed_head_sha, proposed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'proposed', $6, $7, 2, 'live', $8, $9, NOW() - INTERVAL '30 minutes',
+                 NOW() - INTERVAL '40 minutes', NOW())
+         RETURNING id`,
+        [ctx.appId, ctx.member.id, thread.id, ask.id, session.id, sha('a'), sha('c'), proposal.id, sha('b')]
+      );
+      await client.query(
+        `INSERT INTO live_draft_edits (draft_id, commit_sha, summary, paths, created_at)
+         VALUES ($1, $2, '[shots fixture] Project rows as one list with grey last changes',
+                 ARRAY['public/index.html'], NOW() - INTERVAL '37 minutes'),
+                ($1, $3, '[shots fixture] Rows line up with the search box',
+                 ARRAY['public/index.html'], NOW() - INTERVAL '5 minutes')`,
+        [draft.id, sha('b'), sha('c')]
+      );
+      return {
+        shows: [{
+          state: `Your thread with Homeroom bot about ${name}, at the address that opens its live draft in the column beside it: the draft is up for a vote and has two edits, one of them not in its proposal yet (the header offers Update proposal and Close draft). Nothing in it is unread. The preview may still be starting: these copies build nothing, and the thread and the column are the state.`,
+          path: `${path}/design`,
+        }],
+      };
+    },
+  },
+  {
     // A project of the member's with a GitHub repository (#4664): App
     // settings' Access section is live only on an app its viewer manages
     // that has a repository, and the member's fixture apps have none, so
@@ -1495,9 +1682,57 @@ const STATES = [
     },
   },
   {
+    // #7137: a public project whose app answers a guest, so a signed-out
+    // visitor's project page shows Open beside Join and Share. Neither copy
+    // held such a project of its own unless the change added one, so a
+    // change about that page had no shots on either side. The staging
+    // seed's own guest-ready fixture (#7128) is new: a revision before it
+    // would miss the state on its copy, which is why this writes one.
+    id: 'shots-demo-guest-project-open-v1',
+    persona: 'guest',
+    needs: {
+      apps: ['id', 'name', 'slug', 'status', 'created_by', 'collab_visibility', 'view_visibility',
+        'icon_emoji', 'last_deploy_at', 'anon_shell', 'guest_shell', 'anon_shell_checked_at', 'created_at'],
+      app_collaborators: ['app_id', 'user_id', 'status', 'accepted_at'],
+    },
+    free: async (client) => {
+      const taken = await client.query('SELECT 1 FROM apps WHERE slug = $1', [GUEST_PROJECT_SLUG]);
+      return taken.rowCount === 0 && await idsFree(client, 'apps', [IDS.guestProjectApp]);
+    },
+    async install(client, ctx) {
+      // The shape the staging seed's guest-ready project has (#7128): public
+      // to see and to join, its app answers a guest (guest_shell public)
+      // while a visitor with no credential at all is still asked to sign in
+      // (anon_shell gated), which is what makes its page show Open. The
+      // shell check is stamped a year out so the probe never reclassifies
+      // it, and there is no running container behind it.
+      await client.query(
+        `INSERT INTO apps
+           (id, name, slug, status, created_by, collab_visibility, view_visibility, icon_emoji,
+            last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at, created_at)
+         VALUES ($1, $2, $3, 'running', $4, 'public', 'public', '🧩',
+                 NOW() - INTERVAL '2 days', 'gated', 'public', NOW() + INTERVAL '1 year',
+                 NOW() - INTERVAL '10 days')`,
+        [IDS.guestProjectApp, GUEST_PROJECT_NAME, GUEST_PROJECT_SLUG, ctx.member.id]
+      );
+      await client.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '10 days')`,
+        [IDS.guestProjectApp, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A public project a signed-out visitor can open: its page shows Open [shots fixture] Puzzle club, Join and Share.',
+          path: `/#app/${GUEST_PROJECT_SLUG}/dev/hub`,
+        }],
+      };
+    },
+  },
+  {
     // Free app slots for the member and the read-only admin. The states
-    // above give the member three projects (the remix, the book club and the
-    // walking club) against the allowance of two everyone starts with, so
+    // above give the member four projects (the remix, the book club, the
+    // walking club and the puzzle club) against the allowance of two
+    // everyone starts with, so
     // "What do you want to make?" read "3 of 2 app slots used" with Make it
     // off, and two of PR 4777's three changes (a ready-made Study timer)
     // were skipped for it. The copies already lift the server-wide cap
@@ -2206,6 +2441,80 @@ const STATES = [
           { state: 'Homeroom bot\'s tab: the same change under its vote group, saying Vote.',
             path: '/#homeroom-bot' },
         ],
+      };
+    },
+  },
+  {
+    // A request with an open vote to close it (#6989): the staging mock
+    // request the close-offer state also names, so no GitHub is needed. A
+    // fake member proposes closing it and votes yes, another votes no, and
+    // the member has not voted, so the Votes card shows its tally and still
+    // offers Yes and No. The rows are the create route's own
+    // (src/routes/issues.js): an open close_issue row (its trigger joins the
+    // request's thread), the two votes, and the two system lines
+    // (sendSystemMessage). Left out of the governance workflow, as no
+    // ready-made row can be filed, and Homeroom's rule counts active members
+    // a copy never reaches, so one yes cannot close it.
+    id: 'shots-demo-member-close-vote-v1',
+    persona: 'member',
+    needs: {
+      issues: ['id', 'app_id', 'title', 'description', 'kind', 'created_by', 'status', 'payload', 'thread_id',
+        'created_at'],
+      issue_votes: ['issue_id', 'user_id', 'vote', 'created_at'],
+      chat_messages: ['app_id', 'user_id', 'content', 'msg_type', 'thread_type', 'thread_ref', 'created_at'],
+    },
+    free: async (client, ctx) => {
+      const people = await client.query(
+        'SELECT COUNT(*)::int AS n FROM users WHERE username IN ($1, $2)',
+        [CLOSE_VOTE.proposer, CLOSE_VOTE.other]
+      );
+      const taken = await client.query(
+        `SELECT 1 FROM issues
+          WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
+            AND (payload->>'issueNumber')::int = $2`,
+        [ctx.appId, CLOSE_OFFER_REQUEST.number]
+      );
+      return people.rows[0].n === 2 && taken.rowCount === 0
+        && await idsFree(client, 'issues', [IDS.closeVote]);
+    },
+    async install(client, ctx) {
+      const people = (await client.query(
+        'SELECT id, username FROM users WHERE username IN ($1, $2)',
+        [CLOSE_VOTE.proposer, CLOSE_VOTE.other]
+      )).rows;
+      const proposer = people.find((row) => row.username === CLOSE_VOTE.proposer);
+      const other = people.find((row) => row.username === CLOSE_VOTE.other);
+      if (!proposer || !other) throw new Error('The close vote lost its fake people.');
+      const { number, title } = CLOSE_OFFER_REQUEST;
+      const { reason } = CLOSE_VOTE;
+      await client.query(
+        `INSERT INTO issues (id, app_id, title, description, kind, created_by, status, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'close_issue', $5, 'open', $6::jsonb, NOW() - INTERVAL '40 minutes')`,
+        [IDS.closeVote, ctx.appId, `Close issue #${number}: "${title}"`.slice(0, 512), reason, proposer.id,
+          JSON.stringify({ issueNumber: number, issueTitle: title, reason })]
+      );
+      await client.query(
+        `INSERT INTO issue_votes (issue_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'up', NOW() - INTERVAL '35 minutes'),
+                ($1, $3, 'down', NOW() - INTERVAL '20 minutes')`,
+        [IDS.closeVote, proposer.id, other.id]
+      );
+      // As sendSystemMessage posts it: the governance line under the vote,
+      // and the request's own thread so the request's followers see it.
+      const content = `${proposer.username} proposed closing issue #${number}: "${title}"`;
+      await client.query(
+        `INSERT INTO chat_messages (app_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, 'system', 'governance', $3, NOW() - INTERVAL '40 minutes'),
+                ($1, $2, 'system', 'issue', $4, NOW() - INTERVAL '40 minutes')`,
+        [ctx.appId, content, IDS.closeVote, number]
+      );
+      return {
+        shows: [{
+          state: `Request #${number} ("${title}") open on its page: staging-demo-general-lin proposed closing it, `
+            + `with its reason, and the Votes card counts one yes and one no, so it still needs yours: Yes and `
+            + 'No are both offered. A tap on either would record your vote, so do not tap.',
+          path: `/#app/${ctx.selfAppSlug}/dev/issues/${number}`,
+        }],
       };
     },
   },

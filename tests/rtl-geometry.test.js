@@ -134,9 +134,11 @@ test('the side panel measures itself in figures that hold in Arabic', () => {
 });
 
 test('a sideways scroller reads scrollLeft as a distance: it is negative in Arabic', () => {
-  for (const file of ['frontend/src/lib/use-scroll-fade.ts', 'frontend/src/features/ai/lists.tsx']) {
-    assert.match(read(file), /const at = Math\.abs\(el\.scrollLeft\);/, file);
-  }
+  assert.match(read('frontend/src/lib/use-scroll-fade.ts'), /const at = Math\.abs\(el\.scrollLeft\);/);
+  // (Phone review #95's chip rail on the bot tab, which read its chips'
+  // boxes against its own physical sides, went with the chips: 24 Nov 2026,
+  // one project filter.)
+  assert.doesNotMatch(read('frontend/src/features/ai/lists.tsx'), /scrollLeft/, 'nothing on the bot tab\'s list reads a sideways scroll');
   const staking = read('frontend/src/features/profile/staking-sheet.tsx');
   assert.match(staking, /\(el\.clientWidth - 12\) \* dirSign\(\)/, 'a positive scrollLeft is clamped to 0 there');
   assert.match(staking, /Math\.abs\(el\.scrollLeft\) \/ \(el\.clientWidth - 12\)/);
@@ -165,7 +167,7 @@ test('a person\'s words in a list row keep their own direction in Arabic, and no
   } finally {
     globalThis.document = before;
   }
-  assert.match(read('frontend/src/features/messages/index.tsx'), /ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /ownDirection\(botLine \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)/);
 });
 
 test('an arrow key moves to what is on that side of the screen, in every language', () => {

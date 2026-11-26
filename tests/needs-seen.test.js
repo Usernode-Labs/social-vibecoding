@@ -161,7 +161,8 @@ test('the hub\'s Needs you counts what you have not seen, and stays a door to th
   seen.markNeedsSeen('garden', 'proposal:1@0');
   const one = html();
   assert.match(one, /data-ws-hub-needs-votes="2"/);
-  assert.match(one, /<span class="dev-ws-foryou-pill">2 to vote<\/span>/);
+  // One look (25 Nov 2026): the count is the shared strong tag.
+  assert.match(one, /<span class="dev-ws-foryou-pill one-tag one-tag-strong">2 to vote<\/span>/);
   assert.match(one, /<span data-ws-hub-needs-first="">Tags, and 1 more<\/span>/, 'the first vote you have not seen leads');
   seen.markNeedsSeen('garden', 'proposal:2@0');
   seen.markNeedsSeen('garden', 'proposal:3@0');
@@ -289,7 +290,7 @@ test('the Communities tab\'s count drops as votes are swiped past anywhere', () 
 
 test('the app menu\'s "to vote" is the same number', () => {
   const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(SHEET, /unseenNeeds\(slug, c\.needs, Array\.isArray\(c\.owed\) \? c\.owed : null\)/);
+  assert.match(SHEET, /const keys = c && Array\.isArray\(c\.owed\) \? c\.owed : null;\s*const n = c && typeof c\.needs === 'number'\s*\? unseenNeeds\(slug, c\.needs, keys\)/);
 });
 
 // ── The server names the votes behind each count ───────────────────────

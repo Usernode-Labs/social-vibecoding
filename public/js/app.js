@@ -2862,6 +2862,10 @@ const App = {
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'refresh-intent' });
     } catch { /* no worker, or a browser that refuses the post */ }
+    // Nor an answer another reader was just given: the page's own shared
+    // reads (lib/api-cache-identity.ts, request 7165) are dropped too, so
+    // every read the pull starts asks the server.
+    try { window.UsernodeReact?.apiCache?.forget?.(); } catch { /* not installed */ }
   },
 
   // ── Late-arrival correction ─────────────────────────────────────────
@@ -3457,6 +3461,8 @@ const App = {
       // Whether this server answers a ping: its pong holds the socket to
       // the silence check (_checkEvents).
       App._pingEvents(socket);
+      // A reconnect may have missed news: the resync reads the server.
+      if (isReconnect) window.UsernodeReact?.apiCache?.forget?.();
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -3472,6 +3478,11 @@ const App = {
       // on a slow link is not taken for a dead one (lib/offline.ts answered).
       try { window.Offline?.answered?.(); } catch (_) { /* no probe */ }
       try {
+        // News from the server: whatever re-reads because of it asks the
+        // server, never an answer shared from before the news (the shared
+        // reads of lib/api-cache-identity.ts, request 7165). Any frame
+        // counts, before it is read: a `pong` only costs one shared answer.
+        window.UsernodeReact?.apiCache?.forget?.();
         const data = JSON.parse(event.data);
         // The Homeroom bot page keeps its lists current from these: it
         // picks the events that move a thread it lists (features/ai/live.ts).
@@ -4574,7 +4585,7 @@ const App = {
     // tab (one a door's navigation just made) is given the one it opens on.
     const pageTab = typeof AppView !== 'undefined' && AppView._historyWorkshopTab
       ? AppView._historyWorkshopTab() : null;
-    if (pageTab) AppView._setWorkshopTab(pageTab.tab);
+    if (pageTab) AppView._setWorkshopTab(pageTab.tab, pageTab.slug);
     App.restoreFromHash();
     if (pageTab) AppView._showHistoryWorkshopTab(pageTab.slug, pageTab.tab);
     else if (typeof AppView !== 'undefined' && AppView._stampArrivedWorkshopTab) AppView._stampArrivedWorkshopTab();
@@ -7781,6 +7792,17 @@ const App = {
   // page keeps no state of its own to leave, so nothing has to exit it: the
   // next screen's reveal hides it.
   navigateToAi() {
+    // #7140: the side panel's framed document never draws the bot's page.
+    // Its list belongs to the top window, and drawing it in the frame put a
+    // second, narrower copy beside the real one. Hand the address up in
+    // place: the top replaces its own entry with it and this frame is
+    // dropped with the panel.
+    if (App.embeddedPanel) {
+      const hash = String(location.hash || '').replace(/^#/, '');
+      const route = /^homeroom-bot(?:\/|$)/.test(hash) ? hash.split('?')[0] : 'homeroom-bot';
+      window.UsernodeReact?.sidePanelEmbed?.handTop?.(route);
+      return;
+    }
     if (App._revealedScreen === 'ai-screen' && !App.currentApp) return;
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     const leavingApp = !!App.currentApp;
@@ -8464,8 +8486,20 @@ const App = {
     const panel = typeof AppView !== 'undefined' && AppView._panelAddress;
     if (panel && currentFull === panel.to && screenIdOf(newUrl) === screenIdOf(panel.from)) return;
     const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
+    // #7045: a change's address the page has just forwarded to its request's
+    // (AppView._renderTopicSubView) is not somewhere to go back to: the
+    // router's second pass for the same link writes it in place too.
+    const fwd = typeof AppView !== 'undefined' ? AppView._forwardedChange : null;
+    // Compared as the change they name: the two passes may spell its address
+    // differently (with or without its session after the number).
+    const changeOf = (value) => {
+      const m = /^\/app\/[^/?#]+\/dev\/(?:changes|proposals|shared)\/\d+/.exec(String(value || ''));
+      return m ? m[0] : null;
+    };
+    const forwarded = !!fwd && Date.now() - fwd.at < 5000
+      && !!changeOf(fwd.from) && changeOf(fwd.from) === changeOf(newUrl);
 
-    if (opts.replace || sameScreen) {
+    if (opts.replace || sameScreen || forwarded) {
       history.replaceState(null, '', newUrl);
     } else {
       history.pushState(null, '', newUrl);
@@ -9349,7 +9383,13 @@ const App = {
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
     window.UsernodeReact?.headerTitle?.set?.(text, subtitle);
-    document.title = subtitle ? `${text} · ${subtitle}` : text;
+    // Request #7164: a project's page and a request's page name themselves
+    // in the tab (features/header/document-title.ts), since the header's
+    // text is not theirs: it stayed "Communities" or "Homeroom" there. On
+    // every other screen that answers nothing and the header's text is it.
+    let named = null;
+    try { named = window.UsernodeReact?.documentTitle?.named?.() || null; } catch (_) { named = null; }
+    document.title = named || (subtitle ? `${text} · ${subtitle}` : text);
     // The plain title assignment above wiped Notifications' "(N) " unread
     // prefix: let it re-apply.
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {
@@ -9611,6 +9651,12 @@ const App = {
     if (App.currentApp !== slug) {
       return App.navigateToApp(slug, tab, ref, subTab);
     } else {
+      // #43: leaving the project page for its app (Open app on the hub), the
+      // entry being left is stamped with the place on show, so the app's ✕
+      // and Back return to that place, never to one remembered elsewhere.
+      if (tab === 'app' && typeof AppView !== 'undefined' && AppView._stampWorkshopTab && AppView._onProjectPage?.(slug)) {
+        AppView._stampWorkshopTab(slug, AppView._workshopTab(slug));
+      }
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced
       // refresh when the target equals the current view.

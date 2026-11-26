@@ -120,6 +120,12 @@ test('the bar swaps the wordmark for the open app\'s name, or a project page\'s,
   // and its name is the tab's title alone.
   assert.match(tsx, /const showBack = !!openApp \|\| appDiscover;/);
   assert.match(tsx, /const headerTitle = openApp \? openApp\.name \|\| openApp\.slug : guestProject \? guestProject\.name : LANDING_TITLE;/);
+  // With nothing open the tab keeps the sentence the server wrote for the
+  // front page (project-preview.js LANDING_TITLE), and the phone app the short name.
+  assert.match(tsx, /const plainLanding = !openApp && !guestProject;/);
+  assert.match(tsx, /if \(plainLanding\) document\.title = landingDocumentTitle\(\);/);
+  assert.match(tsx, /SERVED_TITLE\.startsWith\(`\$\{LANDING_TITLE\}: `\) && !isNative\(\) \? SERVED_TITLE : LANDING_TITLE;/);
+  assert.ok(require('../src/services/project-preview').LANDING_TITLE.startsWith('Homeroom: '));
   assert.match(tsx, /\{openApp \? headerTitle : <Wordmark/,
     'the mark gives way to the app name — it never draws over it');
   // The element's class string does NOT move with that swap: it is the same
@@ -750,7 +756,7 @@ test('public apps API exposes the home-card fields the landing consumes', () => 
 
 // ─── staging seed ─────────────────────────────────────────────────
 
-test('staging seeds one open + one gated landing tile', () => {
+test('staging seeds one open, one gated and one guest-ready landing tile', () => {
   const src = read('src/db/migrate.js');
   assert.match(src, /async function seedStagingLandingDirectory\(pool\)/);
   assert.match(src, /await seedStagingLandingDirectory\(pool\);/);
@@ -758,9 +764,13 @@ test('staging seeds one open + one gated landing tile', () => {
   const fn = src.match(/async function seedStagingLandingDirectory\(pool\) \{[\s\S]*?\n\}/);
   assert.ok(fn, 'seed body found');
   assert.match(fn[0], /process\.env\.USERNODE_ENV !== 'staging'/);
-  // Both branches of requires_login are represented.
+  // Every branch of requires_login + guest_ready is represented.
   assert.match(fn[0], /'staging-landing-open'/);
   assert.match(fn[0], /'staging-landing-gated'/);
+  // #7128: the app answers a guest but still asks for an account, so a
+  // visitor's Open from its project page is the case the bar must stay for.
+  assert.match(fn[0], /'staging-landing-guest-ready'/);
+  assert.match(fn[0], /'gated', 'public'/);
   // The shell probe re-checks running public apps whose stamp is stale, and
   // these fixtures have no container — a NOW() stamp would flip the open
   // tile to 'unknown' (→ gated) inside one 5-minute sweep.

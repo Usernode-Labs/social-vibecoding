@@ -16,6 +16,7 @@ const proposalDescriptionEdit = require('../services/proposal-description-edit')
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const { planRecordSql } = require('../services/request-specs');
+const { draftSessionSql } = require('../services/live-drafts');
 const codeMissing = require('../services/code-missing');
 const visuals = require('../services/visuals');
 const sessionCost = require('../services/session-cost');
@@ -1420,6 +1421,8 @@ function sessionRoutes(config) {
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
            AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
            AND NOT ${planRecordSql('cs')}
+           -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+           AND NOT ${draftSessionSql('cs')}
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported, includeSettings, includeMerged]
       );
@@ -2077,7 +2080,7 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.locked AS app_locked,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                     AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
@@ -2210,6 +2213,55 @@ function sessionRoutes(config) {
         } catch { /* the pill keeps the group's words */ }
         delete rows[0].other_yes_count;
       }
+
+      // #7160: why the merge queue holds a change that conflicts with main.
+      // The proposal machine's own record carries the last sync with main and
+      // any back-off (the queue reads the same data), so the connector can
+      // report them instead of leaving an agent to read wf_instances. Best
+      // effort: a workflow read that fails leaves the block null.
+      try {
+        const instance = await require('../workflow/platform.ts').proposalInstance(Number(rows[0].id));
+        const data = instance && instance.data && typeof instance.data === 'object' ? instance.data : null;
+        const lastSync = data && data.lastSync && typeof data.lastSync === 'object' ? data.lastSync : null;
+        rows[0].proposal_lane = {
+          last_sync: lastSync ? {
+            reason: lastSync.reason ?? null,
+            outcome: lastSync.outcome ?? null,
+            message: lastSync.message ?? null,
+            at: lastSync.at ?? null,
+            conflict_files: Array.isArray(lastSync.conflictFiles) ? lastSync.conflictFiles.slice(0, 50) : [],
+          } : null,
+          backoff: data && data.backoff && data.backoff.until
+            ? { until: data.backoff.until, failures: Number(data.backoff.failures) || 0 }
+            : null,
+        };
+      } catch { rows[0].proposal_lane = null; }
+
+      // #7160: when the standing shots declaration was made, and by which
+      // turn, person or Homeroom itself. The newest accepted Declared (or
+      // RetryRequested carrying an intent) event, skipping a guarded answer
+      // that kept or found unchanged the standing one.
+      try {
+        const { rows: declaredRows } = await pool.query(
+          `SELECT created_at, actor FROM wf_events
+            WHERE machine = 'shots' AND key = $1 AND result = 'accepted'
+              AND (type = 'Declared'
+                   OR (type = 'RetryRequested'
+                       AND payload->'intent' IS NOT NULL AND payload->'intent' <> 'null'::jsonb))
+              AND COALESCE(reply->>'kept', '') <> 'true'
+              AND COALESCE(reply->>'unchanged', '') <> 'true'
+            ORDER BY id DESC LIMIT 1`,
+          [`session:${rows[0].id}`]
+        );
+        let actor = declaredRows[0] && declaredRows[0].actor ? String(declaredRows[0].actor) : null;
+        if (actor && /^user:\d+$/.test(actor)) {
+          const { rows: who } = await pool.query('SELECT username FROM users WHERE id = $1', [Number(actor.slice(5))]);
+          if (who[0] && who[0].username) actor = `user:${who[0].username}`;
+        }
+        rows[0].shots_declared = declaredRows[0]
+          ? { at: new Date(declaredRows[0].created_at).toISOString(), by: actor }
+          : null;
+      } catch { rows[0].shots_declared = null; }
 
       // A GET on this route is NOT by itself evidence that the user opened
       // the session: screens refetch it programmatically. The notification

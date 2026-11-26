@@ -18,11 +18,14 @@
 //      then imported and called to render the shell tree to static markup.
 //
 // The document is composed here rather than by Vite's HTML pipeline. That is
-// the point: src/head.html is carried over byte-for-byte, so the head's
+// the point: src/head.html is carried over tag for tag, so the head's
 // blocking scripts, the `.in-native-webview` inline script, the cascade
 // self-check probe and the native.css → app.css → tailwind.css link order all
 // survive untouched. Nothing rewrites them, so nothing can silently reorder
-// them.
+// them. One thing is taken out on the way: the head's comments, which are for
+// whoever edits src/head.html and were 35 KB of every page load
+// (frontend/scripts/slim-document.cjs, in every mode below; the code between the
+// comments is not touched, and a parser checks that).
 //
 // ── Modes ──────────────────────────────────────────────────────────────
 //
@@ -65,6 +68,7 @@ const {
   buildScopedAssetUrl, prefixShellAssetUrls,
   HTML_OUTPUT, JS_OUTPUT,
 } = require(path.join(ROOT, 'scripts', 'shell-stamp.js'));
+const { slimHead } = require(path.join(FRONTEND, 'scripts', 'slim-document.cjs'));
 
 function fail(message) {
   console.error(`[build-shell] ${message}`);
@@ -250,6 +254,19 @@ const entryTag = '  <!-- React shell entry. A deferred module on purpose: it hyd
   + '       why that ordering — and the flushSync around hydration — is load-bearing. -->\n'
   + `  <script type="module" src="${buildScopedAssetUrl('/shell/assets/shell.js', buildSha)}"></script>\n`;
 
+// The head as it is served: src/head.html and the entry tag without their
+// comments (frontend/scripts/slim-document.cjs says what that removes and
+// what checks it). The stamp, the build meta and the generated-file notice
+// are composed outside this call, so they are never candidates. The <body>
+// is not passed through it at all.
+let servedHead;
+try {
+  const esbuild = createRequire(path.join(FRONTEND, 'package.json'))('esbuild');
+  servedHead = slimHead(`${prefixShellAssetUrls(head, buildSha).replace(/\s*$/, '\n')}${entryTag}`, { esbuild });
+} catch (err) {
+  fail(err.message);
+}
+
 // NO `class="dark"` ON <html>. It was hardcoded here, which made the document
 // the service worker precaches a DARK document for everybody: the theme is a
 // per-viewer decision (localStorage, else the OS preference) and the only
@@ -269,7 +286,7 @@ const html = `<!DOCTYPE html>
        Built from frontend/ by \`npm run build:shell\`; the markup lives in
        frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
        Hand edits here are overwritten by the next build. -->
-${prefixShellAssetUrls(head, buildSha).replace(/\s*$/, '\n')}${entryTag}</head>
+${servedHead}</head>
 <body ${BODY_ATTRS}>${markup}</body>
 </html>
 `;

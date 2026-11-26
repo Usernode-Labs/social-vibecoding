@@ -668,6 +668,19 @@ leave room in the worker namespace's ResourceQuota for coding workers,
 and so the previews under test do not saturate the shared Postgres primary.
 `0` turns the queue off.
 
+`config.checksProposalOverflowPilot` (`CHECKS_PROPOSAL_OVERFLOW_PILOT`,
+default `false`) allows a single additional shared slot for the first waiting
+proposal when at least two main-watch runs already hold slots. The pilot
+requires `checksMaxConcurrentRuns: 4` and a required dedicated pool whose
+current per-node capacity plan supports five shared slots plus the reserved
+main-watch run. The four-proposal ceiling still applies, and the first
+main-watch run retains its reserved lane. The overflow grant stays with the
+proposal that holds it, so an ordinary slot that frees can go to the head of
+the line. Turning the pilot off or losing sufficient pool capacity counts the
+holder as ordinary until it finishes. Early unit suites use the ordinary
+reservation policy. Admission logs identify pilot starts with
+`proposalOverflowRunId`.
+
 `config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
 node pool for check Jobs as the pool nodes' label `key=value`, for example
 `usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
@@ -689,14 +702,23 @@ images can still be reused. Existing work
 finishes under its original scheduling rules. Coding workers, apps and
 preview servers keep their existing placement.
 
-Required-pool mode also requires a positive checks-queue limit and disables
-speculative early unit suites (`EARLY_UNIT_SUITE=0`). The runtime enforces
-this even when an imported environment enables early suites. Every unit suite
-then runs after its build, within the admitted checks run, so the early
-launcher cannot race past the shared budget. This can lengthen proposal
-checks; it does not skip tests. Non-required mode keeps its existing early
-suite switch. Let previously started early Jobs finish before evaluating the
-new steady-state envelope.
+`config.buildNodePool` (`BUILD_NODE_POOL`, default empty) gives the two build
+lanes a pool of their own, as the same kind of label `key=value`, for example
+`usernodelabs.org/node-pool=build`. Label and taint its nodes the same way. When
+it is set, kpack and BuildKit Pods require that pool and tolerate its taint, and
+a build waits (at most 15 minutes, as above) for a Ready node there rather than
+for room in the checks pool. Empty keeps builds on the checks pool. An invalid
+pair is logged once and builds keep the checks pool. The node needs
+`user.max_user_namespaces > 0`, or BuildKit falls back to kpack. On 26 Nov 2026
+builds shared the one checks node with several proposals' unit suites, and a
+20-second image build took four minutes while using a tenth of a core.
+
+Required-pool mode requires a positive checks-queue limit. At most one
+unit suite can start during its preview build. It reserves a proposal slot
+only when the regular queue is empty and another shared slot will stay free.
+The checks run takes over that reservation when the full suite has launched.
+With no reservation, the suite starts through normal checks admission.
+`EARLY_UNIT_SUITE=0` disables early starts.
 
 In required mode, `config.checkPoolMetricsUrl` should name the existing
 Prometheus base URL. Export only the pool label with kube-state-metrics'

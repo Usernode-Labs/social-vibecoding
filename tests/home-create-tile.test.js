@@ -217,7 +217,6 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
 
 // ── #4757/#5825: the compact entry rides the My apps heading ──────────
 
-const MORE = 'frontend/src/features/home/apps-more.tsx';
 const HOME_INDEX = 'frontend/src/features/home/index.tsx';
 
 test('a held-back view draws no tile in the grid', () => {
@@ -326,35 +325,6 @@ test('#5825: the My apps heading carries the compact entry exactly when the tile
   assert.match(source, /action=\{grid\.editing \? \(/);
 });
 
-test('#5825: the Show-all line is the expander alone, at the right end', () => {
-  const { AppsMoreBody } = loadTsx(MORE);
-  const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 93 }));
-  assert.match(html, /Show all 93 apps/, 'the expander keeps its words');
-  assert.match(html, /class="flex items-center justify-end"/,
-    'the line ends at the grid\'s right edge, where New project was');
-  assert.doesNotMatch(html, /home-create-tile/, 'and carries no compact entry any more');
-  const showAll = html.match(/<button type="button" id="home-apps-more-btn" class="([^"]*)"/);
-  assert.ok(showAll, 'Show all is still a button');
-  assert.match(showAll[1], /\btext-end\b/, 'aligned to the end in its line');
-  assert.doesNotMatch(showAll[1], /\btext-left\b/);
-  assert.doesNotMatch(showAll[1], /\bflex-1\b/, 'no longer centred in the space left over');
-});
-
-test('without a held-back tile, or with a count, the line is the expander alone', () => {
-  const { AppsMoreBody } = loadTsx(MORE);
-  const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 9 }));
-  assert.match(html, /id="home-apps-more-btn"[^>]*class="text-end /,
-    'alone on its line, Show all reads to the right');
-  assert.doesNotMatch(html, /w-full/, 'no longer stretched across the line');
-  assert.doesNotMatch(html, /home-create-tile/, 'and no compact entry beside it');
-  assert.doesNotMatch(html, /flex-1/);
-  // The zero count is still the hidden, empty host.
-  assert.equal(
-    renderToHtml(createElement(AppsMoreBody, { moreCount: 0 })),
-    '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',
-  );
-});
-
 // 17 Nov 2026: where Home is one column the collapsed grid ENDS with the
 // tile; beside the New project card (from 1280px) the grid draws none.
 test('a full last row gives its last cell to the tile, and that app waits behind Show all', () => {
@@ -380,16 +350,12 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   const { Home, model, moreCount, sandbox } = makeHome();
   sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
   Home._apps = mine(12);
-  // The button is the kit's Home's (Standard (WIP), and the standard look since
-  // 20 Nov 2026): the brand look keeps the tile under 768px, where its search row
-  // waits to be pulled into view.
-  sandbox.Skin = { get: () => 'brand' };
+  // New project is a button on the search row from 768px. Under 768px the
+  // grid keeps the tile, where the search row waits to be pulled into view
+  // (phone review, 23 Nov 2026: nothing on screen started a project at rest).
   Home.render();
-  assert.equal(model().create.inCard, false, 'the tile stays on a phone under the brand look');
-  sandbox.Skin = { get: () => 'standard' };
-  Home.render();
-  assert.equal(model().create.inCard, true, 'the standard look has the button at every width');
-  sandbox.Skin = { get: () => 'wip' };
+  assert.equal(model().create.inCard, false, 'the tile stays on a phone');
+  sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 768px)' || q === '(min-width: 1280px)' });
   Home.render();
   const state = model();
   assert.equal(state.create.inCard, true);
@@ -407,14 +373,6 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   shot.Home.render();
   assert.equal(shot.model().create.inCard, false);
 
-  // A frame look draws its own Home, with the tile, at every width.
-  const framed = makeHome();
-  framed.sandbox.matchMedia = () => ({ matches: true });
-  framed.sandbox.Skin = { get: () => 'glass' };
-  framed.Home._apps = mine(12);
-  framed.Home.render();
-  assert.equal(framed.model().create.inCard, false);
-  assert.deepEqual(framed.model().create.placement, { col: 3, row: 2, w: 1, h: 1 });
 });
 
 // #6522: Home.render() hands the grid its Create view again, and the three
@@ -464,6 +422,32 @@ test('the tile draws both states, and never the disabled attribute', () => {
   assert.doesNotMatch(on, /border-dashed/);
   assert.match(off, /border-dashed/);
   assert.doesNotMatch(off, /violet/);
+});
+
+// #7054: the tile is Home's one primary action, so the standard look paints
+// its face as the look's sun pill (the top action and the plan card's Build
+// it), and presses it into the pill's edge. The brand look has its own rule
+// (tests/brand-look.test.js); the locked tile keeps its dashed outline.
+test('#7054: the standard look paints the enabled tile face as its sun pill', () => {
+  const css = read('public/css/app.css');
+  const SEL = 'html:root #home-create-tile\\[data-create-enabled="true"\\]';
+  const rule = css.match(new RegExp(`${SEL} \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(rule, 'the standard look has a rule of its own for the enabled tile face');
+  assert.match(rule[0], /background:\s*var\(--wip-top-cta-bg\)/,
+    'the sun yellow, which clears the face\'s gradient');
+  assert.match(rule[0], /color:\s*var\(--wip-top-cta-ink\)/, 'ink on the sun, as the pills are');
+  assert.match(rule[0], /box-shadow:\s*var\(--wip-top-cta-edge\)/,
+    'the ink outline and hard edge, replacing the shadow and the ring');
+  assert.doesNotMatch(rule[0], /home-create-label/, 'only the face: the label keeps its accent');
+  const hover = css.match(new RegExp(`${SEL}:hover \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(hover, 'a rule for the pointer');
+  assert.match(hover[0], /filter:\s*none/, 'the face no longer brightens under the pointer');
+  const press = css.match(new RegExp(`${SEL}:active \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(press, 'a rule for the press');
+  assert.match(press[0], /box-shadow:\s*var\(--wip-top-cta-edge-down\)/, 'the press takes up the edge');
+  assert.match(press[0], /transform:\s*var\(--wip-top-cta-press\)/, 'and sinks by the pill\'s own amount');
+  assert.match(css, /html\[data-motion="reduce"\] #home-create-tile\[data-create-enabled="true"\]:active \.home-create-glyph \{ transform: none; \}/,
+    'reduced motion keeps the ink change and drops the sink');
 });
 
 test('both states open the same create flow', () => {
@@ -549,7 +533,8 @@ test('the declared Create checks select New project on Home and New community on
   for (const t of declared) assert.doesNotMatch(t.expectSelector || '', /#home-new-community|#home-all-communities|#home-needs-tile/, t.name);
   // And the page draws it with the hook the checks select on.
   const src = read('frontend/src/features/communities/index.tsx');
-  assert.match(src, /id="communities-new-community"[\s\S]{0,400}'data-panel-slot': 'create',\s*'data-create-enabled': String\(createOn\),/);
+  assert.match(src, /id="communities-new-top"\s*data-create-enabled=\{String\(createOn\)\}/);
+  assert.doesNotMatch(src, /communities-new-community/, 'the page draws no New community tile of its own');
   // No check still anchors on the retired section (a :not(:has()) guard that
   // says it is gone is the one allowed mention).
   for (const t of declared) {

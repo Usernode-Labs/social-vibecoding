@@ -7,6 +7,18 @@
     "text": "Edit profile",
     "description": "Button on the viewer's own profile screen: opens the sheet where they change their photo, name and bio."
   },
+  "identity.editName": {
+    "text": "Edit name",
+    "description": "Name of the small pencil button beside the viewer's name on their own profile. Opens a box there to change the name other people see."
+  },
+  "identity.editBio": {
+    "text": "Edit bio",
+    "description": "Small link under the viewer's bio on their own profile. Opens a box there to change the bio."
+  },
+  "identity.addBio": {
+    "text": "Add a bio",
+    "description": "Small link on the viewer's own profile, where the bio would be, when they have not written one. Opens a box there to write it."
+  },
   "identity.buildingSince": {
     "text": "Building since {{date}}",
     "description": "Under the viewer's name on their profile: when they joined. {{date}} is a month and year, such as \"March 2026\". \"Building\" means making things on Homeroom."
@@ -391,22 +403,6 @@
     "text": "What you are told about, here and in each app",
     "description": "Small line under \"Notifications\" in the Settings card on the viewer's own profile: the account-wide defaults and the per-app choices live on the page it opens."
   },
-  "date.today": {
-    "text": "today",
-    "description": "A date said relative to now, placed inside a longer line such as \"sent today\" or after an app's name. Lower case."
-  },
-  "date.yesterday": {
-    "text": "yesterday",
-    "description": "A date said relative to now, placed inside a longer line such as \"sent yesterday\" or after an app's name. Lower case."
-  },
-  "date.daysAgo_one": {
-    "text": "{{count}} day ago",
-    "description": "A date said relative to now, placed inside a longer line such as \"sent 3 days ago\" or after an app's name. {{count}} is a number of days from 2 to 13."
-  },
-  "date.daysAgo_other": {
-    "text": "{{count}} days ago",
-    "description": "A date said relative to now, placed inside a longer line such as \"sent 3 days ago\" or after an app's name. {{count}} is a number of days from 2 to 13."
-  },
   "feedback.title": {
     "text": "Your feedback",
     "description": "Title of the sheet listing the feedback the viewer has sent."
@@ -461,7 +457,7 @@
   },
   "feedback.sent": {
     "text": "sent {{when}}",
-    "description": "On a row of the \"Your feedback\" sheet: when the feedback was sent. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\". Lower case."
+    "description": "On a row of the \"Your feedback\" sheet: when the feedback was sent. {{when}} is a short age such as \"just now\", \"3h ago\" or \"3d ago\", or, a week or more back, a date such as \"Mar 4\". Lower case."
   },
   "feedback.summary.none": {
     "text": "Nothing sent yet",
@@ -525,7 +521,7 @@
   },
   "friends.asked": {
     "text": "Asked {{when}}",
-    "description": "Under the name of a person who sent the viewer a friend request. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\"."
+    "description": "Under the name of a person who sent the viewer a friend request. {{when}} is a short age such as \"just now\", \"3h ago\" or \"3d ago\", or, a week or more back, a date such as \"Mar 4\"."
   },
   "friends.askedUndated": {
     "text": "Asked to be friends",
@@ -541,7 +537,7 @@
   },
   "friends.requested": {
     "text": "Requested {{when}}",
-    "description": "Under the name of a person the viewer sent a friend request to. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\". A past participle: the friendship was requested."
+    "description": "Under the name of a person the viewer sent a friend request to. {{when}} is a short age such as \"just now\", \"3h ago\" or \"3d ago\", or, a week or more back, a date such as \"Mar 4\". A past participle: the friendship was requested."
   },
   "friends.requestedUndated": {
     "text": "Requested",
@@ -1019,44 +1015,72 @@
     "text": "A group decision",
     "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
   },
-  "frame.numbers": {
-    "text": "In numbers",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the card of figures in the side column (changes live, challenges done and the like)."
+  "details.handleNote": {
+    "text": "Change your handle in Settings",
+    "description": "Link under the read-only handle in the in-page profile editor."
   },
-  "frame.public.about": {
-    "text": "About",
-    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card holding the person's bio."
+  "details.save": {
+    "text": "Save changes",
+    "description": "Saves the name and bio in the in-page profile editor."
   },
-  "frame.public.verified": {
-    "text": "Verified",
-    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the side column's rows of accounts the person has verified (GitHub, X)."
+  "projects.title": {
+    "text": "Projects you’ve helped build",
+    "description": "Heading above real projects with the viewer’s recently merged changes on their profile."
   },
-  "frame.public.github": {
-    "text": "GitHub",
-    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's GitHub account, which opens it."
+  "projects.intro": {
+    "text": "Your latest changes, out in the world.",
+    "description": "Introduction to the profile’s recently live projects."
   },
-  "frame.public.x": {
-    "text": "X",
-    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's X account, which opens it."
+  "projects.latest": {
+    "text": "Latest change: {{title}}",
+    "description": "Description of a project card on the profile, naming a real merged change."
   },
-  "frame.tab.label": {
-    "text": "Parts of your page",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said to a screen reader for the row of tabs under the person's handle (Overview, Changes, Requests, Feedback, Votes, Friends)."
+  "projects.empty": {
+    "text": "Your projects will appear here when your first change goes live.",
+    "description": "Empty state for projects with recently merged changes on the profile."
   },
-  "frame.tab.overview": {
-    "text": "Overview",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The first tab: the page of the person's work, rewards, account and settings rows, with their figures and this week's chart."
+  "preferences.title": {
+    "text": "Preferences",
+    "description": "Label in the standard profile’s preferences card or section navigation."
   },
-  "frame.tab.feedback": {
-    "text": "Feedback",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The tab that opens the list of feedback the person has sent, with each report's status."
+  "preferences.appearance": {
+    "text": "Appearance",
+    "description": "Label in the standard profile’s preferences card or section navigation."
   },
-  "frame.projects": {
+  "preferences.privacy": {
+    "text": "Privacy",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.label": {
+    "text": "Profile sections",
+    "description": "Accessible name of the row of tabs on the viewer's own profile in the standard look, which switches the column below it. Each tab keeps the person on the profile."
+  },
+  "sections.projects": {
     "text": "Projects",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: small label over the list of the person's projects, where picking one narrows the list of finished work to it."
+    "description": "Tab of the viewer's own profile in the standard look: the overview, with the projects they have helped build, their recent activity, their work and rewards."
   },
-  "frame.allProjects": {
-    "text": "All projects",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: the first choice in the list of projects, which shows finished work from every project."
+  "sections.changes": {
+    "text": "Changes",
+    "description": "Tab of the viewer's own profile in the standard look: their finished changes listed below the row. A noun, plural."
+  },
+  "sections.requests": {
+    "text": "Requests",
+    "description": "Tab of the viewer's own profile in the standard look: the requests they filed, listed below the row. A noun, plural."
+  },
+  "sections.votes": {
+    "text": "Votes",
+    "description": "Tab of the viewer's own profile in the standard look: the changes and decisions they voted on, listed below the row. A noun, plural."
+  },
+  "sections.activity": {
+    "text": "Activity",
+    "description": "Tab of the viewer's own profile in the standard look: their recent activity, listed below the row."
+  },
+  "recent.title": {
+    "text": "Recent activity",
+    "description": "Heading above the profile’s recently merged changes."
+  },
+  "recent.all": {
+    "text": "View all activity",
+    "description": "Link from the profile’s recent activity to the full changes history."
   }
 }

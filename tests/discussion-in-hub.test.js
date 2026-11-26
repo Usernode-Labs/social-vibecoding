@@ -77,7 +77,7 @@ function withAppView(fn) {
 test('a door names its place in the room for the tab, which takes it once, for its project only', () => {
   withAppView((AppView, events, stored) => {
     AppView._landOnDiscussion('garden-ab12', { threadRootId: '70', focusMessageId: 88 });
-    assert.equal(stored.get(AppView.WORKSHOP_TAB_KEY), 'discussion', 'the page opens on its Discussion tab');
+    assert.equal(stored.get(`${AppView.WORKSHOP_TAB_KEY}:garden-ab12`), 'discussion', 'the page opens on its Discussion tab');
     assert.deepEqual(events.map((e) => e[0]), ['usernode:workshop-discussion', 'usernode:workshop-tab'],
       'the target is in place before the page is told to turn');
     assert.deepEqual(events[1][1], { slug: 'garden-ab12', tab: 'discussion' });

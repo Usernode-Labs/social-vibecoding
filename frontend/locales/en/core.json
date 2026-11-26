@@ -99,10 +99,6 @@
     "text": "Search your communities",
     "description": "Accessible name and tooltip of the small search button beside the Communities heading in the desktop sidebar: opens the list of all the person's communities with its search box ready to type in."
   },
-  "rail.allPlain": {
-    "text": "All communities",
-    "description": "Row under the person's communities in the sidebar of a look of the frame: opens the list of every community they are in."
-  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
@@ -137,7 +133,7 @@
   },
   "rail.pin.full": {
     "text": "Unpin one first",
-    "description": "The same slot when four communities are already pinned, the most there is room for: the drop is refused until one is taken off."
+    "description": "The same slot when ten communities are already pinned, the most there is room for: the drop is refused until one is taken off."
   },
   "rail.pin.add": {
     "text": "Pin to sidebar",
@@ -148,8 +144,8 @@
     "description": "Item in the same right-click menu: opens the community's page in a new browser tab, as the browser's own menu for a link would."
   },
   "rail.pin.fullToast": {
-    "text": "Four communities are pinned already. Unpin one first.",
-    "description": "Short message shown when the person tries to pin a fifth community to the desktop sidebar: four is the most there is room for."
+    "text": "Ten communities are pinned already. Unpin one first.",
+    "description": "Short message shown when the person tries to pin an eleventh community to the desktop sidebar: ten is the most there is room for."
   },
   "rail.pin.unpin": {
     "text": "Unpin",
@@ -589,7 +585,7 @@
   },
   "header.drawer.messages": {
     "text": "Messages",
-    "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level."
+    "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level, and over a conversation opened from that list."
   },
   "header.drawer.toMessages": {
     "text": "Back to your messages",
@@ -974,18 +970,6 @@
   "header.drawer.toHome": {
     "text": "Back to Home",
     "description": "Accessible name of the back button in the header on a community's Hub on a phone: returns to Home, where the viewer's communities are."
-  },
-  "frame.brand": {
-    "text": "Homeroom",
-    "description": "The product's name beside its mark at the top of the sidebar, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A name: do not translate."
-  },
-  "frame.bot": {
-    "text": "Bot",
-    "description": "Short label of the Homeroom bot tab in the phone's tab bar, when the interface is drawn in one of the frame's looks (an admin's preview). The sidebar says Homeroom bot in full; the bar has room for one short word."
-  },
-  "frame.navigation": {
-    "text": "Homeroom",
-    "description": "Accessible name of the sidebar and of the phone's tab bar as navigation landmarks, when the interface is drawn in one of the frame's looks (an admin's preview). The product's name."
   },
   "change.closedWhy.autoRejected": {
     "text": "It was set aside for now: more No than Yes, and not enough support to carry it.",

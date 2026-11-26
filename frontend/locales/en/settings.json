@@ -1191,36 +1191,12 @@
     "text": "Early features we're still testing. They may change or disappear.",
     "description": "Explanation under the Experimental heading in Settings."
   },
-  "experimental.look.fold": {
-    "text": "Look and theme",
-    "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
-  },
-  "experimental.look.label": {
-    "text": "Look",
-    "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
-  },
-  "experimental.look.standard": {
-    "text": "Standard",
-    "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
-  },
-  "experimental.look.brand": {
-    "text": "Paper, simplified, with brand styling",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way a look named Paper did (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is a proper name here."
-  },
-  "experimental.wipTokens.brand": {
-    "text": "Homeroom brand kit (WIP)",
-    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
-  },
-  "experimental.look.description": {
-    "text": "Try another look for Homeroom, in light and dark. One draws every page in the website's colours. The other is the usual look with changes still being tried on it, in the brand kit's colours and typefaces. Admins see this menu, and the same one beside the bell, while the looks are drawn. Kept for this browser.",
-    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
-  },
   "theme.title": {
     "text": "Theme",
     "description": "Heading of the section in Settings where the person chooses a light or dark appearance."
   },
   "theme.intro": {
-    "text": "Light, dark, or follow your device. Applies everywhere on this browser.",
+    "text": "Light, dark, or follow your device. Applies everywhere on this device.",
     "description": "Explanation under the Theme heading in Settings."
   },
   "theme.controlName": {
@@ -1252,7 +1228,7 @@
     "description": "Heading of the Text size part of Settings > Accessibility."
   },
   "accessibility.textSize.intro": {
-    "text": "Makes text bigger everywhere on this browser, up to one and a half times the normal size.",
+    "text": "Makes text bigger everywhere on this device, up to one and a half times the normal size.",
     "description": "Line under the Text size heading in Settings > Accessibility, saying what the control does."
   },
   "accessibility.textSize.controlName": {
@@ -1455,6 +1431,14 @@
     "text": "Couldn't unlink that phone. Try again in a moment.",
     "description": "Error on the Settings > Linked devices page when unlinking a phone failed; the phone stays in the list."
   },
+  "phones.older_one": {
+    "text": "Older ({{count}})",
+    "description": "Folded line at the foot of a group in Settings > Linked devices: the devices of that group not used for 30 days, hidden until it is opened. {{count}} is how many."
+  },
+  "phones.older_other": {
+    "text": "Older ({{count}})",
+    "description": "Folded line at the foot of a group in Settings > Linked devices: the devices of that group not used for 30 days, hidden until it is opened. {{count}} is how many."
+  },
   "phones.group.phones": {
     "text": "Phones",
     "description": "Heading of the first group on the Settings > Linked devices page: the phones signed in to the account through the Homeroom mobile app."
@@ -1464,16 +1448,16 @@
     "description": "Heading of the second group on the Settings > Linked devices page: the browsers (on computers, phones or tablets) signed in to the account on the web."
   },
   "phones.phonesNote": {
-    "text": "Each row is one install of the Homeroom app. Reinstalling the app makes a new row; unlink any you no longer use.",
-    "description": "Explanation under the Phones heading in Settings > Linked devices, saying why one phone can appear more than once: every installation of the Homeroom mobile app is its own row."
+    "text": "Each row is one kind of phone with the Homeroom app, and counts its sign-ins. Unlink any you no longer use.",
+    "description": "Explanation under the Phones heading in Settings > Linked devices. Homeroom cannot tell two phones of the same kind apart, so every sign-in of the Homeroom mobile app from one kind of phone (iPhone, Android phone, or unknown) is one row that says how many sign-ins it holds. Homeroom is the product name."
   },
   "phones.detailStale": {
     "text": "Not used since {{lastUsed}} · Linked {{linked}}",
     "description": "Line under a phone in Settings > Linked devices when the Homeroom app has not used the account on that phone for more than 30 days. {{lastUsed}} is the date it was last used; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
   },
   "phones.browsers.note": {
-    "text": "Each row is one browser signed in to Homeroom on the web. Sign out of any you don't recognise.",
-    "description": "Explanation under the Browsers heading in Settings > Linked devices. Homeroom is the product name."
+    "text": "Each row is one browser on one system, and counts its sign-ins. Sign out of any you don't recognise.",
+    "description": "Explanation under the Browsers heading in Settings > Linked devices. Every sign-in from the same browser on the same system (such as Chrome on Mac) is one row that says how many sign-ins it holds."
   },
   "phones.browsers.empty": {
     "text": "No browsers are signed in to your account.",
@@ -1574,6 +1558,70 @@
   "phones.browsers.signOutFailed": {
     "text": "Couldn't sign that browser out. Try again in a moment.",
     "description": "Error on the Settings > Linked devices page when signing a browser out failed; the browser stays in the list."
+  },
+  "phones.detailGrouped_one": {
+    "text": "{{count}} sign-in · Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGrouped_other": {
+    "text": "{{count}} sign-ins · Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGroupedStale_one": {
+    "text": "{{count}} sign-in · Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.detailGroupedStale_other": {
+    "text": "{{count}} sign-ins · Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the row holds more than one sign-in of the Homeroom app and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{linked}} are already-formatted dates, the newest among the sign-ins: when the app last used the account, and when the newest sign-in was made."
+  },
+  "phones.confirmGrouped_one": {
+    "text": "Press Unlink again to end the {{count}} sign-in of this phone.",
+    "description": "Replaces the dates under a phone in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.confirmGrouped_other": {
+    "text": "Press Unlink again to end all {{count}} sign-ins of this phone.",
+    "description": "Replaces the dates under a phone in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.confirmThisPhoneGrouped_one": {
+    "text": "This is the phone you are using. Press Unlink again to end the {{count}} sign-in and sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this phone included. {{count}} is how many sign-ins."
+  },
+  "phones.confirmThisPhoneGrouped_other": {
+    "text": "This is the phone you are using. Press Unlink again to end all {{count}} sign-ins and sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked devices after Unlink was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this phone included. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.detailGrouped_one": {
+    "text": "{{count}} sign-in · Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGrouped_other": {
+    "text": "{{count}} sign-ins · Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in (used within the last 30 days). {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGroupedStale_one": {
+    "text": "{{count}} sign-in · Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.detailGroupedStale_other": {
+    "text": "{{count}} sign-ins · Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when the row holds more than one sign-in and none was used for more than 30 days. {{count}} is how many sign-ins. {{lastUsed}} and {{signedIn}} are already-formatted dates, the newest among the sign-ins: when the browser last used the account, and when the newest sign-in was made."
+  },
+  "phones.browsers.confirmGrouped_one": {
+    "text": "Press Sign out again to end the {{count}} sign-in of this browser.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmGrouped_other": {
+    "text": "Press Sign out again to end all {{count}} sign-ins of this browser.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmThisBrowserGrouped_one": {
+    "text": "This is the browser you are using. Press Sign out again to end the {{count}} sign-in and sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this browser included. {{count}} is how many sign-ins."
+  },
+  "phones.browsers.confirmThisBrowserGrouped_other": {
+    "text": "This is the browser you are using. Press Sign out again to end all {{count}} sign-ins and sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once, when the row holds more than one sign-in: pressing again signs all of them out, this browser included. {{count}} is how many sign-ins."
   },
   "devConsole.title": {
     "text": "Developer console",
@@ -1856,7 +1904,7 @@
     "description": "Heading of the section in Settings that replays the introduction shown to new members."
   },
   "tour.intro": {
-    "text": "A one-minute walk through your apps and the Homeroom menu.",
+    "text": "A one-minute walk through your projects and the Homeroom menu.",
     "description": "Explanation under the Welcome tour heading in Settings."
   },
   "tour.replay": {
@@ -1866,270 +1914,6 @@
   "tour.hint": {
     "text": "It starts again on your home screen.",
     "description": "Note under the \"Replay the tour\" button in Settings. \"It\" is the welcome tour."
-  },
-  "guide.title": {
-    "text": "User guide",
-    "description": "Heading of the page in Settings that explains the places in Homeroom and how a change gets voted in."
-  },
-  "guide.intro": {
-    "text": "How to start, where things are in Homeroom, and how a change goes live.",
-    "description": "Explanation under the User guide heading in Settings."
-  },
-  "guide.start.heading": {
-    "text": "Start here",
-    "description": "Small label over the first card of Settings > User guide: the first steps for someone new to Homeroom, in order."
-  },
-  "guide.start.join.title": {
-    "text": "Join or make a community",
-    "description": "Row title in Settings > User guide: the first step for someone new."
-  },
-  "guide.start.join.body": {
-    "text": "On Home, Communities to join lists the public ones: open one and join it. To make your own, select New project on Home, or New community on the Communities tab.",
-    "description": "Paragraph in Settings > User guide. \"Communities to join\" and \"New project\" are names shown on the Home screen; \"New community\" is a name shown on the Communities page; \"Communities\" is the name of a tab in the main navigation."
-  },
-  "guide.start.open.title": {
-    "text": "Open an app and its Homeroom menu",
-    "description": "Row title in Settings > User guide: the second step for someone new."
-  },
-  "guide.start.open.body": {
-    "text": "Open a community's hub and select Open app, or select an app under Pinned apps on Home. Inside it, select the Homeroom logo to open its menu.",
-    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned apps\" is the name of a section of the Home screen."
-  },
-  "guide.start.suggest.title": {
-    "text": "Suggest your first improvement",
-    "description": "Row title in Settings > User guide: the third step for someone new."
-  },
-  "guide.start.suggest.body": {
-    "text": "In that menu, select Suggest an improvement. Tap the part of the page you mean and say what should change. It is posted as a request on the project's Workshop.",
-    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
-  },
-  "guide.places.heading": {
-    "text": "Where things are",
-    "description": "Small label over the card of Settings > User guide that explains the main places in Homeroom."
-  },
-  "guide.place.communities.title": {
-    "text": "Communities",
-    "description": "Row title in Settings > User guide, about communities."
-  },
-  "guide.place.communities.body": {
-    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who can open it. Yours are on the Communities tab: the ones you pinned first, then the others you have joined. Each has a hub, a Workshop for the work going on, and channels to talk in. You need to join a community to suggest changes, vote and post there.",
-    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Communities\" is the name of a tab in the main navigation. \"Workshop\" is the name of a place on a project's page."
-  },
-  "guide.place.apps.title": {
-    "text": "Pinned apps",
-    "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
-  },
-  "guide.place.apps.body": {
-    "text": "Pinned apps on Home holds the apps you pin and the ones you help build. Select one to open it. To start your own project, select New project: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a section of the Home screen; \"New project\" is the control on Home that starts a project."
-  },
-  "guide.place.appMenu.title": {
-    "text": "The Homeroom menu",
-    "description": "Row title in Settings > User guide, about the menu behind the Homeroom logo inside an app."
-  },
-  "guide.place.appMenu.body": {
-    "text": "Inside any app, select the Homeroom logo to open its menu. That is where you suggest an improvement or visit the app's community.",
-    "description": "Paragraph in Settings > User guide about the menu behind the Homeroom logo."
-  },
-  "guide.place.suggest.title": {
-    "text": "Suggest an improvement",
-    "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
-  },
-  "guide.place.suggest.body": {
-    "text": "Select it in the Homeroom menu to ask for a change to the app or to Homeroom itself. Tap the spot on the page you mean and say what should change, or switch to the form. It is posted as a request on the project's Workshop.",
-    "description": "Paragraph in Settings > User guide. \"It\" is Suggest an improvement, named by the row title above it. \"The form\" is the written form the button can switch to."
-  },
-  "guide.place.bot.title": {
-    "text": "Homeroom bot",
-    "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
-  },
-  "guide.place.bot.body": {
-    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. New chat starts a conversation there, and the tab lists your chats with the bot beside the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
-    "description": "Paragraph in Settings > User guide. \"New chat\" is the name of the button on the Homeroom bot tab that starts a conversation with the bot. \"Messages\" is the name of a tab."
-  },
-  "guide.place.you.title": {
-    "text": "You and Settings",
-    "description": "Row title in Settings > User guide, about the You tab and the Settings screen. \"You\" is the name of the tab."
-  },
-  "guide.place.you.body": {
-    "text": "The You tab holds your profile, and Settings is on it. Settings is where you change your account, how Homeroom looks, your language and your notifications, and where you can replay the welcome tour.",
-    "description": "Paragraph in Settings > User guide. \"You\" is the name of a tab."
-  },
-  "guide.vote.heading": {
-    "text": "How a change goes live",
-    "description": "Small label over the card of Settings > User guide that explains, in five rows, how a change to an app goes live."
-  },
-  "guide.vote.request.title": {
-    "text": "It starts as a request",
-    "description": "Row title in Settings > User guide: the first step of how a change goes live."
-  },
-  "guide.vote.request.body": {
-    "text": "A member asks for a change, with Suggest an improvement or by telling Homeroom bot. The request goes on the project's Workshop, where people can see it.",
-    "description": "Paragraph in Settings > User guide. \"Workshop\" is the name of a place on a project's page."
-  },
-  "guide.vote.build.title": {
-    "text": "Someone builds it",
-    "description": "Row title in Settings > User guide: the first step of how a change goes live."
-  },
-  "guide.vote.build.body": {
-    "text": "A change starts when a member builds it, with Homeroom bot or a coding agent. When the bot writes a plan for a request, any member can press Build it, and the bot's building time comes out of that member's week. You can see yours in Settings, under AI usage & models.",
-    "description": "Paragraph in Settings > User guide. \"Build it\" is the button on the bot's plan. \"AI usage & models\" is the name of a page in Settings. \"Week\" means the weekly allowance of the bot's building time."
-  },
-  "guide.vote.up.title": {
-    "text": "It goes up for a vote",
-    "description": "Row title in Settings > User guide: the second step of how a change goes live."
-  },
-  "guide.vote.up.body": {
-    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it is listed under Needs you.",
-    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of the list of things waiting on the person."
-  },
-  "guide.vote.checks.title": {
-    "text": "Checks test it",
-    "description": "Row title in Settings > User guide: the third step of how a change goes live. \"Checks\" are automated tests."
-  },
-  "guide.vote.checks.body": {
-    "text": "Homeroom runs automated checks on the preview. A change can't go live until they pass, however the vote goes.",
-    "description": "Paragraph in Settings > User guide."
-  },
-  "guide.vote.rule.title": {
-    "text": "The project's rule decides",
-    "description": "Row title in Settings > User guide: the last step of how a change goes live. The rule is the project's rule for who has to approve a change."
-  },
-  "guide.vote.rule.body": {
-    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Whoever manages a project can propose a new rule from Settings & rules in its ⋯ menu, and that goes to a vote under the current rule. Once the rule is met and the checks pass, the change goes live.",
-    "description": "Paragraph in Settings > User guide. \"Settings & rules\" is the name of a row in a project's ⋯ menu."
-  },
-  "guide.compare.heading": {
-    "text": "Suggest, or ask Homeroom bot?",
-    "description": "Small label over a card of Settings > User guide that says when to use Suggest an improvement and when to ask Homeroom bot."
-  },
-  "guide.compare.suggest.title": {
-    "text": "When you can point at it",
-    "description": "Row title in Settings > User guide: the case for Suggest an improvement."
-  },
-  "guide.compare.suggest.body": {
-    "text": "Use Suggest an improvement when you can see what should change. Tap it on the page and say how. It goes straight to the project as a request.",
-    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
-  },
-  "guide.compare.bot.title": {
-    "text": "When you want to talk it through",
-    "description": "Row title in Settings > User guide: the case for asking Homeroom bot."
-  },
-  "guide.compare.bot.body": {
-    "text": "Ask Homeroom bot when you have a question, want a change built, or are not sure yet what to ask for. It can file the request for you.",
-    "description": "Paragraph in Settings > User guide. \"Homeroom bot\" is the AI assistant's name."
-  },
-  "guide.terms.heading": {
-    "text": "Key terms",
-    "description": "Small label over the card of Settings > User guide that explains words Homeroom uses, one per row."
-  },
-  "guide.term.hub.title": {
-    "text": "Hub",
-    "description": "Row title in Settings > User guide: the name of a community's front page. Same word as on screen."
-  },
-  "guide.term.hub.body": {
-    "text": "A community's front page: who it is for, who was active this week, what needs you and what went live lately.",
-    "description": "Paragraph in Settings > User guide, explaining the word \"Hub\"."
-  },
-  "guide.term.workshop.title": {
-    "text": "Workshop",
-    "description": "Row title in Settings > User guide: the name of a place on a project's page. Same word as on screen."
-  },
-  "guide.term.workshop.body": {
-    "text": "Where a project's work is: the requests, the changes being built and the ones waiting for a vote.",
-    "description": "Paragraph in Settings > User guide, explaining the word \"Workshop\"."
-  },
-  "guide.term.channels.title": {
-    "text": "Channels",
-    "description": "Row title in Settings > User guide: the places on a project's page where members talk. Same word as on screen."
-  },
-  "guide.term.channels.body": {
-    "text": "Where a community's members talk: #general, plus one for each topic the project has.",
-    "description": "Paragraph in Settings > User guide, explaining the word \"Channels\". \"#general\" is the name of a channel; keep it as it is."
-  },
-  "guide.term.needsYou.title": {
-    "text": "Needs you",
-    "description": "Row title in Settings > User guide: the name of the list of decisions waiting on the person. Same words as on screen."
-  },
-  "guide.term.needsYou.body": {
-    "text": "Everything waiting on you, such as a vote or a question from Homeroom bot, across your projects in one place. Each project's page has its own.",
-    "description": "Paragraph in Settings > User guide, explaining \"Needs you\"."
-  },
-  "guide.term.newChat.title": {
-    "text": "New chat",
-    "description": "Row title in Settings > User guide: the name of the button that starts a conversation with Homeroom bot. Same words as on screen."
-  },
-  "guide.term.newChat.body": {
-    "text": "How you start talking to Homeroom bot: on its tab, or from a project's Workshop, where it is already about that project. Each chat is its own thread that only you can see, listed on the bot's tab. News about a request is on the request's page instead.",
-    "description": "Paragraph in Settings > User guide, explaining \"New chat\". \"Workshop\" is the name of a place on a project's page."
-  },
-  "guide.term.justYou.title": {
-    "text": "Just you",
-    "description": "Row title in Settings > User guide: the name shown for a project only its maker is in. Same words as on screen."
-  },
-  "guide.term.justYou.body": {
-    "text": "A project only you are in. Once someone you invite joins, it becomes a Private community.",
-    "description": "Paragraph in Settings > User guide, explaining \"Just you\". \"Private community\" is a name shown on screen."
-  },
-  "guide.term.private.title": {
-    "text": "Private community",
-    "description": "Row title in Settings > User guide: the name shown for a community only its members can open. Same words as on screen."
-  },
-  "guide.term.private.body": {
-    "text": "Only its members can open it. People join when they are invited.",
-    "description": "Paragraph in Settings > User guide, explaining \"Private community\"."
-  },
-  "guide.term.public.title": {
-    "text": "Public community",
-    "description": "Row title in Settings > User guide: the name shown for a community anyone can open. Same words as on screen."
-  },
-  "guide.term.public.body": {
-    "text": "Anyone can open it and join it.",
-    "description": "Paragraph in Settings > User guide, explaining \"Public community\". \"Open\" and \"join\" are verbs."
-  },
-  "guide.faq.heading": {
-    "text": "Questions",
-    "description": "Small label over the card of Settings > User guide that answers common questions, one per row."
-  },
-  "guide.faq.findApp.title": {
-    "text": "I can't find my app",
-    "description": "Row title in Settings > User guide: a question a person might ask."
-  },
-  "guide.faq.findApp.body": {
-    "text": "Pinned apps holds the apps you pin or help build. For any other app, open its community from the Communities tab and select Open app on its hub. To keep it on Home, open the About entry in its Homeroom menu and choose Pin to Home.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a name on the Home screen; \"Communities\" is the name of a tab in the main navigation; \"Open app\" and \"Pin to Home\" are the names of buttons. \"The About entry\" is the row of the Homeroom menu that tells about the app."
-  },
-  "guide.faq.suggestion.title": {
-    "text": "My suggestion isn't showing",
-    "description": "Row title in Settings > User guide: a question a person might ask about a request they posted."
-  },
-  "guide.faq.suggestion.body": {
-    "text": "Your requests are listed in the Homeroom bot tab. A request is posted only once you are online and send it. A private request can be seen only by platform admins.",
-    "description": "Paragraph in Settings > User guide. \"Homeroom bot\" is the name of a tab."
-  },
-  "guide.faq.whoCan.title": {
-    "text": "Who can suggest, vote and post",
-    "description": "Row title in Settings > User guide: a question about who may take part in a community."
-  },
-  "guide.faq.whoCan.body": {
-    "text": "You need to be a member of the community, and a project can ask for more: some let only invited people build, and a vote on a public project may need a verified account. Anyone can read a public community. A private community is joined by invitation. Which yeses a change needs is the project's own rule.",
-    "description": "Paragraph in Settings > User guide. \"Yeses\" are approving votes."
-  },
-  "guide.faq.shortcuts.title": {
-    "text": "Keyboard shortcuts",
-    "description": "Row title in Settings > User guide."
-  },
-  "guide.faq.shortcuts.body": {
-    "text": "On a computer, press C on most screens, or inside an app, to comment on what you see. Your comments are posted as requests, each pinned to the spot you chose. Press C again to stop. In Settings, press / or Ctrl+K (⌘K on a Mac) to find a setting.",
-    "description": "Paragraph in Settings > User guide. C, /, Ctrl+K and ⌘K are keys; keep them as they are."
-  },
-  "guide.faq.problem.title": {
-    "text": "Something is broken",
-    "description": "Row title in Settings > User guide: how to report a problem."
-  },
-  "guide.faq.problem.body": {
-    "text": "Use Suggest an improvement and say what went wrong. Its form asks where it should go: this app, or the platform itself. You can also tell Homeroom bot.",
-    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
   },
   "about.title": {
     "text": "About",
@@ -2479,10 +2263,6 @@
     "text": "Welcome tour",
     "description": "Name of a part of Settings: the page that replays the welcome tour. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
-  "nav.part.guide": {
-    "text": "User guide",
-    "description": "Name of a part of Settings: the page that explains the places in Homeroom and how a change gets voted in. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
-  },
   "nav.part.usernode": {
     "text": "Homeroom app",
     "description": "Name of a part of Settings: the page about the Homeroom phone app. Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2586,6 +2366,14 @@
   "nav.pin.remove": {
     "text": "Unpin {{page}}",
     "description": "Tooltip and accessible name of the filled bookmark button on a pinned row of the Settings menu. Pressing it sends the page back to its usual group. {{page}} is the page's name."
+  },
+  "nav.pin.pageAdd": {
+    "text": "Pin to the top",
+    "description": "Small button at the top of a Settings page on a phone, beside a bookmark icon. Pressing it puts this page in the Pinned group at the top of the Settings menu. Short: it shares its line with nothing else."
+  },
+  "nav.pin.pageRemove": {
+    "text": "Pinned",
+    "description": "The same button once the page is pinned, beside a filled bookmark icon: the page is in the Pinned group at the top of the Settings menu, and pressing it unpins it. Its accessible name says so in full."
   },
   "nav.pin.up": {
     "text": "Move {{page}} up",
@@ -2694,10 +2482,6 @@
   "nav.keywords.tour": {
     "text": "walkthrough help onboarding",
     "description": "Not shown on screen. Extra search words for \"Welcome tour\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
-  },
-  "nav.keywords.guide": {
-    "text": "help how manual vote voting explain",
-    "description": "Not shown on screen. Extra search words for \"User guide\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.usernode": {
     "text": "mobile phone native diagnostics block production",
@@ -2922,6 +2706,10 @@
   "connectors.progress.tickAria": {
     "text": "Step {{n}} done",
     "description": "Screen reader label of the toggle on a setup guide's step in Settings > Connectors, announced as pressed or not pressed. {{n}} is the step's number."
+  },
+  "connectors.row.sameName": {
+    "text": "{{name}} · {{number}}",
+    "description": "Title of a connection's row in Settings > Connectors when two or more connections on one card have the same name (two \"Claude\" rows, say). {{name}} is that name; {{number}} counts them in the card's order (1, 2, 3), so the rows can be told apart. The line under it says when each was connected and last used."
   },
   "connectors.row.unnamedClient": {
     "text": "Connected client",

@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
+const requestsSvc = require('../services/requests');
 const { sendSystemMessage, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -390,13 +391,16 @@ function stagingMockInProgress(viewer) {
 // serving its fixtures (stagingMockIssues and friends) as before: declared
 // checks read them.
 //
-// The two reads that open ONE request (its page, GET .../github-issues/:number,
+// The reads that open ONE request (its page, GET .../github-issues/:number,
 // and its thread, readRequestComments) do not ask this: they read the stored
 // row wherever there is one, and fall back to the mock. A staging copy
 // without GitHub holds stored requests too, a production clone's real ones
 // and the fixtures its seeds write, and the before/after shots copies run
 // exactly that way. Asked, every request page on them answered 404 and
-// bounced to the hub (PR 6898's fixture 900095, PR 6531's real #6552).
+// bounced to the hub (PR 6898's fixture 900095, PR 6531's real #6552). The
+// lists do not ask it either on a staging copy for a project with no
+// repository (#7172): its own stored rows come first, and the mocks fill
+// only a project whose request table is empty.
 function requestsOn() {
   return !IS_STAGING || github.isEnabled();
 }
@@ -1121,6 +1125,23 @@ async function readRequestComments(pool, app, number, { demo = false, max = null
     // copy without GitHub, where its page now opens (requestsOn says why).
     if (!parsed || !Number.isFinite(n)) {
       if (!IS_STAGING) return { comments: [], truncated: false, note: 'unavailable' };
+      // #7172: the project's own stored request carries its own thread; the
+      // mocks stand in only when that thread is empty.
+      if (Number.isFinite(n)) {
+        try {
+          const stored = await requestsSvc.getOneForApp(app, n);
+          if (stored.issue) {
+            const own = await requestsSvc.commentsForApp(app, n, { max: github.ISSUE_COMMENTS_MAX });
+            const shown = await withoutBotThreadCopies(pool, app.id, n, own.comments);
+            if (shown.length) {
+              const clipped = clip(shown, own.truncated);
+              return { comments: clipped.comments, truncated: clipped.truncated };
+            }
+          }
+        } catch (err) {
+          log.warn('issues', 'Could not read a stored request\'s thread on staging', { message: err.message });
+        }
+      }
       const mocks = stagingMockIssueComments(n);
       const clipped = clip(mocks);
       return { comments: clipped.comments, truncated: clipped.truncated };
@@ -2477,9 +2498,71 @@ function issueRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
+      // #7160: the closed board, a plain list of closed requests (newest
+      // closed first). None of the open board's composition — bounties, bot
+      // work, standing — applies to a request that is closed.
+      if (String(req.query.state || '') === 'closed') {
+        // #7172: on a staging copy a project with no repository shows the
+        // requests stored for it, when it has any — a seed's rows. The mocks
+        // fill only a project whose request table is empty, open and closed.
+        if (IS_STAGING && !parsed) {
+          let closedStored = null;
+          try {
+            closedStored = await requestsSvc.listClosedForApp(app);
+            if (closedStored.issues.length && req.query.demo !== '1') return res.json(closedStored);
+            if (!closedStored.issues.length) {
+              const openStored = await requestsSvc.listOpenForApp(app);
+              if (openStored.issues.length && req.query.demo !== '1') return res.json(closedStored);
+            }
+          } catch (err) {
+            log.warn('issues', 'Could not read a project\'s stored requests on staging', { message: err.message });
+            closedStored = null;
+          }
+          // ?demo=1 still appends the mocks the declared checks read, exactly
+          // as the open list does below.
+          if (!(req.query.demo === '1' && closedStored)) {
+            return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+          }
+          const have = new Set((closedStored.issues || []).map((i) => i.number));
+          return res.json({
+            ...closedStored,
+            issues: [
+              ...(closedStored.issues || []),
+              ...stagingMockClosedIssues(app.repo_url).filter((m) => !have.has(m.number)),
+            ],
+          });
+        }
+        if (!requestsOn() || !parsed) {
+          if (!IS_STAGING) return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
+          return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+        }
+        const closed = await github.fetchClosedIssues(parsed.owner, parsed.repo);
+        if (IS_STAGING && (!Array.isArray(closed.issues) || closed.issues.length === 0)) {
+          return res.json({ issues: stagingMockClosedIssues(app.repo_url), truncatedList: false });
+        }
+        return res.json(closed);
+      }
       const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
       let result;
-      if (!requestsOn() || !parsed) {
+      if (IS_STAGING && !parsed) {
+        // #7172: a project with no repository shows the requests stored for
+        // it (a seed's rows) before any made-up one. Mocks fill only a
+        // project whose request table is empty, open and closed.
+        try {
+          const openStored = await requestsSvc.listOpenForApp(app);
+          if (openStored.issues.length) {
+            result = openStored;
+          } else {
+            const closedStored = await requestsSvc.listClosedForApp(app);
+            result = closedStored.issues.length
+              ? openStored
+              : { issues: stagingMockIssues(app.repo_url), truncatedList: false };
+          }
+        } catch (err) {
+          log.warn('issues', 'Could not read a project\'s stored requests on staging', { message: err.message });
+          result = { issues: stagingMockIssues(app.repo_url), truncatedList: false };
+        }
+      } else if (!requestsOn() || !parsed) {
         if (!IS_STAGING) {
           return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
         }
@@ -2991,6 +3074,14 @@ function issueRoutes(config) {
       let issue = null;
       if (mock && req.query.demo === '1') {
         issue = mock;
+      } else if (IS_STAGING && !parsed) {
+        // #7172: the project's own stored request opens at its address even
+        // though it has no repository. The mock is only the fallback.
+        try { ({ issue } = await requestsSvc.getOneForApp(app, number)); }
+        catch (err) {
+          log.warn('issues', 'Could not read a project\'s stored request on staging', { message: err.message });
+        }
+        if (!issue) issue = mock;
       } else if (parsed) {
         // The stored row, even on a staging copy without GitHub (requestsOn
         // says why): the mock is only the fallback.
@@ -3190,6 +3281,26 @@ function issueRoutes(config) {
       // written in the background when what it draws on has moved, so this
       // read never waits on it). A staging mock has a made-up one, so the
       // card's summary can be seen on a preview.
+      // #7160: for a CLOSED request the connector needs who closed it and
+      // how the store recorded it. `closed_via` above carries the vote/admin
+      // case; these two carry a person's own close.
+      let closedByUsername = null;
+      let stateReason = issue.state_reason || null;
+      if (issue.state === 'closed') {
+        try {
+          const { rows: closedRows } = await pool.query(
+            `SELECT r.state_reason, u.username
+               FROM requests r LEFT JOIN users u ON u.id = r.closed_by
+              WHERE r.app_id = $1 AND r.number = $2`,
+            [app.id, number]
+          );
+          if (closedRows[0]) {
+            closedByUsername = closedRows[0].username || null;
+            stateReason = closedRows[0].state_reason || stateReason;
+          }
+        } catch { /* the page reads without it */ }
+      }
+
       const askerName = (creatorRows[0] && creatorRows[0].username)
         || creatorFromSourceLine(issue.body)
         || ghLogin;
@@ -3216,6 +3327,8 @@ function issueRoutes(config) {
           myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,
           closed_via: closedVia,
+          closed_by_username: closedByUsername,
+          state_reason: stateReason,
           chatCount: (chat && chat.cnt) || 0,
           lastMessageAt: (chat && chat.last_at) || null,
           title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,

@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const SEARCH_PATH = path.join(
   __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-search.js'
@@ -25,14 +26,13 @@ const SHEET_PATH = path.join(
   __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-sheet.tsx'
 );
 
-const SEARCH_SRC = fs.readFileSync(SEARCH_PATH, 'utf8');
 const SHEET_SRC = fs.readFileSync(SHEET_PATH, 'utf8');
 
-// The module is import-free ESM; strip the `export` keywords and evaluate it
-// as a plain script, then hand back its two functions.
-const { normalizeNotificationQuery, matchesNotificationQuery } = new Function(
-  `${SEARCH_SRC.replace(/^export /gm, '')}; return { normalizeNotificationQuery, matchesNotificationQuery };`
-)();
+// The shipped module, bundled with the shell's one matcher it imports
+// (frontend/src/lib/search-rank.js), so these run what the sheet calls.
+const { normalizeNotificationQuery, matchesNotificationQuery } = loadTsx(
+  path.relative(path.join(__dirname, '..'), SEARCH_PATH)
+);
 
 // A notif entry as the sheet builds it (an Entry): the
 // view's `appLine` is the project name, `label` the kind line, `segments`
@@ -81,6 +81,14 @@ test('a notification matches on its project name, kind line and subject', () => 
   assert.equal(q('chess'), false);
 });
 
+test('accents aside, as every search in the shell (lib/search-rank.js)', () => {
+  const entry = notifEntry({ appLine: 'Café Corner' });
+  const q = (raw) => matchesNotificationQuery(entry, normalizeNotificationQuery(raw));
+  assert.equal(q('cafe'), true, '"cafe" finds a project called Café');
+  assert.equal(q('CAFÉ corner'), true);
+  assert.equal(matchesNotificationQuery(sessionEntry({ appName: 'Crème' }), normalizeNotificationQuery('creme')), true);
+});
+
 test('a notification does not match on the time or the by line alone', () => {
   const entry = notifEntry();
   assert.equal(matchesNotificationQuery(entry, normalizeNotificationQuery('2h ago')), false);
@@ -112,7 +120,7 @@ test('the search field renders between the title row and the tab strip', () => {
   assert.ok(SHEET_SRC.includes('type="search"'), 'the field is a search input');
 });
 
-test('the query starts empty and is kept when the sheet closes (#5460)', () => {
+test('the query starts empty, and each opening after a close starts over (#21)', () => {
   assert.ok(
     SHEET_SRC.includes("[query, setQuery] = useState('')"),
     'the query state starts empty so the prerender is an empty field'
@@ -121,46 +129,39 @@ test('the query starts empty and is kept when the sheet closes (#5460)', () => {
     SHEET_SRC.includes("if (!open) setOlderShown(false);\n    else if (tab !== 'unread') setOlderShown(false);"),
     'the close effect still collapses the older-rows reveal'
   );
-  assert.ok(
-    !SHEET_SRC.includes("setQuery('')"),
-    'nothing wipes the query when the sheet closes — it is remembered now'
-  );
+  // Phone review, 23 Nov 2026 (#21): the sheet reopened hours later on All
+  // with an old word in the box. The reset runs as the sheet next OPENS
+  // (so a sheet sliding away keeps its list), in a layout effect (so the
+  // opening's first paint is the reset one), and not on the page's first
+  // opening, where ?shot=notifications-all has just chosen its tab.
+  const reset = SHEET_SRC.indexOf("if (reopenRef.current === 'closed') {");
+  assert.ok(reset > 0, 'a reopened sheet is reset');
+  const body = SHEET_SRC.slice(reset, SHEET_SRC.indexOf('}', reset));
+  assert.match(body, /setQuery\(''\);/, 'the search box is emptied');
+  assert.match(body, /setTab\(wantedTab \|\| 'unread'\);/, 'back on Unread, unless a door asked for a tab');
+  const effect = SHEET_SRC.lastIndexOf('useIsomorphicLayoutEffect', reset);
+  assert.ok(effect > SHEET_SRC.indexOf("[query, setQuery] = useState('')"), 'in a layout effect after the state');
+  assert.match(SHEET_SRC.slice(reset, reset + 400), /\}, \[open\]\);/, 'keyed on the sheet opening and closing');
 });
 
-test('the remembered search is restored after mount, not during render (#5460)', () => {
-  const at = SHEET_SRC.indexOf("sessionStorage.getItem('usernode:notifications-search')");
-  assert.ok(at > 0, 'the restore reads the remembered query from sessionStorage');
-  const effect = SHEET_SRC.lastIndexOf('useEffect', at);
-  assert.ok(
-    effect > SHEET_SRC.indexOf("[query, setQuery] = useState('')"),
-    'the read happens in an effect after the state is declared'
-  );
-  // The restore is capped like the field itself, so a stored value edited by
-  // hand cannot exceed it.
-  assert.ok(
-    SHEET_SRC.includes('remembered.slice(0, 100)'),
-    'a restored value is cut to the field 100-character cap'
-  );
+test('nothing remembers the query across visits any more (#21)', () => {
+  assert.ok(!SHEET_SRC.includes("sessionStorage.setItem('usernode:notifications-search'"), 'no query is written to storage');
+  assert.ok(!SHEET_SRC.includes("sessionStorage.getItem('usernode:notifications-search'"), 'no query is read back');
+  const at = SHEET_SRC.indexOf("sessionStorage.removeItem('usernode:notifications-search')");
+  assert.ok(at > 0, 'a value an older build kept is forgotten');
+  assert.ok(SHEET_SRC.lastIndexOf('useEffect', at) > SHEET_SRC.indexOf("[query, setQuery] = useState('')"), 'after mount, never during render');
 });
 
-test('the query is written to the session key when set and removed when cleared (#5460)', () => {
-  assert.ok(
-    SHEET_SRC.includes("sessionStorage.setItem('usernode:notifications-search'"),
-    'a non-empty query is remembered for the tab session'
-  );
-  assert.ok(
-    SHEET_SRC.includes("sessionStorage.removeItem('usernode:notifications-search')"),
-    'an empty query forgets the remembered search'
-  );
-  // Every write routes through rememberQuery, so the Escape clear and the
-  // native search clear (an onChange with '') both reach the storage.
-  const helper = SHEET_SRC.indexOf('const rememberQuery');
-  assert.ok(helper > 0, 'the sheet routes writes through one persisting setter');
-  assert.ok(
-    SHEET_SRC.includes('onChange={(event) => rememberQuery(')
-      && SHEET_SRC.includes("rememberQuery('')"),
-    'typing and clearing both go through rememberQuery'
-  );
+test('the field has a clear button while it holds text (#21)', () => {
+  const clear = SHEET_SRC.indexOf('id="notifications-search-clear"');
+  assert.ok(clear > SHEET_SRC.indexOf('id="notifications-search-input"'), 'the clear sits after the field');
+  assert.ok(clear < SHEET_SRC.indexOf('"notifications-screen-tabs"'), 'inside the search block');
+  const gate = SHEET_SRC.lastIndexOf('{query ? (', clear);
+  assert.ok(gate > SHEET_SRC.indexOf('id="notifications-search-input"'), 'drawn only while the field holds text');
+  assert.match(SHEET_SRC.slice(clear, clear + 800), /onClick=\{\(\) => \{ setQuery\(''\); searchRef\.current\?\.focus\(\); \}\}/, 'it empties the field and keeps the cursor there');
+  assert.match(SHEET_SRC.slice(clear, clear + 800), /aria-label=\{t\('notifications:sheet\.search\.clear'\)\}/, 'it has a name');
+  assert.equal(message('notifications:sheet.search.clear'), 'Clear search');
+  assert.ok(SHEET_SRC.includes("onChange={(event) => setQuery(event.currentTarget.value.slice(0, 100))}"), 'typing is capped at 100');
 });
 
 test('while searching the headings, pinned sections and pager step aside', () => {
@@ -175,12 +176,11 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     '{!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? ('
   );
   assert.ok(gate > 0, 'the headings block is skipped while searching');
-  const todayHead = SHEET_SRC.indexOf('{today.length ? (');
-  const earlierHead = SHEET_SRC.indexOf('{earlier.length ? (');
-  assert.ok(
-    todayHead > gate && earlierHead > gate,
-    'the Today/Earlier headings are skipped while searching'
-  );
+  // Phone review #118: All's sections (allSections) are the older rows'
+  // cards, drawn inside the same gate, and are not built while searching.
+  const allHeads = SHEET_SRC.indexOf('allSections.map(renderOlderSection)');
+  assert.ok(allHeads > gate, 'the section headings are skipped while searching');
+  assert.match(SHEET_SRC, /const allSections = tab === 'all' && !searching \?/);
   assert.ok(
     SHEET_SRC.includes("{searching ? null : (tab === 'unread' && !olderShown ? ("),
     'none of the pager footers render while searching'
@@ -190,7 +190,7 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     'the ordinary empty state is replaced while searching'
   );
   assert.ok(
-    SHEET_SRC.includes('matches.length ? matches.map(renderEntry) : ('),
+    SHEET_SRC.includes('matches.length ? <div className="notifications-stack">{matches.map(renderEntry)}</div> : ('),
     'the matches render through the same row renderer'
   );
 });

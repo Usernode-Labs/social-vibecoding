@@ -1,23 +1,22 @@
 /**
- * A project's own Needs you, around its run (./review-flow.tsx), under the
- * Standard (WIP) look: what stands in the page when nothing waits, and the
- * ways on into the project under whatever does.
+ * A project's own Needs you, around its run (./review-flow.tsx): what stands
+ * in the page when nothing waits, and the ways on into the project under
+ * whatever does.
  *
- * The run itself knows no look (the stage is the product's on every one),
- * so the look is read here, in the two pieces that are drawn beside it.
- * Under every other look ProjectNeedsEmpty draws the line it is handed and
- * ProjectWaysIn draws nothing.
+ * The run itself is the same everywhere it is drawn, so whether this is a
+ * project's page is read here, in the two pieces drawn beside it. Anywhere
+ * else ProjectNeedsEmpty draws the line it is handed and ProjectWaysIn draws
+ * nothing.
  */
 
 import { useEffect, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { ChatIcon, CheckIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { isKitHome, useLiveSkin } from '../../lib/skin';
 
-/** Whether this is a project's page under the look that draws these. */
+/** Whether this is a project's page, which draws these. */
 function useDrawn(slug?: string, project?: string): boolean {
-  return isKitHome(useLiveSkin()) && !!slug && !!project;
+  return !!slug && !!project;
 }
 
 /** From this width a project's Needs you shows what a change does beside it (app.css `[data-rf-beside]`). */
@@ -25,8 +24,7 @@ const DESC_BESIDE = '(min-width: 1280px)';
 
 /**
  * Whether what a change does is shown beside it, not under the arrow in its
- * bar: on a project's own Needs you under the look that draws it, on a large
- * screen. Read after mount, so the first render knows no width.
+ * bar: on a project's own Needs you, on a large screen. Read after mount, so the first render knows no width.
  */
 export function useDescBeside(slug?: string, project?: string): boolean {
   const drawn = useDrawn(slug, project);
@@ -44,7 +42,7 @@ export function useDescBeside(slug?: string, project?: string): boolean {
 
 /**
  * The ways on into a project: its Workshop, its discussion and its hub, as
- * three doors of the hub's own shape under a label of the look.
+ * three doors of the hub's own shape under one label.
  */
 export function ProjectWaysIn({ slug, project }: { slug?: string; project?: string }): ReactNode {
   const t = useMessages('communities');
@@ -79,7 +77,7 @@ export function ProjectWaysIn({ slug, project }: { slug?: string; project?: stri
 
 /**
  * Nothing waits: good news, said as a heading on a card, with the ways on
- * under it. `children` is the plain line every other look draws.
+ * under it. `children` is the plain line drawn anywhere else.
  */
 export function ProjectNeedsEmpty({ slug, project, anchorRef, children }: {
   slug?: string;

@@ -101,7 +101,7 @@ export function newAccountsWait(options: { waitlist_enabled?: boolean } | null |
 }
 
 /** The sorts Discover offers, in the order its control shows them. */
-export const SORTS = ['trending', 'new', 'built', 'popular'] as const;
+export const SORTS = ['trending', 'new', 'built', 'popular', 'name'] as const;
 export type GuestSort = (typeof SORTS)[number];
 
 /**
@@ -113,6 +113,9 @@ export type GuestSort = (typeof SORTS)[number];
 export const CATEGORIES = [
   'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
 ] as const;
+
+/** A to Z reads names as words, so case and accents do not move a name along. */
+const NAME_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
 
 /** How many people built it: the directory's contributors, counted. */
 export function buildersOf(app: GuestApp): number {
@@ -132,10 +135,15 @@ function createdAt(app: GuestApp): number {
  * led the list with test and diagnostic apps nobody uses, above a game 42
  * people play (Evan's review of the live page, 21 Oct 2026); what a visitor
  * can try is Featured's job, and its cards carry Try it wherever they sort.
- * Ties keep the directory's own order.
+ * `'name'` is A to Z, ignoring case and accents. Ties keep the directory's own
+ * order.
  */
 export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[] {
   const indexed = apps.map((app, i) => ({ app, i }));
+  if (sort === 'name') {
+    indexed.sort((a, b) => NAME_ORDER.compare(a.app.name || '', b.app.name || '') || a.i - b.i);
+    return indexed.map((x) => x.app);
+  }
   const key = (app: GuestApp): number => {
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);
@@ -197,13 +205,6 @@ export function featuredApps(apps: readonly GuestApp[], tryable: (app: GuestApp)
  */
 export const MIN_MEMBERS = 25;
 export const MIN_ACTIVE = 10;
-export const MIN_BUILDERS = 5;
-/**
- * A Discover card's people pill (a profile glyph and how many used it
- * lately) shows from this many. Lower than the band's sentence: on the
- * picture it is a figure beside others, not a claim on its own.
- */
-export const MIN_PEOPLE = 5;
 
 /** A project made in the last 30 days wears "New" on its card. */
 const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
@@ -259,11 +260,6 @@ export function projectPath(slug: string): string {
  */
 export function projectVotesHash(slug: string): string {
   return `#app/${encodeURIComponent(slug)}/workshop?ws=workshop`;
-}
-
-/** Whether a project link names its Workshop (projectVotesHash) rather than its hub. */
-export function linksToWorkshop(target: string): boolean {
-  return /[?&]ws=workshop(?:&|$)/.test(String(target || ''));
 }
 
 /** A project's overview, or null when it is not public (404) or cannot be read. */

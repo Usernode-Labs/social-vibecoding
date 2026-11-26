@@ -168,8 +168,10 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/apps/recipe-box/github-issues//claim'],
     ['POST', '/api/apps/recipe-box/github-issues/12/claim/extra'],
     ['POST', '/api/apps/recipe-box/github-issues/12/bounty'],
-    // Path-shape games.
-    ['GET', '/api/apps/recipe-box/github-issues/12'],
+    // Path-shape games. (The single-request read itself is now allowed, so
+    // get_request can read a CLOSED request — #7160; the shapes below it are
+    // still refused.)
+    ['GET', '/api/apps/recipe-box/github-issues/12/comments/3'],
     ['GET', '/api/apps'.concat('/')],
     ['GET', '/api/sessions'],
     ['GET', '/api/sessions/412/status/extra'],
@@ -930,4 +932,16 @@ test('create is on the list only because the route narrows a connector to its ow
   assert.equal(audiences.toolVisibleTo('agent_mayor', 'create_app'), false);
   assert.equal(audiences.toolVisibleTo('worker_read', 'create_app'), false);
   assert.equal(audiences.toolVisibleTo('external', 'create_app'), true);
+});
+
+// #7160: get_request reads a CLOSED request on its own route, a number the
+// open board does not carry. One exact shape, and a read.
+test('#7160: one request by number is a read every kind may make', () => {
+  assert.equal(policy.isConnectorApiRequest('GET', '/api/apps/recipe-box/github-issues/12'), true);
+  for (const kind of ['agent_mayor', 'worker_read']) {
+    assert.equal(policy.isDelegatedApiRequest(kind, 'GET', '/api/apps/recipe-box/github-issues/12'), true, kind);
+  }
+  // Reading it writes nothing, and nothing deeper is reachable through it.
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/github-issues/12'), false);
+  assert.equal(policy.isConnectorApiRequest('GET', '/api/apps/recipe-box/github-issues/12/claim'), false);
 });

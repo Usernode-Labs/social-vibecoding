@@ -15,6 +15,7 @@ const { Client, Pool } = require('pg');
 const express = require('express');
 const communities = require('../src/services/communities');
 const { homePinRoutes } = require('../src/routes/home-pins');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 
 test('home pins: join pins the community, so does making one, an app pin joins nobody, leave keeps the app (PostgreSQL)', async (t) => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -274,9 +275,10 @@ test('home pins: each community you pinned or are in says its members, what went
       liveWeek: 1,
       activeWeek: 3,
       people: [
-        { username: 'bob', avatarUrl: null },
+        // #7135: a person with no uploaded photo shows their generated picture.
+        { username: 'bob', avatarUrl: generatedAvatarUrl(bob.id) },
         { username: 'carol', avatarUrl: '/avatars/carolpic' },
-        { username: 'dana', avatarUrl: null },
+        { username: 'dana', avatarUrl: generatedAvatarUrl(dana.id) },
       ],
     });
     assert.deepEqual(activity.garden, {

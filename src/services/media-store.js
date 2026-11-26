@@ -18,6 +18,11 @@ const transactionIO = require('./media-transaction-io');
 const PREFIX = 'media/sha256/';
 const KEY = /^media\/sha256\/[a-f0-9]{64}$/;
 const ORPHAN_AGE_MS = 24 * 60 * 60 * 1000;
+// Bounds for one cleanup transaction: a stuck lock or statement ends that
+// sweep with a database error (55P03 / 57014) instead of waiting until
+// something else gives up. The clock retries on its next tick.
+const ORPHAN_LOCK_TIMEOUT = '5s';
+const ORPHAN_STATEMENT_TIMEOUT = '30s';
 
 function objectKey(data) {
   if (!Buffer.isBuffer(data)) throw new TypeError('Media must be a Buffer');
@@ -95,7 +100,12 @@ async function put(tx, store, data, contentType = 'application/octet-stream') {
   await transactionIO.run(tx, async (signal) => {
     const existing = await store.statObject(key);
     signal.throwIfAborted();
-    if (existing && Number(existing.size) !== data.length) throw new Error(`Media object size mismatch: ${key}`);
+    // A staging store run against the pair's other copy knows a file exists
+    // from its registry row but not its size; the content hash already says
+    // the bytes are these (staging-media-store.useOtherCopy).
+    if (existing && existing.sizeKnown !== false && Number(existing.size) !== data.length) {
+      throw new Error(`Media object size mismatch: ${key}`);
+    }
     if (!existing) await store.putObject(key, data, contentType);
   });
   return key;
@@ -137,6 +147,14 @@ async function removeOrphan(pool, store, key, cutoff) {
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN');
+    // SET LOCAL ends with the transaction, so the pooled connection goes
+    // back unchanged. A timeout throws into the catch below, which rolls
+    // back and rethrows. Two calls, not one string: PostgreSQL's extended
+    // protocol carries one statement per Parse message, and the SQL checker
+    // (scripts/check-sql.js) prepares every static query, so a two-statement
+    // query fails the repository's own `npm run lint:sql`.
+    await tx.query(`SET LOCAL lock_timeout = '${ORPHAN_LOCK_TIMEOUT}'`);
+    await tx.query(`SET LOCAL statement_timeout = '${ORPHAN_STATEMENT_TIMEOUT}'`);
     // An upsert takes a row lock even when the key was registered before.
     await tx.query(
       `INSERT INTO media_objects (object_key) VALUES ($1)

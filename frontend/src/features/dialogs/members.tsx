@@ -145,9 +145,9 @@ export function MembersDialog() {
           id="members-governance-section"
           className="hidden space-y-3 mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"
         >
-          <p className="text-sm font-semibold">
-            {t('dialogs:members.governance.heading')}
-          </p>
+          {/* Phone review #50: no heading of its own. The section is only ever
+              shown on Homeroom's own project, whose dialog is already titled
+              "Proposal approvals" (members.title.approvals). */}
           <div>
             <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
               {t('dialogs:members.governance.who')}
@@ -373,15 +373,14 @@ export function MembersDialog() {
               catalog (dialogs:members.appAdmins.note.*). It stays as written
               because the prerendered document is compared byte for byte. */}
           <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Set in
-            <code>
-              dapp.json
-            </code>
-            . To change them, open a pull request that edits the
-            <code>
-              admins
-            </code>
-            list. That proposal needs real Yes votes and won&rsquo;t merge on a timer.
+            {/* Phone review #50: JSX drops the line breaks round a tag, so
+                the spaces are written out; the section also shows with this
+                note when its list could not be read. */}
+            {'Set in '}
+            <code>dapp.json</code>
+            {'. To change them, open a pull request that edits the '}
+            <code>admins</code>
+            {' list. That proposal needs real Yes votes and won\u2019t merge on a timer.'}
           </p>
         </div>
         <div className="flex gap-3">

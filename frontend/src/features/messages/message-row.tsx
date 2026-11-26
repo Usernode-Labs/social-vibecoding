@@ -1,10 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
 
-import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, GlobeIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
-} from '@/components/ui/icons';
-
 import { useSearchMark } from '../ai/search-mark';
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -31,19 +26,18 @@ import { BotHtmlReply, botReplyHtml } from './bot-html';
 import { BotLiveCard, isLiveCardObject, liveWorkOf } from './bot-live-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
-import { confirmAction } from '../../lib/confirm';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { enterSends } from '../../lib/enter-sends';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
-import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
+import { messageMenu, messageSheet } from '../message-actions/message-menu';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
-import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
+import { useCanSaveImage } from '../image-viewer/save-image';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from './translate';
 
 /*
@@ -289,98 +283,39 @@ export const MessageRow = memo(function MessageRow({
     catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.saved')); }
   }
 
-  async function blockSender() {
-    if (mine || !message.sender.id) return;
-    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-    const ok = await confirmAction({
-      title: message.sender.unnamed ? (message.sender.id ? t('messages:row.block.titleUnknownHandle') : t('messages:row.block.titleUnknown')) : t('messages:row.block.title', { name: senderName(message.sender, { bare }) }),
-      message: t('messages:row.block.message'),
-      confirmLabel: t('messages:row.block.confirm'),
-      danger: true,
-    });
-    if (!ok) return;
-    setBusy(true); setNotice('');
-    try { await setUserBlocked(message.sender.id, true); }
-    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.block')); }
-    finally { setBusy(false); }
-  }
-
-  async function remove() {
-    const ok = await confirmAction({
-      title: t('messages:row.delete.title'),
-      message: t('messages:row.delete.message'),
-      confirmLabel: t('messages:row.delete.confirm'),
-      danger: true,
-    });
-    if (!ok) return;
-    setNotice('');
-    try { await deleteMessage(message.id); }
-    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.delete')); }
-  }
-
-  async function unread() {
-    setNotice('');
-    try { await markUnread(message.id); toast(t('messages:row.markedUnread')); }
-    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.unread')); }
-  }
-
   function startEdit() { setEditValue(message.content); setEditing(true); }
 
-  // The ⋯ menu, by whose message it is and what kind of chat it sits in.
-  const items: MenuItem[] = [];
-  if (threadRoot !== null) {
-    items.push({ key: 'thread', label: message.thread || threadRoot !== message.id ? t('messages:row.menu.viewThread') : t('messages:row.menu.replyInThread'), icon: ThreadIcon, onSelect: () => openThread(threadRoot) });
-  }
-  if (mine && message.content && live) items.push({ key: 'edit', label: t('messages:row.menu.edit'), icon: PencilSquareIcon, onSelect: startEdit });
-  if (message.content) {
-    items.push({ key: 'copy', label: t('messages:row.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, t('messages:row.textCopied')); } });
-  }
-  // #6081: someone else's words, in the reader's language. One more item in
-  // the same menu, so a chat does not fill up with a button on every message.
-  if (canTranslate) {
-    // #6081: while it is being translated the words stay as written and the
-    // item says so, rather than offering a second tap that does nothing.
-    const label = translation.state === 'pending'
-      ? t('messages:translate.pending')
-      : translation.state === 'shown'
-        ? t('messages:row.menu.showOriginal')
-        : translation.state === 'original'
-          ? t('messages:row.menu.showTranslation')
-          : t('messages:row.menu.translate');
-    items.push({
-      key: 'translate', label, icon: GlobeIcon, disabled: translation.state === 'pending',
-      onSelect: () => {
-        if (translation.state === 'shown' || translation.state === 'original') translation.toggle();
-        else translation.ask();
+  // The ⋯ menu: the one list every chat's rows open
+  // (../message-actions/message-menu.ts), by whose message it is and what
+  // kind of chat it sits in.
+  const senderId = message.sender.id;
+  const items: MenuItem[] = messageMenu({
+    thread: threadRoot !== null ? { started: !!message.thread || threadRoot !== message.id, open: () => openThread(threadRoot) } : null,
+    edit: mine && message.content && live ? startEdit : null,
+    text: message.content,
+    translation: canTranslate ? translation : null,
+    // #4055: its pictures onto the device, whoever sent them.
+    pictures: images.map((att) => ({ src: att.url, name: att.name })),
+    link: messageAddress(conversationId, message.id),
+    markUnread: !mine && !inThread ? () => { setNotice(''); return markUnread(message.id); } : null,
+    remove: mine ? () => { setNotice(''); return deleteMessage(message.id); } : null,
+    report: mine ? null : () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender, { bare }) }), userId: message.sender.id }),
+    block: !mine && senderId ? {
+      who: message.sender.unnamed ? { unknown: 'handle' } : { name: senderName(message.sender, { bare }) },
+      busy,
+      run: async () => {
+        setBusy(true); setNotice('');
+        try { await setUserBlocked(senderId, true); } finally { setBusy(false); }
       },
-    });
-  }
-  // #4055: its pictures onto the device, whoever sent them.
-  const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
-  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
-  items.push({
-    key: 'link', label: t('messages:row.menu.copyLink'), icon: LinkIcon,
-    onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), t('messages:row.linkCopied')); },
+    } : null,
+    failed: (err, fallback) => setNotice(err instanceof Error ? err.message : fallback),
   });
-  if (!mine && !inThread) items.push({ key: 'unread', label: t('messages:row.menu.markUnread'), icon: EnvelopeIcon, onSelect: () => { void unread(); } });
-  if (mine) {
-    items.push({ key: 'delete', label: t('messages:row.menu.delete'), icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
-  } else {
-    items.push({
-      key: 'report', label: t('messages:row.menu.report'), icon: FlagIcon, separated: true,
-      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender, { bare }) }), userId: message.sender.id }),
-    });
-    if (message.sender.id) {
-      items.push({ key: 'block', label: message.sender.unnamed ? (message.sender.id ? t('messages:row.menu.blockUnknownHandle') : t('messages:row.menu.blockUnknown')) : t('messages:row.menu.block', { name: senderName(message.sender, { bare }) }), icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
-    }
-  }
 
   // The phone's sheet: the bar's Reply and Save first, then the same menu.
-  const sheetItems: MenuItem[] = [
-    { key: 'reply', label: t('messages:row.sheet.reply'), icon: ReplyArrowIcon, onSelect: () => setReply(scope, message) },
-    { key: 'save', label: message.saved ? t('messages:row.sheet.unsave') : t('messages:row.sheet.save'), icon: message.saved ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => { void save(); } },
-    ...items,
-  ];
+  const sheetItems: MenuItem[] = messageSheet({
+    reply: () => setReply(scope, message),
+    save: { saved: !!message.saved, toggle: () => { void save(); } },
+  }, items);
 
   // The time of day for today's messages, prefixed with the date once it is
   // not today's (#1808). `fullTime` on the title never elides.
@@ -424,18 +359,15 @@ export const MessageRow = memo(function MessageRow({
     || isTwoQuestions(message) || isReadyMessage(message) || !!head
     || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
       && !isTwoQuestions(message) && !isReadyMessage(message));
-  // Under one of the frame's looks no row has a side (the tour's s17: "your
-  // own messages and theirs share one style, so a thread reads top to
-  // bottom"): every row is the named row a channel draws. #6863: so is every
-  // row of a private thread with the bot, alone in its tab's column, where
-  // the thread is drawn as a public thread's one sheet (`flat`).
-  const frame = isFrameSkin(useLiveSkin());
+  // #6863: every row of a private thread with the bot, alone in its tab's
+  // column, is the named row a channel draws: the thread is drawn as a
+  // public thread's one sheet (`flat`).
   // 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
   // the flat named row its answers are, a notice as much as a reply with
   // buttons: the same speaker no longer changes style message by message.
   // People's own messages keep their bubble.
   const botRow = botChat && !!message.sender.bot;
-  const sided = !flat && !frame && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
+  const sided = !flat && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
@@ -449,7 +381,7 @@ export const MessageRow = memo(function MessageRow({
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} dir="auto" aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
+        <div className="messages-edit"><textarea ref={editRef} dir="auto" aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); else if (enterSends(event.nativeEvent)) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
       ) : filedNext && words ? (
         // #6151: a design filed as a request: its line, then what happens next.
         <>
@@ -513,13 +445,17 @@ export const MessageRow = memo(function MessageRow({
       {designVersion && message.threadRootId ? (
         <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} artifactId={designArtifactOf(message)} />
       ) : null}
+      {/* Homeroom bot parity (P1-P9): a card the bot put under its reply
+          (./bot-cards/). Phone review #30 (23 Nov 2026): it is part of the
+          answer, which its words refer to ("the table compares…"), so it is
+          drawn right under them, before the questions and buttons that
+          close a reply, not after them. */}
+      {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {/* 18 Nov 2026: the request the reply started work on, followed live. */}
       {liveWork ? <BotLiveCard work={liveWork} objects={message.objects} /> : null}
-      {/* Homeroom bot parity (P1-P9): a card the bot put under its reply (./bot-cards/). */}
-      {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {fileAttachments.length ? <div className="messages-attachments">{fileAttachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
@@ -545,12 +481,25 @@ export const MessageRow = memo(function MessageRow({
     </>
   );
 
+  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
+  // end of its name line, beside the message, not at the transcript's far
+  // edge, where on a wide screen it sat 800px from a short bubble and over
+  // the row above. Your own bubble and a channel's rows already end where
+  // the bar is.
+  const barBesideHead = sided && !mine && !grouped;
+  // Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
+  // name line, so its bar sits on the bubble itself, over its top edge and
+  // ending where the bubble ends (starting where it starts when the bubble
+  // is the narrower). MessageActionBar measures the bubble as the pointer
+  // or the keyboard comes in; app.css `.msgx-bar-on-bubble` places it.
+  const barOnBubble = sided && !mine && grouped;
+
   // The bar. WHILE A SEND IS IN FLIGHT it is still laid out, but invisible
   // and inert (#2907). A failed row has no bar — its Retry is its control —
   // and neither has one waiting for a connection, nor a deleted one.
   const actions = !message.failed && !message.queued && !message.deleted ? (
     <MessageActionBar
-      className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`}
+      className={`messages-message-actions ${barOnBubble ? 'msgx-bar-on-bubble' : ''} ${message.pending ? 'messages-message-actions-reserved' : ''}`}
       hidden={!!message.pending}
       // What useDismiss measures "outside" against: without it every press —
       // on a menu item or an emoji too — closed the popover before its click.
@@ -573,14 +522,12 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
-  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
-  // end of its name line, beside the message, not at the transcript's far
-  // edge, where on a wide screen it sat 800px from a short bubble and over
-  // the row above. A continuation line has no name line, and your own
-  // bubble and a channel's rows already end where the bar is.
-  const barBesideHead = sided && !mine && !grouped;
-
-  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
+  // #7163: your own message in a channel sits on the right like a chat, its
+  // face at the trailing edge beside its words (app.css), the head against
+  // that edge as it already was. A conversation's bubbles have their own
+  // side (`.messages-message-bubble`), so this is the named row alone.
+  const endRow = mine && !sided;
+  const stateClasses = `${mine ? 'messages-message-self' : ''} ${endRow ? 'messages-message-end' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the

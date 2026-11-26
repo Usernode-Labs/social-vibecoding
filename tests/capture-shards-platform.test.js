@@ -219,13 +219,6 @@ test('findCheckJobs: every capture shard, and an early unit suite counts as the 
   assert.equal(found.unitSuite.name, 'sv-unit-early-s7-r1');
 });
 
-test('the preview lifecycle\'s cancellation leaves an early unit suite alone', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'kubernetes.js'), 'utf8');
-  const cancel = src.slice(src.indexOf('async function cancelPreviewChecks'), src.indexOf('function observeCheck'));
-  assert.match(cancel, /if \(!name\.startsWith\(`sv-capture-s\$\{sessionId\}-`\)\s+&& !name\.startsWith\(`sv-unit-suite-s\$\{sessionId\}-`\)\) return;/);
-  assert.doesNotMatch(cancel, /sv-unit-early/);
-});
-
 // ── The harvest ──────────────────────────────────────────────────────────
 
 test('the harvest joins a run\'s shards as the live run does', () => {

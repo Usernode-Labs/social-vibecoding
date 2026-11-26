@@ -502,8 +502,8 @@ export function WaitingScreen() {
             <img
               src="/brand/people.png"
               alt=""
-              width={816}
-              height={612}
+              width={576}
+              height={432}
               draggable={false}
               className="block h-auto w-[220px] max-w-full"
             />

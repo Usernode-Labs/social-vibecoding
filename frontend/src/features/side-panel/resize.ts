@@ -30,6 +30,21 @@
  * from the stylesheet so the two cannot disagree. The drag stopped at the
  * app's 480px while the stylesheet allowed 360.
  *
+ * ── And the column's own floor, so the list never floats (24 Nov 2026) ─
+ *
+ * The list beside the column is held to 42rem, and the column takes the
+ * rest: app.css floors Main at the room less `--ai-list-max`, so the list's
+ * side is never wider than the list and no empty band opens either side of
+ * it. The divider reads the same figure (`floor`), so a drag toward the
+ * list stops where the list reaches its full 42rem, the handle stays on the
+ * column's real edge, and its range says what can be drawn. A stored width
+ * is applied as stored (`storedBounds`) and the stylesheet raises it on
+ * screen, so a preview's columns, which read Main's width, read the width
+ * chosen as before. The stylesheet declares the figure only where the floor
+ * holds (the lists beside the column, from 768px, outside a preview's
+ * columns and the frame's looks); where it is absent the column's own
+ * MIN_PANEL_W is its floor, as before.
+ *
  * ── Two widths, two keys (3 Nov 2026) ─────────────────────────────────
  *
  * The edge of the Homeroom bot page's column (a thread's, `#ai-main-pane`)
@@ -135,6 +150,14 @@ export interface LayoutProbe {
   neighbourMin?: number;
   /** The narrowest this column may be dragged, when not MIN_PANEL_W. */
   selfMin?: number;
+  /** Where the stylesheet holds this column wider than its own minimum: the
+   *  bot page's column beside its list, never narrower than the room less
+   *  the list's 42rem (app.css, THE THREAD TAKES THE SPARE ROOM). A drag or
+   *  a key stops there; a stored width is applied as stored (`storedBounds`)
+   *  and the stylesheet raises it on screen, so a layout without the floor
+   *  (a preview's columns, which read this column's width) reads the width
+   *  chosen, as it did. */
+  floor?: number;
   /** Where the column's room ends, from the window's inline-start edge, when
    *  another column follows it (the thread before a preview); the window's
    *  far edge otherwise. */
@@ -149,8 +172,14 @@ function roomRight(probe: LayoutProbe): number {
 /** The range the panel's width may take in this window. */
 export function bounds(probe: LayoutProbe): WidthBounds {
   const room = Math.floor(roomRight(probe) - Math.max(0, probe.appLeft) - (probe.neighbourMin ?? MIN_APP_W));
-  const min = probe.selfMin ?? MIN_PANEL_W;
+  const min = Math.max(probe.selfMin ?? MIN_PANEL_W, probe.floor ?? 0);
   return { min, max: Math.max(min, room) };
+}
+
+/** The range a stored width is applied in: `bounds` less the column's
+ *  `floor`, which the stylesheet holds on screen itself. */
+export function storedBounds(probe: LayoutProbe): WidthBounds {
+  return bounds({ ...probe, floor: undefined });
 }
 
 /** The panel's width as chosen: its inner edge to the end of the room. */
@@ -291,6 +320,7 @@ export function probeLayout(win: Window = window): LayoutProbe {
   }
   let rightInset = 0;
   let neighbourMin = MIN_APP_W;
+  let listMax = 0;
   try {
     const doc = win.document;
     const style = doc.body ? win.getComputedStyle(doc.body) : null;
@@ -310,10 +340,19 @@ export function probeLayout(win: Window = window): LayoutProbe {
     };
     const panelSide = doc.documentElement.dir === 'rtl' ? 'left' : 'right';
     if (doc.documentElement.getAttribute('data-side-strip') === panelSide) rightInset = px('--platform-strip-w');
-    if (aiPageUp(doc)) neighbourMin = px('--ai-list-min') || MIN_APP_W;
+    if (aiPageUp(doc)) {
+      neighbourMin = px('--ai-list-min') || MIN_APP_W;
+      listMax = px('--ai-list-max');
+    }
   } catch {
     rightInset = 0;
     neighbourMin = MIN_APP_W;
+    listMax = 0;
   }
-  return { innerWidth: win.innerWidth, appLeft, rightInset, neighbourMin };
+  const probe: LayoutProbe = { innerWidth: win.innerWidth, appLeft, rightInset, neighbourMin };
+  // The list is held to `listMax` beside the column, so the column is never
+  // narrower than the room less that (app.css, THE THREAD TAKES THE SPARE
+  // ROOM). Rounded up, so a clamped column never leaves a band of a pixel.
+  if (listMax > 0) probe.floor = Math.max(MIN_PANEL_W, Math.ceil(roomRight(probe) - Math.max(0, appLeft) - listMax));
+  return probe;
 }

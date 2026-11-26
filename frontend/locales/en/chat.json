@@ -864,7 +864,7 @@
     "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
   "group.row.botSkipped": {
-    "text": "Homeroom bot doesn't answer this message; @ it in your own words to ask it.",
+    "text": "Homeroom bot doesn't answer this message. @ it yourself to ask.",
     "description": "Small grey line under a message a person's coding agent posted for them on a request's, a change's or a reply thread's discussion, when Homeroom bot will not answer it (so an agent and the bot cannot talk to each other forever, or its voice is off there). One line, no icon, not a button."
   },
   "group.row.unreadMention": {
@@ -902,6 +902,10 @@
   "group.voteCard.unnamed": {
     "text": "A change",
     "description": "What the small vote card under a chat line about a change calls the change while neither its number nor its title is known yet."
+  },
+  "group.voteCard.seeChange": {
+    "text": "See the change",
+    "description": "Button on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, once that change is live and its vote is over: scrolls to that change’s section on the page. See is a verb."
   },
   "group.voteCard.seeVote": {
     "text": "See the vote",
@@ -1011,102 +1015,6 @@
     "text": "View full plan",
     "description": "Button on the card of a plan (the written description of a change) shared in a chat: opens the whole plan in the side panel. View is a verb."
   },
-  "group.menu.makeRequest": {
-    "text": "Make this a request",
-    "description": "Item in a chat message's menu: asks Homeroom bot to treat the message as a request to build something for the project. 'Request' is a noun."
-  },
-  "group.menu.viewThread": {
-    "text": "View thread",
-    "description": "Item in a chat message's menu, when the message already has replies: opens the thread of replies under it."
-  },
-  "group.menu.replyInThread": {
-    "text": "Reply in thread",
-    "description": "Item in a chat message's menu, when the message has no replies yet: opens a thread under the message to reply there. Reply is a verb."
-  },
-  "group.menu.edit": {
-    "text": "Edit message",
-    "description": "Item in the menu of the person's own chat message: starts editing it."
-  },
-  "group.menu.copyText": {
-    "text": "Copy text",
-    "description": "Item in a chat message's menu: copies the message's text to the clipboard. Copy is a verb."
-  },
-  "group.menu.textCopied": {
-    "text": "Message text copied",
-    "description": "Brief notice after 'Copy text' in a chat message's menu: the message's text is on the clipboard."
-  },
-  "group.menu.copyLink": {
-    "text": "Copy link to message",
-    "description": "Item in a chat message's menu: copies a web link that opens the chat at this message. Copy is a verb."
-  },
-  "group.menu.linkCopied": {
-    "text": "Link copied",
-    "description": "Brief notice after 'Copy link to message' in a chat message's menu: the link is on the clipboard."
-  },
-  "group.menu.markUnread": {
-    "text": "Mark unread",
-    "description": "Item in the menu of someone else's chat message: marks the channel as unread from this message on, so it shows as new again. Mark is a verb."
-  },
-  "group.menu.markedUnread": {
-    "text": "Marked unread",
-    "description": "Brief notice after 'Mark unread' in a chat message's menu: the channel now shows as unread from that message."
-  },
-  "group.menu.markUnreadFailed": {
-    "text": "Couldn’t mark this unread.",
-    "description": "Brief notice when 'Mark unread' in a chat message's menu failed. 'This' is the message."
-  },
-  "group.menu.delete": {
-    "text": "Delete message",
-    "description": "Item in the menu of the person's own chat message: asks for confirmation, then deletes the message for everyone."
-  },
-  "group.menu.deleteFailed": {
-    "text": "Couldn’t delete this message.",
-    "description": "Brief notice when deleting the person's own chat message failed."
-  },
-  "group.menu.report": {
-    "text": "Report message",
-    "description": "Item in the menu of someone else's chat message: opens the form that reports the message to the moderators. Report is a verb."
-  },
-  "group.menu.block": {
-    "text": "Block @{{username}}",
-    "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. {{username}} is the author's username; keep the @ before it. Block is a verb."
-  },
-  "group.menu.blockUnknown": {
-    "text": "Block @System",
-    "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. Used on a message whose author did not come with it and is shown as \"System\"."
-  },
-  "group.menu.blockFailed": {
-    "text": "Couldn’t block this person.",
-    "description": "Alert shown when blocking a chat message's author failed and the server gave no reason. Block is a verb: to hide a person's messages."
-  },
-  "group.deleteConfirm.title": {
-    "text": "Delete this message?",
-    "description": "Title of the confirmation dialog before the person's own chat message is deleted."
-  },
-  "group.deleteConfirm.message": {
-    "text": "Everyone will see “Message deleted” in its place. This can’t be undone.",
-    "description": "Body of the confirmation dialog before the person's own chat message is deleted. “Message deleted” is the exact text shown where the message was; translate it the same way as that text."
-  },
-  "group.deleteConfirm.confirm": {
-    "text": "Delete",
-    "description": "Confirm button of the dialog that asks whether to delete the person's own chat message. A verb."
-  },
-  "group.blockConfirm.title": {
-    "text": "Block @{{username}}?",
-    "description": "Title of the confirmation dialog before a chat message's author is blocked. {{username}} is that person's username; keep the @ before it. Block is a verb: to hide a person's messages."
-  },
-  "group.blockConfirm.titleUnknown": {
-    "text": "Block @System?",
-    "description": "Title of the confirmation dialog before a chat message's author is blocked. Used on a message whose author did not come with it and is shown as \"System\"."
-  },
-  "group.blockConfirm.message": {
-    "text": "Their messages in Messages and app discussions will be hidden.",
-    "description": "Body of the confirmation dialog before a person is blocked from a chat message's menu. The second 'Messages' is the name of the Messages tab; 'app discussions' are the projects' channels."
-  },
-  "group.blockConfirm.confirm": {
-    "text": "Block",
-    "description": "Confirm button of the dialog that asks whether to block a chat message's author. A verb: to hide a person's messages."
-  },
   "group.report.label": {
     "text": "Message from @{{username}}",
     "description": "Names what is being reported, at the top of the report form opened from a chat message. {{username}} is the message author's username; keep the @ before it."
@@ -1114,18 +1022,6 @@
   "group.report.labelUnknown": {
     "text": "Message from @System",
     "description": "Names what is being reported, at the top of the report form opened from a chat message. Used on a message whose author did not come with it and is shown as \"System\"."
-  },
-  "group.sheet.reply": {
-    "text": "Reply",
-    "description": "Item on the sheet that opens when a chat message is pressed and held on a touch screen: starts a reply to that message. A verb."
-  },
-  "group.sheet.unsave": {
-    "text": "Unsave",
-    "description": "Item on the sheet that opens when a saved chat message is pressed and held: removes the message from the person's saved items."
-  },
-  "group.sheet.save": {
-    "text": "Save",
-    "description": "Item on the sheet that opens when a chat message is pressed and held: keeps the message in the person's saved items. A verb, to bookmark; not saving a form."
   },
   "group.thread.replies_one": {
     "text": "{{count}} reply",
@@ -1420,8 +1316,16 @@
     "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the offer behind them no longer exists."
   },
   "group.botOffer.goneClose": {
-    "text": "This offer is no longer available. You can still propose closing it from the request’s ⋯ menu.",
-    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists; the request's ⋯ menu still has its own Propose to close."
+    "text": "This offer is no longer available. You can still propose closing this request.",
+    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists. A Propose to close button sits under this line."
+  },
+  "group.botOffer.proposeClose": {
+    "text": "Propose to close",
+    "description": "Button under the line that says a close offer has gone or expired: opens the close-request dialog with the bot's reason already in its reason box."
+  },
+  "group.botOffer.closeFailed": {
+    "text": "Couldn’t open the close form. Reload and try again.",
+    "description": "Brief message at the bottom of the screen when pressing Propose to close could not open the close-request dialog because the app's scripts did not load."
   },
   "group.botOffer.expired": {
     "text": "This offer has expired.",

@@ -368,10 +368,22 @@ test('the identity card renders picture, name and the way in to editing', () => 
     profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
-  assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
+  assert.match(fn, /IdentityAvatar/, 'the picture, or the brand pair fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
-  assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  assert.match(fn, /identity\.username && identity\.username !== identity\.name \? <div className="profile-id-handle">/, 'the handle under the name, when it is not the name');
+  // #7135: the two-person drawing is no longer a stand-in picture. A person
+  // with no photo has a generated picture of their own, sent as avatarUrl;
+  // the component only names no picture for an unknown account.
+  const avatar = profileViewTsx.slice(
+    profileViewTsx.indexOf('function IdentityAvatar('),
+    profileViewTsx.indexOf('function IdentityCard(')
+  );
+  assert.ok(avatar.length, 'IdentityAvatar must exist');
+  assert.doesNotMatch(avatar, /\/brand\/groups\/avatar-/, 'the brand pair is retired as the fallback');
+  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is not drawn either');
+  assert.match(avatar, /profile-id-avatar[^"`]*rounded-full[^"`]*overflow-hidden/,
+    'an unknown account still holds the round frame, empty');
   // The builder-profile chip left the card: the viewer's proposed PRs are
   // Your changes now (UI overhaul; they were "See all" over Your
   // contributions, which went with it).
@@ -395,7 +407,9 @@ test('the bio is a text node, never innerHTML', () => {
     const code = src.replace(/^\s*\/\/.*$/gm, '');
     assert.doesNotMatch(code, /innerHTML/, `${name} must render text as text`);
   }
-  assert.match(profileViewTsx, /whitespace-pre-line/, 'newlines in a bio still render');
+  const inlineEdit = read('frontend/src/features/profile/identity-inline-edit.tsx');
+  assert.doesNotMatch(inlineEdit.replace(/^\s*\/\/.*$/gm, ''), /innerHTML/, 'identity-inline-edit.tsx must render text as text');
+  assert.match(inlineEdit, /<p className="profile-id-bio [^"]*whitespace-pre-line[^"]*">/, 'newlines in a bio still render');
 });
 
 test('outbound handle links are scheme-guarded and rel-protected', () => {
@@ -456,13 +470,16 @@ test('the username is shown read-only, with somewhere to go', () => {
 const sheetCode = profileSheetTsx
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '');
+// The Sheet that presents it (the lift, its home, the flagged root).
+const SHEET_LIB = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/lib/sheet.ts'), 'utf8');
 
 test('the edit card degrades when the native modal kit is absent', () => {
-  // The lift goes through lib/kit-surface.ts, which returns null when the kit
-  // is missing or refuses — the same `|| null` shape Settings.showTermsSheet
-  // handles. The editor must still be reachable, so the card simply stays
-  // where React rendered it: inside #profile-root.
-  assert.match(sheetCode, /adoptKitSurface\(\{/);
+  // The lift goes through the Sheet (lib/sheet.ts, over lib/kit-surface.ts),
+  // which presents nothing when the kit is missing or refuses — the same
+  // `|| null` shape Settings.showTermsSheet handles. The editor must still be
+  // reachable, so the card simply stays where React rendered it: inside
+  // #profile-root.
+  assert.match(sheetCode, /useSheet\(\{/);
   // `kind: 'sheet'` until #1285, and the swap is the fix, not a preference.
   // `.platform-sheet-adopted` pins `max-height: 70vh` and `.un-sheet` sets
   // `touch-action: none` with no scroller detection, so a form this tall was
@@ -474,9 +491,9 @@ test('the edit card degrades when the native modal kit is absent', () => {
   // The kit takes the CARD and the flag goes on the ROOT — the dialogs' split,
   // and here it is forced: `.platform-modal-adopted` is `display: none
   // !important`, so it cannot land on the node the kit is showing.
-  assert.match(sheetCode, /adoptedOn: flagEl/);
-  assert.match(sheetCode, /id="profile-edit-root"/);
-  assert.match(sheetCode, /home: 'placeholder'/,
+  assert.match(sheetCode, /id="profile-edit-root" ref=\{rootRef\}/);
+  assert.match(SHEET_LIB, /adoptedOn: rootRef\.current \|\| undefined/);
+  assert.match(SHEET_LIB, /home: 'placeholder'/,
     'its home is #profile-root — that IS the no-kit presentation');
   assert.match(profileViewTsx, /<ProfileEditSheet/,
     'rendered inside #profile-root, above the identity card');
@@ -774,4 +791,35 @@ test('the profile no longer fetches the season challenge list via the old route'
     path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
   assert.doesNotMatch(standing, /\/challenges-api\/me\/breakdown/, 'nor does the standing card');
   assert.match(standing, /\/challenges-api\/me\/ranking\?season_id=active/);
+});
+
+
+test('inline profile save leaves a staged photo and its sheet alone', async () => {
+  const saved = { window: globalThis.window, App: globalThis.App, fetch: globalThis.fetch };
+  const calls = [];
+  const app = { user: { username: 'webuser', displayName: 'Before' } };
+  globalThis.window = { App: app, addEventListener() {}, removeEventListener() {} };
+  globalThis.App = app;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ user: { username: 'webuser', displayName: 'After' } }) };
+  };
+  try {
+    const Profile = loadProfileModule();
+    Profile._pendingAvatar = 'remove';
+    let dismissed = false;
+    Profile._dismissSheet = () => { dismissed = true; };
+    Profile._render = () => {};
+    const result = await Profile._save({ displayName: 'After', bio: 'Building together', detailsOnly: true });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.map((call) => call.url), ['/api/me/profile', '/api/auth/me']);
+    assert.deepEqual(JSON.parse(calls[0].options.body), { displayName: 'After', bio: 'Building together' });
+    assert.equal(app.user.displayName, 'After');
+    assert.equal(Profile._pendingAvatar, 'remove');
+    assert.equal(dismissed, false);
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.App = saved.App;
+    globalThis.fetch = saved.fetch;
+  }
 });

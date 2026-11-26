@@ -21,6 +21,13 @@
 // it hides nothing, and on a flat list "older" has exactly one meaning. The
 // assertions below still pin every piece of the scroll machinery as gone.
 //
+//   4. Request 7164 (the phone audit of 25 Nov 2026): on a phone the pager's
+//      own request is also made when the person reaches the end of the list,
+//      as a native list does. That is not step 1 either. It reveals nothing
+//      that was loaded and hidden: it presses the button below for you, once
+//      for each length of the list, and the button stays. The Unread tab's
+//      "See older notifications" is a reveal and stays a press.
+//
 // We extract the REAL functions/methods from the shipped source (so the
 // tests can't drift from what runs) and exercise them against stubs.
 //
@@ -184,6 +191,38 @@ test('the pager renders after the rows and is wired to loadOlder', () => {
   assert.match(block, /snap\.screenCanLoadMore/, 'offered only when a page exists');
   assert.doesNotMatch(LIST_CODE, /notifications-older-toggle/,
     'the drawer-era reveal toggle stays gone');
+});
+
+// ── Request 7164: on a phone the end of the list loads the next page ────
+
+test('reaching the end of the list makes the pager\'s own request, on a phone, once for each length', () => {
+  const m = LIST_CODE.match(/function LoadAtEnd\([\s\S]*?\n\}\n/);
+  assert.ok(m, 'the end-of-list mark found');
+  const mark = m[0];
+  assert.match(mark, /new IntersectionObserver\(/);
+  assert.match(mark, /typeof IntersectionObserver !== 'function'\) return undefined/, 'without it the button is the way');
+  assert.match(mark, /window\.matchMedia\('\(max-width: 767px\)'\)\.matches\) return undefined/, 'a phone only');
+  assert.match(mark, /if \(!active \|\|/, 'never while the sheet is closed');
+  assert.match(mark, /root: node\.closest\('\[data-notif-scroller\]'\)/, "measured against the sheet's own scroller");
+  assert.match(mark, /tried\.current === rows\) return;\s*\n\s*tried\.current = rows;\s*\n\s*reach\.current\(\);/,
+    'one length of list is tried once: a failed or empty page is not asked for again on its own');
+  assert.match(mark, /return \(\) => watcher\.disconnect\(\);/);
+  assert.match(mark, /\}, \[active, rows\]\);/, 'watched afresh when a page lands, so a list still short of the screen goes on');
+  assert.match(mark, /aria-hidden="true"/);
+  assert.match(LIST_CODE, /overflow-y-auto overscroll-contain platform-safe-scroll" data-notif-scroller=""/);
+
+  const block = listBlock();
+  const marks = [...block.matchAll(/<LoadAtEnd\b[\s\S]*?\/>\s*<button\s+id="([a-z-]+)"/g)];
+  assert.deepEqual(marks.map((hit) => hit[1]),
+    ['notifications-load-older', 'notifications-load-older', 'notifications-load-more-threads'],
+    'beside each pager that fetches, and its button stays');
+  assert.equal((block.match(/<LoadAtEnd active=\{!!open\} rows=\{shown\.length\} onReach=\{\(\) => controller\(\)\?\.loadOlder\(\)\} \/>/g) || []).length, 2,
+    'the same loadOlder the button calls, counted by the rows this filter draws');
+  // A reveal is a choice, not a page: Unread shows its older, mostly read
+  // rows only when asked (#4700), and its unread pager fills itself (#5527).
+  const collapsed = block.match(/\(tab === 'unread' && !olderShown \? \([\s\S]*?id="notifications-see-older"[\s\S]*?<\/button>/);
+  assert.ok(collapsed);
+  assert.doesNotMatch(collapsed[0], /LoadAtEnd/, 'See older notifications stays a press');
 });
 
 // ── #4700: the Unread footer reveals older rows IN PLACE ────────────────

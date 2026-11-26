@@ -14,10 +14,18 @@ const SERVER = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
 test('provider identities use immutable numeric subjects and strict handles', () => {
   assert.deepEqual(identity.normalizeIdentity({
     provider: 'github', subject: 123, handle: 'octo-user',
-  }), { provider: 'github', subject: '123', handle: 'octo-user' });
+  }), { provider: 'github', subject: '123', handle: 'octo-user', accountCreatedAt: null });
   assert.deepEqual(identity.normalizeIdentity({
     provider: 'x', subject: '456', handle: 'octo_user',
-  }), { provider: 'x', subject: '456', handle: 'octo_user' });
+  }), { provider: 'x', subject: '456', handle: 'octo_user', accountCreatedAt: null });
+  // When the provider reported when the account was made, it is kept; a
+  // value that is not a plausible date is no date.
+  assert.equal(identity.normalizeIdentity({
+    provider: 'github', subject: '9', handle: 'octo', accountCreatedAt: '2011-01-25T18:44:36Z',
+  }).accountCreatedAt, '2011-01-25T18:44:36.000Z');
+  for (const bad of ['', 'soon', '1999-01-01T00:00:00Z', '2999-01-01T00:00:00Z', 17, {}]) {
+    assert.equal(identity.normalizeIdentity({ provider: 'x', subject: '9', handle: 'octo', accountCreatedAt: bad }).accountCreatedAt, null, String(bad));
+  }
 
   for (const bad of [
     { provider: 'github', subject: '0', handle: 'valid' },
@@ -118,7 +126,7 @@ test('saving a proof stores no token, dual-writes GitHub attribution, and serial
   const lock = tx.calls.find((call) => /FOR UPDATE/.test(call.sql));
   assert.ok(lock, 'same-user provider links are serialized');
   const insert = tx.calls.find((call) => /INSERT INTO user_social_identities/.test(call.sql));
-  assert.deepEqual(insert.params, [7, 'github', '12345', 'octo-user']);
+  assert.deepEqual(insert.params, [7, 'github', '12345', 'octo-user', null]);
   assert.equal(tx.calls.some((call) => call.params.includes('never-store-me')), false);
   const compatibility = tx.calls.find((call) => /github_login = \$2/.test(call.sql));
   assert.ok(compatibility);
@@ -186,7 +194,7 @@ test('refreshing the same immutable subject updates its handle without changing 
   const write = tx.calls.find((call) => /INSERT INTO user_social_identities/.test(call.sql));
   assert.match(write.sql, /handle = EXCLUDED\.handle/);
   assert.doesNotMatch(write.sql, /public_visible = EXCLUDED\.public_visible/);
-  assert.deepEqual(write.params, [7, 'x', '10', 'new_name']);
+  assert.deepEqual(write.params, [7, 'x', '10', 'new_name', null]);
 });
 
 test('Change account stages a verified replacement and leaves the current proof authoritative', async () => {
@@ -246,7 +254,7 @@ test('replacement confirmation atomically swaps the proof and its chosen profile
   const write = tx.calls.find((call) => /INSERT INTO user_social_identities/.test(call.sql));
   assert.match(write.sql, /provider_subject = EXCLUDED\.provider_subject/);
   assert.match(write.sql, /public_visible = EXCLUDED\.public_visible/);
-  assert.deepEqual(write.params, [7, 'x', '11', 'replacement1', false]);
+  assert.deepEqual(write.params, [7, 'x', '11', 'replacement1', false, null]);
   const writeAt = tx.calls.indexOf(write);
   const discardAt = tx.calls.findIndex((call) => /DELETE FROM social_identity_pending_replacements/.test(call.sql));
   assert.ok(discardAt > writeAt, 'the pending proof is removed only after the durable swap succeeds');

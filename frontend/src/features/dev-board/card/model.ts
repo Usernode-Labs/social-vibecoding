@@ -101,6 +101,70 @@ export function shownPill(card: { pill?: { state: StatusPillState; row?: StatusP
 }
 
 /**
+ * The side one vote spec shows as already cast, from the `gc-vote-active`
+ * class AppView puts on the side the viewer chose. The pair's answer is
+ * `votedSide(yes) ?? votedSide(no)`.
+ */
+export function votedSide(spec: ActionSpec | null | undefined): 'yes' | 'no' | null {
+  if (!spec || !/\bgc-vote-active\b/.test(spec.cls || '')) return null;
+  if (/\bgc-vote-btn-yes\b/.test(spec.cls || '')) return 'yes';
+  if (/\bgc-vote-btn-no\b/.test(spec.cls || '')) return 'no';
+  return null;
+}
+
+/**
+ * The side a saved vote (#5463, cards-store.ts voteSavedStore) gives this
+ * change's vote specs, or null when none of them is that vote. The match is
+ * `savedVoteFor`'s (workshop/workshop.tsx): the change's session id in
+ * `castVote`'s first argument, at the epoch its third argument carries. A
+ * governance vote (`castIssueVote`) never matches, and neither does a saved
+ * vote at an epoch the row has moved past: the row asks again.
+ */
+export function savedSideFor(
+  yes: ActionSpec | null | undefined,
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): 'yes' | 'no' | null {
+  if (!yes || !yes.act || yes.act.fn !== 'castVote' || !saved) return null;
+  const args = Array.isArray(yes.act.args) ? yes.act.args : [];
+  const id = args[0];
+  if (id == null) return null;
+  const entry = saved[String(id)];
+  if (!entry || (entry.vote !== 'yes' && entry.vote !== 'no')) return null;
+  const rowEpoch = typeof args[2] === 'number' ? args[2] : null;
+  const savedEpoch = entry.epoch == null ? null : Number(entry.epoch);
+  if (rowEpoch != null && savedEpoch != null && rowEpoch !== savedEpoch) return null;
+  return entry.vote;
+}
+
+/**
+ * The approvals pill with a just-saved vote counted in, so a board row whose
+ * data is still the pre-vote copy reads where the vote stands the moment the
+ * server takes it (#7101). Only the at-least-N approvals pill is corrected —
+ * the case the request reported — and only when the side differs from the
+ * one the row already shows; every other pill comes back as it was, and a
+ * pill with nothing to change is the SAME object (the stores' no-op rule).
+ * Uncounted and advisory voters do not move the count: a caller passes
+ * `savedSide` null for them, while the vote button still shows their side.
+ */
+export function pillWithSavedVote(
+  s: StatusPillState | null | undefined,
+  specMine: 'yes' | 'no' | null,
+  savedSide: 'yes' | 'no' | null,
+  t: (id: string, values?: Record<string, string | number>) => string,
+): StatusPillState | null {
+  if (!s || s.key !== 'approvals' || !savedSide || savedSide === specMine) return s || null;
+  const yes = Math.max(0, (s.yes || 0) + (savedSide === 'yes' ? 1 : 0) - (specMine === 'yes' ? 1 : 0));
+  const no = Math.max(0, (s.no || 0) + (savedSide === 'no' ? 1 : 0) - (specMine === 'no' ? 1 : 0));
+  return {
+    ...s,
+    yes,
+    no,
+    label: t('project:card.pill.approvals', { yes, count: s.majority }),
+    tone: yes >= s.majority && !s.awaitsOtherYes ? 'ok' : 'progress',
+  };
+}
+
+/**
  * A named call back into AppView, with its arguments.
  *
  * The cards used to carry `onclick="AppView.castVote(12, 'yes', '<sha>')"` in
@@ -441,7 +505,8 @@ export interface ChecksProgress {
 
 export interface RowTag {
   label: string;
-  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
+  /** `bot` is Homeroom bot's own work-state, always spinning (#7182). */
+  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad' | 'bot';
   /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486).
    *  `bot`: Homeroom bot built it from the viewer's request (#4728). */
   glyph?: 'eye' | 'lock' | 'bot';
@@ -838,6 +903,21 @@ export interface DevWorkshopView {
    */
   dashboard: {
     open: number;
+    /**
+     * 24 Nov 2026: the Workshop path's Asked stop — the open lane, requests
+     * nobody is building and that are not up for a vote — counted with the
+     * board's own `asked` stage test (AppView._devCardInStage), so the list
+     * the stop opens holds what it counts. Optional for an older view.
+     */
+    asked?: number;
+    /**
+     * How many of the viewer's own threads (the Yours filter's reading) sit
+     * at three of the path's stops: each a part of what that stop counts.
+     * Null for a guest, who has none.
+     */
+    mine?: { asked: number; votes: number; live: number } | null;
+    /** The digest the weeks come from has not answered yet: Live by week holds its place. */
+    weeksPending?: boolean;
     themes: number;
     votesWaiting: number;
     /**
@@ -958,7 +1038,10 @@ export interface DevWorkshopView {
     who: string | null;
     at: string | null;
     going: boolean;
+    /** The run's element shot, drawn whole; null without one. */
     picture: string | null;
+    /** The after screen framed on what its claim is about (#41): its URL, size and the element's box, in CSS px. */
+    frame?: { url: string; width: number; height: number; box: number[] } | null;
   }[];
   /**
    * One unclaimed open issue to suggest, as a row. Null when there is none;

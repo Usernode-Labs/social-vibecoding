@@ -18,6 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 
 // ─── Module-cache pool/ws stubbing (same pattern as the sibling test) ───
 
@@ -201,14 +202,17 @@ test('fields=address → exactly username + address', async () => {
   } finally { await srv.close(); }
 });
 
-test('avatar_url rides through the read, null for a member with no picture', async () => {
+test('avatar_url rides through the read: a photo, or the account\'s generated picture', async () => {
   const srv = await startTestServer(makeMockPool());
   try {
     const { body } = await get(srv.baseUrl, '');
     const alice = body.items.find((i) => i.username === 'alice');
     const bob = body.items.find((i) => i.username === 'bob');
     assert.equal(alice.avatar_url, '/avatars/11');
-    assert.equal(bob.avatar_url, null);
+    // #7135: a member with no photo gets the picture generated from their id,
+    // so every row with a known account carries one.
+    assert.equal(bob.avatar_url, generatedAvatarUrl(2));
+    assert.match(bob.avatar_url, /^\/avatars\/g\/[a-f0-9]{20}\.svg$/);
   } finally { await srv.close(); }
 });
 
@@ -222,14 +226,17 @@ test('fields=avatar_url → exactly username + avatar_url', async () => {
   } finally { await srv.close(); }
 });
 
-test('include_0_values=0 → null avatar_url dropped, a present one kept', async () => {
+test('include_0_values=0 → nulls dropped, an avatar_url always kept', async () => {
   const srv = await startTestServer(makeMockPool());
   try {
     const { body } = await get(srv.baseUrl, '?include_0_values=0');
     const alice = body.items.find((i) => i.username === 'alice');
     const bob = body.items.find((i) => i.username === 'bob');
     assert.ok('avatar_url' in alice, 'a present picture survives');
-    assert.ok(!('avatar_url' in bob), 'a missing picture is dropped like any null');
+    // #7135: a known account always has a picture now, so it is never a null
+    // to drop; a genuinely null field still is.
+    assert.equal(bob.avatar_url, generatedAvatarUrl(2));
+    assert.ok(!('last_kudos_at' in bob), 'a null field is dropped like any null');
   } finally { await srv.close(); }
 });
 

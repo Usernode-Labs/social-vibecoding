@@ -271,6 +271,14 @@ export function leadRow<T extends WorkState>(request: T | null, change: T | null
   return request.stage === 'up_for_vote' && change ? change : request;
 }
 
+/** An update after the first, as its Discussion line records it (src/routes/votes.js). */
+export interface ChangeUpdate {
+  at?: string | null;
+  by?: string | null;
+  bot?: boolean;
+  votesKept?: boolean;
+}
+
 export interface ChangeRailInput {
   id: number | null;
   author: string | null;
@@ -297,13 +305,25 @@ export interface ChangeRailInput {
   work?: Standing | null;
   /** The viewer is the row's requester: its words are theirs (a request's row only; a change's row reads the same to everyone). */
   yours?: boolean;
+  /** Each update after the first: when, by whom, and whether the earlier votes stand. */
+  updates?: ChangeUpdate[] | null;
 }
 
 /** The pills that only count votes: the step says "Up for a vote", and the foot has the count. */
 const VOTE_PILL: ReadonlySet<string> = new Set(['needs_vote', 'approvals', 'needs_member']);
 
+/** Pure: two lines that say the same thing, whatever their case and closing stop. */
+const same = (a: unknown, b: unknown): boolean => typeof a === 'string' && typeof b === 'string'
+  && a.trim().replace(/[.!?…]+$/, '').toLowerCase() === b.trim().replace(/[.!?…]+$/, '').toLowerCase();
+
+/** Pure: the step's figure for its note, unless the step's title already says it (#88). */
+const unlessTitled = (figure: string | null | undefined, title: unknown): string | null => (figure && !same(figure, title) ? figure : null);
+
 const sentence = (parts: (string | null | undefined)[]): string => parts
   .map((p) => String(p || '').trim()).filter(Boolean)
+  // Phone review #88 (23 Nov 2026): a sentence said once. The note under
+  // "Set aside in ~7h 1m" led with the same "Set aside in ~7h 1m".
+  .filter((p, i, all) => all.findIndex((q) => same(q, p)) === i)
   .map((p) => (/[.!?…]$/.test(p) ? p : `${p}.`))
   .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
   .join(' ');
@@ -325,6 +345,21 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
     at: input.at,
     desc: input.author ? { id: 'project:topic.rail.by', values: { name: input.author } } : null,
   }));
+  // #7117 discussion: an update after the first is an event of its own, so a
+  // proposal updated from a draft shows what happened to it, not only its
+  // first build. When it is known, who made it; either way, what became of
+  // the votes it moved the code under.
+  for (const [i, u] of (input.updates || []).entries()) {
+    steps.push(step({
+      key: `updated:${i}`,
+      icon: 'built',
+      title: { id: 'project:topic.rail.updated' },
+      at: u.at || null,
+      desc: u.by ? { id: 'project:topic.rail.by', values: { name: u.by } }
+        : u.bot ? { id: 'project:topic.rail.byBot' } : null,
+      note: u.votesKept ? { id: 'project:topic.rail.votesStand' } : { id: 'project:topic.rail.votesCleared' },
+    }));
+  }
   const { id, testing, votes, status } = input;
   const checks: RailOpen | null = id != null ? { kind: 'checks', changeId: id } : null;
   const ballot: RailOpen | null = id != null ? { kind: 'votes', changeId: id } : null;
@@ -377,9 +412,10 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       break;
     case 'stuck':
       if (testing.done && testing.tone !== 'bad') tested();
+      const stuckTitle = input.merge && input.merge.tone === 'bad' ? input.merge.name : status.label;
       now({
-        icon: 'stopped', tone: 'bad', title: input.merge && input.merge.tone === 'bad' ? input.merge.name : status.label,
-        note: sentence(input.merge && input.merge.tone === 'bad' ? [input.merge.figure, ...input.merge.note] : votes.note) || null,
+        icon: 'stopped', tone: 'bad', title: stuckTitle,
+        note: sentence(input.merge && input.merge.tone === 'bad' ? [unlessTitled(input.merge.figure, stuckTitle), ...input.merge.note] : votes.note) || null,
         noteTone: 'bad', open: ballot,
       });
       break;
@@ -420,12 +456,14 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
     default: {
       tested();
       const asking = votes.tone === 'ask';
+      const title = asking || VOTE_PILL.has(status.key) ? { id: 'core:work.stage.upForVote' } : status.label;
       now({
         icon: 'vote',
-        title: asking || VOTE_PILL.has(status.key) ? { id: 'core:work.stage.upForVote' } : status.label,
+        title,
         // The figure is the foot's headline: here it leads who can give the
-        // yes, when the card says so; else the plain sentence.
-        note: votes.note.length ? sentence([votes.figure, votes.note[0]]) : { id: 'project:topic.rail.note.vote' },
+        // yes, when the card says so; else the plain sentence. A figure the
+        // title already says ("Set aside in ~7h 1m") is not said again.
+        note: votes.note.length ? sentence([unlessTitled(votes.figure, title), votes.note[0]]) : { id: 'project:topic.rail.note.vote' },
         noteTone: 'act',
         open: ballot,
       });

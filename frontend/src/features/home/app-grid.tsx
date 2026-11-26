@@ -64,8 +64,8 @@ import { CopyIcon, LockIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
-import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
+import { agoStamp } from '../../lib/timestamp';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
@@ -88,12 +88,23 @@ function cellStyle(item: GridItem): string | undefined {
   return placementStyle(item.placement);
 }
 
-function AppIcon({ icon }: { icon: IconView }) {
+/**
+ * The tiles that are on screen when the grid first draws: its first two rows
+ * of four. Their pictures load at once, so the first screenful is not held
+ * back; every tile after them waits until it is near the screen (#7165).
+ */
+export const EAGER_TILES = 8;
+
+function AppIcon({ icon, eager }: { icon: IconView; eager: boolean }) {
   if (icon.kind === 'image') {
     // w-full/h-full, not a fixed size: the tile draws a 1px hairline border
     // and the image fills the CONTENT box so it stays flush inside the ring
     // rather than being cropped by it (same note as AppCard.iconTileFor).
-    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
+    // The tile is a fixed 56px box, so a picture that arrives late moves
+    // nothing.
+    return eager
+      ? <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />
+      : <img src={icon.src} alt="" loading="lazy" decoding="async" draggable={false} className="w-full h-full object-cover" />;
   }
   if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
   return <>{icon.letter}</>;
@@ -166,17 +177,9 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-/** How long ago, in the shell's short words: "just now", "12m ago", "2h ago", "30d ago". */
-function openedAgo(at: number, t: (id: string, params?: Record<string, unknown>) => string): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - at) / 60000));
-  if (minutes < 1) return t('core:time.ago.justNow');
-  if (minutes < 60) return t('core:time.ago.minutes', { count: minutes });
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t('core:time.ago.hours', { count: hours });
-  return t('core:time.ago.days', { count: Math.floor(hours / 24) });
-}
-
-function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
+function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null, eager = false }: {
+  /** One of the first tiles, on screen when the grid draws: its picture is not lazy. */
+  eager?: boolean;
   /** Standard (WIP): under the name, the app's sentence and its contributors. */
   rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
@@ -189,8 +192,8 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
   // it is read from is empty until an effect fills it (recent-apps-store.js).
   // Always "30d ago" at most, never a date: lib/timestamp.ts's agoStamp turns
   // to a date past a week, and across a new year that date carries its year,
-  // which a phone's tile has no room for.
-  const openedWhen = openedAt && !app.statusLabel && !app.buildLine ? openedAgo(openedAt, t) : '';
+  // which a phone's tile has no room for, so it counts days (relativeOnly).
+  const openedWhen = openedAt && !app.statusLabel && !app.buildLine ? agoStamp(openedAt, { relativeOnly: true }).text : '';
   const opened = openedWhen ? t('home:grid.tile.opened', { when: openedWhen }) : '';
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
@@ -329,13 +332,15 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
               el.addEventListener('pointerdown', (e) => e.stopPropagation());
             }}
             type="button"
-            className="app-card-remove absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
+            className="app-card-remove un-touch-target absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
             aria-label={t('home:edit.removeNamed', { app: app.name })}
             onClick={(e) => {
               e.stopPropagation();
               controller()?._editRemove?.(app.slug);
             }}
           >
+            {/* The badge is drawn at 20px and pressed at 44 (un-touch-target;
+                phone review, 23 Nov 2026: 20x20 was the whole target). */}
             {/* No MinusIcon in the kit's set: the glyph is the minus itself,
                 a text node at the badge's 20px scale. */}
             <span aria-hidden="true" className="text-[14px] leading-none font-semibold">&minus;</span>
@@ -357,7 +362,7 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
           className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
         >
-          <AppIcon icon={app.icon} />
+          <AppIcon icon={app.icon} eager={eager} />
         </div>
         {/*
             A VERSION OF ANOTHER APP (docs/plans/versions.md): "Made from
@@ -477,8 +482,6 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
 export function AppGrid() {
   const t = useMessages('home');
   const state = useStoreState(gridStore);
-  // Standard (WIP), lib/skin.ts: the tile also says what the app is.
-  const rich = isKitHome(useLiveSkin());
   const live = useLiveAppSlugs();
   // When each app was last left on this device, for the tiles' "Opened" line.
   const { apps: recents } = useStoreState(recentAppsStore);
@@ -568,15 +571,16 @@ export function AppGrid() {
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}
-      {state.items.map((item) => (
+      {state.items.map((item, i) => (
         <AppCardTile
           key={`card:${item.app.slug}`}
+          eager={i < EAGER_TILES}
           app={item.app}
           style={cellStyle(item)}
           yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
           editing={state.editing}
-          rich={rich}
+          rich
           openedAt={state.view === 'grid' && !item.app.demo ? openedTimes.get(item.app.slug) ?? null : null}
         />
       ))}

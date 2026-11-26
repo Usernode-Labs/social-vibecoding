@@ -10,11 +10,13 @@
 // machine's work (src/workflow/shots-eval/), on the trial's attempt id.
 
 const appManifest = require('./app-manifest');
+const dbRetry = require('./db-retry');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff-worker');
+const pureDiff = require('./shots-diff');
 const shotsFiles = require('./shots-files');
 const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
@@ -65,9 +67,11 @@ function agentBusyRetryable(error) {
 // (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
 // wording: a database or clone step the platform runs for the copies tags
 // its own error (shots-environment), GitHub's hourly limit and the shots
-// agent's exit have their own codes, and the worker's bootstrap names its
-// transient failures. Anything else, a revision that does not build
-// included, is the proposal's and is not taken again.
+// agent's exit have their own codes, the worker's bootstrap names its
+// transient failures, and a database connection that could not be had in
+// time is known by its shape (db-retry.isConnectionError, 23 Nov 2026).
+// Anything else, a revision that does not build included, is the
+// proposal's and is not taken again.
 const GITHUB_RESET_GRACE_MS = 60_000;
 const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
 const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
@@ -86,6 +90,9 @@ function platformFault(error, { now = Date.now() } = {}) {
   // once, a few minutes on, by the recovery sweep.
   if (error.code === 'github_unavailable') return { kind: 'github_unavailable', retryAt: now + 5 * 60_000 };
   if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  // No connection in time (a release's draining process on its small pool,
+  // a server refusing connections): whichever step met it, the database's.
+  if (dbRetry.isConnectionError(error)) return { kind: 'database' };
   // The change's worker could not start (its volume, its image, no room on
   // any node, a setup that never finished): the platform's, never the
   // change's, so the run is taken again once.
@@ -384,6 +391,20 @@ function screenBrowsers(intent) {
       planContract.phoneScreen(viewport) ? phoneTool(story.persona) : BROWSER_TOOLS[story.persona]]))]));
 }
 
+// 25 Nov 2026: each of those browsers has a twin for the before side
+// (worker/write-shots-mcp-config.js), so the agent takes the same step on
+// both sides in one turn and saves both sides of a state in one call,
+// instead of walking the before side after the after side (about a model
+// round trip a step). None for a run that takes only the after side.
+function twinBrowsers(intent, { afterOnly = false } = {}) {
+  if (afterOnly) return [];
+  return [...new Set(Object.values(screenBrowsers(intent)).flatMap((screens) => Object.values(screens)))]
+    .filter((name) => typeof name === 'string' && name);
+}
+// The brief names the twins from the worker itself (worker/shots-mcp.js
+// get_brief), only for the ones it started: a warm worker can stay on an
+// older image with none, and its agent must not be told to use them.
+
 // Homeroom's install strip shows only in a phone browser, and every shots page
 // opens with it dismissed (worker/shots-page-init.js); a page opened with this
 // on its query shows it, for a change to the strip itself. Fixed words only.
@@ -578,6 +599,78 @@ function fitBrief(brief, budget = BRIEF_BUDGET) {
   };
 }
 
+// What the change's own staging seeds could not put on the before copy, and
+// what either copy's seeds wrote nothing for (#7172), for the shots agent: a
+// claim whose side needs one of those rows is skipped with a plain reason
+// rather than reported as a vague capture failure.
+const SEED_OUTCOME_RANK = { failed: 0, skipped: 1, nothing: 2 };
+function didNothingOf(beforeSeeds, afterSeeds) {
+  const before = [];
+  const after = [];
+  if (beforeSeeds) {
+    for (const entry of beforeSeeds.leftOut || []) {
+      before.push({
+        seed: entry.name,
+        outcome: 'failed',
+        reason: entry.why === 'media'
+          ? 'its media file is not on the before copy'
+          : 'the before copy\'s database cannot hold it',
+      });
+    }
+    for (const entry of beforeSeeds.outcomes || []) {
+      if (entry.outcome && entry.outcome !== 'wrote') {
+        before.push({ seed: entry.name, outcome: entry.outcome, reason: entry.reason || null });
+      }
+    }
+  }
+  for (const entry of afterSeeds?.outcomes || []) {
+    if (entry.outcome && entry.outcome !== 'wrote') {
+      after.push({ seed: entry.name, outcome: entry.outcome, reason: entry.reason || null });
+    }
+  }
+  const ordered = (list) => [...list].sort((a, b) => (SEED_OUTCOME_RANK[a.outcome] ?? 3) - (SEED_OUTCOME_RANK[b.outcome] ?? 3));
+  return {
+    before: ordered(before).slice(0, 20),
+    after: ordered(after).slice(0, 20),
+  };
+}
+
+function changeSeedsBrief(beforeSeeds, afterSeeds) {
+  const leftOut = (beforeSeeds?.leftOut || []).map(({ name, why }) => ({ seed: name, why }));
+  const beforeCopy = beforeSeeds?.ran === true ? 'applied'
+    : beforeSeeds?.ran === 'partial' ? 'partial' : 'not_run';
+  const didNothing = didNothingOf(beforeSeeds, afterSeeds);
+  // Nothing to say: every seed wrote, and the before-copy step ran in full.
+  const beforeStepIncomplete = !!beforeSeeds && beforeSeeds.ran !== true;
+  if (!didNothing.before.length && !didNothing.after.length && !beforeStepIncomplete) return null;
+  return {
+    beforeCopy,
+    leftOut,
+    didNothing,
+    note: 'Each seed under didNothing wrote nothing on the copy it names (skipped, failed, or changed no rows), with'
+      + ' the reason. If a declared change\'s steps need a row one of them writes, call skip_change for it at once'
+      + ' with the reason "seed <name> did nothing on the <before|after> copy: <reason>", and do not try other'
+      + ' browsers.' + (leftOut.length ? ' A seed under leftOut is on the after copy only: the before copy could not hold it.' : '')
+      + (beforeSeeds?.ran === 'partial' ? ' The before-copy seed step did not finish in time, so other seeds may be missing too.' : '')
+      + (beforeSeeds?.ran === false ? ' The before-copy seed step did not run, so none of the change\'s own seeds are on the before copy.' : ''),
+  };
+}
+
+// The words a run adds for the demo data its copies never got, capped at five
+// names and said per copy, skipped and failed first.
+function seedSentence(seeds) {
+  if (!seeds) return '';
+  const parts = [];
+  for (const copy of ['before', 'after']) {
+    const list = Array.isArray(seeds[copy]) ? seeds[copy] : [];
+    if (!list.length) continue;
+    const shown = list.slice(0, 5).map((entry) => `${entry.seed} (${entry.outcome}${entry.reason ? `: ${entry.reason}` : ''})`);
+    const more = list.length > 5 ? ` and ${list.length - 5} more` : '';
+    parts.push(`Demo data that did not load on the ${copy} copy: ${shown.join(', ')}${more}.`);
+  }
+  return parts.join(' ');
+}
+
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
   childApp = false, afterOnly = false, declaredChecks = null,
@@ -599,6 +692,7 @@ function shotsBrief({
   const moment = previewClock.forSession(session);
   // The screens' own files first: they say most about where a change shows.
   const files = [...revision.files.filter(isFrontendFile), ...revision.files.filter((file) => !isFrontendFile(file))];
+  const changeSeeds = changeSeedsBrief(deployment.beforeSeeds, deployment.afterSeeds);
   return fitBrief({
     version: 2,
     runId: run.id,
@@ -650,6 +744,9 @@ function shotsBrief({
     },
     declaredChecks: declaredChecks || declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // Seeds that wrote nothing on either copy (#7172), for any app: the
+    // agent names one when a claim needs a row it should have written.
+    ...(changeSeeds ? { changeSeeds } : {}),
     // The only files upload_file can choose where a page asks for one, the
     // same on both copies (worker/shots-samples.js).
     sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
@@ -698,7 +795,12 @@ function sameProvenance(actual, expected) {
     && actual.headImageDigest === expected.headImageDigest;
 }
 
+// The code a run that ended on `error` records. A connection the database
+// would not give in time is one code whatever the driver said (its errno, a
+// SQLSTATE, or none at all), so every reader can say it in plain words
+// (shots-state DATABASE_BUSY_REASON) instead of the driver's.
 function errorCode(error) {
+  if (dbRetry.isConnectionError(error)) return state.DATABASE_BUSY_CODE;
   const code = String(error?.code || '');
   return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'shots_failed';
 }
@@ -801,7 +903,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'get_brief', 'save_shot', 'finish_shots', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
@@ -1220,6 +1322,7 @@ async function buildCopies(config, pool, {
     // Ranked once: the brief shows as many as its budget has room for, and
     // the run's diagnostics rank a visit against all of them.
     const declaredChecks = declaredCheckSummary(pair.sides.head.checkout, intent, testingPathsForSession(session));
+    const seedBrief = changeSeedsBrief(exploration.beforeSeeds, exploration.afterSeeds);
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
@@ -1247,6 +1350,7 @@ async function buildCopies(config, pool, {
       // change names them and this pair installed their fixture
       // (declaredBrowserPersonas).
       browserPersonas: declaredBrowserPersonas(intent, exploration.availableFixtures),
+      twinBrowsers: twinBrowsers(intent, { afterOnly }),
       // A child app's pages load /usernode-bridge|native|tailwind/ from the
       // platform, which the edge routes in production; the shots browser's
       // proxy does the same. The platform serves its own.
@@ -1256,6 +1360,9 @@ async function buildCopies(config, pool, {
       // (3x phone, 2x desktop) instead of 1x. Read once, so the whole run
       // takes one density (services/shots-density.js).
       deviceDensity: await deps.shotsDensity.enabledOrOff(pool),
+      // #7172: the seeds that wrote nothing on each copy, so the verdict
+      // carries them and a failed run names them.
+      seeds: seedBrief?.didNothing || null,
     };
     if (await ended()) return { stale: true };
     await shotsControl.create(pool, {
@@ -1314,23 +1421,39 @@ function followedErrorOf(result) {
 
 // What a run adds up to once its agent's turn has ended: the summary of its
 // workspace, without the bytes.
+// A reason that ends with the demo-data sentence, which is never the part cut
+// off when the agent's own words are long.
+function withSeedNote(text, seedNote, max = 1800) {
+  if (!seedNote) return text.slice(0, max);
+  const room = Math.max(0, max - seedNote.length - 1);
+  return `${text.slice(0, room).trimEnd()} ${seedNote}`.slice(0, max);
+}
+
 function verdictOf(summary) {
   const s = summary.summary;
   const reasons = [...new Set(s.stories.map((story) => story.reason).filter(Boolean))];
+  const seeds = summary.seeds || null;
+  const seedNote = seedSentence(seeds);
+  // `shot_runs.hard_verdict.seeds` reads the same list, so a card and the
+  // connector know why a demo row was never there.
+  const verdict = seeds ? { ...s.verdict, seeds } : s.verdict;
+  const failedReason = s.failedCount ? shotsFiles.failedReason(summary.intent, s.stories) : null;
+  const incompleteReason = reasons.join(' ') || 'The shots agent did not save a before and after shot.';
   return {
     passed: s.verdict.passed === true,
     readyCount: s.readyCount,
     failedCount: s.failedCount,
-    verdict: s.verdict,
+    verdict,
     manifestHash: s.manifestHash,
     slots: s.files.map((file) => shotsControl.dbSlot(file)),
     reasons,
     skippedAny: summary.skippedAny,
     counts: summary.counts,
     // A run that publishes nothing says why: each failed change's claim, or
-    // what each skipped change lacked.
-    failedReason: s.failedCount ? shotsFiles.failedReason(summary.intent, s.stories) : null,
-    incompleteReason: reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.',
+    // what each skipped change lacked, then the demo data that never loaded.
+    failedReason: failedReason == null ? null : withSeedNote(failedReason, seedNote),
+    incompleteReason: withSeedNote(incompleteReason, seedNote),
+    seeds,
     lastToolFailure: summary.lastToolFailure,
   };
 }
@@ -1446,6 +1569,7 @@ async function dispatchAgent(config, pool, {
         phoneClipSize: a.phoneClipSize,
         phonePersonas: a.phonePersonas || [],
         browserPersonas: Array.isArray(a.browserPersonas) ? a.browserPersonas : [],
+        twinBrowsers: Array.isArray(a.twinBrowsers) ? a.twinBrowsers : [],
         platformAssets: a.platformAssets === true,
         deviceDensity: a.deviceDensity === true,
         onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,
@@ -1490,23 +1614,60 @@ async function dispatchAgent(config, pool, {
     agent: error ? { outcome: error.busy ? 'busy' : error.died ? 'died' : error.timedOut ? 'timed_out' : 'failed', ...error }
       : { outcome: 'completed' },
     followed: !!turn.followed,
-    ...verdictOf({ ...summary, intent: control.intent }),
+    ...verdictOf({ ...summary, intent: control.intent, seeds: a.seeds || null }),
     trace: { ...traceSummary(metrics), ...(finalResponse ? { agentFinalResponse: finalResponse } : {}) },
   };
+}
+
+// A verdict with the comparison's screens: the changes whose screens came
+// out the same marked so, a change folded onto another one's screen said so
+// beside it, and a screen on which something sizeable changed outside every
+// change's frame noted (shots-diff elsewhereChanged). Injected comparers may
+// lack the optional readers.
+function withScreens(verdict, screens, diff) {
+  let stories = verdict.stories;
+  if (typeof diff.unchangedStories === 'function') {
+    stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
+  }
+  // A change folded onto another one's screen kept its own after shot, but
+  // the card draws the first change's: say so beside it. Injected comparers
+  // may return screens without the field.
+  if (typeof shotsFiles.markFolded === 'function') {
+    const folded = new Set();
+    for (const screen of screens) {
+      if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
+    }
+    if (folded.size) stories = shotsFiles.markFolded(stories, folded);
+  }
+  const notices = typeof diff.elsewhereNotices === 'function'
+    ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
+    : (verdict.notices || []);
+  return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+}
+
+// The ready changes of a run's declaration, each slot their comparison reads.
+function readyStories(intent, verdict) {
+  return (intent?.stories || []).filter((story) => (verdict.stories || [])
+    .some((result) => result.id === story.id && result.status === 'ready'));
 }
 
 /**
  * Where each ready change's before and after screens differ, so the card
  * can outline it, with the changes whose screens came out the same marked
  * so (shots.publish). Resolves the verdict to store. A screen that cannot be
- * compared is shown without outlines; it never holds the run back.
+ * compared never holds the run back: when the comparison fails (its worker
+ * busy past the wait, out of time, or an image it cannot read), the verdict
+ * still carries a screen for each one the run shot (shots-diff
+ * fallbackScreens: nothing outlined, and no change marked unchanged, since
+ * nothing was compared), so the card draws the current viewer, and says
+ * `screensFallback`: the shots machine compares them again later
+ * (recompareScreens below) and puts the real screens in their place.
  */
 async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
   const diff = injected.shotsDiff || shotsDiff;
   const control = await shotsControl.read(pool, runId);
   if (!control || verdict.afterOnly) return verdict;
-  const ready = control.intent.stories.filter((story) => verdict.stories
-    .some((result) => result.id === story.id && result.status === 'ready'));
+  const ready = readyStories(control.intent, verdict);
   const slots = [];
   for (const story of ready) {
     for (const viewport of story.viewports) {
@@ -1517,37 +1678,50 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
       }
     }
   }
+  let files = null;
   try {
-    const files = await shotsControl.filesFor(pool, runId, slots);
-    const screens = await diff.screensFor(ready, files, { signal });
-    let stories = verdict.stories;
-    if (typeof diff.unchangedStories === 'function') {
-      stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
-    }
-    // A change folded onto another one's screen kept its own after shot, but
-    // the card draws the first change's: say so beside it. Injected comparers
-    // may return screens without the field.
-    if (typeof shotsFiles.markFolded === 'function') {
-      const folded = new Set();
-      for (const screen of screens) {
-        if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
-      }
-      if (folded.size) stories = shotsFiles.markFolded(stories, folded);
-    }
-    // A screen on which something sizeable changed outside every change's
-    // frame says so beside the agent's own notices (shots-diff
-    // elsewhereChanged). Injected comparers may not have it.
-    const notices = typeof diff.elsewhereNotices === 'function'
-      ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
-      : (verdict.notices || []);
-    return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+    files = await shotsControl.filesFor(pool, runId, slots);
+    // The run's own comparison waits for a worker, with the longer deadline
+    // (shots-diff-worker RUN_COMPARE_TIMEOUT_MS).
+    const screens = await diff.screensFor(ready, files, { signal, wait: true });
+    return withScreens(verdict, screens, diff);
   } catch (error) {
     if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {
       runId, code: error?.code, error: String(error?.message || error).slice(0, 300),
     });
-    return verdict;
+    let screens = [];
+    try { screens = files ? pureDiff.fallbackScreens(ready, files) : []; } catch { screens = []; }
+    return { ...verdict, screens, screensFallback: true };
   }
+}
+
+/**
+ * The comparison of a published run whose first one failed (its verdict
+ * says `screensFallback`), tried again (shots.recompare), from the run's
+ * published shots: its workspace is gone by then. Resolves { verdict } with
+ * the real screens in place of the fallback ones, or { skipped } when there
+ * is nothing to do (the run is no longer published, or already compared).
+ * A comparison that fails again throws, so the work item tries again later
+ * (src/workflow/shots/services.ts RECOMPARE_ATTEMPTS, spaced out).
+ */
+async function recompareScreens(pool, { runId, signal }, injected = {}) {
+  const diff = injected.shotsDiff || shotsDiff;
+  const { rows: [run] } = await pool.query(
+    'SELECT id, state, intent, hard_verdict FROM shot_runs WHERE id = $1', [runId]);
+  const verdict = run?.hard_verdict;
+  if (!run || run.state !== 'verified' || !verdict || typeof verdict !== 'object' || verdict.screensFallback !== true) {
+    return { skipped: true };
+  }
+  const ready = readyStories(run.intent, verdict);
+  if (!ready.length || verdict.afterOnly) return { skipped: true };
+  const files = await (injected.publishedFilesFor || shotsControl.publishedFilesFor)(pool, runId);
+  const screens = await diff.screensFor(ready, files, { signal, wait: true });
+  // The verdict as published, less what the fallback put in it.
+  const compared = { ...verdict };
+  delete compared.screensFallback;
+  delete compared.screens;
+  return { verdict: withScreens(compared, screens, diff) };
 }
 
 // Another run on the proposal's worker is under way: its own (the shots
@@ -1629,6 +1803,8 @@ module.exports = {
   MAKE_PROJECT,
   AFTER_ONLY,
   shotsBrief,
+  // #7172: the verdict's seed sentence, as its test seam.
+  verdictOf,
   BRIEF_BUDGET,
   sameProvenance,
   agentBusyRetryable,
@@ -1636,6 +1812,7 @@ module.exports = {
   MAX_AGENT_BUSY_RETRIES,
   MIN_AGENT_RETRY_MS,
   platformFault,
+  errorCode,
   visibleError,
   redactDiagnosticText,
   newRunMetrics,
@@ -1650,5 +1827,6 @@ module.exports = {
   agentErrorOf,
   dispatchAgent,
   compareScreens,
+  recompareScreens,
   cleanupRun,
 };

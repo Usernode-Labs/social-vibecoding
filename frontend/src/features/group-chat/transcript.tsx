@@ -57,23 +57,16 @@ import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, 
 import { Button } from '@/components/ui/button';
 import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
-import {
-  BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
-} from '@/components/ui/icons';
+import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
-import { confirmAction } from '../../lib/confirm';
 import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
-import { Icon as KitIcon } from '@/components/ui/kit';
-import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
 import { BotRequestCardView } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
-import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
+import { useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
 import { VoteCard, VoteLine } from './vote-card';
 import { Body } from './long-body';
@@ -88,8 +81,9 @@ import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
 import { changeLine, changeReplyCount, changeStream, keptOnRequest } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
+import { messageMenu, messageSheet } from '../message-actions/message-menu';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
-import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
+import { toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
@@ -222,9 +216,19 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
   const why = offer.status === 'gone' || offer.refused?.code === 'gone' ? 'gone'
     : offer.status === 'retired' || offer.refused?.code === 'retired' ? 'retired'
       : offer.status === 'expired' || offer.refused?.code === 'expired' ? 'expired' : (offer.refused?.code || '');
-  return (
+  // #6988: a close offer that is gone or expired still lets the requester
+  // propose the close. Its own buttons are gone, so this line carries one
+  // that opens the close-request dialog with the bot's reason in its box.
+  const goneOrExpired = offer.status === 'gone' || offer.status === 'expired'
+    || offer.refused?.code === 'gone' || offer.refused?.code === 'expired';
+  const issueNumber = Number(offer.issueNumber);
+  const canPropose = offer.kind === 'close_request' && goneOrExpired
+    && Number.isSafeInteger(issueNumber) && issueNumber > 0;
+  const statusLine = (
     <p
-      className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400"
+      className={canPropose
+        ? 'text-[12px] text-zinc-500 dark:text-zinc-400'
+        : 'mt-1 text-[12px] text-zinc-500 dark:text-zinc-400'}
       role="status"
       data-gc-bot-offer-status={why}
       data-gc-bot-offer-gone={why === 'gone' ? '' : undefined}
@@ -232,6 +236,30 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
     >
       {t(line)}
     </p>
+  );
+  if (!canPropose) return statusLine;
+  return (
+    <div className="mt-1 flex flex-col gap-2">
+      {statusLine}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="pillNeutral"
+          ink="neutral"
+          size="sm"
+          className="font-semibold"
+          data-gc-bot-offer-close=""
+          onClick={() => {
+            // Its own document's entry point, as the page's ⋯ row is.
+            (window as unknown as {
+              AppView?: { promptCloseIssue?: (n: number, reason?: string) => void };
+            }).AppView?.promptCloseIssue?.(issueNumber, offer.why || '');
+          }}
+        >
+          {t('chat:group.botOffer.proposeClose')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -620,6 +648,8 @@ export interface SeeVote {
   sessionId: number;
   number: number | null;
   title: string | null;
+  /** The change is live, so its vote is over: the line offers the change, not the vote (#116). */
+  live?: boolean;
 }
 
 /**
@@ -645,7 +675,7 @@ export const SystemRow = memo(function SystemRow({ msg, seeVote = null }: { msg:
         <span className="gc-msg-system-repeat" title={t('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
       ) : null}
       {vote ? (seeVote
-        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
         : <VoteCard msg={msg} />) : null}
       {/*
           A system or vote row is savable and reactable, exactly as the string
@@ -754,15 +784,17 @@ function SpecSnippet({ html }: { html: string }) {
 
 /**
  * A person's message — a named row, Discord's shape, on every surface
- * (#2783): square avatar, name, time, flat text, the viewer's own on the
- * left like everybody else's. The general chat used to put a person's body in
- * a bubble and the viewer's own on the right; the Messages screen's DMs did
- * the same and dropped it at the same time, so every chat reads alike.
+ * (#2783): square avatar, name, time, flat text. In a channel (`surface`
+ * `main`) the viewer's own rows are drawn on the right, the chat's "me"
+ * side (#7163): your picture at the trailing edge beside your words, your
+ * name and time against the right, and the body stacked right. Reply
+ * threads and a request's or change's stream (`surface` `thread`) keep the
+ * left-hand row for everyone.
  *
  * `grouped` is a continuation of the same person's previous message
  * (`groupsWithPrevious`): no avatar and no header, the time in the gutter.
  * `gc-msg-self` stays on the viewer's own rows, which the reaction bar and a
- * thread's tint key off.
+ * thread's tint key off; `gc-msg-end` marks the right-hand rows.
  *
  * ── The controls are the shared bar (#2387) ───────────────────────────
  *
@@ -782,8 +814,9 @@ function MessageActions({ msg, surface, onReportMessage }: {
   surface: 'main' | 'thread';
   onReportMessage: () => void;
 }) {
-  // Subscribed: the menu's labels are read in the language on screen.
-  useMessages('chat');
+  // Subscribed: the menu's labels (../message-actions/message-menu.ts) are
+  // read in the language on screen.
+  useMessages('messages');
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -825,9 +858,9 @@ function MessageActions({ msg, surface, onReportMessage }: {
 }
 
 /**
- * The ⋯ menu of an app chat row — the same acts, in the same order, as a
- * Messages conversation's (#2387). What differs is only where each one goes:
- * the module, over the app's own socket and routes.
+ * The ⋯ menu of an app chat row: the one list every chat's rows open
+ * (../message-actions/message-menu.ts), fed with what this place can do.
+ * Its acts go to the module, over the app's own socket and routes.
  */
 export function messageMenuItems(
   msg: TranscriptMessage,
@@ -837,63 +870,26 @@ export function messageMenuItems(
   const chat = controller();
   const id = msg.id;
   if (!id) return [];
-  const items: MenuItem[] = [];
-  // B9: hand one of your own messages to Homeroom bot, in your words.
-  if (surface === 'main' && msg.canAskBot) {
-    items.push({ key: 'ask-bot', label: translate('chat:group.menu.makeRequest'), icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
-  }
-  if (surface === 'main' && msg.canThread) {
-    items.push({ key: 'thread', label: msg.thread ? translate('chat:group.menu.viewThread') : translate('chat:group.menu.replyInThread'), icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
-  }
-  if (msg.showEdit) items.push({ key: 'edit', label: translate('chat:group.menu.edit'), icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
-  if (msg.text) items.push({ key: 'copy', label: translate('chat:group.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', translate('chat:group.menu.textCopied')); } });
-  // #4055: its pictures onto the device, whoever posted them.
-  const pictures = downloadableImages((msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })));
-  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
-  const link = chat?.messageAddress?.(id);
-  if (link) items.push({ key: 'link', label: translate('chat:group.menu.copyLink'), icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), translate('chat:group.menu.linkCopied')); } });
-  if (!msg.mine && surface === 'main') {
-    items.push({
-      key: 'unread', label: translate('chat:group.menu.markUnread'), icon: EnvelopeIcon,
-      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast(translate('chat:group.menu.markedUnread'))).catch(() => toast(translate('chat:group.menu.markUnreadFailed'))); },
-    });
-  }
-  if (msg.mine && msg.kind === 'message') {
-    items.push({
-      key: 'delete', label: translate('chat:group.menu.delete'), icon: DraftTrashIcon, danger: true, separated: true,
-      // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-      onSelect: () => {
-        void confirmAction({
-          title: translate('chat:group.deleteConfirm.title'),
-          message: translate('chat:group.deleteConfirm.message'),
-          confirmLabel: translate('chat:group.deleteConfirm.confirm'),
-          danger: true,
-        }).then((ok) => {
-          if (!ok) return;
-          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast(translate('chat:group.menu.deleteFailed')));
-        });
-      },
-    });
-  } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
-    items.push({ key: 'report', label: translate('chat:group.menu.report'), icon: FlagIcon, separated: true, onSelect: onReportMessage });
-    items.push({
-      key: 'block', label: msg.usernameMissing ? translate('chat:group.menu.blockUnknown') : translate('chat:group.menu.block', { username: msg.username }), icon: NoSymbolIcon, danger: true,
-      onSelect: () => {
-        const senderId = msg.senderId;
-        if (!senderId) return;
-        void confirmAction({
-          title: msg.usernameMissing ? translate('chat:group.blockConfirm.titleUnknown') : translate('chat:group.blockConfirm.title', { username: msg.username }),
-          message: translate('chat:group.blockConfirm.message'),
-          confirmLabel: translate('chat:group.blockConfirm.confirm'),
-          danger: true,
-        }).then((ok) => {
-          if (!ok) return;
-          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : translate('chat:group.menu.blockFailed')));
-        });
-      },
-    });
-  }
-  return items;
+  const theirs = !msg.mine && !!msg.senderId && msg.kind === 'message';
+  const senderId = msg.senderId;
+  return messageMenu({
+    makeRequest: surface === 'main' && msg.canAskBot ? () => { void chat?.makeBotRequest?.(id); } : null,
+    thread: surface === 'main' && msg.canThread ? { started: !!msg.thread, open: () => chat?.openReplyThread?.(id) } : null,
+    edit: msg.showEdit ? () => chat?._startEdit?.(id) : null,
+    text: msg.text,
+    // #4055: its pictures onto the device, whoever posted them.
+    pictures: (msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })),
+    link: chat?.messageAddress?.(id) || null,
+    markUnread: !msg.mine && surface === 'main' ? () => Promise.resolve(chat?.markUnread?.(id)) : null,
+    remove: msg.mine && msg.kind === 'message' ? () => Promise.resolve(chat?.deleteMessage?.(id)) : null,
+    report: theirs ? onReportMessage : null,
+    block: theirs && senderId ? {
+      who: msg.usernameMissing ? { unknown: 'handle' } : { name: `@${msg.username}` },
+      run: () => setUserBlocked(senderId, true),
+    } : null,
+    // The module's errors are for developers; the menu's sentence is the one to show.
+    failed: (_error, fallback) => toast(fallback),
+  });
 }
 
 /**
@@ -921,10 +917,15 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   latest?: boolean;
 }) {
   const t = useMessages('chat');
+  // The long-press sheet's words are the shared menu's.
+  useMessages('messages');
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
+  // #7163: your own message in a channel sits on the right, the chat's "me"
+  // side; a reply thread and a page's stream keep the left-hand row.
+  const right = !!msg.mine && surface === 'main';
   // #4055: in the app, whether its build can save a picture is known only
   // once asked; asking re-renders the row so the menu's Download line can
   // appear. Nothing is asked for a row without a picture.
@@ -933,14 +934,14 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: msg.usernameMissing ? t('chat:group.report.labelUnknown') : t('chat:group.report.label', { username: msg.username }), userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
-  const sheetItems: MenuItem[] = live ? [
-    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: t('chat:group.sheet.reply'), icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
-    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? t('chat:group.sheet.unsave') : t('chat:group.sheet.save'), icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
-    ...items,
-  ] : [];
+  const sheetItems: MenuItem[] = live ? messageSheet({
+    reply: !chat?._readOnly?.() ? () => chat?.replyToMessage?.(msg.id, surface) : null,
+    save: msg.showBookmark ? { saved: !!msg.bookmarked, toggle: () => chat?.toggleBookmark?.(msg.id) } : null,
+  }, items) : [];
   return (
     <ChatMessageRow
-      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
+      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${right ? ' gc-msg-end' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
+      from={right ? 'me' : 'them'}
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
@@ -1022,7 +1023,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
               the vote, elsewhere the small card with Preview and Vote.
           */}
           {msg.voteRef ? (seeVote
-            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
             : <VoteCard msg={msg} />) : null}
           {/* #6533: what a change looks like under Homeroom bot's reply. */}
           {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
@@ -1266,20 +1267,6 @@ function isBotPlan(spec: { sharedBy: string; sharedByUnknown?: boolean; botNote?
 }
 
 /**
- * What happened is said with a glyph. The standard look draws the emoji
- * each line names; under one of the frame's looks (version 2 of the tour's
- * s32 to s35) the line is the kit's event line (looks.json "wear": evt),
- * whose glyph is one of the kit's own stroked icons in the line's grey. A
- * glyph with no icon of its own (the bullet of a plain notice) stays as it
- * is. The look is read once per line, before anything a line returns on.
- */
-const EVENT_ICONS: Record<string, string> = { '📋': 'file', '✋': 'hand', '👀': 'eye', '✅': 'check', '🗳️': 'vote', '🎉': 'rocket' };
-function useEventGlyph(): (glyph: string) => ReactNode {
-  const frame = isFrameSkin(useLiveSkin());
-  return (glyph) => (frame && EVENT_ICONS[glyph] ? <KitIcon name={EVENT_ICONS[glyph]} size={16} /> : glyph);
-}
-
-/**
  * #4453: something that happened on a request — a claim, a spec posted, a
  * notice — as one quiet line with a glyph, where the stream reached it.
  * `.gc-msg-system` keeps the module's row hooks (tap-to-quote's row
@@ -1291,7 +1278,6 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   const claim = /^(\S+) claimed this (?:issue|request)$/.exec((msg.systemText || '').trim());
   const t = useMessages('project');
   const tChat = useMessages('chat');
-  const drawn = useEventGlyph();
   let glyph = '•';
   let text: ReactNode = msg.systemText;
   // Each line is one whole message, with <0> around who did it.
@@ -1326,14 +1312,15 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   }
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-request-event={spec || gh ? 'spec' : claim ? 'claim' : 'notice'}>
-      <span className="dev-request-event-glyph" aria-hidden="true">{drawn(glyph)}</span>
+      <span className="dev-request-event-glyph" aria-hidden="true">{glyph}</span>
       <span className="dev-request-event-text">
         {text}
         {msg.repeat && msg.repeat > 1 ? (
           <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
         {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>{t('project:topic.request.stream.read')}</button></> : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+        {/* Its own muted line under the sentence, with nothing before it (#116). */}
+        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{msg.time}</span> : null}
       </span>
     </div>
   );
@@ -1387,7 +1374,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     const out = new Map<number, SeeVote>();
     for (const key of Object.keys(changes.numbers)) {
       const id = Number(key);
-      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null });
+      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null, live: !!changes.live?.[id] });
     }
     return out;
   }, [changes]);
@@ -1481,13 +1468,12 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
 }) {
   const t = useMessages('project');
   const tChat = useMessages('chat');
-  const drawn = useEventGlyph();
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind} data-change-event-on={changeId || undefined}>
-      <span className="dev-request-event-glyph" aria-hidden="true">{drawn(line.glyph)}</span>
+      <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
         {/* A line the page words is one whole message: <0> is who did it,
             <1> a vote's reason. */}
@@ -1504,8 +1490,17 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
         {line.kind === 'spec' && msg.specShare?.sessionId ? (
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
         ) : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
-        {tag ? <span className="dev-request-event-time" data-change-event-tag="">{` · ${tag}`}</span> : null}
+        {/* The time and the change it happened to are their own muted line
+            under the sentence (phone review #116, 23 Nov 2026): a separator
+            baked into the start of the time began that line with a stray
+            "·" whenever the sentence wrapped. The tag rides inside the
+            time's span, so the dot is only ever between the two. */}
+        {msg.time ? (
+          <span className="dev-request-event-time" title={msg.timeTitle}>
+            {msg.time}
+            {tag ? <span data-change-event-tag="">{` · ${tag}`}</span> : null}
+          </span>
+        ) : tag ? <span className="dev-request-event-time" data-change-event-tag="">{tag}</span> : null}
       </span>
     </div>
   );

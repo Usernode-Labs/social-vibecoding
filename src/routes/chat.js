@@ -19,6 +19,7 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { isDemoNeedsProposal } = require('./workshop-overview');
 const {
   appChatReadLimiter,
+  appChatLoadLimiter,
   attachmentUploadLimiter,
   groupChatWriteLimiter,
   messageBookmarkLimiter,
@@ -1267,7 +1268,7 @@ function chatRoutes(config) {
   //       under the card that asked first): the same as a mention, without
   //       the read. `dismiss` is Not now. Members only, from the person's own
   //       browser, and capped per person by the service.
-  router.get('/api/apps/:slug/my-bot-requests', appChatReadLimiter, async (req, res) => {
+  router.get('/api/apps/:slug/my-bot-requests', appChatLoadLimiter, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {

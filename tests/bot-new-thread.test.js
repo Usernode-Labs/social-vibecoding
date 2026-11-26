@@ -52,7 +52,7 @@ function load() {
   return { mod, calls };
 }
 
-test('New chat is the Homeroom bot tab\'s labelled button, beside search, and is drawn before anything is read', () => {
+test('New chat is the Homeroom bot tab\'s labelled button, at the end of its head\'s line, and is drawn before anything is read', () => {
   // 14 Nov 2026: where the "+" disc was. Every conversation with the bot is
   // a thread and there is no Main Chat to type into, so this is how one
   // starts; the bot chat's header in Messages, which had a "+" too, is no
@@ -64,15 +64,20 @@ test('New chat is the Homeroom bot tab\'s labelled button, beside search, and is
   const html = renderToHtml(createElement(NewChatButton, { onOpen() {} }));
   assert.match(html, /^<button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="rounded-full bg-violet-600 [^"]*"><svg/, 'the page\'s one filled button, in the accent');
   assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*<\/svg><span>New chat<\/span><\/button>$/, 'a plus, then its words');
+  // 24 Nov 2026 (the three bands): the page hands it to the list's head
+  // card, which draws it at the end of the line with the Homeroom mark and
+  // the counts; the search field is the line under it.
   const ai = read('frontend/src/features/ai/index.tsx');
-  const hero = ai.slice(ai.indexOf('const hero = ('), ai.indexOf('</section>', ai.indexOf('const hero = (')));
-  assert.match(hero, /data-ai-search-toggle=""[\s\S]*<\/button>\n\s+<NewChatButton onOpen=\{openNewChat\} \/>/, 'in the Homeroom bot tab\'s head, after search');
+  assert.match(ai, /newChat=\{<NewChatButton onOpen=\{openNewChat\} \/>\}/);
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  const hero = lists.slice(lists.indexOf('data-ai-hero=""'), lists.indexOf('</section>', lists.indexOf('data-ai-hero=""')));
+  assert.match(hero, /<\/span>\n\s+\{newChat\}\n\s+$/, 'in the Homeroom bot tab\'s head, at the end of its line');
   assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /NewThreadButton/);
   assert.doesNotMatch(read(NEW_THREAD), /NewThreadButton/);
-  // Where the heading is too narrow for the words, the disc alone, and the
-  // words stay its name (app.css, by the heading's own width).
+  // Where the list is narrow (under 520px of it), the disc alone, and the
+  // words stay its name (app.css, by the list's own width).
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 14px 16px; \}\n@container \(max-width: 400px\) \{\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 0; \}\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] > span \{\n    position: absolute; width: 1px; height: 1px;/);
+  assert.match(css, /#ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 14px 16px; \}\n@container ai-list \(max-width: 519\.98px\) \{\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 0; \}\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] > span \{\n    position: absolute; width: 1px; height: 1px;/);
 });
 
 test('New chat opens set to a project: the one chip picked, else the project last left, else Any project; a page in the column is carried', () => {
@@ -118,13 +123,43 @@ test('the blank thread reads nothing and saves nothing in its first render, and 
     assert.match(html, new RegExp(`${escapeRe(words)}<span class="messages-start-more">…</span>`));
   }
   // Any project, on the chip over the box; the picker is not drawn until it is opened.
-  assert.match(html, new RegExp(`class="messages-project-chip" data-bot-new-thread-project=""[^>]*aria-expanded="false"[^>]*>[\\s\\S]*?${escapeRe(message('messages:newThread.anyProject'))}`));
+  // One look (25 Nov 2026): the chip is also the shared menu chip (one-chip).
+  assert.match(html, new RegExp(`class="messages-project-chip one-chip" data-bot-new-thread-project=""[^>]*aria-expanded="false"[^>]*>[\\s\\S]*?${escapeRe(message('messages:newThread.anyProject'))}`));
   assert.doesNotMatch(html, /id="bot-project-picker"/);
   assert.doesNotMatch(html, /data-bot-new-thread-draws/, 'the drawing line only once a design start begins the message');
   assert.deepEqual([...mod.CHANGE_KINDS], ['any', 'fix', 'add', 'design']);
   const server = require('../src/services/private-threads');
   assert.deepEqual(Object.keys(server.CHANGE_KINDS), [...mod.CHANGE_KINDS], 'the kinds the server knows');
   for (const start of mod.NEW_THREAD_STARTS) assert.ok(mod.CHANGE_KINDS.includes(start.kind), `${start.key} is for a kind the server knows`);
+});
+
+test('docked beside the bot tab\'s lists, New chat is the column\'s resting state: drawn as cards, with no ✕ (24 Nov 2026)', () => {
+  const { mod } = load();
+  const close = new RegExp(`aria-label="${escapeRe(message('messages:newThread.close'))}"`);
+  // A phone's drawer and Messages: the ✕ is there, and closes the new chat.
+  const loose = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
+  assert.match(loose, close);
+  assert.doesNotMatch(loose, /data-bot-new-thread-docked/);
+  // The docked column (#7039 never leaves it empty): no ✕, and no control in its place.
+  const docked = renderToHtml(createElement(mod.NewThreadDocked.Provider, { value: true }, createElement(mod.NewThreadPanel, { conversationId: 7 })));
+  assert.doesNotMatch(docked, close);
+  assert.match(docked, /data-bot-new-thread-docked=""/);
+  const head = docked.match(/<header class="messages-thread-header">([\s\S]*?)<\/header>/);
+  assert.ok(head, 'the head is drawn');
+  assert.doesNotMatch(head[1], /<button/, 'nothing to press in the head while the list is there');
+  assert.match(head[1], new RegExp(escapeRe(message('messages:newThread.title'))));
+  assert.match(head[1], new RegExp(escapeRe(message('messages:newThread.sub'))));
+  // Only the bot tab's docked column provides it.
+  const ai = read('frontend/src/features/ai/index.tsx');
+  assert.equal((ai.match(/<NewThreadDocked\.Provider value>/g) || []).length, 1);
+  // The look: no sheet round it, a title card, and one card under it for the
+  // starts, the choosers and the box, laid in the pane's grid (no offset).
+  const css = read('public/css/app.css');
+  const pane = 'html:root #ai-screen \\.ai-main-pane \\.messages-layout > \\[data-bot-new-thread-docked\\]';
+  assert.match(css, /#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\[data-bot-new-thread-docked\]\) \{\s+background: none;\s+border: 0;\s+border-radius: 0;\s+\}/);
+  assert.match(css, new RegExp(`${pane} \\{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\\(0, 1fr\\) auto;`));
+  assert.match(css, new RegExp(`${pane}::before \\{[^}]*grid-row: 2 / -1;[^}]*margin: 12px var\\(--thread-gutter\\) 8px;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
+  assert.match(css, new RegExp(`${pane} > \\.messages-thread-header \\{[^}]*margin-inline: var\\(--thread-gutter\\);[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card-solid\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
 });
 
 test('the kind is read off the start a message begins with, and a tap writes the start into the box', () => {
@@ -151,6 +186,20 @@ test('the kind is read off the start a message begins with, and a tap writes the
   assert.match(src, /input\.setSelectionRange\(end, end\);/, 'the caret goes to the end');
 });
 
+// #7069: New chat puts the caret in the box, so you can type at once; on a
+// touch-only phone it does not, so the keyboard stays down over the starts.
+test('#7069: opening a new chat focuses its box', () => {
+  const src = read(NEW_THREAD);
+  assert.ok(src.includes("import { wantsKeyboardFocus } from '../message-actions/focus';"), 'the same rule Reply uses');
+  assert.ok(src.includes('let openTurn = 0;'));
+  const start = src.slice(src.indexOf('export function startNewThread'), src.indexOf('/** The chat a new chat is open in right now'));
+  assert.ok(start.includes('blankIn = conversationId;\n  openTurn += 1;\n  notify();'),
+    'every New chat press counts a turn, one over a chat already open too');
+  assert.ok(src.includes('() => openTurn,'), 'the panel reads that turn');
+  assert.ok(src.includes('useEffect(() => { if (wantsKeyboardFocus()) toField(); }, [opened]);'),
+    'the caret goes in the box where there is a keyboard, never on a touch-only phone');
+});
+
 test('the project is chosen from the "Your communities" rows, Any project first', () => {
   const picker = loadTsx('frontend/src/features/messages/project-picker.tsx');
   const info = {
@@ -168,7 +217,7 @@ test('the project is chosen from the "Your communities" rows, Any project first'
   const src = read('frontend/src/features/messages/project-picker.tsx');
   // A sheet from the floor on a phone (the kit's when it is there), a menu from 768px.
   assert.match(src, /wide\n\s+\? <PickerMenu slug=\{slug\} anchor=\{anchor\} onPick=\{onPick\} onClose=\{onClose\} \/>\n\s+: <PickerSheet slug=\{slug\} onPick=\{onPick\} onClose=\{onClose\} \/>/);
-  assert.match(src, /adoptKitSurface\(\{\n\s+kind: 'sheet',/);
+  assert.match(src, /useSheet\(\{\n\s+kind: 'sheet',/);
   assert.match(src, /className="community-switcher community-switcher-sheet"/);
   assert.match(src, /className="community-switcher community-switcher-menu"/);
   assert.match(src, /import \{ switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');
@@ -232,7 +281,7 @@ test('its box is the conversation composer\'s card, piece for piece', () => {
   const composer = read('frontend/src/features/messages/composer.tsx');
   for (const piece of [
     '<div className="messages-composer-card">',
-    '<div className="flex items-end gap-1.5">',
+    '<div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? \'\' : undefined}>',
     '<div className="messages-composer-add" ref={addRef}>',
     'className="messages-composer-input"',
     'className="messages-send"',
@@ -277,10 +326,17 @@ test('who works on it: Homeroom bot by default, on a chip beside the project\'s,
   const { mod, calls } = load();
   const html = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
   assert.deepEqual(calls, [], 'the connections are not read until the picker is opened');
-  const chip = html.match(/<button type="button" class="messages-project-chip" data-bot-new-thread-builder="homeroom"[^>]*>[\s\S]*?<\/button>/);
+  // One look (25 Nov 2026): both chips are the shared menu chip, the label its quiet lead word.
+  const chip = html.match(/<button type="button" class="messages-project-chip one-chip" data-bot-new-thread-builder="homeroom"[^>]*>[\s\S]*?<\/button>/);
   assert.ok(chip, 'the builder chip is the project chip\'s own class');
   assert.match(chip[0], /aria-haspopup="dialog" aria-expanded="false"/);
   assert.doesNotMatch(chip[0], /data-picked/, 'tinted only for a pick of the person\'s own');
+  // Phone review S13: each chip says what it picks, in words that are also
+  // its name for a screen reader, on one shared fill.
+  assert.match(chip[0], /<span class="messages-project-chip-name"><span class="messages-project-chip-label one-chip-lead">With:<\/span> Homeroom bot<\/span>/);
+  assert.doesNotMatch(chip[0], /aria-label=|title=|style=/, 'its words name it; no tint is set');
+  const project = html.match(/<button type="button" class="messages-project-chip one-chip" data-bot-new-thread-project=""[^>]*>[\s\S]*?<\/button>/);
+  assert.match(project[0], new RegExp(`<span class="messages-project-chip-label one-chip-lead">About:</span> ${escapeRe(message('messages:newThread.anyProject'))}`));
   assert.match(chip[0], new RegExp(escapeRe(message('messages:newThread.builder.homeroom.name'))));
   assert.ok(html.indexOf('data-bot-new-thread-project=""') < html.indexOf('data-bot-new-thread-builder="homeroom"'), 'after the project\'s chip');
   // Homeroom bot's thread is as it was: its own words under the title, its send, no steps.
@@ -293,7 +349,7 @@ test('who works on it: Homeroom bot by default, on a chip beside the project\'s,
   const bar = src.slice(src.indexOf('<div className="messages-project-row">'), src.indexOf('<div className="messages-composer-card">'));
   assert.match(bar, /<ProjectChip[\s\S]*?\/>\n\s+<BuilderChip/, 'both chips float over the card, in one row');
   assert.match(bar, /if \(!pickingBuilder && links\.phase !== 'ready' && links\.phase !== 'loading'\) void links\.load\(\);/, 'read on the first open');
-  assert.match(read('public/css/app.css'), /\.messages-project-row \{ display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; \}/);
+  assert.match(read('public/css/app.css'), /\.messages-project-row \{ display: flex; gap: 6px; padding-bottom: 8px; \}\n\.messages-project-row > \[data-bot-new-thread-builder\] \{ flex-shrink: 0; \}/);
 });
 
 test('which products are connected is read off the names Settings sorts its cards by', () => {

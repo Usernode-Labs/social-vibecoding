@@ -5429,9 +5429,31 @@ const AppView = {
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
       AppView._clearTopicHeadBody();
+      // 24 Nov 2026: a live draft that has not been proposed is no change.
+      // Its old change address opens the thread its draft bar is in, in
+      // place (no Back entry), and no change page is drawn.
+      const draftHome = await AppView._draftHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (draftHome) {
+        AppView._devTopic = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
+        // #7045: the router runs twice for one followed link (popstate, then
+        // hashchange), and the second pass wrote this change's address again
+        // over the request's it had just been swapped for: a second entry,
+        // and a Back that did nothing. App.updateHash reads this and swaps
+        // that write in place as well.
+        try {
+          // The second pass finds the request's address here already: the
+          // change's, noted by the first, is the one kept.
+          if (/\/dev\/(?:changes|proposals|shared)\/\d+/.test(location.pathname)) {
+            AppView._forwardedChange = { from: location.pathname, at: Date.now() };
+          }
+        } catch (_) { AppView._forwardedChange = null; }
         AppView._openChangeOnRequest(home, ref.id, { replaceRoute: true });
         return;
       }
@@ -5796,7 +5818,16 @@ const AppView = {
   // lives on, or null when it keeps its own page (routes/threads.js, the
   // change's home). Asked once per change and app; a read that fails or
   // takes too long is "its own page", so the page still opens.
+  //
+  // 24 Nov 2026: the same read also says whether the session is a live app
+  // draft that has not been proposed. Such a session is no change at all: it
+  // has no page, and its old address opens the thread its draft bar is in
+  // (`_draftHomeOf`).
   _changeHomes: new Map(),
+  // The same read's other answer (24 Nov 2026): the thread an unproposed
+  // live draft's old change address opens, or null. Both maps are filled by
+  // the one fetch below, so asking either costs no second read.
+  _draftHomes: new Map(),
   CHANGE_HOME_WAIT_MS: 4000,
   async _requestHomeOf(id) {
     const slug = App.currentApp || AppView.appData?.slug;
@@ -5807,8 +5838,12 @@ const AppView = {
       const read = fetch(`/api/apps/${encodeURIComponent(slug)}/threads/change/${n}${AppView._demoQS()}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
+          if (!data) { AppView._draftHomes.delete(key); return null; }
           const home = Number(data && data.request);
-          return Number.isInteger(home) && home > 0 ? home : null;
+          const request = Number.isInteger(home) && home > 0 ? home : null;
+          const draft = Number(data && data.draft && data.draft.threadRootId);
+          AppView._draftHomes.set(key, Number.isInteger(draft) && draft > 0 ? draft : null);
+          return request;
         })
         .catch(() => null);
       AppView._changeHomes.set(key, read);
@@ -5822,6 +5857,40 @@ const AppView = {
     } finally {
       clearTimeout(timer);
     }
+  },
+  // The thread an unproposed live draft's old change address opens, or null.
+  // Shares `_requestHomeOf`'s one cached read (above).
+  async _draftHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._draftHomes.has(key)) await AppView._requestHomeOf(id);
+    const draft = Number(AppView._draftHomes.get(key));
+    return Number.isInteger(draft) && draft > 0 ? draft : null;
+  },
+
+  // 24 Nov 2026: a live draft that has not been proposed has no change page.
+  // Its old address opens the thread its draft bar is in, in place of the
+  // change address (no Back entry), as a change's request home does.
+  _openDraftThread(threadRootId) {
+    const root = Number(threadRootId);
+    if (!Number.isInteger(root) || root <= 0) return false;
+    // #7140: in the side panel's framed document there is no bot page to
+    // draw — its list belongs to the top window, and drawing it here put a
+    // second, narrower copy beside the real one. Hand the thread up instead,
+    // which replaces the top's entry with it and drops this frame with the
+    // panel. Nothing here moves or reveals a screen.
+    if (typeof App !== 'undefined' && App.embeddedPanel) {
+      window.UsernodeReact?.sidePanelEmbed?.handTop?.('homeroom-bot/thread/' + root);
+      return true;
+    }
+    try {
+      history.replaceState(null, '', `#homeroom-bot/thread/${root}`);
+    } catch (err) { /* opaque origin: the page still opens below */ }
+    if (typeof App !== 'undefined' && App.navigateToAi) App.navigateToAi();
+    window.UsernodeReact?.ai?.openAt?.({ threadRootId: root, focusMessageId: null });
+    return true;
   },
 
   // 6 Nov 2026 (#6439): a vote to close a request is decided on the
@@ -6470,14 +6539,19 @@ const AppView = {
       // left can never take on the new route's pill or thread list.
       const slug = (AppView.appData && AppView.appData.slug) || null;
       const route = AppView._topicRoute();
+      // Request #7164: the page's own name, for the browser tab's title
+      // (features/header/document-title.ts), which says the request and
+      // the project where it used to keep the last screen's name.
+      const title = String(item.title || item.session_title || item.pr_title || '');
       react.publishTopicHead(t.kind === 'gov'
-        ? { card: null, body: { decision: item }, item: null, slug, route, loading: false }
+        ? { card: null, body: { decision: item }, item: null, slug, route, title, loading: false }
         : {
           card,
           body,
           item: t.kind === 'session' || t.kind === 'proposal' ? item : null,
           slug,
           route,
+          title,
           loading: false,
         });
       AppView._paintedTopic = { kind: t.kind, id: t.id, slug };
@@ -7876,8 +7950,8 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
-      note = why ? `${title} ${why}` : title;
+      const phase = AppView._checksPhaseCopy(item.check_phase, item);
+      note = why ? `${phase.sentence} ${why}` : phase.title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
       // change" (#1771).
@@ -8315,6 +8389,9 @@ const AppView = {
       // (src/services/work-state.js). The foot words its headline and line
       // from it, so this page and the Homeroom bot tab cannot disagree.
       work: item && item.work && typeof item.work === 'object' ? item.work : null,
+      // #7117 discussion: an update after the first is an event on the
+      // timeline, as the Discussion line it wrote is (src/routes/votes.js).
+      updates: item && Array.isArray(item.updates) ? item.updates : [],
       // The last run's counts and its failures by name, for the layer See
       // what failed opens over the card (change-head.tsx ChecksSummary).
       checks: AppView._checksSummary(item),
@@ -9262,8 +9339,9 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
-      // #6122: a queued run also says how long its wait should be.
-      const note = [copy.title];
+      // #6122: a queued run also says how long its wait should be. Its
+      // place in line is the note's first sentence, so it ends as one.
+      const note = [copy.sentence];
       if (phase === 'queued') {
         const eta = AppView._checksEta(item);
         if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
@@ -9318,10 +9396,11 @@ const AppView = {
     };
   },
 
-  // The Before and after card: the shots in the viewer specs use, once they
-  // are taken; until then one line inside the card that says so; a run
-  // that failed or was waived says that instead. Nothing when the change
-  // shows nothing (no shots and no captures, or none needed).
+  // The Before and after card: the shots in the one before & after viewer
+  // (review-flow/shots-viewer.tsx), once they are taken; until then one line
+  // inside the card that says so; a run that failed or was waived says that
+  // instead. Nothing when the change shows nothing (no shots and no
+  // captures, or none needed).
   _changeShotsView(kind, item) {
     const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
     if (!shots) {
@@ -9331,18 +9410,14 @@ const AppView = {
     const view = AppView._shotsView(shots);
     if (!view || view.state === 'not_required') return null;
     if (view.verified) {
-      const html = AppView.shotsHtml(shots, { sessionId: item.id, thread: true });
       // 1 Nov 2026 (one page per thread): a change on its request's page
       // shows its first screen's before and after small, as the Workshop's
-      // picture does, with Expand into this viewer.
-      const pic = html ? AppView._workshopVisuals(null, shots) : null;
+      // picture does, with Expand into the viewer.
+      const pic = AppView._workshopVisuals(null, shots);
       const thumbs = pic && (pic.before || pic.after)
-        ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
-      // The run's own screens and what changed on each, for the card's
-      // picture: the Needs you page's slider (topic/thread-picture.tsx).
-      const screens = pic && Array.isArray(pic.screens) ? pic.screens : [];
-      const changes = pic && Array.isArray(pic.changes) ? pic.changes : [];
-      return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
+        ? { before: pic.before || null, after: pic.after || null } : null;
+      // The viewer reads the shots themselves, as every surface does.
+      return { state: 'verified', source: { shots, sessionId: Number(item.id) }, line: null, thumbs, changeId: Number(item.id) || null };
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     // The previous version's shots (shots-view.js previous) stay on the card
@@ -9364,7 +9439,13 @@ const AppView = {
         retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
       };
     }
-    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    if (running) {
+      // 23 Nov 2026: a run Homeroom takes again because it was too busy to
+      // get a database connection says that, still under way, rather than
+      // that the screenshots are being taken.
+      const busy = view.retrying && shots.failureCode === 'database_busy';
+      return { state: view.state, html: '', line: busy ? view.sentence : PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    }
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
@@ -9602,13 +9683,14 @@ const AppView = {
       // Once a proposal has entered shots v2, its state is authoritative.
       // In particular, pending/failed shots must never be visually
       // replaced by an older route capture that happens to exist.
-      const tilesHtml = item.shots
-        ? AppView.shotsHtml(item.shots, { sessionId: item.id })
-        : AppView.visualsTilesHtml(item.visuals);
       // Open: the tiles are the About sheet's before/after row now, not a
-      // toggle behind a button.
-      if (tilesHtml) {
-        visuals = { sessionId: item.id, open: true, tilesHtml };
+      // toggle behind a button. Shots are drawn by the one before & after
+      // viewer (review-flow/shots-panel.tsx), from the shots themselves.
+      if (item.shots && typeof item.shots === 'object') {
+        visuals = { sessionId: item.id, open: true, source: { shots: item.shots, sessionId: Number(item.id) } };
+      } else {
+        const tilesHtml = AppView.visualsTilesHtml(item.visuals);
+        if (tilesHtml) visuals = { sessionId: item.id, open: true, tilesHtml };
       }
     }
 
@@ -10486,6 +10568,15 @@ const AppView = {
     if (kind === 'proposal' || kind === 'session') {
       const asked = { kind, id };
       AppView._devTopicAsked = asked;
+      // 24 Nov 2026: an unproposed live draft has no change page: its
+      // address opens its thread, as `_renderTopicSubView` does.
+      const draftHome = await AppView._draftHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      if (draftHome) {
+        AppView._devTopicAsked = null;
+        AppView._openDraftThread(draftHome);
+        return;
+      }
       const home = await AppView._requestHomeOf(id);
       if (AppView._devTopicAsked !== asked) return;
       AppView._devTopicAsked = null;
@@ -10746,6 +10837,18 @@ const AppView = {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
     if (!btn || !menu) return;
+    // A sheet row's words. A row's title can hold a second, quieter run after
+    // its name (App secrets' "No manifest yet", filled into #dc-secrets-state):
+    // two flex items on the desktop menu, with a gap between. `textContent`
+    // has no gap, so the sheet read "App secretsNo manifest yet"; the runs are
+    // joined with a middle dot instead. A title with one run reads as before.
+    const rowLabel = (titleEl, node) => {
+      const runs = Array.from(titleEl?.childNodes || [])
+        .map((part) => (part.textContent || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (runs.length) return runs.join(' · ');
+      return (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim();
+    };
     AppView._plusMenuAbort?.abort();
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
@@ -10774,8 +10877,10 @@ const AppView = {
       const glyph = node.querySelector('svg')?.cloneNode(true);
       if (glyph) glyph.removeAttribute('class');
       return {
-        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        label: rowLabel(titleEl, node),
         iconEl: glyph || undefined,
+        // Phone review #115: Leave is red in the sheet as in the menu.
+        destructive: node.hasAttribute('data-plus-destructive'),
         handler: () => node.click(),
       };
     });
@@ -10840,7 +10945,7 @@ const AppView = {
             const glyph = node.querySelector('svg')?.cloneNode(true);
             if (glyph) glyph.removeAttribute('class');
             return {
-              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: rowLabel(titleEl, node),
               iconEl: glyph || undefined,
               // The menu's one lit row, Suggest an improvement (actions-row.tsx
               // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
@@ -10919,8 +11024,9 @@ const AppView = {
         // a sheet of their own, headed with the row's name.
         // The owner, 7 Oct: a second sheet of the same kind, titled, whose
         // last card is Back rather than Cancel. Back brings the menu back.
+        // S17: with its group labels, which sheetActions makes headings.
         const rows = settingsPanel
-          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus], div[data-plus-group]')) : [];
         Promise.resolve(PlatformUI.actionSheet({
           title: PlatformI18n.t('changes:board.plusMenu.settingsTitle'), cancelLabel: PlatformI18n.t('core:common.back'), actions: sheetActions(rows),
         })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
@@ -11098,7 +11204,7 @@ const AppView = {
     AppView._renderTopicHead();
   },
   // The card pictures are picked by the page's mode (_workshopVisuals), so a
-  // mode switch repaints what shows them: the open topic (its ThreadPicture
+  // mode switch repaints what shows them: the open topic (its before & after pair
   // and change cards, through _renderTopicHead) and the Workshop's recently
   // live list. Registered on Theme.onChange, which fires after the new
   // theme is on <html>.
@@ -12001,18 +12107,12 @@ const AppView = {
       GroupChat.sendTyping();
     });
 
-    // Multi-line submit semantics: a <textarea> doesn't auto-submit on
-    // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
-    // inserts a newline (default). On touch the on-screen return key
-    // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
-    // included: the chord every other composer on the platform answers to,
-    // and the one way to send from a hardware keyboard on a touch screen.
-    // Bubble phase, so the autocomplete's capture-phase keydown still owns
-    // Enter while its dropdown is open.
+    // A <textarea> doesn't submit on Enter, so we drive it here, by the one
+    // rule every message box keeps (frontend/src/lib/enter-sends.ts, via
+    // `GroupChat._enterSends`). Bubble phase, so the autocomplete's
+    // capture-phase keydown still owns Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
+      if (GroupChat._enterSends(e)) {
         e.preventDefault();
         submitGeneral();
       }
@@ -13478,7 +13578,8 @@ const AppView = {
         }
         tags.push({
           label,
-          tone: ws.spinner ? 'run' : 'plain',
+          // #7182: the bot's own status stands apart from other running tags.
+          tone: ws.tone === 'bot' ? 'bot' : (ws.spinner ? 'run' : 'plain'),
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
@@ -13683,12 +13784,26 @@ const AppView = {
    * through the vote queue lands on the digest every time otherwise. Stored
    * per browser rather than per account: it is a reading position, not a
    * setting, and the same mechanism the grouping already uses.
+   *
+   * PER PROJECT (phone review #43, 23 Nov 2026). It was one place for every
+   * project on the device: a project whose Workshop had never been opened
+   * came back from its app on "Group challenge · Workshop", because the
+   * Workshop was the last place shown in ANOTHER project. Each project now
+   * remembers its own (`devWorkshopTab:<slug>`), and one with nothing
+   * remembered opens on its Hub. `slug` is the current project unless named;
+   * a switch (place-store.ts landKeepingPlace) still reads the page it is
+   * leaving, so it keeps the place you were on.
    */
-  _workshopTab() {
+  _workshopTabStoreKey(slug) {
+    const at = slug || (typeof App !== 'undefined' && App && App.currentApp) || '';
+    return at ? `${AppView.WORKSHOP_TAB_KEY}:${at}` : null;
+  },
+  _workshopTab(slug) {
     const url = AppView._workshopTabParam();
     if (url) return url;
     try {
-      const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      const key = AppView._workshopTabStoreKey(slug);
+      const stored = key ? window.localStorage.getItem(key) : null;
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
       if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
@@ -13767,6 +13882,7 @@ const AppView = {
       .slice(0, limit);
     return rows.map((m) => {
       const pictures = AppView._workshopVisuals(null, m.shots || null);
+      const thumb = AppView._recentLiveThumb(m.shots || null, pictures);
       const dep = m.deployment_state;
       const going = dep === 'pending' || dep === 'deploying' || (dep !== 'deployed' && m.live_at === null);
       const raw = AppView._devCardAuthor('merged', m);
@@ -13778,9 +13894,34 @@ const AppView = {
         who: AppView._botBuilt(m) ? PlatformI18n.t('changes:workshop.row.byBot') : (raw || null),
         at: going ? null : (m.live_at || m.merged_at || m.created_at || null),
         going,
-        picture: pictures && pictures.after ? pictures.after : null,
+        picture: thumb.picture,
+        frame: thumb.frame,
       };
     });
+  },
+  // RECENTLY LIVE'S SMALL PICTURE (phone review #41, 23 Nov 2026). It was the
+  // change's first after still, the whole screen, cropped to a 96 × 60 slot
+  // at random: a white box with words cut at its edge, a blurred strip, and on
+  // a dark page a bright slab, one of them blank. Now it shows what changed or
+  // nothing:
+  //   frame    the after screen framed on the element its claim is about,
+  //            as the shots run recorded it (#6966 `frames`), in the page's
+  //            mode: { url, width, height, box: [x, y, w, h] } in CSS px.
+  //   picture  else the run's element shot (a `focus` still), drawn whole.
+  // Neither, and the row draws the project's tile.
+  _recentLiveThumb(shots, pictures) {
+    const none = { picture: null, frame: null };
+    if (!pictures) return none;
+    for (const screen of (Array.isArray(pictures.screens) ? pictures.screens : [])) {
+      const f = (screen.frames || []).find((one) => one && one.n > 0 && Array.isArray(one.a) && one.a[2] > 0 && one.a[3] > 0);
+      if (f && screen.after && screen.after.url && screen.width > 0 && screen.after.height > 0) {
+        return { picture: null, frame: { url: screen.after.url, width: screen.width, height: screen.after.height, box: f.a.slice(0, 4) } };
+      }
+    }
+    const after = pictures.after || null;
+    const element = after && Array.isArray(shots && shots.artifacts)
+      && shots.artifacts.some((a) => a && a.url === after && a.variant === 'focus');
+    return element ? { picture: after, frame: null } : none;
   },
 
   // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
@@ -13825,7 +13966,9 @@ const AppView = {
   // shot on, and whether it was a phone-frame capture (#768). Null when no
   // group has a still on either side; a group with one honest half is kept,
   // and the feed then shows that side alone.
-  _workshopVisuals(visuals, shots = null) {
+  // `theme` picks the shots' mode where the viewer has its own light/dark
+  // flip (review-flow/shots-viewer.tsx); left out, the page's mode decides.
+  _workshopVisuals(visuals, shots = null, theme = null) {
     if (shots && typeof shots === 'object') {
       // A v2 record is authoritative even while pending/failed: returning
       // null suppresses the legacy capture instead of substituting a picture
@@ -13838,7 +13981,7 @@ const AppView = {
       // shot where the run took one and the light one otherwise. A run
       // lists its dark shots before its light ones, so without this the
       // first match was nearly always dark (#6820).
-      const mode = AppView.resolvedTheme();
+      const mode = theme === 'dark' || theme === 'light' ? theme : AppView.resolvedTheme();
       const find = (claimValue, viewportName, side, variant, theme = 'light') => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
         && a.side === side && a.variant === variant && a.media === 'png' && (a.theme || 'light') === theme && urlOk(a.url)
@@ -14000,13 +14143,16 @@ const AppView = {
     return `${(at > max * 0.6 ? cut.slice(0, at) : cut).trim()}…`;
   },
 
-  _setWorkshopTab(key) {
+  _setWorkshopTab(key, slug) {
     // The plan is gone once it is built, so the page reopens on the hub.
     const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
-    try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+    // Remembered for that project alone (#43, see _workshopTab).
+    const store = AppView._workshopTabStoreKey(slug);
+    if (!store) return;
+    try { window.localStorage.setItem(store, next); } catch {}
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
@@ -14262,14 +14408,14 @@ const AppView = {
     if (AppView._historyWorkshopTab()) return false;
     const slug = (typeof App !== 'undefined' && App && App.currentApp) || null;
     if (!slug || !AppView._onProjectPage(slug)) return false;
-    return AppView._stampWorkshopTab(slug, AppView._workshopTab());
+    return AppView._stampWorkshopTab(slug, AppView._workshopTab(slug));
   },
   // Show an entry's tab after a traversal. Remembered the way a press is (so
   // the page mounts on it), and told to a page already up as a TRAVERSAL, so
   // the page switches without pushing an entry of its own.
   _showHistoryWorkshopTab(slug, tab) {
     if (!AppView._isWorkshopPlace(tab)) return;
-    AppView._setWorkshopTab(tab);
+    AppView._setWorkshopTab(tab, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
     } catch {}
@@ -14294,7 +14440,7 @@ const AppView = {
   _landOnTab(slug, tab) {
     const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
     AppView._notePlaceDecided(slug);
-    AppView._setWorkshopTab(key);
+    AppView._setWorkshopTab(key, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
@@ -15497,8 +15643,28 @@ const AppView = {
     // Page-counted numbers are floors; server counts never are. The walk
     // marks its own figures with this for the same reason the tiles do.
     const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
+    // 24 Nov 2026: the Workshop's path (features/dev-board/workshop/
+    // front-page.tsx) counts its Asked stop with the same lane test the
+    // board narrows to (`_devCardInStage('asked')`), and marks the stops
+    // where the viewer has threads (`_devCardIsYours`, the Yours filter's
+    // reading of "yours": the Homeroom bot tab's threads), each a part of
+    // what its stop counts. The front page asks for this project's list
+    // (`_loadYours`) while it is up, not every page built from this view,
+    // and the page is drawn again when it lands.
+    const yoursIn = (pick) => entries.filter((e) => pick(e) && AppView._devCardIsYours(e.kind === 'my-session' || e.kind === 'shared-session' ? 'session' : e.kind, e.item)).length;
+    const shippedEntry = (e) => e.kind === 'merged' && AppView._devCardInStage('shipped', e.lane, e.kind, e.item);
     const dashboard = {
       open: openEntries.length,
+      asked: openEntries.filter((e) => e.lane === 'open').length,
+      // The digest the weeks are read from has not answered yet (it may
+      // still fail: a failed read is an answer). The Workshop's Live by week
+      // holds its place meanwhile rather than arriving after the rest.
+      weeksPending: !(AppView._workshopThemes && AppView._workshopThemes.slug === slug),
+      mine: meId != null ? {
+        asked: yoursIn((e) => e.lane === 'open'),
+        votes: yoursIn((e) => e.lane === 'review'),
+        live: yoursIn(shippedEntry),
+      } : null,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
       // #4745: the votes figure is tappable. It opens the one waiting item's
@@ -16681,9 +16847,11 @@ const AppView = {
   },
 
   // The stored `stage` filter, or null for anything that is not one of the
-  // three values a figure sets (#5369) — an older tab's storage included.
+  // values a figure sets (#5369) — an older tab's storage included. 24 Nov
+  // 2026: and two of the Workshop path's stops (features/dev-board/workshop/
+  // front-page.tsx), Asked and Up for a vote.
   _kanbanStageValue(stage) {
-    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' ? stage : null;
+    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' || stage === 'asked' || stage === 'votes' ? stage : null;
   },
 
   // The Overview figures' own predicates, shared with the narrowing they
@@ -16702,10 +16870,17 @@ const AppView = {
   //               still going live is left out, the same as the figure) and
   //               merged since Monday 00:00 UTC, the week `shippedWeek`
   //               counts.
+  //   'asked'     the path's first stop (24 Nov 2026): the OPEN lane, every
+  //               request nobody is building and that is not up for a vote,
+  //               taken or not — the dashboard's `asked`.
+  //   'votes'     its third: the changes and group decisions up for a vote,
+  //               the review lane the dashboard's `votesWaiting` counts.
   _devCardInStage(stage, lane, kind, item) {
     const wanted = AppView._kanbanStageValue(stage);
     if (!wanted) return true;
     if (wanted === 'open') return lane !== 'done' && lane !== 'shipped';
+    if (wanted === 'asked') return lane === 'open';
+    if (wanted === 'votes') return lane === 'review';
     if (wanted === 'unclaimed') return lane === 'open' && kind === 'issue' && AppView._issueUnclaimed(item);
     // 'shipped': decided by date, not by the lane — the Workshop's shipped
     // lane is a trailing seven days (#1787) where the figure is the calendar
@@ -16773,6 +16948,8 @@ const AppView = {
         for (const n of body.sessions || []) mine.sessions.add(Number(n));
         for (const n of body.decisions || []) mine.decisions.add(Number(n));
         if (AppView._kanbanFilters && AppView._kanbanFilters.yours && App.currentApp === slug) AppView._repaintBoardSurface();
+        // The Workshop's path marks the stops where these are (_workshopView's `mine`).
+        else if (App.currentApp === slug && typeof document !== 'undefined' && document.getElementById('dev-workshop')) AppView._rerenderWorkshop();
       })
       .catch(() => { /* what you started still reads as yours */ });
   },
@@ -17196,6 +17373,8 @@ const AppView = {
     open: 'changes:board.filterChip.stageOpen',
     unclaimed: 'changes:board.filterChip.stageUnclaimed',
     shipped: 'changes:board.filterChip.stageShipped',
+    asked: 'changes:board.filterChip.stageAsked',
+    votes: 'changes:board.filterChip.stageVotes',
   },
   // #5369: an Overview figure's tap — open items, nobody on them, live this
   // week. All items is narrowed to exactly what the figure counts: the
@@ -17204,6 +17383,16 @@ const AppView = {
   // the box the way clearing the Search chip does. The chip's × dismisses it
   // like any other filter; `applyKanbanFilters` spreads the current set, so
   // the dialog's Done keeps it.
+  // 24 Nov 2026: the Workshop path's "Open the board" (features/dev-board/
+  // workshop/front-page.tsx) opens All items with no stage filter: one a
+  // stop set earlier is taken off, and a search or a filter of the
+  // person's own stays (the dot on the door says one is on, #2915).
+  clearWorkshopStage() {
+    const f = AppView._kanbanFilters;
+    if (!f || !AppView._kanbanStageValue(f.stage)) return;
+    AppView._kanbanFilters = { ...f, stage: null };
+    AppView._repaintBoardSurface();
+  },
   openWorkshopStage(stage) {
     if (!AppView._kanbanStageValue(stage)) return;
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage };
@@ -22003,19 +22192,30 @@ const AppView = {
 
   // `pr` is optional: a queued run's title says how many runs are ahead of
   // it when the row carries that (checks_progress.queue.ahead).
+  //
+  // `sentence` is the title as the first sentence of a note that goes on
+  // (the Testing card's "About 6 minutes until it starts.", the trigger in
+  // Details). A queued run's title is a heading, with no full stop, so the
+  // note reads it as a sentence of its own, in every language, rather than
+  // "Waiting for a checks slot (2 ahead) This wait is longer than usual."
+  // (23 Nov 2026). The other phases' titles already end as sentences do.
   _checksPhaseCopy(phase, pr) {
     const ids = AppView.CHECKS_PHASE_COPY[phase] || AppView.CHECKS_PHASE_OTHER_COPY;
-    const copy = { title: PlatformI18n.t(ids.title), detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
+    const title = PlatformI18n.t(ids.title);
+    const copy = { title, sentence: title, detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
     if (phase !== 'queued') return copy;
     // The title with the place in line is a whole message per case.
     const q = pr && pr.checks_progress && pr.checks_progress.queue;
     const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
-    if (ahead === null) return copy;
+    if (ahead === null) return { ...copy, sentence: PlatformI18n.t('changes:checks.phase.queued.sentence') };
     return {
       ...copy,
       title: ahead === 0
         ? PlatformI18n.t('changes:checks.phase.queued.titleNext')
         : PlatformI18n.t('changes:checks.phase.queued.titleAhead', { count: ahead }),
+      sentence: ahead === 0
+        ? PlatformI18n.t('changes:checks.phase.queued.sentenceNext')
+        : PlatformI18n.t('changes:checks.phase.queued.sentenceAhead', { count: ahead }),
     };
   },
 
@@ -23135,9 +23335,26 @@ const AppView = {
   // reading each other's ids out of the document. This entry point stays
   // because the issue rows in the Dev feed and the topic head both call
   // `AppView.promptCloseIssue(n)`; it forwards to the island's controller.
-  promptCloseIssue(issueNumber) {
-    if (!AppView.appData) return;
-    dialogIsland('closeIssue')?.open(issueNumber);
+  promptCloseIssue(issueNumber, reason) {
+    // The request's own page has appData; the side panel's column runs this
+    // in a page that may not have recorded the project yet, so fall back to
+    // the open app's slug rather than returning silently (#6988).
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null) || null;
+    const controller = dialogIsland('closeIssue');
+    if (!controller) {
+      // A failed bundle is the one case the dialog cannot open at all. Say
+      // so instead of leaving the row looking like it did nothing.
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.closeFailed'), { error: true });
+      }
+      return;
+    }
+    controller.open({
+      issueNumber,
+      reason: typeof reason === 'string' ? reason : '',
+      ...(slug ? { slug } : {}),
+    });
   },
 
   // #6000: "Propose reopening", the mirror of promptCloseIssue. Forwards to
@@ -24926,6 +25143,27 @@ const AppView = {
           act: () => AppView.promptReopenIssue(n),
         });
     }
+    // #7000: the request's own address, so a link pasted elsewhere opens this
+    // request and not just its title. Same row, words and notice as a change's
+    // page (_proposalMenuItems) and a governance vote's (_govDecisionMenu).
+    // Outside the closed guard above: sharing a closed request changes nothing,
+    // so it is offered on one too. A read-only viewer's ⋯ keeps exactly the
+    // rows it has always had (tests/card-action-layout.test.js pins that list,
+    // and the side panel's own Copy link is there for that page); this row is
+    // the only thing this change adds to the menu.
+    if (!AppView.readOnly) items.push({
+      label: PlatformI18n.t('changes:issue.menu.copyLink'),
+      icon: 'link',
+      title: PlatformI18n.t('changes:issue.menu.copyLink'),
+      copyLink: true,
+      act: () => {
+        const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+        const url = `${window.location.origin}/#app/${slug}/dev/issues/${n}`;
+        Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+          if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:issue.menu.copyLinkDone'));
+        });
+      },
+    });
     items.push({
       label: PlatformI18n.t('changes:issue.menu.share'),
       icon: 'share',
@@ -26036,12 +26274,18 @@ const AppView = {
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
             : shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
-              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+              : shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:badge.reason.shots.retryingBusyDetail')
+                : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots)
-            // #6598: never quote GitHub's own error page here.
+            // #6598: never quote GitHub's own error page here, nor (23 Nov
+            // 2026) the database driver's words for a connection it could
+            // not give in time.
             : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:shots.sentence.githubDown')
-              : shots.failureReason)
+              : shots.state === 'failed' && shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:shots.sentence.busy')
+                : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -26916,6 +27160,12 @@ const AppView = {
         ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
+        // 23 Nov 2026: no database connection in time. The driver's own
+        // words are never shown; the line says what Homeroom does next.
+        : e.failureCode === 'database_busy'
+        ? (e.automaticRetryPending === true
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retryingBusy.detail')]
+          : [t('changes:shots.state.couldNot.label'), t('changes:shots.state.busy.detail')])
         : e.automaticRetryPending === true
           ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
             ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
@@ -26967,6 +27217,14 @@ const AppView = {
           ? t('changes:shots.sentence.retryingGithub')
           : t('changes:shots.sentence.githubDown');
       }
+      // 23 Nov 2026: Homeroom could not get a database connection in time
+      // (a release's draining process, say). Nothing the proposal did; the
+      // driver's own words are never quoted.
+      if (e.failureCode === 'database_busy') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingBusy')
+          : t('changes:shots.sentence.busy');
+      }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason
           ? t('changes:shots.sentence.changeFailedBecause', { reason: quoted(e.failureReason) })
@@ -27004,7 +27262,7 @@ const AppView = {
   // "What changes for you" (topic/topic-head.tsx): the declared changes,
   // which are the plainest statement of the change there is, as bullets, and
   // the run's state as one strip. A VERIFIED run keeps the before/after card
-  // (shotsHtml), which already leads with the declared changes.
+  // (review-flow/shots-viewer.tsx), which already leads with the declared changes.
   _shotsView(shots) {
     if (!shots || typeof shots !== 'object') return null;
     const state = String(shots.state || 'planned');
@@ -27074,17 +27332,17 @@ const AppView = {
     return width >= 120 && height >= 40;
   },
 
-  // The before/after viewer (#3699). One frame for two callers: the
-  // proposal card's shots (shotsHtml, <img> sides) and an HTML spec's drawn
-  // screens (frontend/src/lib/spec-html.ts, sandboxed-frame sides). Each
-  // caller builds a screen's two sides and the notes under it; this builds
-  // the rest: the radios that hold the state, the toolbar, the stage, the
-  // labels that flip it and the chips. It is markup only. The switching is
-  // CSS (:has() over the radios), so the card still needs no script.
+  // An HTML spec's drawn screens, before and after (#3699): the frame for
+  // frontend/src/lib/spec-html.ts, whose sides are sandboxed frames. A
+  // change's own shots are drawn by the one before & after viewer instead
+  // (review-flow/shots-viewer.tsx, the Needs you page's slider). The caller
+  // builds a screen's two sides and the notes under it; this builds the
+  // rest: the radios that hold the state, the toolbar, the stage, the labels
+  // that flip it and the chips. It is markup only. The switching is CSS
+  // (:has() over the radios), so it needs no script.
   //
   // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
-  // notesHtml, zoomable, stacked }. Three options the card leaves off, so
-  // its markup is what it always was:
+  // notesHtml, zoomable }. Three options, off unless asked for:
   //   sideBySide — a third side option: before and after at once, in the
   //                same fixed stage.
   //   autoSide   — start side by side when the viewer has room for that
@@ -27100,92 +27358,9 @@ const AppView = {
     screen: 'changes:shots.size.screen',
   },
 
-  // The same sizes inside a line of text, where English writes them small.
-  SHOTS_SIZE_WORD_IDS: {
-    desktop: 'changes:shots.sizeWord.desktop',
-    phone: 'changes:shots.sizeWord.phone',
-  },
-
   SHOTS_SCREEN_PICK_IDS: {
     desktop: 'changes:shots.viewer.pickDesktop',
     phone: 'changes:shots.viewer.pickPhone',
-  },
-
-  // What the shots agent did to both builds to reach a change, by kind
-  // (services/shots-files.js condition).
-  SHOTS_CONDITION_IDS: {
-    request_held: 'changes:shots.claim.requestHeld',
-    request_failed: 'changes:shots.claim.requestFailed',
-    sample_file: 'changes:shots.claim.sampleFile',
-  },
-
-  // "seen as …" under a shot, whole, by the people the screen's changes were
-  // viewed as, in the order they come up (persona keys joined with '+').
-  SHOTS_SEEN_AS_IDS: {
-    'member': 'changes:shots.seenAs.member',
-    'readOnlyAdmin': 'changes:shots.seenAs.readOnlyAdmin',
-    'fullAdmin': 'changes:shots.seenAs.fullAdmin',
-    'guest': 'changes:shots.seenAs.guest',
-    'member+readOnlyAdmin': 'changes:shots.seenAs.memberReadOnlyAdmin',
-    'member+fullAdmin': 'changes:shots.seenAs.memberFullAdmin',
-    'member+guest': 'changes:shots.seenAs.memberGuest',
-    'readOnlyAdmin+member': 'changes:shots.seenAs.readOnlyAdminMember',
-    'readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.readOnlyAdminFullAdmin',
-    'readOnlyAdmin+guest': 'changes:shots.seenAs.readOnlyAdminGuest',
-    'fullAdmin+member': 'changes:shots.seenAs.fullAdminMember',
-    'fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.fullAdminReadOnlyAdmin',
-    'fullAdmin+guest': 'changes:shots.seenAs.fullAdminGuest',
-    'guest+member': 'changes:shots.seenAs.guestMember',
-    'guest+readOnlyAdmin': 'changes:shots.seenAs.guestReadOnlyAdmin',
-    'guest+fullAdmin': 'changes:shots.seenAs.guestFullAdmin',
-    'member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminFullAdmin',
-    'member+readOnlyAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminGuest',
-    'member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminReadOnlyAdmin',
-    'member+fullAdmin+guest': 'changes:shots.seenAs.memberFullAdminGuest',
-    'member+guest+readOnlyAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdmin',
-    'member+guest+fullAdmin': 'changes:shots.seenAs.memberGuestFullAdmin',
-    'readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberFullAdmin',
-    'readOnlyAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminMemberGuest',
-    'readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminFullAdminMember',
-    'readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminGuest',
-    'readOnlyAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminGuestMember',
-    'readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestFullAdmin',
-    'fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdmin',
-    'fullAdmin+member+guest': 'changes:shots.seenAs.fullAdminMemberGuest',
-    'fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminMember',
-    'fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuest',
-    'fullAdmin+guest+member': 'changes:shots.seenAs.fullAdminGuestMember',
-    'fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdmin',
-    'guest+member+readOnlyAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdmin',
-    'guest+member+fullAdmin': 'changes:shots.seenAs.guestMemberFullAdmin',
-    'guest+readOnlyAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminMember',
-    'guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminFullAdmin',
-    'guest+fullAdmin+member': 'changes:shots.seenAs.guestFullAdminMember',
-    'guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminReadOnlyAdmin',
-    'member+readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminFullAdminGuest',
-    'member+readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminGuestFullAdmin',
-    'member+fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.memberFullAdminReadOnlyAdminGuest',
-    'member+fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminGuestReadOnlyAdmin',
-    'member+guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdminFullAdmin',
-    'member+guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberGuestFullAdminReadOnlyAdmin',
-    'readOnlyAdmin+member+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminMemberFullAdminGuest',
-    'readOnlyAdmin+member+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberGuestFullAdmin',
-    'readOnlyAdmin+fullAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminMemberGuest',
-    'readOnlyAdmin+fullAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminFullAdminGuestMember',
-    'readOnlyAdmin+guest+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestMemberFullAdmin',
-    'readOnlyAdmin+guest+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminGuestFullAdminMember',
-    'fullAdmin+member+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdminGuest',
-    'fullAdmin+member+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberGuestReadOnlyAdmin',
-    'fullAdmin+readOnlyAdmin+member+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminMemberGuest',
-    'fullAdmin+readOnlyAdmin+guest+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuestMember',
-    'fullAdmin+guest+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestMemberReadOnlyAdmin',
-    'fullAdmin+guest+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdminMember',
-    'guest+member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdminFullAdmin',
-    'guest+member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestMemberFullAdminReadOnlyAdmin',
-    'guest+readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminMemberFullAdmin',
-    'guest+readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminFullAdminMember',
-    'guest+fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminMemberReadOnlyAdmin',
-    'guest+fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.guestFullAdminReadOnlyAdminMember',
   },
 
   _shotsSizeName(size) {
@@ -27196,24 +27371,7 @@ const AppView = {
     return value.charAt(0).toUpperCase() + value.slice(1);
   },
 
-  _shotsSizeWord(size) {
-    const value = String(size);
-    const id = Object.prototype.hasOwnProperty.call(AppView.SHOTS_SIZE_WORD_IDS, value) ? AppView.SHOTS_SIZE_WORD_IDS[value] : '';
-    return id ? PlatformI18n.t(id) : value;
-  },
-
-  // #4459: which mode a viewer's shots show, remembered by viewer key (the
-  // session id) while the page stays open. Unset means follow the theme the
-  // card is drawn in.
-  _shotsThemePicks: new Map(),
-
-  _shotsThemePick(key, input) {
-    AppView._shotsThemePicks.set(String(key || ''), input?.classList.contains('shots-theme-dark') ? 'dark' : 'light');
-  },
-
-  // `barLead` (#4455): markup at the start of each screen's toolbar — a
-  // change page's card puts its title there, beside the switch.
-  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, themes = false, className = '', barLead = '' } = {}) {
+  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '' } = {}) {
     const esc = escapeHtml;
     const attr = escapeAttr;
     const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
@@ -27222,7 +27380,6 @@ const AppView = {
     const sideId = (side) => `shots-${key}-side-${side}`;
     const pickId = (index) => `shots-${key}-screen-${index}`;
     const zoomId = (which) => `shots-${key}-zoom-${which}`;
-    const themeId = (which) => `shots-${key}-theme-${which}`;
     const shownSizes = [...new Set(list.map((screen) => screen.viewport))];
     const indexesOf = (size) => list.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
     const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
@@ -27232,8 +27389,6 @@ const AppView = {
       phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
     };
     const bothIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/></svg>';
-    const moonIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
-    const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
     // #5691: the button that lifts the viewer to the top layer at window
@@ -27267,15 +27422,9 @@ const AppView = {
       const zoomSwitch = zooming && screen.zoomable
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}">${closeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}">${wholeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}</span></label></span>`
         : '';
-      // The mode flip (#4459), when the run took dark shots: two round
-      // labels at the bar's right end, before the arrows; the one that
-      // names the mode already showing is hidden by the theme pick.
-      const themeFlips = themes
-        ? `<label for="${themeId('dark')}" class="shots-theme-flip shots-theme-to-dark" title="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}">${moonIcon}</label><label for="${themeId('light')}" class="shots-theme-flip shots-theme-to-light" title="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}">${sunIcon}</label>`
-        : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${expand}${stepping ? stepper(screenIndex) : ''}</div>
-        <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
+        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${expand}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
           <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${PlatformI18n.htmlText('changes:shots.viewer.clickBefore')}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${PlatformI18n.htmlText('changes:shots.viewer.clickAfter')}" aria-hidden="true"></label>
@@ -27293,533 +27442,7 @@ const AppView = {
           ? PlatformI18n.t(AppView.SHOTS_SCREEN_PICK_IDS[String(screen.viewport)], { index: index + 1, total: list.length })
           : PlatformI18n.t('changes:shots.viewer.pickOther', { index: index + 1, total: list.length, size: screen.viewport }))}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
-    // The theme pick (#4459), when the run took dark shots: the checked one
-    // is the pick remembered for this viewer, else the theme the page is
-    // drawn in.
-    const rememberedTheme = AppView._shotsThemePicks.get(String(key));
-    const themePick = rememberedTheme === 'dark' || rememberedTheme === 'light'
-      ? rememberedTheme
-      : (typeof document !== 'undefined' && document.documentElement?.classList?.contains('dark') ? 'dark' : 'light');
-    const themePicks = themes
-      ? `<span class="shots-picks"><input type="radio" class="shots-theme-pick shots-theme-light" name="shots-${key}-theme" id="${themeId('light')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}"${themePick === 'light' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"><input type="radio" class="shots-theme-pick shots-theme-dark" name="shots-${key}-theme" id="${themeId('dark')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}"${themePick === 'dark' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"></span>`
-      : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
-  },
-
-  // #4455: two more readings for a change's page. `thread` is its Before
-  // and after card: the viewer specs use (side by side when there is room),
-  // the title in the switch's row, each change's claim and what the shots
-  // leave out, and nothing else. `details` is what that card moved into
-  // Details (Shot details): how each change is reached, at which screen
-  // sizes and as whom, and the builds the shots were taken on. Both are for
-  // a verified run only.
-  shotsHtml(shots, opts = {}) {
-    if (!shots || typeof shots !== 'object') return '';
-    const thread = !!opts.thread;
-    const detailsOnly = !!opts.details;
-    const state = String(shots.state || 'planned');
-    // A failed run's details reading is the one non-verified one that draws:
-    // the sheet says what happened and why, instead of linking to shots that
-    // do not exist. One the platform is already retrying reads as under way
-    // and draws nothing there.
-    const failedDetails = detailsOnly && state === 'failed' && shots.automaticRetryPending !== true;
-    if ((thread || detailsOnly) && state !== 'verified' && !failedDetails) return '';
-    const sessionId = Number(opts.sessionId);
-    const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
-    const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
-    const esc = escapeHtml;
-    const attr = escapeAttr;
-    const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
-      ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
-    const shotsUrl = (url) => {
-      const value = String(url || '');
-      // A sharp still has its own address, `?density=device`, and a smaller
-      // copy its own, `?size=thumb` or `?size=screen` (shots-view.js
-      // artifactUrl); nothing else may follow the id.
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.exec(value);
-      if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
-      return value;
-    };
-    const stateCopy = AppView._shotsStateCopy(shots);
-    // The previous version's shots (_shotsPrevious), drawn as published ones
-    // are but marked as the previous version's, with no retake of their own.
-    const previousVersion = state === 'verified' && shots.previousVersion === true;
-    const shownState = previousVersion ? 'previous' : 'verified';
-    const badge = previousVersion
-      ? `<span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" data-shots-previous-badge="1">${PlatformI18n.htmlText('changes:shots.card.previousBadge')}</span>`
-      : state === 'verified'
-      ? `<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.card.readyBadge')}</span>`
-      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label')])[0])}</span>`;
-    const code = (inner) => `<code>${inner}</code>`;
-    const provenance = `<span>${PlatformI18n.htmlRich('changes:shots.card.beforeCommit', { commit: shortSha(shots.baseSha) }, [code])}</span><span aria-hidden="true">→</span><span>${PlatformI18n.htmlRich('changes:shots.card.afterCommit', { commit: shortSha(shots.headSha) }, [code])}</span>`;
-
-    if (state !== 'verified') {
-      const copy = stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label'), PlatformI18n.t('changes:shots.state.pending.detail')];
-      const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
-      // #2601/#2558: the same control a failed run offers, on a run that
-      // never started. The rerun route already accepts a 'planned' run (it
-      // reruns the same head), and a stuck run is precisely the case where
-      // a reader needs a way to kick it.
-      // Not while an automatic retry is coming: two ways to start the same
-      // run again, one of them already under way, is one too many.
-      const retryable = (state === 'failed' && shots.automaticRetryPending !== true
-          && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
-        || AppView._shotsNotStarted(shots);
-      // The details reading of a failed run asks only whether this reader may
-      // start it again (`canRetake`, the author or an app admin); every other
-      // reading keeps the `retryable` rule above.
-      const wantsRetake = detailsOnly ? opts.canRetake === true : retryable;
-      const retry = wantsRetake && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button"${detailsOnly ? ' data-shots-retake="1"' : ''} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
-        : '';
-      const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
-        && Number.isInteger(sessionId) && sessionId > 0;
-      const stop = stoppable
-        ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
-        : '';
-      const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
-        : '';
-      // The previous version's shots, under this version's state, until
-      // this version's publish (the change page's card draws them itself:
-      // _changeShotsView).
-      const previous = !thread && !detailsOnly ? AppView._shotsPrevious(shots) : null;
-      const previousHtml = previous ? AppView.shotsHtml(previous, opts) : '';
-      return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
-        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
-        ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}${stop}</div>${override}
-      </section>${previousHtml ? `<div class="mt-3" data-shots-previous="1">${previousHtml}</div>` : ''}`;
-    }
-
-    const by = (storyId, viewport, side, variant, media = null, theme = 'light') => artifacts.find((a) => (
-      a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && (a.theme || 'light') === theme && shotsUrl(a.url)
-    ));
-    // One result per declared change; runs from before shots have none.
-    const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
-    // A project's first version (services/shots-starter.js): its before build
-    // was still the starter template's placeholder, so only the after side
-    // was taken. The card says so where a before would be.
-    const afterOnly = shots.afterOnly === true;
-    const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
-    // A failed change was tried on the after build and the app broke; like a
-    // skipped one it has no shots of its own, but it reads as a problem.
-    const failed = (claim) => resultOf(claim)?.status === 'failed';
-    const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
-    const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
-    // Who the shots agent was signed in as. `personaId` is the word on its
-    // own; `seenAs` is the whole "seen as …" fact for one or more of them.
-    const personaKey = (claim) => (claim.persona === 'read_only_admin' ? 'readOnlyAdmin'
-      : claim.persona === 'full_admin' ? 'fullAdmin'
-        : claim.persona === 'guest' ? 'guest' : 'member');
-    const personaId = {
-      readOnlyAdmin: 'changes:shots.persona.readOnlyAdmin',
-      fullAdmin: 'changes:shots.persona.fullAdmin',
-      guest: 'changes:shots.persona.guest',
-      member: 'changes:shots.persona.member',
-    };
-    const seenAs = (names) => PlatformI18n.t(AppView.SHOTS_SEEN_AS_IDS[names.length ? names.join('+') : 'member']);
-    const persona = (claim) => PlatformI18n.t(personaId[personaKey(claim)]);
-    const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
-
-    // One screen at a time, in a frame that keeps its size: a phone screen
-    // sits in the middle of the same 16:10 stage as a desktop one, at the
-    // same zoom, so stepping between them never resizes the card. Each
-    // declared change is outlined where the run found the two sides differ
-    // (services/shots-diff.js) and numbered as in the description under the
-    // screen, which describes only the changes on that screen. Changes on the
-    // same screen share it. A run from before that was worked out gets a
-    // screen per change and size, with nothing outlined.
-    let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => screen
-      && by(screen.shot, screen.viewport, 'base', 'context') && by(screen.shot, screen.viewport, 'head', 'context'));
-    if (!screens.length) {
-      for (const claim of claims.filter((entry) => !skipped(entry))) {
-        const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
-        for (const viewport of viewports) {
-          if (by(claim.id, viewport, 'base', 'context') || by(claim.id, viewport, 'head', 'context')) {
-            screens.push({ viewport, shot: claim.id, stories: [claim.id], regions: [] });
-          }
-        }
-      }
-    }
-    // Grouped by screen size, which the Desktop / Phone switch picks; the
-    // arrows step through the screens of one size.
-    const sizes = [...new Set(screens.map((screen) => screen.viewport))];
-    screens = sizes.flatMap((size) => screens.filter((screen) => screen.viewport === size)).slice(0, 6);
-    const onScreenOf = (screen) => (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
-      .map((id) => claims.find((claim) => claim.id === id)).filter((claim) => claim && !skipped(claim));
-
-    const pctOf = (value, total) => `${Math.max(0, Math.min(100, (Number(value) / total) * 100)).toFixed(3)}%`;
-    const outlines = (screen, side) => {
-      const width = Number(screen.width);
-      const height = Number(side === 'base' ? screen.heightBefore : screen.heightAfter);
-      if (!(width > 0 && height > 0)) return '';
-      return (Array.isArray(screen.regions) ? screen.regions : []).map((region) => {
-        const box = side === 'base' ? region.b : region.a;
-        const mark = side === 'base' ? region.bMark : region.aMark;
-        const n = region.story ? numberOf(region.story) : 0;
-        const label = n > 0 ? `<span class="shots-box-n">${n}</span>` : '';
-        if (Array.isArray(box)) {
-          return `<span${n > 0 ? ` data-shots-n="${n}"` : ''} class="shots-box${n > 0 ? '' : ' shots-box-other'}" style="left:${pctOf(box[0], width)};top:${pctOf(box[1], height)};width:${pctOf(box[2], width)};height:${pctOf(box[3], height)}">${label}</span>`;
-        }
-        if (Array.isArray(mark) && n > 0) {
-          return `<span data-shots-n="${n}" class="shots-mark" style="left:${pctOf(mark[0], width)};top:${pctOf(mark[1], height)};width:${pctOf(mark[2], width)}">${label}</span>`;
-        }
-        return '';
-      }).join('');
-    };
-    // The shape of a side's shot, so the stage can fit it without stretching.
-    const shapeOf = (artifact, width, height, narrow) => {
-      const w = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : Number(width);
-      const h = Number(artifact && artifact.height) > 0 ? Number(artifact.height) : Number(height);
-      return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
-    };
-    const sizeName = AppView._shotsSizeName;
-    // #5063: the change page's side-by-side view crops both sides to the
-    // screen's declared changes (the numbered outlines, with a margin), so
-    // a small change reads large. A crop wider than it is tall stacks the
-    // two sides, before above after, instead of beside each other. The crop
-    // is CSS over the existing stills: no new image. The proposal card has
-    // no side-by-side view, and an HTML spec's screens crop themselves.
-    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
-    const cropOf = (screen) => {
-      const width = Number(screen.width);
-      const hBefore = Number(screen.heightBefore);
-      const hAfter = Number(screen.heightAfter);
-      if (!(width > 0 && hBefore > 0 && hAfter > 0)) return null;
-      // What each change on the screen is about (its frame: the element its
-      // shots agent shot) when the run recorded one, else its outlines.
-      const framesOn = (which) => (Array.isArray(screen.frames) ? screen.frames : [])
-        .filter((frame) => frame && numberOf(frame.story) > 0)
-        .map((frame) => (which === 'base' ? frame.b : frame.a))
-        .filter((box) => Array.isArray(box) && box.length === 4 && box[2] > 0 && box[3] > 0);
-      const unionOf = (which) => {
-        const framed = framesOn(which);
-        const rects = framed.length ? framed : (Array.isArray(screen.regions) ? screen.regions : [])
-          .filter((region) => region && numberOf(region.story) > 0)
-          .map((region) => {
-            const box = which === 'base' ? region.b : region.a;
-            const mark = which === 'base' ? region.bMark : region.aMark;
-            if (Array.isArray(box)) return box;
-            if (Array.isArray(mark)) return [mark[0], mark[1], mark[2], 0];
-            return null;
-          })
-          .filter((box) => Array.isArray(box) && box.length === 4);
-        if (!rects.length) return null;
-        return rects.reduce((u, box) => [
-          Math.min(u[0], box[0]), Math.min(u[1], box[1]),
-          Math.max(u[0] + u[2], box[0] + box[2]) - Math.min(u[0], box[0]),
-          Math.max(u[1] + u[3], box[1] + box[3]) - Math.min(u[1], box[1]),
-        ]);
-      };
-      // A side whose region sits on the other side only (an added row) reads
-      // the same part of its own still.
-      const uBefore = unionOf('base') || unionOf('head');
-      const uAfter = unionOf('head') || unionOf('base');
-      if (!uBefore || !uAfter) return null;
-      const height = Math.min(hBefore, hAfter);
-      // 24px of margin each way; never below half the screen's width or a
-      // fifth of it tall, so a tiny change still shows its surroundings.
-      const cw = clamp(Math.round(Math.max(uBefore[2], uAfter[2]) + 48), Math.round(width / 2), width);
-      const ch = clamp(Math.round(Math.max(uBefore[3], uAfter[3]) + 48), Math.round(width / 5), height);
-      // A crop that would cover most of the screen shows no more than the
-      // whole screen does: keep today's whole-screen layout.
-      if (cw * ch >= 0.8 * width * height) return null;
-      const at = (u, h) => ({
-        x: clamp(Math.round(u[0] + u[2] / 2 - cw / 2), 0, width - cw),
-        y: clamp(Math.round(u[1] + u[3] / 2 - ch / 2), 0, h - ch),
-      });
-      return { cw, ch, stacked: cw > ch, before: at(uBefore, hBefore), after: at(uAfter, hAfter) };
-    };
-
-    // The switches are radios before the screens and labels on each screen,
-    // so the viewer needs no script: the side is one pair for every screen,
-    // the screens one group (the keyboard's arrow keys step both). The ids
-    // come from the proposal, so a repaint renders the same markup. The frame
-    // itself is _shotsViewerHtml, which an HTML spec's screens share.
-    const key = Number.isInteger(sessionId) && sessionId > 0 ? sessionId : 'card';
-
-    // The declared change's own words, how to reach it, what the shots
-    // leave out, and any clips of it at the given sizes.
-    const flowOf = (claim) => (Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((step) => esc(step)).join(' <span aria-hidden="true">→</span> ') : '');
-    const leadIn = (inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`;
-    // What the shots agent did to both builds to reach the change: an API GET
-    // it held unanswered or made fail, or sample files it uploaded. Said
-    // beside the shots, so a loading or error state it caused is never taken
-    // for the app's own.
-    const conditionsOf = (result) => (Array.isArray(result.conditions) ? result.conditions : []).slice(0, 4).map((entry) => {
-      const id = entry && AppView.SHOTS_CONDITION_IDS[entry.kind];
-      if (!id) return '';
-      const files = entry.kind === 'sample_file' && Array.isArray(entry.files)
-        ? entry.files.filter((name) => typeof name === 'string' && name) : [];
-      const request = entry.kind !== 'sample_file' && typeof entry.request === 'string' ? entry.request : '';
-      if (!files.length && !request) return '';
-      const values = files.length ? { files: PlatformI18n.listText(files) } : { request: `GET ${request}` };
-      return `<p data-shots-condition="${attr(entry.kind)}" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich(id, values, [leadIn])}</p>`;
-    }).join('');
-    const noteOf = (claim) => {
-      const result = resultOf(claim);
-      // An unchanged change (its before and after came out the same) is
-      // shown as a ready one, and its note says so.
-      if (!result || (result.status !== 'ready' && result.status !== 'unchanged')) return '';
-      // What the shots agent said its shots leave out of the claim.
-      const shotNote = typeof result.note === 'string' ? result.note : '';
-      return `${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [leadIn])}</p>` : ''}${conditionsOf(result)}`;
-    };
-    const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
-    const clipsOf = (claim, viewports) => viewports.map((viewport) => {
-      // A motion change has a clip per side; older runs stored one paired
-      // before/after recording instead.
-      const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
-      const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
-      const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-      const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
-      const clipIds = {
-        base: { caption: 'changes:shots.clip.beforeCaption', label: 'changes:shots.clip.beforeLabel' },
-        head: { caption: 'changes:shots.clip.afterCaption', label: 'changes:shots.clip.afterLabel' },
-      };
-      const clip = (which, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(clipIds[which].caption, { size: AppView._shotsSizeWord(viewport) })}</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(PlatformI18n.t(clipIds[which].label, { claim: claim.claim || '' }))}" style="${videoStyle}"></video>`
-            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">${PlatformI18n.htmlText('changes:shots.clip.none')}</div>`}
-        </figure>`;
-      if (baseClip || headClip) {
-        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${afterOnly ? '' : clip('base', baseClip, poster('base'))}${clip('head', headClip, poster('head'))}</div>`;
-      }
-      if (pairedClip) {
-        const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
-        return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">${videoKind === 'animation' ? PlatformI18n.htmlText('changes:shots.clip.playAnimation') : PlatformI18n.htmlText('changes:shots.clip.playInteraction')}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${attr(videoKind === 'animation' ? PlatformI18n.t('changes:shots.clip.animationLabel', { claim: claim.claim || '' }) : PlatformI18n.t('changes:shots.clip.interactionLabel', { claim: claim.claim || '' }))}" style="${videoStyle};margin-top:6px"></video></details>`;
-      }
-      return '';
-    }).join('');
-
-    // The run took dark shots (#4459) when any artifact is one: the viewer
-    // then shows them and offers the other mode. Every artifact above is a
-    // light shot, so callers from before the column read as light.
-    const themes = artifacts.some((artifact) => (artifact?.theme || 'light') === 'dark');
-    const screenParts = screens.map((screen) => {
-      const onScreen = onScreenOf(screen);
-      const before = by(screen.shot, screen.viewport, 'base', 'context');
-      const after = by(screen.shot, screen.viewport, 'head', 'context');
-      const absent = !afterOnly && onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
-      const who = seenAs([...new Set(onScreen.map(personaKey))]);
-      const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
-      const described = onScreen.map((claim) => claim.claim || '').join(' ');
-      const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
-      // The crop applies only while both sides show at once, and only on the
-      // change page's card: a Before or After pick keeps the whole screen, a
-      // new app's first version has no before to crop, and the proposal card
-      // has no side-by-side view.
-      const crop = thread && !afterOnly && before && after ? cropOf(screen) : null;
-      const side = (which, artifact, altId) => {
-        const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
-        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
-        const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        const alt = `alt="${attr(PlatformI18n.t(altId, { changes: described }))}"`;
-        // The same screen in the other mode (#4459), beside the light one;
-        // the theme pick and the stylesheet decide which shows. A side with
-        // no dark shot keeps its light one in both modes.
-        const dark = themes
-          ? by(screen.shot, screen.viewport, which === 'base' ? 'base' : 'head', 'context', null, 'dark')
-          : null;
-        // #6825: the still takes the smallest copy sharp for this slot (its
-        // stage is at most about 640 px wide), over its blurred preview, so
-        // the picture arrives sooner and nothing moves when it lands.
-        // Behind it, the thumbnail over the blurred preview, so the slot goes
-        // blur, then soft, then sharp.
-        const still = (artifact, cls) => {
-          const set = AppView._shotSrcSet(artifact);
-          const layers = [AppView._shotThumb(artifact), AppView._shotPlaceholder(artifact)].filter(Boolean);
-          const each = (value) => layers.map(() => value).join(',');
-          const style = layers.length ? ` style="${attr(`background-image:${layers.map((one) => `url("${one}")`).join(',')};background-size:${each('cover')};background-position:${each('center')}`)}"` : '';
-          // The slot's width, from the usable box (#THE USABLE BOX): the page
-          // less its own margins, up to the stage's 640 px.
-          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';
-          // The preview is this box's own background, so the box is fixed
-          // before a byte arrives: its width and height are the still's
-          // pixels, and the decoded picture covers the preview in place. If
-          // no copy loads at all, the preview gives way to the full-size
-          // picture rather than staying blurred forever.
-          const box = `${Number(artifact.width) > 0 ? ` width="${Math.round(Number(artifact.width))}"` : ''}${Number(artifact.height) > 0 ? ` height="${Math.round(Number(artifact.height))}"` : ''}`;
-          const fallback = set ? ` onerror="this.onerror=null;this.removeAttribute('srcset');this.removeAttribute('sizes');this.style.backgroundImage='none'"` : '';
-          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets}${box} ${alt} class="${cls}" loading="lazy"${style}${fallback}>`;
-        };
-        const inner = `${still(artifact, 'shots-img-light')}${dark ? still(dark, 'shots-img-dark') : ''}${drawn[which]}`;
-        if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
-        const at = which === 'base' ? crop.before : crop.after;
-        const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;
-        const style = `--shots-shape:${shape};--shots-crop-shape:${crop.cw} / ${crop.ch};--shots-crop-x:${pct(-at.x, crop.cw)};--shots-crop-y:${pct(-at.y, crop.ch)};--shots-crop-w:${pct(screen.width, crop.cw)};--shots-crop-h:${pct(which === 'base' ? screen.heightBefore : screen.heightAfter, crop.ch)}`;
-        return `<span class="shots-flip-side ${cls}" data-shots-crop="1" style="${style}"><span class="shots-crop">${inner}</span></span>`;
-      };
-      const changes = onScreen.map((claim) => {
-        const n = numberOf(claim.id);
-        const flow = thread ? '' : flowOf(claim);
-        return `<li class="shots-change" data-shots-n="${n}" data-shots-change="${attr(claim.id || '')}"><span class="shots-change-n">${n}</span>
-            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
-      }).join('');
-      // A dashed outline or line needs its words the first time it shows.
-      const shown = drawn.base + drawn.head;
-      const keys = [
-        shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
-        shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
-      ].join('');
-      // The still's own pixels over its density: the screen's size in CSS
-      // pixels, which is what the screen was declared at.
-      const density = Number(after && after.density) >= 1 ? Number(after.density) : 1;
-      const width = Number(after && after.width) / density;
-      const height = Number(after && after.height) / density;
-      const meta = width > 0 && height > 0
-        ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
-        : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
-      return {
-        viewport: screen.viewport,
-        afterHtml: side('head', after, 'changes:shots.screen.altAfter'),
-        beforeHtml: side('base', before, absent ? 'changes:shots.screen.altBeforeAbsent' : 'changes:shots.screen.altBefore'),
-        afterChip: PlatformI18n.t('changes:shots.viewer.chipAfter'),
-        beforeChip: absent ? PlatformI18n.t('changes:shots.viewer.chipBeforeAbsent') : PlatformI18n.t('changes:shots.viewer.chipBefore'),
-        stacked: !!crop && crop.stacked,
-        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${meta}</div>`}`,
-      };
-    });
-
-    // What no screen above describes: a change the shots agent skipped, one
-    // with no screen of its own, and clips at a size it has no screen for.
-    const shownAt = new Set();
-    for (const screen of screens) for (const claim of onScreenOf(screen)) shownAt.add(`${claim.id}|${screen.viewport}`);
-    const items = claims.map((claim) => {
-      const result = resultOf(claim);
-      const n = numberOf(claim.id);
-      if (failed(claim)) {
-        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
-          <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.claim.failedBadge')}</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.failedReason'))}</p></div>
-        </li>`;
-      }
-      if (skipped(claim)) {
-        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
-          <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.skippedBadge')}</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.skippedReason'))}</p></div>
-        </li>`;
-      }
-      const viewports = viewportsOf(claim);
-      const unseen = viewports.filter((viewport) => !shownAt.has(`${claim.id}|${viewport}`));
-      const clips = clipsOf(claim, unseen);
-      if (unseen.length < viewports.length && !clips) return '';
-      const flow = thread ? '' : flowOf(claim);
-      return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="ready" class="shots-claim">
-        <span class="shots-claim-n">${n}</span>
-        <div class="min-w-0 flex-1">
-          <strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>
-          ${thread ? '' : `<div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.where', { sizes: PlatformI18n.listText(viewports.map((viewport) => AppView._shotsSizeWord(viewport))), persona: persona(claim) })}</div>`}
-          ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
-          ${noteOf(claim)}
-          ${clips}
-        </div>
-      </li>`;
-    }).filter(Boolean);
-    if (!screenParts.length && !claims.some(skipped)) {
-      return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.card.missingDetails')}</section>`;
-    }
-    const withClips = artifacts.some((artifact) => artifact?.variant === 'animation');
-    const lookCopy = previousVersion
-      ? PlatformI18n.htmlText('changes:shots.card.previousIntro')
-      : afterOnly
-      ? PlatformI18n.htmlText(withClips ? 'changes:shots.card.introNewAppClips' : 'changes:shots.card.introNewApp')
-      : PlatformI18n.htmlText(withClips ? 'changes:shots.card.introClips' : 'changes:shots.card.intro');
-    if (detailsOnly) {
-      // Shot details (#4455): the steps and sizes the card leaves out.
-      const rows = claims.map((claim) => {
-        const flow = flowOf(claim);
-        return `<li class="dev-shot-details-claim" data-shots-detail="${attr(claim.id || '')}"><strong>${esc(claim.claim || '')}</strong>
-          <div class="dev-shot-details-meta">${PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.listText(viewportsOf(claim).map(sizeName)), second: seenAs([personaKey(claim)]) })}</div>
-          ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
-      }).join('');
-      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">${PlatformI18n.htmlText('changes:shots.details.builds')} ${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span></p>`;
-    }
-    const viewer = AppView._shotsViewerHtml(thread
-      ? { key, screens: screenParts, sideBySide: true, autoSide: true, themes, className: 'shots-viewer-spec dev-change-viewer', barLead: `<span class="dev-change-card-name">${PlatformI18n.htmlText('changes:shots.thread.title')}</span>` }
-      : { key, screens: screenParts, themes });
-    // What the shots agent noticed broken on the after build besides the
-    // declared changes (note_problem): quiet lines under a small-caps label,
-    // each saying where it shows and whether the before build has it too.
-    // They are not part of the change and decide nothing.
-    const notices = (Array.isArray(shots.shotNotices) ? shots.shotNotices : [])
-      .filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()).slice(0, 5);
-    // The meta line's facts are each a whole message, joined by the pair.
-    const noticedTitle = PlatformI18n.htmlText('changes:shots.noticed.title');
-    const noticed = notices.length
-      ? `<section class="shots-noticed" data-shots-noticed="${notices.length}" aria-label="${noticedTitle}"><h3 class="shots-noticed-head">${noticedTitle}</h3><ul class="shots-noticed-list">${notices.map((entry) => {
-        const n = numberOf(entry.change);
-        const also = entry.alsoBefore === true ? 'true' : entry.alsoBefore === false ? 'false' : 'unknown';
-        const meta = [
-          claims.length > 1 && n > 0 ? PlatformI18n.t('changes:shots.noticed.change', { number: n }) : '',
-          sizeName(entry.screen),
-          also === 'true' ? PlatformI18n.t('changes:shots.noticed.alsoBefore') : also === 'false' ? PlatformI18n.t('changes:shots.noticed.notBefore') : '',
-        ].filter(Boolean).reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second }));
-        return `<li class="shots-noticed-item" data-shots-notice="${attr(entry.change || '')}" data-also-before="${also}"><p class="shots-noticed-text">${esc(entry.text.trim())}</p><div class="shots-noticed-meta">${esc(meta)}</div></li>`;
-      }).join('')}</ul></section>`
-      : '';
-    if (thread) {
-      return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body"${afterOnly ? ' data-shots-after-only="1"' : ''}>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
-    }
-    // Ready shots can be taken again too: after better steps or hints, or to
-    // outline a run from before outlines were worked out. The route lets only
-    // the author or an app manager do it. The previous version's are not
-    // this version's to take again: its own state above says how.
-    const retake = Number.isInteger(sessionId) && sessionId > 0 && !previousVersion
-      ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
-      : '';
-    return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"${afterOnly ? ' data-shots-after-only="1"' : ''}><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
-      <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">${PlatformI18n.htmlText('changes:shots.card.details')}</summary>
-        <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span>${shotResults.length ? `<span>${PlatformI18n.htmlText('changes:shots.card.takenByAgent')}</span>` : ''}</div>
-      </details>${retake}</div></section>`;
-  },
-
-  // Authenticated shots uses full relative URLs rather than public
-  // artifact ids. Re-validate them at the DOM boundary before placing them
-  // in the React-owned comparison overlay.
-  openShotsComparison(triggerEl) {
-    if (!triggerEl) return;
-    const d = triggerEl.dataset || {};
-    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
-    const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
-    const head = urlOk(d.headUrl) ? d.headUrl : '';
-    if (!before && !head) return;
-    const named = d.claim || PlatformI18n.t('changes:shots.compare.fallbackTitle');
-    const label = d.viewport
-      ? PlatformI18n.t('changes:facts.pair', { first: named, second: AppView._shotsSizeWord(d.viewport) })
-      : named;
-    const baseAbsent = d.baseAbsent === '1';
-    const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
-    const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
-    // Each side's heading, the picture's description with and without the
-    // change's own words, and what stands in for a missing picture.
-    const sides = {
-      before: { heading: 'changes:shots.compare.before', alt: 'changes:shots.compare.altBefore', altUnnamed: 'changes:shots.compare.altBeforeUnnamed', missing: 'changes:shots.compare.noShot' },
-      beforeAbsent: { heading: 'changes:shots.compare.beforeAbsent', alt: 'changes:shots.compare.altBeforeAbsent', altUnnamed: 'changes:shots.compare.altBeforeAbsentUnnamed', missing: 'changes:shots.compare.notThereYet' },
-      after: { heading: 'changes:shots.compare.after', alt: 'changes:shots.compare.altAfter', altUnnamed: 'changes:shots.compare.altAfterUnnamed', missing: 'changes:shots.compare.noShot' },
-    };
-    const column = (side, url) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(sides[side].heading)}</div>${url
-      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(d.claim ? PlatformI18n.t(sides[side].alt, { claim: d.claim }) : PlatformI18n.t(sides[side].altUnnamed))}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.compare.openOriginal')}</a>`
-      : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${PlatformI18n.htmlText(sides[side].missing)}</div>`}</div>`;
-    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'beforeAbsent' : 'before', before)}${column('after', head)}</div>`;
-    const compare = AppView._visualCompare();
-    compare.open({ label, bodyHtml, openedAt: Date.now() });
-    compare.setHandlers({
-      onBack: () => AppView.closeVisualComparison(),
-      onBackdrop: () => {
-        if (AppView._visualCompareDismissGuarded()) return;
-        AppView.closeVisualComparison();
-      },
-    });
-    AppView._visualCompareKeyHandler = (event) => {
-      if (event.key === 'Escape') AppView.closeVisualComparison();
-    };
-    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   async rerunShots(sessionId, button) {
@@ -28288,7 +27911,7 @@ const AppView = {
       spinner = !!busy.length; tone = busy.length ? 'emerald' : 'sky';
       who = named(s); at = s.lastActivityAt;
     } else if (bot) {
-      key = 'bot'; spinner = true;
+      key = 'bot'; spinner = true; tone = 'bot';
       at = bot.since || null;
       // The one rule (frontend/src/lib/work-state.ts): the chip names
       // Homeroom bot only in the stage the stored row says (_botChipWords).
@@ -28716,12 +28339,16 @@ const AppView = {
     sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
     emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    // #7182: Homeroom bot's own work, in the bot's periwinkle rather than
+    // the yellow every running task shares. The tokens swap for dark.
+    bot: 'bg-[color:var(--bot-tint)] text-[color:var(--bot-ink)]',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
     sky: 'hover:bg-sky-500/20',
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
+    bot: 'hover:bg-[color:var(--bot-line)]',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session
@@ -29382,6 +29009,19 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #7101: a board row whose lists were not current when the vote was
+      // cast had no optimistic target, so nothing repainted and the row kept
+      // the stale tally until the post-vote read. The saved vote already
+      // settles the React row from the store; this lets the page header and
+      // the chat's vote controls follow too, and applies the vote to a
+      // cached row found now (an equal vote returns early, so never twice).
+      if (!optimistic) {
+        const settledRow = AppView._findItem('proposal', sessionId);
+        if (settledRow) AppView._applyVoteToRow(settledRow, vote);
+        // Only a change with NO cached row at all needs the paint: a row that
+        // already showed this vote has nothing to redraw (#1924).
+        if (!pr && !live) AppView._repaintAfterVote(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -29645,6 +29285,19 @@ const AppView = {
     } catch { /* paint only */ }
   },
 
+  // #6990: a GROUP DECISION the server SAVED, published once so every Needs
+  // you surface lets go of it with the sidebar's badge, and so the Votes
+  // card that cast it can show the vote before its slower re-read lands
+  // (cards-store.ts govVoteSavedStore). Paint only, as _publishVoteSaved.
+  _publishGovVoteSaved(issueId, vote) {
+    const id = Number(issueId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    const side = vote === 'yes' || vote === 'no' ? vote : null;
+    try {
+      AppView._reactDevBoard()?.publishGovVoteSaved?.(id, side);
+    } catch { /* paint only */ }
+  },
+
   // Vote on a governance proposal (env-var change, close-issue, rename,
   // maintenance campaign).
   //
@@ -29766,6 +29419,13 @@ const AppView = {
       // Anything else (vote recorded, gate not met yet, toggled off) needs no
       // toast — the refreshed card's tally / countdown pill says it all.
 
+      // #6990: the vote the server saved, published before the reads start:
+      // the card that cast it shows it at once, and Needs you (its list and
+      // its counts) lets go of the decision with the sidebar badge. A
+      // same-side vote is the server's toggle-off, so it publishes none.
+      const savedVote = data && data.toggled ? null : (vote === 'down' ? 'no' : 'yes');
+      AppView._publishGovVoteSaved(issueId, savedVote);
+
       AppView.refreshDevData('vote');
       // #6595: the view this vote came from re-reads itself at once — the
       // side panel or the bot tab's column, where refreshDevData does
@@ -29780,8 +29440,10 @@ const AppView = {
       // As castVote (#5452): the vote reaches the Kudos history as soon as
       // the server saved it.
       window.Leaderboard?.invalidateHistory?.();
-      // #6987: true only once the server took the vote, as castVote answers.
-      return true;
+      // #6987: truthy only once the server took the vote, as castVote
+      // answers. #6990: the object carries the side the server saved (null
+      // when it toggled the same side off), so the card applies it at once.
+      return { ok: true, vote: savedVote };
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.
@@ -30204,6 +29866,10 @@ const AppView = {
   //                caller that is not on that app's screen (Homeroom bot's
   //                ready card). Defaults to the app on screen.
   //   opts.readOnly — overrides AppView.readOnly for that caller.
+  //   opts.waitForStart — a live draft's preview, which may still be
+  //                starting (features/messages/live-draft-bar.tsx): an
+  //                answer that it is not up yet is a wait, not a dead end
+  //                (_waitForStagingStart).
   _finishStagingTelemetry(attemptId, outcome, detail) {
     if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcome, detail);
     if (AppView._stagingTelemetryAttempt === attemptId) AppView._stagingTelemetryAttempt = null;
@@ -30230,6 +29896,16 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const readOnly = AppView._stagingReadOnly(opts);
+    // Asked again for a live draft's preview while it is waiting for that
+    // preview to start (the draft's reload frame does): the wait stands and
+    // the server is asked once more, rather than the open starting over.
+    const parked = AppView._pendingStagingPreview;
+    if (opts && opts.waitForStart && parked && parked.waitForStart
+        && parked.sessionId === sessionId && parked.slug === slug
+        && parked.loadId === AppView._stagingLoadId
+        && typeof staging.isOpen === 'function' && staging.isOpen()) {
+      return AppView._recheckStagingStart(parked);
+    }
     const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
     const telemetryAttempt = inheritedTelemetryAttempt
       || window.UITelemetry?.attempt?.('preview_open', {
@@ -30265,15 +29941,33 @@ const AppView = {
     // whole window) while the server is asked.
     staging.open();
     AppView._stagingHeader(sessionId, app, opts);
-    // The preview's own address (?preview=<slug>/<id>), written in place, so
-    // a reload or a copied link reopens it (restorePreviewFromAddress).
-    AppView._writePreviewAddress(slug, sessionId);
+    // The preview's own address (?preview=<slug>/<id>) and the layout it was
+    // in (?preview-at=...), written in place, so a reload or a copied link
+    // reopens it (restorePreviewFromAddress).
+    AppView._writePreviewAddress(slug, sessionId, opts && opts.layout);
     // A preview reopened from its address waits a moment for the page's
     // column, which may not be drawn yet.
     // With its project and whether it is read only, so the thread it stands
     // beside can ask for it again when it is come back to (detail.ts).
+    staging.setHandlers({
+      onBack: () => AppView.closeStagingOverlay(),
+      // Where the preview stands, kept beside it in the address so a refresh
+      // comes back in the same layout. Only the preview that is open writes.
+      onLayout: (layout) => {
+        const pv = AppView._stagingPreview;
+        if (!pv || Number(pv.sessionId) !== Number(sessionId)) return;
+        AppView._writePreviewAddress(pv.slug || slug, sessionId, layout);
+      },
+    });
     if (typeof staging.place === 'function') {
-      staging.place({ sessionId, wide: false, settle: !!(opts && opts.settle), slug: slug || null, readOnly });
+      staging.place({
+        sessionId,
+        wide: false,
+        settle: !!(opts && opts.settle),
+        slug: slug || null,
+        readOnly,
+        layout: (opts && opts.layout) || null,
+      });
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
@@ -30291,7 +29985,6 @@ const AppView = {
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.opening'), sub: '' });
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     // #3413: every terminal failure below covers the page with the loader, so
     // the card's own "Retry preview" (swapToStagingForSession → this function)
     // sits unreachable under it. Offer the same action inside the loader: re-
@@ -30394,6 +30087,15 @@ const AppView = {
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
+    // A live draft's preview that is still starting: the server answers
+    // missing until its address is written, and unhealthy or edge while it
+    // comes up. That is a wait, parked like a rebuild's, so the preview
+    // opens by itself once it is up.
+    if (data.status === 'unavailable' && opts && opts.waitForStart
+        && AppView.STAGING_START_REASONS.includes(data.reason)) {
+      AppView._waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts });
+      return;
+    }
     if (data.status === 'unavailable') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       // Stopped (previews stop after a while unused): it says so, and how
@@ -30444,6 +30146,9 @@ const AppView = {
       telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      // A live draft's preview woken here keeps waiting if it is not quite
+      // up when its staging_awake lands, rather than showing a dead end.
+      ...(opts && opts.waitForStart ? { waitForStart: true, rechecks: 0 } : {}),
     };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
@@ -30458,6 +30163,99 @@ const AppView = {
         offerShots: true,
       });
     }, 180000);
+  },
+
+  // What preview-status answers about a preview that is still starting
+  // (src/routes/sessions.js inspectPreview): no address yet, or up but not
+  // yet answering, itself or through its public address.
+  STAGING_START_REASONS: ['missing', 'unhealthy', 'edge'],
+  STAGING_START_GIVE_UP_MS: 180000,
+  // Asked again on its own, in case its staging_ready is missed: every ten
+  // seconds, for as long as the give-up time.
+  STAGING_START_RECHECK_MS: 10000,
+  STAGING_START_RECHECKS: 18,
+  _stagingStartTimer: null,
+
+  // A live draft's preview is starting (ensureStaging's opts.waitForStart).
+  // The loader says so, and the marker is parked as for a rebuild (the same
+  // fields, read-only kept), so staging_ready / staging_awake bring it back
+  // through ensureStaging's ready gate. The same bounded give-up as a
+  // rebuild's, with words that are true for a start, and the marker stays
+  // parked after it.
+  _waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts }) {
+    AppView._setStagingLoader(true, {
+      title: PlatformI18n.t('changes:frame.loader.starting'),
+      sub: PlatformI18n.t('changes:frame.loader.startingSub'),
+      offerShots: true,
+    });
+    const pending = {
+      sessionId, slug, testing, loadId, retry,
+      telemetryAttempt,
+      app: opts && opts.app ? opts.app : null,
+      readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      waitForStart: true,
+      rechecks: 0,
+    };
+    AppView._pendingStagingPreview = pending;
+    if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
+    AppView._stagingRebuildTimer = setTimeout(() => {
+      if (loadId !== AppView._stagingLoadId || AppView._pendingStagingPreview !== pending) return;
+      AppView._setStagingLoader(true, {
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowStart'),
+        ...AppView._offerStagingPreviewRetry(retry),
+        offerShots: true,
+      });
+    }, AppView.STAGING_START_GIVE_UP_MS);
+    AppView._scheduleStagingStartRecheck(pending);
+  },
+
+  _scheduleStagingStartRecheck(pending) {
+    if (AppView._stagingStartTimer) clearTimeout(AppView._stagingStartTimer);
+    AppView._stagingStartTimer = null;
+    if ((pending.rechecks || 0) >= AppView.STAGING_START_RECHECKS) return;
+    AppView._stagingStartTimer = setTimeout(() => {
+      AppView._stagingStartTimer = null;
+      if (AppView._pendingStagingPreview !== pending) return;
+      pending.rechecks = (pending.rechecks || 0) + 1;
+      AppView._recheckStagingStart(pending);
+    }, AppView.STAGING_START_RECHECK_MS);
+  },
+
+  // Asks preview-status once more about a preview still starting. Still not
+  // up: the wait goes on. Any other answer goes through ensureStaging again,
+  // whose branches decide, ready or not.
+  async _recheckStagingStart(pending) {
+    const current = () => AppView._pendingStagingPreview === pending && pending.loadId === AppView._stagingLoadId;
+    if (!current()) return;
+    let data = null;
+    try {
+      let demo = '';
+      try { demo = AppView._demoQS(); } catch { demo = ''; }
+      const res = await fetch(`/api/sessions/${pending.sessionId}/preview-status${demo}`);
+      data = res.ok ? await res.json().catch(() => null) : null;
+    } catch { data = null; }
+    if (!current()) return;
+    const stillStarting = !data || data.status === 'rebuilding'
+      || (data.status === 'unavailable' && AppView.STAGING_START_REASONS.includes(data.reason));
+    if (stillStarting) {
+      AppView._scheduleStagingStartRecheck(pending);
+      return;
+    }
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    AppView._pendingStagingPreview = null;
+    return AppView._reopenParkedStaging(pending, data.url || null);
+  },
+
+  // The parked open again, with what it was asked with.
+  _reopenParkedStaging(pending, url) {
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
+    return AppView.ensureStaging(pending.sessionId, url, pending.testing, {
+      telemetryAttempt: pending.telemetryAttempt,
+      ...(pending.app ? { app: pending.app } : {}),
+      ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
+      ...(pending.waitForStart ? { waitForStart: true } : {}),
+    });
   },
 
   // #439: terminal loader state when a rebuild can't proceed (no changes,
@@ -30501,6 +30299,7 @@ const AppView = {
       return;
     }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
       AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
@@ -30517,11 +30316,8 @@ const AppView = {
       // not prove the new runtime still answers by the time this browser
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
-      return AppView.ensureStaging(sessionId, url, pending.testing, {
-        telemetryAttempt: pending.telemetryAttempt,
-        ...(pending.app ? { app: pending.app } : {}),
-        ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
-      });
+      // A live draft's start keeps waiting if it is not up by then.
+      return AppView._reopenParkedStaging(pending, url);
     }
     AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
     AppView._showStagingUnavailable(pending.loadId, PlatformI18n.t('changes:frame.unavailable.noAddress'), pending.retry);
@@ -30831,7 +30627,7 @@ const AppView = {
       pending: !known && Number.isInteger(id) && id > 0,
     });
     staging.setVote(null);
-    staging.setShots('');
+    staging.setShots(null);
     try {
       staging.setNoteSeen(localStorage.getItem(AppView.PREVIEW_NOTE_KEY) === '1');
     } catch (_) {
@@ -30975,9 +30771,9 @@ const AppView = {
     AppView._rememberPreviewChange(id, row);
     try {
       const view = row.shots && typeof row.shots === 'object' ? AppView._shotsView(row.shots) : null;
-      staging.setShots(view && view.verified ? AppView.shotsHtml(row.shots, { sessionId: id, thread: true }) : '');
+      staging.setShots(view && view.verified ? { shots: row.shots, sessionId: Number(id) } : null);
     } catch (_) {
-      staging.setShots('');
+      staging.setShots(null);
     }
   },
 
@@ -31437,42 +31233,62 @@ const AppView = {
    * address's query, `?preview=<slug>/<session id>`, beside whatever page it
    * stands over, so a reload, a copied link or Back onto the entry reopens
    * it, on the same change and in the place that page gives it
-   * (features/staging/placement.ts). Written in place: opening a preview is
-   * not a step for Back. The router keeps every query parameter as it goes
-   * (App._routeSearch), so the name stays while the preview is up and goes
-   * when it closes. Never in the side panel's framed copy (the top window
-   * draws the preview) or on a shot route.
+   * (features/staging/placement.ts). Since the preview's layout is remembered
+   * too (`preview-at`), a refresh comes back where the preview stood: beside
+   * the thread, in the side panel, or covering the window, docked or not.
+   * Written in place: opening a preview is not a step for Back. The router
+   * keeps every query parameter as it goes (App._routeSearch), so the name
+   * stays while the preview is up and goes when it closes. Never in the side
+   * panel's framed copy (the top window draws the preview) or on a shot route.
    */
   PREVIEW_PARAM: 'preview',
+  PREVIEW_LAYOUT_PARAM: 'preview-at',
+  // Where the preview stands, as placement.ts names it; anything else is
+  // ignored as if the address carried no layout at all.
+  PREVIEW_LAYOUTS: ['full', 'column', 'panel', 'column-full', 'panel-full'],
 
-  // Pure: the preview a query names ({ slug, sessionId }), or null.
+  // Pure: a remembered preview layout, or null for anything else.
+  _previewLayoutAt(value) {
+    const v = String(value == null ? '' : value);
+    return AppView.PREVIEW_LAYOUTS.includes(v) ? v : null;
+  },
+
+  // Pure: the preview a query names ({ slug, sessionId }, and its `layout`
+  // when the address remembers one), or null.
   _previewAddressAt(search) {
-    let value = null;
-    try { value = new URLSearchParams(String(search || '')).get(AppView.PREVIEW_PARAM); } catch (_) { value = null; }
+    let params = null;
+    try { params = new URLSearchParams(String(search || '')); } catch (_) { params = null; }
+    const value = params ? params.get(AppView.PREVIEW_PARAM) : null;
     const match = /^([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})$/.exec(String(value || ''));
     if (!match) return null;
     const sessionId = Number(match[2]);
-    return sessionId > 0 ? { slug: match[1], sessionId } : null;
+    if (!(sessionId > 0)) return null;
+    const layout = params ? AppView._previewLayoutAt(params.get(AppView.PREVIEW_LAYOUT_PARAM)) : null;
+    return layout ? { slug: match[1], sessionId, layout } : { slug: match[1], sessionId };
   },
 
   // Pure: `search` with the preview named (or, with no slug, not named),
-  // every other parameter kept byte for byte.
-  _previewSearch(search, slug, sessionId) {
+  // every other parameter kept byte for byte. Its layout rides beside it.
+  _previewSearch(search, slug, sessionId, layout) {
     const raw = String(search || '').replace(/^\?/, '');
+    const dropped = [AppView.PREVIEW_PARAM, AppView.PREVIEW_LAYOUT_PARAM];
     const kept = raw ? raw.split('&').filter((part) => {
       if (!part) return false;
       const key = part.split('=', 1)[0].replace(/\+/g, ' ');
-      try { return decodeURIComponent(key) !== AppView.PREVIEW_PARAM; } catch (_) { return true; }
+      try { return !dropped.includes(decodeURIComponent(key)); } catch (_) { return true; }
     }) : [];
     const id = Number(sessionId);
     if (slug && /^[a-z0-9][a-z0-9-]{0,254}$/.test(String(slug)) && Number.isInteger(id) && id > 0) {
       kept.push(`${AppView.PREVIEW_PARAM}=${slug}/${id}`);
+      const at = AppView._previewLayoutAt(layout);
+      if (at) kept.push(`${AppView.PREVIEW_LAYOUT_PARAM}=${at}`);
     }
     return kept.length ? `?${kept.join('&')}` : '';
   },
 
-  // Name the open preview in the address, or (no slug) stop naming it.
-  _writePreviewAddress(slug, sessionId) {
+  // Name the open preview in the address, and the layout it is in, or (no
+  // slug) stop naming it.
+  _writePreviewAddress(slug, sessionId, layout) {
     if (typeof window === 'undefined' || !window.history || !window.location) return false;
     if (typeof App !== 'undefined' && App && App.embeddedPanel) return false;
     const loc = window.location;
@@ -31480,7 +31296,7 @@ const AppView = {
       try { if (new URLSearchParams(loc.search || '').get('shot')) return false; } catch (_) { return false; }
     }
     const here = AppView._hereAddress();
-    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId)}${loc.hash || ''}`;
+    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId, layout)}${loc.hash || ''}`;
     if (to === here) return true;
     try {
       window.history.replaceState(window.history.state, '', to);
@@ -31510,6 +31326,8 @@ const AppView = {
     AppView.ensureStaging(at.sessionId, null, (AppView._sessionTesting || {})[at.sessionId] || null, {
       app: sameApp ? AppView.appData : { slug: at.slug },
       settle: true,
+      // The layout it was in when the address was written, if any.
+      layout: at.layout || null,
       ...(sameApp ? {} : { lookOnlyIfRefused: true }),
     });
     return true;
@@ -31538,6 +31356,7 @@ const AppView = {
     }
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     // #816: drop the iframe-load watch + its safety timeout so a late load
     // event from the preview being torn down here can't re-touch the loader.
     if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
@@ -31758,18 +31577,21 @@ const AppView = {
     }
   },
 
-  // TRUE only on Android in an installed (standalone / fullscreen) context:
-  // the same two conditions the #2755 CSS rule gates on. `un-android` is set
-  // by the kit's native.js at first paint; iOS never gets it, and a browser
-  // tab is not standalone (there the max value is the collapsed browser
-  // chin, and reserving it would double the gap).
+  // TRUE on Android where the page really owns the bottom edge: an installed
+  // (standalone / fullscreen) app, or the native WebView (#7061). These are
+  // the same conditions the #2755 / #7061 CSS rules gate on. `un-android` is
+  // set by the kit's native.js at first paint; iOS never gets it, and a
+  // browser tab is neither standalone nor native (there the max value is the
+  // collapsed browser chin, and reserving it would double the gap).
   _isAndroidStandalone() {
-    if (typeof document === 'undefined' || typeof window === 'undefined'
-      || typeof window.matchMedia !== 'function') {
-      return false;
-    }
+    if (typeof document === 'undefined') return false;
     const docEl = document.documentElement;
     if (!docEl || !docEl.classList || !docEl.classList.contains('un-android')) return false;
+    if (docEl.classList.contains('in-native-webview')
+      && !docEl.classList.contains('web-browser-chrome')) return true;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
     try {
       return window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
     } catch {
@@ -31895,6 +31717,44 @@ const AppView = {
       vvHeight: vv.height,
       scale: vv.scale,
     });
+  },
+
+  // PURE. The frame's rect with its top moved down to the platform header's
+  // foot where the header lies over it (phone review #74, 23 Nov 2026). The
+  // header overlaps the frame by its 8px rounded foot (`-mb-2`), and on an
+  // iPhone Duo held upright the header IS the system's top band, 80px
+  // beside the clock, so the frame started 7px inside the band and the app
+  // was told a 7px top inset for a strip the header already covers. What
+  // the header covers is not the app's to pad. A header that does not
+  // reach over the frame's top (hidden, chromeless, beside it) changes
+  // nothing; neither does a header taller than the frame, which cannot be.
+  _frameRectBelowHeader(rect, header) {
+    if (!rect || !header) return rect;
+    const top = Number(rect.top);
+    const bottom = Number(rect.bottom);
+    const foot = Number(header.bottom);
+    if (!Number.isFinite(top) || !Number.isFinite(bottom) || !Number.isFinite(foot)) return rect;
+    if (!(Number(header.height) > 0) || !(Number(header.width) > 0)) return rect;
+    if (!(Number(header.top) <= top) || !(foot > top) || !(foot < bottom)) return rect;
+    // It must span the frame: a header beside a desktop frame covers none of it.
+    if (!(Number(header.left) <= Number(rect.left) + 1) || !(Number(header.right) >= Number(rect.right) - 1)) return rect;
+    return {
+      top: foot,
+      bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: bottom - foot,
+    };
+  },
+
+  // The platform header's rect while it is on screen, else null.
+  _platformHeaderRect() {
+    if (typeof document === 'undefined') return null;
+    const header = document.getElementById('platform-header');
+    if (!header || header.classList.contains('hidden') || typeof header.getBoundingClientRect !== 'function') return null;
+    const r = header.getBoundingClientRect();
+    return r.width && r.height ? r : null;
   },
 
   _frameInsets(raw, rect, viewport) {
@@ -32046,10 +31906,25 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
     const keyboard = AppView._keyboardInset();
+    // With the keys up, what is on screen is the band of the LAYOUT viewport
+    // from iOS's pan down to the keys (phone review #1, 23 Nov 2026), and the
+    // shell lays the frame on that band (app.css, "THE SHELL HOLDS STILL").
+    // So the frame is measured against the band: its top against the pan,
+    // where the status bar now is, and the keyboard against the band's foot,
+    // which the frame ends on. `innerHeight` cannot stand in for the layout
+    // viewport there: iOS collapses it to the visual viewport (the kit's
+    // #1938 table), and the keyboard read off it came out as nearly the
+    // whole frame. At rest nothing here changes.
+    const pan = keyboard > 0 ? AppView._viewportPan() : 0;
+    const layout = keyboard > 0 ? (AppView._layoutViewportHeight() || window.innerHeight) : window.innerHeight;
+    const viewport = { width: window.innerWidth, height: layout };
+    // The part of the frame the platform header does not cover (#74), read
+    // where both are laid out (the layout viewport), then moved into the band.
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
+    const seen = pan > 0 ? AppView._shiftRect(visible, -pan) : visible;
     const raw = AppView._readRootInsets();
     raw.bottom = AppView._rootBottomInset({
       bottom: raw.bottom,
@@ -32057,12 +31932,35 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, rect, viewport);
+    const insets = AppView._frameInsets(raw, seen, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(seen, viewport, keyboard);
     return insets;
+  },
+
+  // Pure. A DOMRect-alike moved down by `dy` px (up when negative).
+  _shiftRect(rect, dy) {
+    const d = Number(dy) || 0;
+    return {
+      top: rect.top + d, bottom: rect.bottom + d,
+      left: rect.left, right: rect.right,
+      width: rect.width, height: rect.height,
+    };
+  },
+
+  // How far iOS has panned the visual viewport down the layout viewport to
+  // reveal a focused field, in whole px. 0 while pinch-zoomed (a zoom's
+  // offset is not a pan) and wherever nothing pans. The same reading
+  // lib/visual-viewport.ts publishes as `--platform-vv-top`.
+  _viewportPan() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    const scale = Number(vv.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const top = Number(vv.offsetTop);
+    return Number.isFinite(top) && top > 0 ? Math.round(top) : 0;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -33243,6 +33141,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('orientationchange', onViewportChange, { passive: true });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
+    // iOS's pan arrives in its own event, after the resize, and moves where
+    // the shell lays the frame (safeAreaForFrame).
+    window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
   }
 }
 
@@ -33263,53 +33164,12 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = AppView;
 }
 
-// #1808: the legacy copy of `agoStamp` from frontend/src/lib/timestamp.ts —
-// form B, the age for a card, feed or list row. This file is a classic script
-// loaded by a <script> tag and cannot import from the bundle, and bridging it
-// through `window.UsernodeReact` would make the live format depend on which of
-// the two loaded first. So it is a hand-kept copy, and
-// tests/message-timestamp.test.js EXECUTES both against one table of instants
-// and asserts they answer identically. Read that file's header for the rule;
-// change both together or the test says so.
-//
-// Two things it fixes over the shape it replaces: the relative form stops at
-// SEVEN days (it used to run to thirty, so rows read "23d ago", which is a
-// duration and not information), and every caller now has a `title` carrying
-// the unelided stamp.
-const REL_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
-function relStamp(iso, now) {
-  const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
-  if (Number.isNaN(date.getTime())) return { text: '', title: '' };
-  const ref = now || new Date();
-  // Interface language, device region (#6103), as GroupChat._stamp and
-  // lib/timestamp.ts read it; the device default where the runtime predates it.
-  const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
-  // The zone the account picked (#6479); the device's where none is.
-  const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
-  const zone = timeZone ? { timeZone } : {};
-  const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
-  const title = date.toLocaleString(locale, {
-    ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  });
-  const elapsed = ref.getTime() - date.getTime();
-  if (elapsed >= REL_FLOOR_MS) {
-    return {
-      text: date.toLocaleDateString(locale, yearOf(date) === yearOf(ref)
-        ? { ...zone, month: 'short', day: 'numeric' }
-        : { ...zone, year: 'numeric', month: 'short', day: 'numeric' }),
-      title,
-    };
-  }
-  // A future instant (server/browser clock skew) clamps to "just now" rather
-  // than printing a negative age.
-  const seconds = Math.max(0, Math.floor(elapsed / 1000));
-  if (seconds < 60) return { text: PlatformI18n.t('changes:age.justNow'), title };
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { text: PlatformI18n.t('changes:age.minutes', { count: minutes }), title };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { text: PlatformI18n.t('changes:age.hours', { count: hours }), title };
-  return { text: PlatformI18n.t('changes:age.days', { count: Math.floor(hours / 24) }), title };
-}
+// #1808: the age for a card, feed or list row, with the unelided stamp for
+// `title`. It is lib/timestamp.ts's `agoStamp`, the one formatter, which the
+// bundle publishes on PlatformI18n for this classic script (lib/i18n/runtime.ts);
+// read at call time, as every PlatformI18n.t here is. Its rule is in that
+// file's header: relative under a week, the date from then on.
+function relStamp(iso) { return PlatformI18n.agoStamp(iso); }
 
 // The text alone, for the callers that have nowhere to hang a title.
 function relTime(iso) { return relStamp(iso).text; }

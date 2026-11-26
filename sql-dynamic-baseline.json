@@ -87,11 +87,25 @@
       "preview": "migration.sql"
     },
     {
+      "source": "src/db/seed-other-copy.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 2,
+      "preview": "sql"
+    },
+    {
       "source": "src/db/session-locks.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 2,
       "preview": "sql"
+    },
+    {
+      "source": "src/db/staging-seed-outcome.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "982d9e3eb996f559e633",
+      "count": 2,
+      "preview": "text"
     },
     {
       "source": "src/middleware/auth.js",
@@ -250,9 +264,23 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "runtime-expression",
+      "fingerprint": "23adf783ab6aa52e5d68",
+      "count": 1,
+      "preview": "activeUsersSql(includeAdmins)"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "runtime-expression",
       "fingerprint": "a9abe0bb8b8fe9e78fbd",
       "count": 1,
       "preview": "metricsSql(true)"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bfb4d58869632eaed8a2",
+      "count": 1,
+      "preview": "dailySpendSql(includeAdmins)"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -299,13 +327,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "2c5b5898f202955d3743",
-      "count": 1,
-      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 6)::int AS wau, COUNT(DISTINCT user"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "35c213856bd95299a61b",
       "count": 1,
       "preview": "`${metricsSql(false, 'prompt_version')}`"
@@ -323,13 +344,6 @@
       "fingerprint": "43afefd2e8c3b28f1072",
       "count": 1,
       "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents, COALESCE(SUM(lu.byok_cost_cents), 0)::float "
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "4477bc03e2c497e8a7b8",
-      "count": 1,
-      "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -386,6 +400,13 @@
       "fingerprint": "a740c5c5517cf3fe1b4b",
       "count": 1,
       "preview": "`SELECT r.id, r.app_id, a.slug AS app_slug, a.name AS app_name, r.session_id, r.pr_number, cs.pr_title, r.kind, r.trigger, r.status, r.summary, r.started_at, r."
+    },
+    {
+      "source": "src/routes/feedback.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "aca74cdfc7794b9a7f9d",
+      "count": 1,
+      "preview": "MY_FEEDBACK_SELF_APP_SQL"
     },
     {
       "source": "src/routes/feedback.js",
@@ -600,23 +621,23 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "746f59b975f936b6550d",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.locked AS app_locked, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "7ffdd7f7a1fa05479558",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "974dbc333f746ae0a00c",
       "count": 1,
       "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "9e134adc759194b62a60",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "b34b87a74ed74ad996e0",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
     },
     {
       "source": "src/routes/sessions.js",
@@ -1086,6 +1107,20 @@
       "fingerprint": "da9e0ef3aa5f12fda97b",
       "count": 1,
       "preview": "YOURS_SQL"
+    },
+    {
+      "source": "src/services/analytics-figures.js",
+      "kind": "runtime-expression",
+      "fingerprint": "23adf783ab6aa52e5d68",
+      "count": 1,
+      "preview": "activeUsersSql(includeAdmins)"
+    },
+    {
+      "source": "src/services/analytics-figures.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bfb4d58869632eaed8a2",
+      "count": 1,
+      "preview": "dailySpendSql(includeAdmins)"
     },
     {
       "source": "src/services/app-access.js",
@@ -2096,6 +2131,27 @@
       "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
     },
     {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e98fa2ae3bbef1de386",
+      "count": 1,
+      "preview": "SELF_APP_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a77e64e7f2e320971df9",
+      "count": 1,
+      "preview": "VIEWER_FEEDBACK_SQL"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",
@@ -2581,7 +2637,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "f0bfda8303e734d58580",
+      "fingerprint": "73efd30c0043ffb33c93",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },

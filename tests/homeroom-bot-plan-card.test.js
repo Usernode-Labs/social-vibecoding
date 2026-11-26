@@ -137,3 +137,18 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   assert.match(host, /progress=\{planProgress\(card, state\)\}/);
   for (const s of ['Step 3 of 7', 'My plan for', 'Change something']) assert.doesNotMatch(s, /—|!/);
 });
+
+test('#7044: the plan card\'s Build it wears the sun pill', () => {
+  const css = read('public/css/app.css');
+  // Drawn with the sun-pill tokens the bar's own button uses.
+  assert.match(css, /--wip-top-cta-bg:\s*#ffee6f;/, 'the sun');
+  assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]\s*\{[^}]*background:\s*var\(--wip-top-cta-bg\)[^}]*color:\s*var\(--wip-top-cta-ink\)[^}]*box-shadow:\s*var\(--wip-top-cta-edge\)/s,
+    'yellow words and ink, with the ink outline and hard edge');
+  assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]:hover\s*\{\s*background:\s*var\(--wip-top-cta-bg\);\s*\}/,
+    'pointing at it keeps the same sun, as that look has no lighter yellow');
+  // A press takes up the edge and moves the pill down; reduced motion stays still.
+  assert.match(css, /html:root \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{[^}]*box-shadow:\s*var\(--wip-top-cta-edge-down\)[^}]*transform:\s*var\(--wip-top-cta-press\)/s);
+  assert.match(css, /html\[data-motion="reduce"\] \[data-bot-plan\] button\[data-bot-plan-build\]:active\s*\{\s*transform:\s*none;\s*\}/,
+    'a reader who asked for less motion keeps it still');
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /\[data-skin/, 'one look: nothing is drawn under another');
+});

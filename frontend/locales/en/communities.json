@@ -123,25 +123,21 @@
     "text": "Not saved on this phone yet. Your communities will load when you’re back online.",
     "description": "Communities screen, in place of the list, when Homeroom cannot be reached and the list was never saved on this device. Not an error: it says what will happen."
   },
+  "page.search.placeholderShort": {
+    "text": "Search",
+    "description": "Placeholder inside the search field at the top of the Communities page on a phone, where the field beside New community is too narrow for \"Search your communities\". A verb."
+  },
+  "page.search.clear": {
+    "text": "Clear search",
+    "description": "Tooltip and accessible name of the × button inside the Communities page's search field: empties the field."
+  },
+  "page.search.toJoin": {
+    "text": "Search communities to join",
+    "description": "Button under the line that says none of the person's communities match their search on the Communities page: opens Home with the same words in its search, which also looks through the public communities they can join."
+  },
   "page.noMatch": {
     "text": "None of your communities match “{{query}}”.",
     "description": "Line on the Communities page when the search finds none of the person's communities. {{query}} is what they typed."
-  },
-  "page.discover.heading": {
-    "text": "Discover",
-    "description": "Small-caps heading over the last card of the Communities page, which leads to the public communities the person has not joined. A verb used as a section name, the same word as the button's first."
-  },
-  "page.discover.title": {
-    "text": "Find more communities",
-    "description": "Title of the card at the foot of the Communities page, which leads to the public communities the person has not joined."
-  },
-  "page.discover.text": {
-    "text": "Public communities you have not joined yet are on Home, under Communities to join.",
-    "description": "Line under \"Find more communities\" on the Communities page. Home is the name of the Home screen; \"Communities to join\" is the name of the section there, written as that section's heading is."
-  },
-  "page.discover.button": {
-    "text": "Discover communities",
-    "description": "Button on the card at the foot of the Communities page: opens the Home screen at its Communities to join section. \"Discover\" is a verb."
   },
   "needsYou.filter.label": {
     "text": "Show votes",
@@ -505,7 +501,7 @@
   },
   "review.vote.prevLabel": {
     "text": "Go back to the previous change",
-    "description": "Screen-reader name of the round back arrow at the left of the Yes | No pair in Needs you. It shows the change seen just before this one; it is greyed out on the first change of a run."
+    "description": "Screen-reader name of the round step-back arrow at the left of the Yes | No pair in Needs you. It shows the change seen just before this one; it is greyed out on the first change of a run."
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",

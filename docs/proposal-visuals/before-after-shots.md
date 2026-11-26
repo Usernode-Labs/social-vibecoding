@@ -116,10 +116,12 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   (in any signed-in persona's browser: each is its own account, so one can
   reply to or vote on another's), or the staging seeds (`src/db/migrate.js`
   for Homeroom, the app's own `IS_STAGING` seed for a child app). A seed the
-  proposal itself adds reaches only the after copy, which is the side a
-  state new in the proposal needs, so the answer says to seed such a state
-  in that same proposal; a change to a state that already existed needs it
-  on both copies, so its seed merges first, in its own proposal. A seed is
+  proposal itself adds reaches the after copy, which is the side a state new
+  in the proposal needs, so the answer says to seed such a state in that same
+  proposal. For Homeroom itself it also reaches the before copy when main's
+  schema can hold it, so a change to a state that already existed can be
+  seeded in its own proposal too; a seed that needs a table or column main
+  lacks stays on the after copy only. A seed is
   idempotent and obviously fake: rows for the shots' fixture accounts and
   fake people, never a signal the code reads to decide something, and a
   model's reply as the stored message. The answer used to send every seed
@@ -275,9 +277,24 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    either revision under test. So a proposal cannot use a demo state it adds
    itself: the state reaches shots only once the proposal has merged. Data a
    proposal needs for its own shots belongs in that revision's staging seeds
-   (`src/db/migrate.js`), which each side runs for its own revision: the
-   after side has it, and the before side has what the base revision
-   already seeded.
+   (`src/db/migrate.js`), which each side runs for its own revision.
+
+   For Homeroom itself, once both copies have booted the run also applies
+   the change's own staging seeds to the before copy, from the after copy's
+   image pointed at the before copy's database. So a project or rows a
+   change seeds for its shots are on both copies when main's schema can hold
+   them, and the before shot shows the old behaviour on that same data.
+   Each seed goes in whole or not at all: it runs in its own transaction on
+   the before copy, and one that throws there (a table, column or constraint
+   main lacks, or a media file only the after copy holds) is rolled back
+   and left out. Every seed main already has is written to run twice safely,
+   so applying it again changes nothing. A seed that reaches beyond the
+   database (making starter projects through another service) never runs on
+   the before copy. The names left out go to the shots agent in the brief's
+   `changeSeeds`, and a delegated change whose before side needed one is
+   shown as skipped with the reason "the before copy can't hold the demo
+   data this change adds". A child app keeps today's behaviour: its copies
+   run only their own revision's seeds.
 
    Homeroom's own copies also offer phone sign-in, with the fictional test
    numbers and a code made for the run (see "Phone sign-in on Homeroom's
@@ -997,47 +1014,54 @@ built: the before checkout is what says the app is new.
 
 ## What people see
 
-The proposal's card shows one screen at a time in a frame that keeps its
-size. Every screen sits in the same 16:10 stage, a phone screen in the middle
-at the same zoom as a desktop one, so moving between screens never resizes the
-card. A toolbar above the screen switches between Before and After (clicking
-the screen flips it too) and between Desktop and Phone when the run has both.
-When one size has more than one screen, ‹ › arrows at the toolbar's right end
-step through that size's screens; the toolbar is the same on every screen, so
-they never move. It is radios and labels, so it needs no script, and the
-keyboard's arrow keys step them too. Each declared change on the screen is
-outlined and numbered, red where it was and green where it is now; a dashed
-line marks where something appears or goes, and a difference no declared
-change accounts for is outlined dashed and grey. Changes whose before screens
-are the same image share one screen. Under the screen are only the changes on
-it, with those numbers (pointing at one picks out its outline), a key for any
-dashed shape, and the screen size and persona. The screens share one grid
-cell, so the card is as tall as its longest description on every screen.
+Every place a change's shots are shown draws one viewer
+(`frontend/src/features/review-flow/shots-viewer.tsx`): the slider the Needs
+you page draws (`review-flow/compare.tsx`), from the same data
+(`review-flow/shots-model.ts`, over the screens `AppView._workshopVisuals`
+shapes for Needs you). That is the change page's Before and after card and its
+Expand (the same viewer, larger, in the detail column), the change's section
+on its request's page, Details, the preview's Before & after tab, the About
+sheet and the admin Screenshot gallery. One picture of one screen, After over
+Before with a seam between them: drag the seam, or press the switch at its
+foot to flip, and press and hold to magnify. The picture frames what changed
+(the areas the run found differ and the element each change is about), never
+larger than life; nothing is outlined or tinted, the seam tells the two sides
+apart. When the run has more than one screen (each screen size is a screen of
+its own), they are tiles under the picture, each named by its size, with
+"1 of 3 screens". Beside the tiles are the declared changes the screen shows,
+numbered, each with what its shots leave out, what the shots agent did to both
+builds to reach it, and its before and after clips when it is motion. Under
+them, the changes no screen shows, then "Also noticed". Expanded, each screen
+also says its size and who it was seen as; Details says each change's steps.
 
 - **Ready.** The change and its steps. Motion changes also show a before and
   an after clip player. When the agent noted that its shots leave part of the
   claim out, the note is shown as "Not in these shots: …", so a partial pair
   is never mistaken for the whole change. A change with no screen of its own
   is listed below the viewer instead.
-- **Side by side, cropped (#5063).** On the change page's card, side by side
-  (and the automatic side by side when there is room) crops both sides to
-  the screen's declared changes: the numbered outlines with a small margin,
-  drawn with CSS over the stills, so no new image is made. A crop wider than
-  it is tall stacks the two sides, before above after, with the divider and
-  After chip moved to suit. Picking Before or After keeps the whole screen,
-  and a screen with no outlines, a region that covers most of it, or a first
-  version's after-only shots show whole as they always did.
-
-The outlines are worked out once, when the run saves its shots
+The areas that differ are worked out once, when the run saves its shots
 (`src/services/shots-diff.js`), and stored in the verdict as `screens`. The
 two screens are compared row by row first, the way a text diff compares
 lines, so content that only moved (a sheet that grew upward) lines up instead
 of counting as changed; rows that do not line up are compared pixel by pixel
 for how wide the change is. Each area is tied to the declared change whose
-element shot sits inside it, and widened to that element. A run from before
-this has no `screens`: its card flips a screen per change and size, with
-nothing outlined. The Workshop feed's picture still leads with the element
+element shot sits inside it, and widened to that element; the slider frames
+on them. A run from before this has no `screens`: the viewer draws a whole
+screen per change and size. The Workshop feed's picture still leads with the element
 shot when it is big enough to read (at least 120×40 CSS px on both sides).
+
+The comparison runs in a worker thread (`shots-diff-worker.js`). A run's own
+comparison waits for a worker when the process's two are taken (a bounded
+line) and has a minute (`RUN_COMPARE_TIMEOUT_MS`); the close-ups an agent's
+tool asks for and a still's checks as `save_shot` saves it are still refused
+at the limit, with their short deadlines. When the comparison fails anyway,
+the run still publishes a screen for each change and size from the PNGs'
+headers (`shots-diff.fallbackScreens`: nothing outlined, each change framed
+where its browser measured its element shot, and no change marked
+unchanged), its verdict says `screensFallback`, and the shots machine
+compares it again from the published shots (`shots.recompare`: four tries in
+about an hour), putting the real screens in place on the same run
+(23 Nov 2026: PR 7037's card fell back to the older viewer without this).
 
 The whole screens are also taken in dark mode (#4459): a run opens each page
 again with the mode parameter (`un-theme=dark` for an app built on Homeroom,
@@ -1047,12 +1071,10 @@ Element shots and clips stay light, and the dark versions are optional: a
 change with none is still ready, a run whose app looks the same in both modes
 keeps none (the agent is told when a dark shot comes out identical to its
 light one), and runs taken before this are light only. The viewer shows the
-mode the card is drawn in and a small round button at the toolbar's right end
-(a moon, or a sun) switches the whole card to the other mode, remembered
-while the page stays open. A side with no dark shot keeps its light one in
-both modes; the outlines and the side-by-side crop come from the light
-screens and fit the dark ones, because the layout does not change with the
-mode. Other places that show a single shot keep the light one.
+mode the page is drawn in and a small round button at the picture's foot (a
+moon, or a sun) switches it to the other mode. A side with no dark shot keeps
+its light one in both modes; the framing comes from the light screens and
+fits the dark ones, because the layout does not change with the mode. Other places that show a single shot keep the light one.
 - **Skipped.** The change, a "Skipped" badge and the reason.
 - **Failed.** The change, a red "Didn’t work" badge and what the agent saw.
   A run whose only changes failed reads "Something didn’t work". The change
@@ -1284,7 +1306,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
-| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699; "Also noticed" is `.shots-noticed` in `public/css/app.css`) |
+| The one viewer, everywhere a change's shots are shown | `frontend/src/features/review-flow/shots-viewer.tsx` (on the Needs you slider, `compare.tsx`), `shots-model.ts` (what it draws), `shots-panel.tsx` (the run's state, the About sheet's and the admin gallery's whole card, Details' part); "Also noticed" is `.shots-noticed` in `public/css/app.css`. An HTML spec's drawn screens keep their own frame, `AppView._shotsViewerHtml` (#3699) |
 | A staging run with notices to look at | `src/db/migrate.js` (`seedStagingShotsNoticed`) |
 
 ## Diagnosing a run

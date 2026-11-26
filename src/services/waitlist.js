@@ -437,7 +437,18 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
       WHERE id = $1 AND has_platform_access = FALSE`,
     [userId, manualRelease === true]
   );
-  return !!(result && result.rowCount > 0);
+  const letIn = !!(result && result.rowCount > 0);
+  // #7027: a release can apply invite links that were queued (the SQL trigger
+  // does the joining), so the invitations those links accepted stop being
+  // unread. No appId: every project they are now in. Best-effort.
+  if (letIn) {
+    try {
+      const notifications = require('./notifications');
+      const marked = await notifications.markJoinedInviteNotificationsRead(pool, userId, null);
+      if (marked) require('./ws').pushNotificationToUser(userId, { type: 'notifications_changed' });
+    } catch {}
+  }
+  return letIn;
 }
 
 // The waitlist switched off (#6633, Admin › Waitlist, `waitlist_enabled` in

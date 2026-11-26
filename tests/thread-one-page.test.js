@@ -74,7 +74,11 @@ test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apar
   publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
   // #6236: each change's title rides along, for the line under the bot's
   // "It's up for a vote" post that names the change (vote-card.tsx VoteLine).
-  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null } });
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null }, live: {} });
+  // #116: a change that is live is marked, so its line says See the change.
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode', state: 'merged' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get().live)), { 91: true });
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
   const head = read(`${TOPIC}/request-head.tsx`);
   assert.match(head, /publishRequestChanges\(r\.number, layout\.changes\);/);
   assert.match(head, /GroupChat\?\.setThreadMembers\?\.\('issue', r\.number, layout\.changes\.map\(\(c\) => c\.id\)\)/);
@@ -148,8 +152,11 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   // #6230 (3 Nov 2026): Expand opens the change's before and after in the
   // detail column beside the thread, as a design's preview and a plan do,
   // instead of popping the viewer over the page; the request asked for it.
-  assert.match(src, /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: id \},/,
+  // It is the one before & after viewer, the same one a change's own card
+  // expands to (./shots-detail.ts).
+  assert.match(src, /const open = \(\) => \{ if \(source\) openShotsDetail\(source\); \};/,
     'Expand opens the change\'s before and after in the detail column');
+  assert.match(read(`${TOPIC}/shots-detail.ts`), /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: source\.sessionId \},/);
   assert.doesNotMatch(src, /showPopover/, 'the viewer no longer pops over the page');
   assert.match(src, /<ChangeSheets id=\{item\.id\} row=\{view\.row\} body=\{view\.body\} \/>/);
   const head = read(`${TOPIC}/topic-head.tsx`);
@@ -159,12 +166,13 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   assert.match(sheets, /\{body\.canEditIssues \? \(\s+<IssueAssociations[\s\S]*?editorOnly/, 'and ⋯ Edit requests has its editor');
   assert.match(head, /if \(editorOnly\) \{\s+return editing \|\| notice \? \(/, 'nothing while it is shut');
   const view = read('public/js/app-view.js');
-  assert.match(view, /viewer: `shots-\$\{Number\(item\.id\)\}-viewer`/, 'the thumbnails name the viewer their Expand opens');
+  assert.match(view, /return \{ state: 'verified', source: \{ shots, sessionId: Number\(item\.id\) \}, line: null, thumbs,/,
+    'the thumbnails come with the shots their Expand opens');
   for (const id of ['more', 'moreNumbered', 'shotBefore', 'shotAfter', 'shotsOpen', 'shotsExpand']) {
     assert.ok(message(`project:topic.thread.page.${id}`, { number: 6063 }), id);
   }
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-thread-shots-viewer \.shots-viewer:not\(:popover-open\) \{ display: none; \}/, 'shut, the viewer takes no room');
+  assert.doesNotMatch(css, /\.dev-thread-shots-viewer/, 'no viewer is kept shut on the page');
 });
 
 test('D1: rendered, a change built for a request is a line with its title, and a ballot\'s folds start shut', () => {
@@ -592,17 +600,43 @@ test('D2: a change built for a request lands on the request\'s page, at it; one 
   const view = read('public/js/app-view.js');
   const sub = view.slice(view.indexOf('  async _renderTopicSubView(content, ref) {'), view.indexOf('    AppView._devTopic = ref.pr\n'));
   assert.match(sub, /if \(\(ref\.kind === 'proposal' \|\| ref\.kind === 'session'\) && ref\.id\) \{/, 'changes, proposals and shared addresses alike');
-  assert.match(sub, /const home = await AppView\._requestHomeOf\(ref\.id\);\s+if \(AppView\._devTopic !== asked\) return;\s+if \(home\) \{\s+AppView\._openChangeOnRequest\(home, ref\.id, \{ replaceRoute: true \}\);\s+return;/);
+  assert.match(sub, /const home = await AppView\._requestHomeOf\(ref\.id\);\s+if \(AppView\._devTopic !== asked\) return;\s+if \(home\) \{[\s\S]{0,900}?AppView\._openChangeOnRequest\(home, ref\.id, \{ replaceRoute: true \}\);\s+return;/);
   assert.match(view, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/change\/\$\{n\}\$\{AppView\._demoQS\(\)\}`\)/);
   const open = view.slice(view.indexOf('  _openChangeOnRequest(number, sessionId, options = {}) {'));
   assert.match(open, /window\.UsernodeReact\?\.devBoard\?\.showVotes\?\.\(sessionId\);/, 'with its Votes card in view');
   assert.match(open, /return AppView\.openTopic\('issue', Number\(number\), options\.replaceRoute \? \{ replaceRoute: true \} : undefined\);/);
   assert.match(view, /if \(options && options\.replaceRoute\) return App\.switchTab\('dev', ref, 'topic', \{ replaceRoute: true \}\);/,
     'in place of the change\'s address, so Back does not bounce');
-  const panel = view.slice(view.indexOf('  async openTopicInPanel(kind, id) {'), view.indexOf('  async openTopicInPanel(kind, id) {') + 900);
+  // 24 Nov 2026: an unproposed live draft is no change. Its old address is
+  // replaced in place with its thread, and read BEFORE the request home.
+  assert.match(sub, /const draftHome = await AppView\._draftHomeOf\(ref\.id\);[\s\S]{0,200}?AppView\._openDraftThread\(draftHome\);/);
+  assert.ok(sub.indexOf('_draftHomeOf') > -1 && sub.indexOf('_draftHomeOf') < sub.indexOf('_requestHomeOf'),
+    'the draft home is read first');
+  assert.match(view, /history\.replaceState\(null, '', `#homeroom-bot\/thread\/\$\{root\}`\)/);
+  const panel = view.slice(view.indexOf('  async openTopicInPanel(kind, id) {'), view.indexOf('  async openTopicInPanel(kind, id) {') + 1400);
+  // 24 Nov 2026: an unproposed live draft's address opens its thread instead.
+  assert.match(panel, /const draftHome = await AppView\._draftHomeOf\(id\);/);
+  assert.match(panel, /if \(draftHome\) \{[\s\S]{0,120}?AppView\._openDraftThread\(draftHome\);/);
   assert.match(panel, /if \(home\) return AppView\._openChangeOnRequest\(home, id, \{ panel: true \}\);/, 'the Workshop\'s side panel too');
   const changes = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(changes, /if \(!card \|\| !takeVotesInView\(id\)\) return;/, 'the change\'s section takes the ask');
+});
+
+test('#7140: a draft opened in the side panel\'s document hands its thread to the top window', () => {
+  const view = read('public/js/app-view.js');
+  const start = view.indexOf('  _openDraftThread(threadRootId) {');
+  const fn = view.slice(start, view.indexOf('  // 6 Nov 2026 (#6439)', start));
+  // The frame draws no bot page: its list belongs to the top window, so the
+  // thread is handed up in place and nothing here moves or reveals a screen.
+  assert.match(fn, /if \(typeof App !== 'undefined' && App\.embeddedPanel\) \{[\s\S]{0,320}?sidePanelEmbed\?\.handTop\?\.\('homeroom-bot\/thread\/' \+ root\);[\s\S]{0,80}?return true;/);
+  assert.ok(fn.indexOf('handTop') < fn.indexOf('history.replaceState'),
+    'handed up before this document\'s own address moves');
+  assert.ok(fn.indexOf('handTop') < fn.indexOf('App.navigateToAi'),
+    'and the frame never reveals the bot page beside its own list');
+  // Outside the panel the draft keeps today's behaviour: its old address is
+  // replaced in place and the thread opens in the tab's column.
+  assert.match(fn, /history\.replaceState\(null, '', `#homeroom-bot\/thread\/\$\{root\}`\)/);
+  assert.match(fn, /App\.navigateToAi\(\);[\s\S]{0,120}?ai\?\.openAt\?\.\(\{ threadRootId: root, focusMessageId: null \}\)/);
 });
 
 // #6225: a change's Votes card lists every request a yes would close, each

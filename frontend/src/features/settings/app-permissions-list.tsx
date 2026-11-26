@@ -20,6 +20,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { appPermissionsStore } from './app-permissions-store.js';
+import { PermissionsEmpty } from './permissions-empty';
 
 type PermissionItem = {
   capability: string;
@@ -200,11 +201,7 @@ export function AppPermissionsListView(state: AppPermissionsState) {
     return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:appPermissions.loadFailed')}</p>;
   }
   if (!state.apps.length) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        {t('settings:appPermissions.empty')}
-      </p>
-    );
+    return <PermissionsEmpty kind="device">{t('settings:appPermissions.empty')}</PermissionsEmpty>;
   }
   return (
     <>

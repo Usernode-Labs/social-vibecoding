@@ -133,6 +133,8 @@ export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: s
 export function chipFor(href: string, workshopTab: string | null, stepsBack = false): { to: ChipKey; handle?: string } {
   if (href.startsWith('#messages')) return { to: 'messages' };
   if (backsToBot(href)) return { to: 'bot' };
+  // #7045: opened from Needs you (every community's decisions, `#needs`), it goes back there.
+  if (href === '#needs') return { to: 'needs' };
   return /\/workshop$/.test(href) && stepsBack ? placeChip(workshopTab) : { to: 'workshop' };
 }
 
@@ -158,6 +160,23 @@ function TopicChip({ href, to, handle }: { href: string; to: ChipKey; handle?: s
       <span>{t(CHIP_TEXT[to].label, values)}</span>
     </a>
   );
+}
+
+/**
+ * The first chip's accessible name ("Back to Workshop"), or null where the
+ * page has no chip. ONE LOOK (25 Nov 2026): on a phone the bar draws the
+ * page's way back as its white disc (../../nav-drawer/header-drawer.tsx
+ * DrawerBack), and the disc says what the chip it presses says.
+ */
+export function useTopicBackName(): string | null {
+  const t = useMessages('project');
+  const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
+  const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
+  if (!href) return null;
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
+  const { to, handle } = chipFor(href, workshopTab, stepsBackTo(href));
+  return t(CHIP_TEXT[to].name, handle ? { handle } : undefined);
 }
 
 export function TopicBack(): ReactNode {

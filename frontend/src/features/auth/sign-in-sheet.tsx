@@ -187,14 +187,12 @@ import { reducedMotion } from '../../lib/reduced-motion';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
-import { Icon as KitIcon, k } from '@/components/ui/kit';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { t as translate, errorText } from '../../lib/i18n/runtime';
 import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
@@ -789,14 +787,14 @@ export const HOLD_FIELD_FOCUS = {
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+const INPUT = 'min-h-11 w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
 // The Email code | Password switch (#5258): a grey track, the chosen one a
 // white segment on it, as Settings' Light / Dark / System.
 const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
-const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
+const SWITCH_ON = 'h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
-const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
+const SWITCH_OFF = 'h-11 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
 /**
  * One of an invite's links (`inviteWays`). "Sign up with email instead" and
@@ -943,10 +941,6 @@ export function SignInSheet({
   beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const t = useMessages('auth');
-  // Under one of the frame's looks three steps are laid out as the kit's
-  // sheet (the kit branch before the standard render below). The sheet is
-  // mounted after the first paint, so the device's own look is read at once.
-  const kit = isFrameSkin(useLiveSkin());
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
   const [step, setStep] = useState<Step>(firstStep);
@@ -1631,7 +1625,6 @@ export function SignInSheet({
   if (!open) return null;
 
   const methodSwitch = hasMethodSwitch(step, from, signIn);
-  const kitStep = kit && (step === 'choose' || step === 'email' || step === 'phone' || step === 'password');
   const toStep = (next: Step) => {
     if (next === 'password' && (step === 'choose' || step === 'email')) {
       const typed = (firstField.current?.value || email).trim();
@@ -1762,14 +1755,12 @@ export function SignInSheet({
             type="button"
             onClick={close}
             aria-label={t('core:common.close')}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
-        {/* Under a look four steps are laid out as the kit's sheet (kitSteps, after this render); any other step, and every step under the standard look, is what follows. */}
-        {kitStep ? kitSteps() : (<>
         {methodSwitch ? (
           <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
             <button type="button" role="radio" aria-checked={step !== 'password'} data-sign-in-sheet-method-email="" className={step !== 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step === 'password') toStep('email'); }}>
@@ -2052,193 +2043,7 @@ export function SignInSheet({
         {step === 'choose' || step === 'email' || !stepSaysTerms(step) ? null : (
           <TermsNotice className="mt-3" recaptcha={recaptchaInUse ? RECAPTCHA_LINE : null} />
         )}
-        </>)}
       </div>
     </div>
   );
-
-  // THE KIT BRANCH (version 2 of the looks, the tour's o04 to o06): under a
-  // look the first step, the email step, the phone step and the password
-  // step are laid out as the kit's sheet. The field in a card first, the
-  // other ways as rows in one card under "or", the one primary button last,
-  // the terms as the sheet's foot; the Email code | Password switch is the
-  // kit's tabs. The email step is one of them because a sheet opens on it
-  // whenever Apple and Google are not known yet (a members' address opened
-  // by a visitor asks for the sheet before the providers have answered), and
-  // because the switch's Email code leads back to it: every step that
-  // carries the switch draws it the same way.
-  // Everything else is this sheet's own: the shell above (dim, cover, panel,
-  // title and close), the same fields with their ids and refs, the same
-  // handlers, and every data-sign-in-* hook. A function declaration, so it
-  // is hoisted over the render that calls it and closes over its values.
-  function kitSteps() {
-    const providerRows = providers.map((provider) => (
-      <button key={provider} type="button" data-sign-in-provider={provider} disabled={busy} className={k('row', 'sm')} onClick={() => continueWith(provider)}>
-        <span className={k('lead')} aria-hidden="true">
-          {provider === 'apple' ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" /> : <GoogleIcon className="h-[18px] w-[18px]" />}
-        </span>
-        <span className={k('tx')}><span className={k('t')}>{t('auth:signInSheet.continueWith', { provider: PROVIDER_LABEL[provider] })}</span></span>
-      </button>
-    ));
-    // An invite's ways that are a button become rows; its "Already on
-    // Homeroom? Sign in" and "New to Homeroom? Sign up" stay lines, in the foot.
-    const rowWays = ways.filter((way) => way === 'phone' || way === 'email-signup');
-    const lineWays = ways.filter((way) => way !== 'phone' && way !== 'email-signup');
-    const toPhone = (onPress: () => void, key: string) => (
-      <button key={key} type="button" data-sign-in-sheet-to-phone="" className={k('row', 'sm')} onClick={onPress}>
-        <span className={k('lead')} aria-hidden="true"><KitIcon name="phone" /></span>
-        <span className={k('tx')}><span className={k('t')}>{t('auth:signInSheet.toPhoneLink')}</span></span>
-      </button>
-    );
-    const wayRows = rowWays.map((way) => (way === 'phone' ? toPhone(() => takeWay(way), way) : (
-      <button key={way} type="button" data-sign-in-sheet-to-email-signup="" className={k('row', 'sm')} onClick={() => takeWay(way)}>
-        <span className={k('lead')} aria-hidden="true"><KitIcon name="mail" /></span>
-        <span className={k('tx')}><span className={k('t')}>{t('auth:signInSheet.invite.signUpWithEmail')}</span></span>
-      </button>
-    )));
-    const or = (rows: ReactNode, hook?: 'providers') => (
-      <section className={k('sec')} data-sign-in-sheet-providers={hook ? '' : undefined}>
-        <div className={k('sechead')} data-sign-in-sheet-or=""><h3 className={k('cap')}>{t('auth:signInSheet.or')}</h3></div>
-        <div className={k('card')}>{rows}</div>
-      </section>
-    );
-    const alert = error ? (
-      <div role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">
-        {error}
-        <NativeLoginDetailsLink details={details} />
-      </div>
-    ) : null;
-    const chooseRows = [
-      ...providerRows,
-      ...(phoneLink && !phone ? [toPhone(() => { setError(null); setStep('phone'); }, 'to-phone')] : []),
-      ...wayRows,
-    ];
-    // The email step's ways are the standard step's own: "Other ways to
-    // continue" (to the first step, where Apple and Google are), then the phone.
-    const emailRows = [
-      ...(providers.length ? [(
-        <button key="other-ways" type="button" data-sign-in-sheet-other-ways="" className={k('row', 'sm')} onClick={() => { setError(null); setStep('choose'); }}>
-          <span className={k('lead')} aria-hidden="true"><KitIcon name="more" /></span>
-          <span className={k('tx')}><span className={k('t')}>{t('auth:signInSheet.email.otherWays')}</span></span>
-        </button>
-      )] : []),
-      ...(phoneLink && !phone ? [toPhone(() => { setError(null); setStep('phone'); }, 'to-phone')] : []),
-      ...wayRows,
-    ];
-    return (
-      <div data-sign-in-sheet-kit="">
-        {methodSwitch ? (
-          <div className="mt-4">
-            <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={k('tabs', 'seg')}>
-              <button type="button" role="radio" aria-checked={step !== 'password'} data-sign-in-sheet-method-email="" className={k('tab', step !== 'password' && 'on')} onClick={() => { if (step === 'password') toStep('email'); }}>
-                {t('auth:signInSheet.method.emailCode')}
-              </button>
-              <button type="button" role="radio" aria-checked={step === 'password'} data-sign-in-sheet-method-password="" className={k('tab', step === 'password' && 'on')} onClick={() => { if (step !== 'password') toStep('password'); }}>
-                {t('auth:signInSheet.method.password')}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {step === 'choose' ? (
-          <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
-            <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
-                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} onInput={(e) => setHasAddress(!!e.currentTarget.value.trim())} onChange={(e) => setHasAddress(!!e.currentTarget.value.trim())} onFocus={(e) => setHasAddress(!!e.currentTarget.value.trim())} {...HANDLE_FIELD} />
-              </div>
-            </div>
-            {chooseRows.length ? or(chooseRows) : null}
-            <button type="submit" data-sign-in-provider="email" data-sign-in-email-empty={hasAddress ? undefined : ''} disabled={busy} className={k('btn', 'block', !hasAddress && 'off')} {...HOLD_FIELD_FOCUS}>
-              {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
-            </button>
-          </form>
-        ) : null}
-
-        {step === 'email' ? (
-          <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
-            <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
-                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
-              </div>
-            </div>
-            {emailRows.length ? or(emailRows) : null}
-            <button type="submit" disabled={busy} className={k('btn', 'block', busy && 'off')} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
-          </form>
-        ) : null}
-
-        {step === 'phone' ? (
-          <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void submitPhoneStep(); }}>
-            {askName ? (
-              <p data-sign-in-sheet-name-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.phone.namePrivate')}</p>
-            ) : null}
-            <div className={FIELD_GROUP}>
-              {askName ? (
-                <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-name" className={LABEL}>{t('auth:signInSheet.phone.nameLabel')}</label>
-                  <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
-                </div>
-              ) : null}
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-phone" className={LABEL}>{t('auth:signInSheet.phone.numberLabel')}</label>
-                <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
-              </div>
-            </div>
-            {askName && !phoneLink ? (
-              <SignupOptIn id="sign-in-sheet-news-text" kind="sms" checked={newsByText} onChange={setNewsByText} />
-            ) : null}
-            {providerRows.length || wayRows.length ? or([...providerRows, ...wayRows], 'providers') : null}
-            <button type="submit" disabled={busy} className={k('btn', 'block', busy && 'off')} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phone.sending') : t('auth:signInSheet.phone.send')}</button>
-          </form>
-        ) : null}
-
-        {step === 'password' ? (
-          <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void signInWithPassword(); }}>
-            <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-identifier" className={LABEL}>{t('auth:signInSheet.password.identifierLabel')}</label>
-                <input ref={identifierField} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(passwordStepFields, 0)} className={INPUT} {...HANDLE_FIELD} />
-              </div>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-current-password" className={LABEL}>{t('auth:signInSheet.password.label')}</label>
-                <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
-              </div>
-            </div>
-            <button type="submit" disabled={busy} className={k('btn', 'block', busy && 'off')} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
-            <div className={k('foot')}>
-              {!methodSwitch ? (
-                <><button type="button" className={k('link')} onClick={() => toStep('email')}>{t('auth:signInSheet.password.useEmailCode')}</button>{' · '}</>
-              ) : null}
-              <button type="button" data-sign-in-sheet-forgot="" className={k('link')} onClick={() => { typedIdentifier.current = (identifierField.current?.value || '').trim(); toStep('forgot'); }}>{t('auth:signInSheet.password.forgot')}</button>
-            </div>
-          </form>
-        ) : null}
-
-        {alert}
-        <SessionConfirmationNotice completion={completion} />
-
-        {/* The email step says the terms only where the standard one does (emailFoot: an invite's Join); with nothing to say it has no foot. */}
-        {step === 'password' || (step === 'email' && !lineWays.length && !emailFoot) ? null : (
-          <div className={`mt-4 flex flex-col gap-2 ${k('foot')}`}>
-            {lineWays.length ? <div data-sign-in-sheet-ways="" className="flex flex-col gap-1.5">{lineWays.map(wayLine)}</div> : null}
-            {/* The landing's sheets, whose phone is a link away: back to the email. */}
-            {step === 'phone' && !phone ? (
-              <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-                <RichMessage id="auth:signInSheet.phone.haveAccount" components={[
-                <a
-                  href="#login"
-                  data-sign-in-sheet-to-email=""
-                  onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('email'); }}
-                  className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-                />,
-                  ]} />
-              </p>
-            ) : null}
-            {step === 'email' ? emailFoot : <TermsNotice recaptcha={step === 'phone' && recaptchaInUse ? RECAPTCHA_LINE : null} />}
-          </div>
-        )}
-      </div>
-    );
-  }
 }

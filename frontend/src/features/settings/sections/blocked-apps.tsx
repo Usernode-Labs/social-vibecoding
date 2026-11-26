@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
+import { PermissionsEmpty } from '../permissions-empty';
 
 type BlockedApp = { slug: string; name: string; created_at?: string | null };
 
@@ -68,8 +69,8 @@ function BlockedAppsList() {
     finally { setBusy(null); }
   }
   return <div ref={host} className="ui-card mt-4 space-y-3">
-    {apps === null && !error ? <p className="text-sm text-zinc-500">{t('settings:blockedApps.loading')}</p> : null}
-    {apps?.length === 0 ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.empty')}</p> : null}
+    {apps === null && !error ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.loading')}</p> : null}
+    {apps?.length === 0 ? <PermissionsEmpty kind="blocked">{t('settings:blockedApps.empty')}</PermissionsEmpty> : null}
     {apps?.map(app => <BlockedAppRow key={app.slug} app={app} busy={busy} onUnblock={row => void unblock(row)} />)}
     {error ? <div role="alert"><p className="text-sm text-red-700 dark:text-red-400">{error}</p><Button type="button" onClick={() => refresh.current()}>{t('core:common.retry')}</Button></div> : null}
   </div>;

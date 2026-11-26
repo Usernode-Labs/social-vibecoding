@@ -85,6 +85,63 @@ test('app.css scales the root font for the two presets', () => {
     'Larger is 125%');
 });
 
+// The body of the first top-level rule whose selector list is exactly
+// `selector` (not the last line of a longer list).
+function cssRule(css, selector) {
+  for (let at = css.indexOf(`\n${selector} {`); at >= 0; at = css.indexOf(`\n${selector} {`, at + 1)) {
+    if (css[at - 1] !== ',') return css.slice(at, css.indexOf('}', at));
+  }
+  assert.fail(`app.css has a ${selector} rule of its own`);
+}
+
+test('Messages\' words are sized in rem, so Text size reaches them, at the same sizes by default', () => {
+  // Text size scales rem. These were fixed pixels, so at 150% the page's
+  // headings grew and the messages themselves did not.
+  const css = cssSrc();
+  // The inbox's rows are the shared row now (ListRow and its ListRowMeta,
+  // @/components/ui/grouped-list.tsx), which sizes them in rem itself.
+  const sizes = {
+    '.messages-message-head': 17,
+    '.messages-markdown.gc-msg-content': 17,
+    '.messages-bubble': 17,
+    '.messages-edit textarea': 17,
+    '.messages-composer-input': 17,
+  };
+  for (const [selector, px] of Object.entries(sizes)) {
+    const size = /font-size: ([\d.]+)rem;/.exec(cssRule(css, selector));
+    assert.ok(size, `${selector} is sized in rem`);
+    assert.equal(Number(size[1]) * 16, px, `${selector} is ${px}px at the default size`);
+  }
+  assert.match(css, /\n\.messages-message-head time,\n\.messages-message-head time ~ span \{[^}]*font-size: 0\.9375rem;/,
+    'a message\'s time is 15px at the default size');
+  // What you type is the size it will be drawn at, at every text size: the
+  // composer's leading scales with its text (22px at the default size).
+  assert.match(cssRule(css, '.messages-composer-input'), /line-height: 1\.375rem;/);
+  // A long name gives way before the time is pushed past the column's edge.
+  assert.match(cssRule(css, '.messages-message-head'), /max-width: 100%;/);
+});
+
+test('on a phone, a Home icon is never wider than its cell, so large text sizes cannot make icons meet', () => {
+  const css = cssSrc();
+  const at = css.indexOf('html:root #app-list > .app-card > .relative { width: min(');
+  assert.ok(at >= 0, 'the phone grid bounds the icon by its cell');
+  assert.ok(css.lastIndexOf('@media (max-width: 639.98px) {', at) > css.lastIndexOf('\n}\n', at),
+    'inside the phone block, not the wider grids\'');
+  assert.match(css.slice(at), /^[^}]*width: min\(3\.5rem, calc\(100% - 0\.1875rem\)\); height: auto; aspect-ratio: 1 \/ 1; \}/,
+    '3.5rem at the default size, and less only when the cell is narrower');
+  assert.match(css, /html:root #app-list > \.app-card > \.relative > \.app-icon-tile \{ width: 100%; height: 100%; border-radius: min\(1\.25rem, 36%\); \}/);
+});
+
+test('the cascade self-check measures its probe against the root, so a large text size is not reported as broken', () => {
+  // A healthy probe is 0.65rem; one that lost the cascade inherits the body's
+  // size, which is the root's. Three quarters of the root sits between them
+  // at every text size, where a fixed 12px failed a healthy probe from 125%.
+  const src = headSrc();
+  assert.match(src, /var rootSize = parseFloat\(getComputedStyle\(document\.documentElement\)\.fontSize\) \|\| 16;/);
+  assert.match(src, /if \(!\(size > 0 && size < rootSize \* 0\.75\) \|\| weight !== '500' \|\| !tinted\)/);
+  assert.doesNotMatch(src, /size < 12\)/, 'no fixed 12px threshold');
+});
+
 // ── The slider's steps (#6510) ───────────────────────────────────────────
 
 // The head's Display module, run alone against a fake page.

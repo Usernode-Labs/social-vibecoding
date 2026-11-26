@@ -336,6 +336,12 @@ const EVENT_TYPES = Object.freeze({
   // topic's "Merges paused by a red main" figure pairs them.
   MAIN_PAUSED: 'main_paused',
   MAIN_RESUMED: 'main_resumed',
+  // A check of main stopped while its Jobs ran, because a newer merge made
+  // its verdict one nobody reads (services/main-watch.js watchVerdict):
+  // { runId, sha, tipSha, phase, why: 'recheck' | 'newer_green', ranMs }.
+  // ranMs is how long it had held its checks slot: what stopping it saved
+  // is the rest of its run.
+  MAIN_CHECK_STOPPED: 'main_check_stopped',
   // A merged commit of Homeroom itself that did not become the running
   // release in time (services/release-watch.js, once per commit and kind):
   // { sha, kind: 'workflow_failed' | 'workflow_running' | 'rollout_missing'

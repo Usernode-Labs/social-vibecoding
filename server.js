@@ -89,6 +89,7 @@ const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
+const appStockRoutes = require('./src/routes/app-stock');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { appPermissionsRoutes, declaredFor, grantedCapabilities, effectiveCapabilities } = require('./src/routes/app-permissions');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
@@ -612,6 +613,14 @@ app.use(anthropicProxyRoutes(config));
 // containers, not browser sessions.
 app.use(appLlmProxyRoutes(config));
 
+// Dapp → platform stock photo search (#7042, the first part of #6457). App
+// containers call /api/app-stock/v1/search with their per-app token plus
+// the user's iframe JWT (a staging preview: the user's token alone). It
+// answers with fixed sample photos: no key is read and no outside service
+// is called yet. Same private-IP gate; mounted before authMiddleware
+// because callers are app containers, not browser sessions.
+app.use(appStockRoutes(config));
+
 // Dapp → platform app-storage API (#752). App containers upload/delete
 // user files with their per-app token (USERNODE_STORAGE_TOKEN) plus the
 // user's iframe JWT — same credential pattern and private-IP gate as
@@ -892,8 +901,12 @@ app.use(platformAboutRoutes(config));
 // reason; the daily re-draft is a clock too (src/workflow/clock/services.ts).
 {
   const workshopThemes = require('./src/services/workshop-themes');
+  const requestSummary = require('./src/services/request-summary');
   if (typeof ws.onBoardChange === 'function') {
     ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
+    // A change put up for a vote rewrites the summary of the requests it is
+    // attached to, so the page's words catch up without a page read.
+    ws.onBoardChange(requestSummary.onBoardChange(getPool(config)));
   }
 }
 app.use(reportSnapshotRoutes(config));

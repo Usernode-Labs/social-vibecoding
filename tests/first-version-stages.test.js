@@ -124,7 +124,7 @@ test('the line says the stage and the time so far; zero says nothing', () => {
   assert.match(html, /<span class="truncate">Drawing the screens · 2 min so far<\/span>/);
 });
 
-test('the App tab lists the steps in the house style: small caps over the plane\'s card, rows 15 over 13, no fill on a done step', () => {
+test('the App tab lists the steps in the house style: small caps over the plane\'s card, rows 16 over 14 (15 over 13 from 768px), no fill on a done step', () => {
   const { FirstVersionSteps, stepNote } = loadTsx('frontend/src/features/app-frame/first-version-steps.tsx');
   const now = Date.parse(T(25));
   const steps = progress.firstVersionSteps({ key: 'checking', since: T(20), round: 1, rounds: 2 },
@@ -136,8 +136,9 @@ test('the App tab lists the steps in the house style: small caps over the plane\
   const rows = [...html.matchAll(/data-step="(\w+)" data-step-state="(\w+)"/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(rows, [['plan', 'done'], ['screens', 'done'], ['build', 'done'], ['check', 'now'], ['test', 'next'], ['live', 'next']]);
   for (const words of ['Plan written', 'Screens drawn', 'Building', 'Checking the screens', 'Testing', 'Live']) assert.match(html, new RegExp(`>${words}<`));
-  assert.match(html, /text-\[0\.9375rem\] font-\[650\]/, '15px titles');
-  assert.match(html, /text-\[0\.8125rem\]/, '13px lines');
+  // The row ramp of the design review (25 Nov 2026): 16/600 over 14 on a phone, 15 over 13 from 768px.
+  assert.match(html, /text-base font-semibold leading-\[1\.3125rem\][^"]*md:text-\[0\.9375rem\]/, '16px titles, 15px from 768px');
+  assert.match(html, /text-sm leading-\[1\.1875rem\][^"]*md:text-\[0\.8125rem\]/, '14px lines, 13px from 768px');
   assert.match(html, /aria-current="step"/);
   assert.doesNotMatch(html, /--accent|violet-/, 'no accent: nothing here asks for anything');
   // What each row says under it.

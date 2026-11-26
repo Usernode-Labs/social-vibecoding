@@ -48,17 +48,15 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
+import { ChallengeItemList, type ItemsView } from './challenge-items';
 import { ChallengeHistory, type HistoryView } from './challenge-history';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
-import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
+import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 import { YourStanding } from './your-standing';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
-import { ChallengesFrame } from './frame/challenges-frame';
 import { useLeaderboardSection } from './section-store';
-import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 // The controller, by name. It is published on `window` for its legacy callers
 // (./leaderboard.js's lazy mount, app.js's pull-to-refresh and its #982
@@ -72,6 +70,7 @@ const controller = () => (window as {
     requestBlockProduction(): void;
     retryBpState(): void;
     retryInvites(): void;
+    retryItems(): void;
     openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
@@ -199,6 +198,9 @@ type DetailView = {
     state: 'loading' | 'error' | 'ready';
     people?: { key: string; name: string; word: string; reason: string }[];
   } | null;
+  // #7152: on the feedback and proposal challenges, the viewer's own reports
+  // or proposals for the period and how each stands.
+  items?: ItemsView | null;
   blockProduction?: BlockProductionView | null;
   // The organiser's requirements, under "What counts".
   requirements: string | null;
@@ -268,6 +270,7 @@ function Card({ view }: { view: CardView }): ReactNode {
     <ChallengeCard
       view={view}
       className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
+      wrapTitle
       onClick={() => controller()?._openIdx(view.idx)}
     />
   );
@@ -661,6 +664,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
+      {/* #7152: the viewer's own reports or proposals, each with the status
+          the count gives it, above "See your feedback" and What counted. */}
+      {view.items ? <ChallengeItemList view={view.items} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}
@@ -696,68 +702,7 @@ function scrollTarget(el: HTMLElement): HTMLElement | Window {
     ? window : el;
 }
 
-/**
- * The grid under one of the frame's looks: the kit's page
- * (./frame/challenges-frame.tsx) from this pane's own view and the
- * viewer's standing (./my-standing.js), which the standard look draws as a
- * card of its own over the grid. Every state of the grid is the kit's page
- * (its cards, and loading, the error and "no challenges"), so the head and
- * the tabs never give way to the standard parts.
- */
-function ChallengesInFrame({ grid, up }: { grid: GridView | null; up: boolean }): ReactNode {
-  const t = useMessages('leaderboard');
-  // The pane stays mounted behind Standings and Kudos: it is the page on
-  // show only while its own section is.
-  const { section } = useLeaderboardSection();
-  const standing = standingView(useStoreState(myStandingStore)) as {
-    rank: number | null; people: number; pending: string | null;
-    token: { gated: true } | { gated: false; empty: boolean; amount: string; revealed: boolean };
-  } | null;
-  useEffect(() => { void MyStanding.load(); }, []);
-  const ranked = standing && standing.rank != null
-    ? (standing.people > 0
-      ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
-      : t('leaderboard:standing.rank', { rank: standing.rank }))
-    : null;
-  // "#16" and " of 151 ranked": the figure the catalog marks, then its words.
-  const figure = ranked ? /<0>(.*?)<\/0>(.*)/.exec(ranked) : null;
-  const token = !standing ? null
-    : standing.token.gated ? { gated: true as const, onReview: () => MyStanding.reviewTerms() }
-      : standing.token.empty ? null
-        : { gated: false as const, amount: standing.token.amount, revealed: standing.token.revealed, onReveal: () => MyStanding.revealTokens() };
-  const cards = grid && grid.kind === 'cards' ? grid : null;
-  // The line over the bar, as ./season-progress.tsx says it.
-  const raw = cards && typeof cards.progress.points === 'number' ? cards.progress.points : NaN;
-  const points = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : null;
-  const total = cards ? Math.max(0, Math.floor(Number(cards.progress.total) || 0)) : 0;
-  const lockedCount = cards ? Math.floor(Number(cards.lockedCount) || 0) : 0;
-  const firstEvent = cards ? cards.onboardingEventId : null;
-  return (
-    <ChallengesFrame
-      up={up && section === 'challenges'}
-      tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
-      onTab={(key) => { if (key !== 'challenges') (window as any).Leaderboard?._setSection?.(key); }}
-      state={!grid || grid.kind === 'loading' ? 'loading' : grid.kind}
-      error={grid && grid.kind === 'error' ? grid.message : null}
-      progress={cards && total ? {
-        done: Math.max(0, Math.min(total, Math.floor(Number(cards.progress.done) || 0))),
-        total,
-        points: points == null ? null : t('leaderboard:challenges.points', { count: points, points: points.toLocaleString('en-US') }),
-      } : null}
-      onFirst={firstEvent != null ? () => controller()?._toOnboarding(firstEvent) : null}
-      groups={cards ? cards.groups : []}
-      notice={cards ? cards.notice : null}
-      locked={cards && lockedCount >= 1 ? { title: lockedTitle(lockedCount), hint: lockedHint(lockedCount, cards.lockedNames) } : null}
-      onOpen={(idx) => controller()?._openIdx(idx)}
-      standing={standing ? { rank: figure ? figure[1] : null, of: figure ? figure[2].trim() || null : null, pending: standing.pending, token } : null}
-    />
-  );
-}
-
 export function ChallengesPane(): ReactNode {
-  // Under one of the frame's looks the grid is the kit's page, drawn ahead
-  // of this pane's own parts, which app.css puts away while it is up.
-  const frame = isFrameSkin(useLiveSkin());
   const state = useStoreState(topochainChallengesStore) as {
     mounted: boolean;
     grid: GridView | null;
@@ -766,7 +711,7 @@ export function ChallengesPane(): ReactNode {
   };
   // #6967: the screen's third tab. Challenges and Standings keep the pane
   // exactly as they had it; History replaces the standing card and the grid
-  // with its own list, in every look.
+  // with its own list.
   const { section } = useLeaderboardSection();
   const onHistory = section === 'challenge-history';
 
@@ -824,9 +769,8 @@ export function ChallengesPane(): ReactNode {
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
         {onHistory ? (
           /*
-              #6967: the History tab, in both the standard and the frame
-              looks — the same cards either way. It takes the grid's place,
-              so the standing card and the challenge cards step aside.
+              #6967: the History tab. It takes the grid's place, so the
+              standing card and the challenge cards step aside.
           */
           <ChallengeHistory view={state.history} />
         ) : (
@@ -837,7 +781,6 @@ export function ChallengesPane(): ReactNode {
                 token allocation the Me screen used to carry (./your-standing.tsx).
                 It is inside the grid so a challenge's page hides it too.
             */}
-            {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
             <YourStanding />
             <Grid view={state.grid} />
           </>

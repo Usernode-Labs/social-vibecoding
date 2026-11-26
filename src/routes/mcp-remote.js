@@ -46,6 +46,7 @@ const {
 } = require('../services/mcp-connect-constants');
 const mcpOauth = require('../services/mcp-oauth');
 const mcpTools = require('../services/mcp-tools');
+const appAgent = require('../services/app-agent-oauth');
 const { consumeSharedTokenBucket } = require('../services/cli-auth');
 
 const CONSENT_CSP = [
@@ -164,6 +165,29 @@ function browserCsrf(config, req, res) {
     return false;
   }
   return true;
+}
+
+// Which flow an authorization request is. A client names the address it
+// wants a token for in `resource` (RFC 8707). None, or Homeroom's own, is the
+// connector, as it always was. Anything else must be an app's declared agent
+// address (services/app-agent-oauth.js), and is refused when it is not one:
+// it never falls back to a connector token.
+function namesAnotherResource(config, value) {
+  if (value == null || value === '') return false;
+  if (typeof value !== 'string') return true;
+  try { return new URL(value).origin !== config.cliAuthOrigin; } catch { return true; }
+}
+
+function appAudit(dbClient, { eventType, userId, clientId, grantId, appId, reason = null, grant = null }) {
+  return mcpOauth.insertAudit(dbClient, {
+    eventType,
+    occurredAt: new Date(),
+    userId,
+    actorUserId: userId,
+    clientId,
+    scopes: [],
+    metadata: { surface: 'app_agent', app_id: appId, grant_id: grantId, ...(reason ? { reason } : {}), ...(grant ? { grant } : {}) },
+  });
 }
 
 // Exactly one syntactically valid Bearer credential (implementation in
@@ -336,6 +360,30 @@ function mcpPreAuthRoutes(config) {
   router.get('/.well-known/oauth-protected-resource', protectedResourceMetadata);
   router.get(`/.well-known/oauth-protected-resource${MCP_PATH}`, protectedResourceMetadata);
 
+  // The same document for an app's declared agent address
+  // (services/app-agent-oauth.js). The app's door points here from its 401:
+  // it can answer a request or pass it to the app, never serve a page of its
+  // own there. Anything that is not such an address is a plain 404.
+  router.get('/.well-known/oauth-protected-resource/app/:host/*', async (req, res) => {
+    const ok = await enforceBucket(pool, res, {
+      namespace: 'mcp-ip',
+      subject: clientIp(req),
+      ratePerMinute: IP_RATE_PER_MINUTE,
+      capacity: IP_RATE_PER_MINUTE,
+    });
+    if (!ok) return undefined;
+    const found = await appAgent
+      .resolveResource(pool, `https://${req.params.host}/${req.params[0]}`)
+      .catch(() => null);
+    if (!found) return res.status(404).json({ error: 'not_found' });
+    return res.json({
+      resource: found.resource,
+      authorization_servers: [config.cliAuthOrigin],
+      bearer_methods_supported: ['header'],
+      resource_name: 'An app on Homeroom',
+    });
+  });
+
   // ── RFC 8414: authorization-server metadata ──────────────────────────
   // S256 only and no implicit/password grants: this advertises exactly what
   // the token endpoint will actually accept.
@@ -451,6 +499,33 @@ function mcpPreAuthRoutes(config) {
         if (typeof code !== 'string' || typeof redirectUri !== 'string') {
           return res.status(400).json({ error: 'invalid_request' });
         }
+        // An app's code (its own prefix and table) makes an app's tokens.
+        if (appAgent.isCode(code)) {
+          const resource = typeof body.resource === 'string' && body.resource ? body.resource : null;
+          try {
+            const outcome = await mcpOauth.withTransaction(pool, async (dbClient) => {
+              const made = await appAgent.exchangeCode(dbClient, {
+                code, clientId, redirectUri, codeVerifier: verifier, resource,
+              });
+              if (made.error) return made;
+              await appAudit(dbClient, {
+                eventType: 'token_issued', userId: made.userId, clientId,
+                grantId: made.grantId, appId: made.appId, grant: 'authorization_code',
+              });
+              return made;
+            });
+            if (outcome.error) return res.status(400).json({ error: outcome.error });
+            return res.json({
+              access_token: outcome.issued.accessToken,
+              token_type: 'Bearer',
+              expires_in: outcome.issued.expiresIn,
+              refresh_token: outcome.issued.refreshToken,
+            });
+          } catch (err) {
+            log.error('mcp-remote', 'app code exchange failed', { message: err.message });
+            return res.status(503).json({ error: 'temporarily_unavailable' });
+          }
+        }
         try {
           const outcome = await mcpOauth.withTransaction(pool, async (dbClient) => {
             const consumed = await mcpOauth.consumeAuthorizationCode(dbClient, {
@@ -502,6 +577,21 @@ function mcpPreAuthRoutes(config) {
 
       if (grantType === 'refresh_token') {
         const refreshToken = body.refresh_token;
+        if (appAgent.isRefreshToken(refreshToken)) {
+          try {
+            const outcome = await appAgent.rotate(pool, { refreshToken, clientId });
+            if (outcome.error) return res.status(400).json({ error: outcome.error });
+            return res.json({
+              access_token: outcome.issued.accessToken,
+              token_type: 'Bearer',
+              expires_in: outcome.issued.expiresIn,
+              refresh_token: outcome.issued.refreshToken,
+            });
+          } catch (err) {
+            log.error('mcp-remote', 'app refresh failed', { message: err.message });
+            return res.status(503).json({ error: 'temporarily_unavailable' });
+          }
+        }
         if (!mcpOauth.isCanonicalSecret(refreshToken, REFRESH_PREFIX)) {
           return res.status(400).json({ error: 'invalid_grant' });
         }
@@ -542,6 +632,20 @@ function mcpPreAuthRoutes(config) {
       });
       if (!ok) return undefined;
       const token = (req.body && req.body.token) || '';
+      if (appAgent.isAccessToken(token) || appAgent.isRefreshToken(token)) {
+        try {
+          const ended = await appAgent.revokeByToken(pool, token);
+          if (ended) {
+            await mcpOauth.withTransaction(pool, (dbClient) => appAudit(dbClient, {
+              eventType: 'token_revoked', userId: ended.userId, clientId: ended.clientId,
+              grantId: ended.grantId, appId: ended.appId, reason: 'client_revocation',
+            }));
+          }
+        } catch (err) {
+          log.error('mcp-remote', 'app revocation failed', { message: err.message });
+        }
+        return res.status(200).end();
+      }
       const isAccess = mcpOauth.isCanonicalSecret(token, TOKEN_PREFIX);
       const isRefresh = mcpOauth.isCanonicalSecret(token, REFRESH_PREFIX);
       // RFC 7009: an unknown or malformed token is still a 200 — the client
@@ -780,10 +884,31 @@ function mcpBrowserRoutes(config) {
     if (typeof redirectUri !== 'string' || !client.redirect_uris.includes(redirectUri)) {
       return res.status(404).json({ error: 'invalid_or_unknown_client' });
     }
-    const scopes = mcpOauth.normalizeScopes(req.query.scope);
-    if (!scopes) return res.status(400).json({ error: 'invalid_scope' });
     let origin = '';
     try { origin = new URL(redirectUri).origin; } catch { origin = ''; }
+    // An app's agent address: say which app, to a member of its project
+    // only. Anybody else gets the answer an unknown request gets, so the
+    // page never confirms that a private app exists.
+    if (namesAnotherResource(config, req.query.resource)) {
+      const target = await appAgent.resolveResource(pool, req.query.resource).catch(() => null);
+      if (!target || !await appAgent.mayApprove(pool, target.appId, req.user.id).catch(() => false)) {
+        return res.status(404).json({ error: 'invalid_or_unknown_client' });
+      }
+      return res.json({
+        client_name: client.client_name,
+        redirect_origin: origin,
+        username: req.user.username,
+        app: { name: target.name, address: `${target.host}${target.path}` },
+        scopes: [{
+          id: 'app',
+          label: `Act as you in ${target.name}`,
+          detail: `Read and change what you can in this app, through ${target.host}${target.path}. `
+            + 'It works only while you are a member of the project, and you can disconnect it in the app.',
+        }],
+      });
+    }
+    const scopes = mcpOauth.normalizeScopes(req.query.scope);
+    if (!scopes) return res.status(400).json({ error: 'invalid_scope' });
     return res.json({
       client_name: client.client_name,
       redirect_origin: origin,
@@ -813,7 +938,8 @@ function mcpBrowserRoutes(config) {
     if (typeof redirectUri !== 'string' || !client.redirect_uris.includes(redirectUri)) {
       return res.status(404).json({ error: 'invalid_or_unknown_client' });
     }
-    const scopes = mcpOauth.normalizeScopes(body.scope);
+    const forApp = namesAnotherResource(config, body.resource);
+    const scopes = forApp ? [] : mcpOauth.normalizeScopes(body.scope);
     if (!scopes) return res.status(400).json({ error: 'invalid_scope' });
     const challenge = body.code_challenge;
     if (body.code_challenge_method !== 'S256'
@@ -823,11 +949,48 @@ function mcpBrowserRoutes(config) {
     }
     const state = typeof body.state === 'string' ? body.state.slice(0, 512) : '';
 
+    // An app's agent address: the approval is for that app alone, and only a
+    // member of its project who may see it can give one.
+    let target = null;
+    if (forApp) {
+      target = await appAgent.resolveResource(pool, body.resource).catch(() => null);
+      if (!target || !await appAgent.mayApprove(pool, target.appId, req.user.id).catch(() => false)) {
+        return res.status(404).json({ error: 'invalid_or_unknown_client' });
+      }
+    }
+
     if (body.decision !== 'approve') {
       const url = new URL(redirectUri);
       url.searchParams.set('error', 'access_denied');
       if (state) url.searchParams.set('state', state);
       return res.json({ redirect_to: url.toString() });
+    }
+
+    if (target) {
+      try {
+        const { code, grantId } = await appAgent.issueCode(pool, {
+          appId: target.appId,
+          userId: req.user.id,
+          clientId: client.client_id,
+          redirectUri,
+          codeChallenge: challenge,
+          resource: target.resource,
+        });
+        await mcpOauth.withTransaction(pool, (dbClient) => appAudit(dbClient, {
+          eventType: 'authorization_approved', userId: req.user.id, clientId: client.client_id,
+          grantId, appId: target.appId,
+        }));
+        const url = new URL(redirectUri);
+        url.searchParams.set('code', code);
+        if (state) url.searchParams.set('state', state);
+        log.info('mcp-remote', 'App assistant authorized', {
+          userId: req.user.id, clientId: client.client_id, appId: target.appId,
+        });
+        return res.json({ redirect_to: url.toString() });
+      } catch (err) {
+        log.error('mcp-remote', 'app authorization failed', { message: err.message });
+        return res.status(503).json({ error: 'temporarily_unavailable' });
+      }
     }
 
     try {

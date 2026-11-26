@@ -1,3 +1,4 @@
+// test:changed: when frontend/src/ frontend/@/ (both bars are read from the rendered shell; scripts/test-changed.js)
 // Header height parity (#909) — the shell's top bar is the same height on
 // every screen.
 //
@@ -262,10 +263,16 @@ test('CEILING: the landing bar is the wordmark at 28px, with no anchor and one q
   assert.ok(mark, '#landing-header-title draws the wordmark');
   assert.match(mark[1], /\bh-7\b/, 'the wordmark is exactly the 28px content row');
   assert.match(mark[1], /\bw-auto\b/, 'and takes its width from its own aspect ratio');
+  // Where the title box is narrower than that (beside Sign in and Join the
+  // waitlist on a 360px phone), the mark is drawn smaller and whole: the
+  // box used to clip it to "Homeroon" (visual audit, Nov 2026).
+  assert.match(mark[1], /\bmax-w-full\b/, 'and never wider than its box');
 
   // The bar still answers "Homeroom" to a screen reader. The heading used to
   // spell the word out; a drawing has to be told to.
-  assert.match(title.slice(0, 400), /aria-label="Homeroom"/,
+  // Read up to the mark's own tag, not a fixed length: the title's class
+  // string grows whenever the bar learns a state.
+  assert.match(title.slice(0, title.indexOf('>', title.indexOf('<svg'))), /aria-label="Homeroom"/,
     'the mark carries the name the heading used to spell out');
 });
 

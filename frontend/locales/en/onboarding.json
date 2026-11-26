@@ -992,12 +992,12 @@
     "description": "Link beside the \"What should it do?\" label while a ready idea's sentence is shown: turns that sentence into plain text the member can edit freely. \"it\" is the description."
   },
   "firstSession.make.ownWordsLabel": {
-    "text": "Your own words",
+    "text": "Your idea",
     "description": "Accessible name of the small text field inside a ready idea's sentence, where the member types their own words for the blank."
   },
   "firstSession.make.finishLabel": {
-    "text": "Finish it in your own words",
-    "description": "Label of the box under the game sentence on the \"What do you want to make?\" screen, where a member describes a new project: the member types the rest of that sentence. \"it\" is the sentence."
+    "text": "Finish the sentence",
+    "description": "Label of the box under the game sentence on the \"What do you want to make?\" screen, where a member describes a new project: the member types the rest of that sentence."
   },
   "firstSession.make.choicesLabel": {
     "text": "Choices",
@@ -1151,14 +1151,6 @@
     "text": "Use {{preset}}",
     "description": "Button: make the new project with the picked preset instead. {{preset}} is its name. Nothing is proposed: the project does not exist yet."
   },
-  "firstSession.make.frame.yourIdea": {
-    "text": "Your idea",
-    "description": "New project (\"What do you want to make?\") when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the two answers: what the project should do and what to call it."
-  },
-  "firstSession.make.frame.whoCanChange": {
-    "text": "Who can change it",
-    "description": "New project (\"What do you want to make?\") when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card beside the form that names the approval rule the new project starts with (for example \"You or the group\") and offers Change."
-  },
   "firstSession.make.lookAround": {
     "text": "Not sure yet? <0>Look around first</0>",
     "description": "Line under the Make it button on a new member's first screen. <0>…</0> is a link that skips making a project and shows a short tour of Home instead."
@@ -1226,10 +1218,6 @@
   "firstSession.import.describeInstead": {
     "text": "Describe a new project instead",
     "description": "Link under the Import it button: goes back to the form where a new project is described in words."
-  },
-  "firstSession.import.frame.repository": {
-    "text": "Repository",
-    "description": "Import a GitHub repo, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the repo's address and the project's name."
   },
   "firstSession.import.error.noUrl": {
     "text": "Paste a GitHub repo URL first.",
@@ -1580,8 +1568,8 @@
     "description": "Placeholder in the empty note box on the sheet for sending an invite link to a community."
   },
   "firstSession.invite.noteHint": {
-    "text": "When you share, your note also goes in the group chat as your first message.",
-    "description": "Hint under the note box on the sheet for sending an invite link to a community: the note is also posted in the community's chat."
+    "text": "Your note goes with the link. When you share or copy it, it also goes in the group chat as your first message.",
+    "description": "Hint under the note box on the sheet for sending an invite link to a community: the note is saved onto the link, and a note they wrote is also posted in the community's chat whether they shared the link or copied it."
   },
   "firstSession.invite.shareLink": {
     "text": "Share link",
@@ -1780,12 +1768,12 @@
     "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at the Communities tab. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is that tab."
   },
   "tour.step.apps.title": {
-    "text": "Pinned apps",
+    "text": "Pinned projects",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
     "text": "Open the apps you pin here, in one tap. To start your own, select New project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned apps section. \"New project\" is the label of the control on Home that starts one (the last tile of Pinned apps, or the button beside search); write New project as that control is named."
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned projects section. \"New project\" is the label of the control on Home that starts one (the last tile of Pinned projects, or the button beside search); write New project as that control is named."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",

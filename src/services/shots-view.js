@@ -16,6 +16,7 @@ const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 const STORY_ID_RE = /^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/;
 const VIEWPORT_RE = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
 const MEDIA_TYPE = Object.freeze({ png: 'image/png', webm: 'video/webm', gif: 'image/gif' });
+const SEED_NAME_RE = /^[A-Za-z][A-Za-z0-9]{2,79}$/;
 
 function cleanClaims(value) {
   if (!Array.isArray(value)) return [];
@@ -33,6 +34,26 @@ function cleanClaims(value) {
     baseState: claim?.baseState === 'not_present' ? 'not_present' : 'present',
     animation: ['none', 'steps', 'motion'].includes(claim?.animation) ? claim.animation : 'none',
   })).filter((claim) => claim.id && claim.claim);
+}
+
+// The demo-data seeds a run's copies wrote nothing for (#7172), as a flat
+// list with the copy they were short on. Capped like the brief that made it.
+function cleanSeedNotes(value) {
+  if (!value || typeof value !== 'object') return [];
+  const out = [];
+  for (const copy of ['before', 'after']) {
+    const list = Array.isArray(value[copy]) ? value[copy] : [];
+    for (const entry of list.slice(0, 20)) {
+      if (!entry || !SEED_NAME_RE.test(String(entry.seed || ''))) continue;
+      out.push({
+        copy,
+        seed: String(entry.seed).slice(0, 80),
+        outcome: ['skipped', 'failed', 'nothing'].includes(entry.outcome) ? entry.outcome : 'nothing',
+        reason: typeof entry.reason === 'string' ? entry.reason.slice(0, 200) : null,
+      });
+    }
+  }
+  return out;
 }
 
 // One result per declared change: its shots are ready, or unchanged (shown,
@@ -300,6 +321,7 @@ function fromSnapshot(session, currentHead) {
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
     shotNotices: [],
+    seedNotes: [],
     afterOnly: false,
     screens: [],
     progress: null,
@@ -350,6 +372,7 @@ function serializePrevious(run, session, slug, { dense = false } = {}) {
     headSha: run.headSha || null,
     shotResults: cleanShotResults(run.shotResults),
     shotNotices: cleanShotNotices(run.shotNotices, claims),
+    seedNotes: cleanSeedNotes(run.seeds),
     afterOnly: run.afterOnly === true,
     screens: withDensity(cleanScreens(run.screens, claims), artifacts),
     artifacts,
@@ -417,6 +440,11 @@ function serialize(run, session, slug, currentHead, { dense = false } = {}) {
     // Only a published run's card shows them.
     shotNotices: matchesCurrent && run.state === 'verified'
       ? cleanShotNotices(run.shotNotices, cleanClaims(run.claims)) : [],
+    // The demo-data seeds this run's copies wrote nothing for (#7172), on
+    // the same runs that carry shotResults, so a failed card can name one.
+    seedNotes: matchesCurrent && (run.state === 'verified'
+      || (run.state === 'failed' && ['shots_change_failed', 'shots_capture_incomplete'].includes(run.failureCode)))
+      ? cleanSeedNotes(run.seeds) : [],
     // A project's first version (services/shots-starter.js): its before was
     // the starter template's placeholder, so the run took the after side
     // only, and the card says "New app: nothing before".
@@ -516,6 +544,7 @@ module.exports = {
   cleanClaims,
   cleanShotResults,
   cleanShotNotices,
+  cleanSeedNotes,
   cleanScreens,
   cleanArtifacts,
   artifactUrl,

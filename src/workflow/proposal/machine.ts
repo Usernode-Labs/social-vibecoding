@@ -62,6 +62,9 @@ import { APPROVER_NO_WINDOW_WORDS } from '../rules/governance-gate.ts';
 import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
 import { OPEN_STATUSES, onMain } from '../rules/pr-base.ts';
+// #7158: the queue's own rule for whether a spent free resolution is still
+// this main's, so the queue never asks for a sync this machine declines.
+import { resolutionCurrent } from '../merge-queue/machine.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
 
@@ -160,6 +163,10 @@ export interface Sync {
   // did nothing (it may then be asked again for that head).
   claimHead?: string | null;
   prev?: { bootHead?: string | null; fixedHead?: string | null; fixedKeys?: string[] } | null;
+  // The free resolution this sync spent (#7158): the approval epoch it was
+  // spent for and what the row held before, put back when the sync ran
+  // nothing.
+  spent?: { epoch: number; prevEpoch: number | null; prevMain: string | null } | null;
   // GitHub refused the head as a conflict the mirror measures clean: the
   // turn runs anyway.
   githubConflict?: boolean;
@@ -167,6 +174,8 @@ export interface Sync {
 export interface SyncOutcome {
   n: number; reason: string; outcome: string; sha: string | null; message: string | null;
   behind?: number; pushOk?: boolean; conflictFiles?: string[];
+  // When this sync was recorded (#7160). Records from before it have none.
+  at?: string;
 }
 
 export interface Data {
@@ -909,13 +918,14 @@ const syncStop = (d: Data, n: number, by: string | null): WorkRequest =>
 // agent conversation's Stop): it ends as stopped by them, never as a
 // conflict it could not resolve, and gives its once-record back, so the
 // platform asks again when it next needs it.
-const stopRequested: Handler = (s, e, f) => {
+const stopRequested: Handler = (s, e, f, ctx) => {
   const sync = s.data.sync;
   if (!sync) return step(s);
   const by = e.payload.by ?? e.actor ?? null;
   const message = by ? `Sync with main stopped by ${by}. The branch is unchanged.` : 'Sync with main stopped. The branch is unchanged.';
   let d: Data = { ...s.data, sync: null,
-    lastSync: { n: sync.n, reason: sync.reason, outcome: 'stopped', sha: null, message, behind: 0, pushOk: false, conflictFiles: [] } };
+    lastSync: { n: sync.n, reason: sync.reason, outcome: 'stopped', sha: null, message, behind: 0, pushOk: false, conflictFiles: [],
+      at: ctx.now.toISOString() } };
   const writes: DomainWrite[] = [];
   if (sync.claimHead && sync.prev) {
     if (sync.reason === 'boot_failure') writes.push({ type: 'bootFailureRelease', sessionId: d.sessionId, head: sync.claimHead, prev: sync.prev.bootHead ?? null });
@@ -1264,8 +1274,11 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
   if (s.data.attempt) return 'merging';
   // A platform sync for a head (a boot failure, a failing check) waits in its
   // work for whoever is working on the session (sync-main.waitForIdle), as
-  // the old one did; a person's and the queue's are refused.
-  const waits = p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason) || p.reason === GITHUB_CHECKS_SYNC;
+  // the old one did; a person's is refused. #7158: the queue's conflict
+  // resolution waits too (a turn or a shots run holds the session for
+  // minutes), instead of failing at once and spending nothing it can still do.
+  const waits = p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason) || p.reason === GITHUB_CHECKS_SYNC
+    || p.reason === 'conflict';
   if (!waits && (row.activeTurn || moving(row))) return 'busy';
   if (!row.branch || !row.repo) return 'no_branch';
   // #6546: an approved change GitHub refused over failed required checks
@@ -1297,7 +1310,12 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
     const g = s.data.gaveUp;
     if (g && g.head === row.integrationHead && (g.main == null || row.integrationMain == null || g.main === row.integrationMain)) return 'unresolvable';
     if (s.data.backoff && Date.parse(s.data.backoff.until) > ctx.now.getTime()) return 'sync_backoff';
-    if (!p.approved && !p.mechanical && row.integrationResolvedEpoch === row.epoch) return 'awaiting_approval';
+    // #7158: spent only while it is still this main's resolution; main moved
+    // since, the queue resolves the change again.
+    if (!p.approved && !p.mechanical
+      && resolutionCurrent(row.integrationResolvedEpoch, row.epoch, row.integrationResolvedMain, row.integrationMain)) {
+      return 'awaiting_approval';
+    }
   }
   return null;
 }
@@ -1320,6 +1338,11 @@ function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<P
     claimHead: p.head ?? null, githubConflict: !!p.githubConflict,
     prev: p.reason === 'boot_failure' ? { bootHead: row.bootFailureSyncHead }
       : CHECK_SYNCS.has(p.reason) ? { fixedHead: row.fixedCheckSyncHead, fixedKeys: row.fixedCheckSyncKeys } : null };
+  // #7158: the free resolution this sync spends, and what the row held before
+  // it, given back when the sync ran nothing.
+  if (p.reason === 'conflict' && !p.approved && !p.mechanical) {
+    sync.spent = { epoch: row.epoch, prevEpoch: row.integrationResolvedEpoch, prevMain: row.integrationResolvedMain };
+  }
   // What makes it once: written with the sync's own work, so a restart in
   // between resumes the sync instead of reading it as tried (merge trace
   // bug 9).
@@ -1344,7 +1367,7 @@ function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<P
     writes,
     push: p.reason === 'conflict' ? [votes(f, { integrating: true })] : [],
     work: [{ kind: WORK.sync, key: `sync:${n}`, input: { sessionId: s.data.sessionId, n, reason: p.reason,
-      measureFirst: platformSync, waitForIdle: platformSync,
+      measureFirst: platformSync, waitForIdle: platformSync || p.reason === 'conflict',
       githubConflict: !!p.githubConflict } }],
   });
 }
@@ -1468,7 +1491,8 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   const outcome = r ? String(r.outcome || 'done') : 'error';
   let d: Data = { ...s.data, sync: null,
     lastSync: { n: sync.n, reason: sync.reason, outcome, sha: r?.sha ?? null, message: r?.message ?? (e.payload as any)?.error?.message ?? null,
-      behind: Number(r?.behind) || 0, pushOk: !!r?.pushOk, conflictFiles: Array.isArray(r?.conflictFiles) ? r.conflictFiles.slice(0, 200) : [] } };
+      behind: Number(r?.behind) || 0, pushOk: !!r?.pushOk, conflictFiles: Array.isArray(r?.conflictFiles) ? r.conflictFiles.slice(0, 200) : [],
+      at: ctx.now.toISOString() } };
   const writes: DomainWrite[] = [];
   if (!r) {
     const failures = (s.data.backoff?.failures || 0) + 1;
@@ -1487,6 +1511,13 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
     else if (CHECK_SYNCS.has(sync.reason)) {
       writes.push({ type: 'fixedCheckRelease', sessionId: d.sessionId, head: sync.claimHead, prevHead: sync.prev.fixedHead ?? null, prevKeys: sync.prev.fixedKeys || [] });
     }
+  }
+  // #7158: a conflict resolution that ran nothing (the worker stayed busy, or
+  // it failed before touching the branch) spends nothing either: the free
+  // resolution goes back, and the lane may ask again for this head.
+  if (sync.reason === 'conflict' && sync.spent && NOTHING_RAN.has(outcome)) {
+    writes.push({ type: 'resolutionRelease', sessionId: d.sessionId, epoch: sync.spent.epoch,
+      prevEpoch: sync.spent.prevEpoch, prevMain: sync.spent.prevMain });
   }
   // #6546: a GitHub-checks sync that pushed nothing (level with main by now,
   // conflicting, or it could not run) spends nothing: the next refusal may
@@ -2187,7 +2218,16 @@ const WRITES = {
               SELECT DISTINCT k FROM unnest(COALESCE(fixed_check_sync_keys, '{}'::text[]) || $3::text[]) AS k ORDER BY k)
       WHERE id = $1`, [w.sessionId, w.head, w.keys || []]),
   resolutionSpent: async (tx: Tx, w: any) => tx.query(
-    'UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch WHERE id = $1', [w.sessionId]),
+    `UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch,
+            integration_resolved_main_sha = integration_main_sha
+      WHERE id = $1`, [w.sessionId]),
+  // A free resolution given back (#7158): only while it still names the
+  // epoch its sync was spent for, so a later claim stands. The main it ran
+  // against goes back with it (null for a first spend).
+  resolutionRelease: async (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET integration_resolved_epoch = $3, integration_resolved_main_sha = $4
+      WHERE id = $1 AND integration_resolved_epoch = $2`,
+    [w.sessionId, w.epoch, w.prevEpoch ?? null, w.prevMain ?? null]),
   // A once-record given back (P6): only while it still names the head its
   // sync was for, so a later claim stands.
   bootFailureRelease: async (tx: Tx, w: any) => tx.query(

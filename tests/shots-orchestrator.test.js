@@ -627,6 +627,12 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
   // again once, a few minutes on, by the recovery sweep.
   assert.deepEqual(fault({ code: 'github_unavailable' }),
     { kind: 'github_unavailable', retryAt: now + 5 * 60_000 });
+  // 23 Nov 2026: a connection the database would not give in time (a
+  // release's draining process on its small pool) is the database's,
+  // whichever step met it, and is taken again once.
+  assert.deepEqual(fault(new Error('timeout exceeded when trying to connect')), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' })), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('sorry, too many clients already'), { code: '53300' })), { kind: 'database' });
 
   for (const error of [
     null,
@@ -638,9 +644,26 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
     { code: 'shots_stopped' },
     { code: 'visible_changes_conflict' },
     { shotsPlatformFault: 'not_a_kind' },
+    // An ordinary query error is not the database being out of reach.
+    Object.assign(new Error('syntax error at or near "SELEC"'), { code: '42601' }),
   ]) {
     assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
   }
+});
+
+test('a run that ended on a connection it could not get records one code, whatever the driver said', () => {
+  for (const error of [
+    new Error('timeout exceeded when trying to connect'),
+    Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+  ]) {
+    assert.equal(orchestrator.errorCode(error), 'database_busy');
+    const agent = orchestrator.agentErrorOf(error);
+    assert.equal(agent.code, 'database_busy');
+    assert.deepEqual(agent.platformFault, { kind: 'database' });
+  }
+  assert.equal(orchestrator.errorCode(new Error('Image build failed')), 'shots_failed');
+  assert.equal(orchestrator.errorCode({ code: 'shots_capture_incomplete' }), 'shots_capture_incomplete');
 });
 
 // trace_summary.tokenUsage was null on every shots run (18 Nov 2026). The
@@ -666,4 +689,122 @@ test('a run\'s trace says what its agent spent, however the turn ended', () => {
   const none = orchestrator.newRunMetrics();
   orchestrator.addAgentUsage(none, { result: null, agentError: { code: 'shots_agent_failed' } });
   assert.equal(Object.hasOwn(orchestrator.traceSummary(none), 'tokenUsage'), false);
+});
+
+// #7139: a change's own staging seeds are written into the before copy too.
+// When one could not go in, the brief names it so a claim that needed it is
+// skipped with a plain reason instead of a vague capture failure.
+test('Homeroom\'s brief carries changeSeeds only when a seed was left out of the before copy', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-change-seeds-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (beforeSeeds) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A guest-ready demo project' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/db/migrate.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' }, beforeSeeds },
+      intent: contract.parseIntent(fixtures.intent()),
+      selfApp: true,
+    });
+    assert.equal('changeSeeds' in briefFor({ ran: true, applied: ['seedA'], leftOut: [] }), false,
+      'nothing left out says nothing');
+    assert.equal('changeSeeds' in briefFor(null), false);
+
+    const applied = briefFor({ ran: true, applied: [], leftOut: [{ name: 'seedNeedsNewTable', why: 'schema' }] });
+    assert.equal(applied.changeSeeds.beforeCopy, 'applied');
+    assert.deepEqual(applied.changeSeeds.leftOut, [{ seed: 'seedNeedsNewTable', why: 'schema' }]);
+    assert.deepEqual(applied.changeSeeds.didNothing, {
+      before: [{ seed: 'seedNeedsNewTable', outcome: 'failed', reason: 'the before copy\'s database cannot hold it' }],
+      after: [],
+    });
+    assert.match(applied.changeSeeds.note, /did nothing on the <before\|after> copy: <reason>/);
+    assert.match(applied.changeSeeds.note, /on the after copy only/);
+
+    assert.equal(briefFor({ ran: 'partial', leftOut: [] }).changeSeeds.beforeCopy, 'partial');
+    assert.equal(briefFor({ ran: false, reason: 'no_runner' }).changeSeeds.beforeCopy, 'not_run');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('#7172: a copy whose seeds wrote nothing reaches the brief and the verdict', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-change-seeds-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const afterSeeds = {
+      ran: true,
+      outcomes: Array.from({ length: 7 }, (_, i) => ({
+        name: `seedNothing${i}`, outcome: i === 0 ? 'failed' : 'skipped', reason: `no project p${i}`,
+      })),
+    };
+    const brief = orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A guest-ready demo project' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/db/migrate.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' }, afterSeeds },
+      intent: contract.parseIntent(fixtures.intent()),
+      selfApp: true,
+    });
+    assert.equal(brief.changeSeeds.didNothing.after.length, 7);
+    assert.equal(brief.changeSeeds.didNothing.after[0].seed, 'seedNothing0', 'a failed seed comes first');
+    assert.equal(brief.changeSeeds.didNothing.before.length, 0);
+
+    const verdict = orchestrator.verdictOf({
+      summary: {
+        stories: [{ id: 'one', status: 'skipped', reason: 'The seeded request does not exist.' }],
+        verdict: { passed: false }, readyCount: 0, failedCount: 0, manifestHash: 'x', files: [],
+      },
+      intent: { stories: [] },
+      seeds: brief.changeSeeds.didNothing,
+    });
+    assert.deepEqual(verdict.seeds, brief.changeSeeds.didNothing);
+    assert.deepEqual(verdict.verdict.seeds, brief.changeSeeds.didNothing,
+      'the published verdict carries them for shot_runs.hard_verdict.seeds');
+    assert.match(verdict.incompleteReason, /Demo data that did not load on the after copy:/);
+    assert.match(verdict.incompleteReason, /seedNothing0 \(failed: no project p0\)/);
+    assert.match(verdict.incompleteReason, /and 2 more/);
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+// 25 Nov 2026: each browser a run shoots in has a twin for the before side
+// (worker/write-shots-mcp-config.js). The platform's brief never names the
+// twins: a warm worker can stay on an older image that has none, so the
+// worker's own bridge names the ones it started (worker/shots-mcp.js
+// get_brief). The run still asks every worker for them.
+test('the platform\'s brief never names the twins, and the run asks the worker to start them', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-twins-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Seasonal theme picker' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    assert.equal('beforeScreenBrowsers' in briefFor({}), false);
+    assert.equal('beforeScreenBrowsers' in briefFor({ afterOnly: true }), false);
+    assert.ok(Object.keys(briefFor({}).screenBrowsers).length, 'it still names each screen\'s browser');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+  // The run starts exactly those twins (services/worker.js SHOTS_TWIN_BROWSERS).
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
+  assert.match(source, /twinBrowsers: twinBrowsers\(intent, \{ afterOnly \}\),/);
+  assert.match(source, /twinBrowsers: Array\.isArray\(a\.twinBrowsers\) \? a\.twinBrowsers : \[\],/);
 });

@@ -223,9 +223,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
-    // SwooshArrowIcon: the drawn arrow before Invite on a project's hub,
-    // under the Standard (WIP) look only, so never in the cold document.
-    'M0.9 15.1C5.6 9.1 12.4 8.3 18.2 11.1L17.7 12.7C12.4 10.3 6.4 10.8 0.9 15.1ZM22.3 13.3L18.9 9.4L18.4 11.8L16.3 13.6Z',
     // ── The Communities tab is a row of its own again (18 Nov 2026) ─────
     //
     // The sidebar's "All communities" row drew Squares2X2Icon in the static
@@ -243,10 +240,12 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // The rail's Discover tab drew CompassIcon (two paths) in the static
     // document; the compass still draws behind state (a Settings row). Its
-    // filter sheet's button drew FilterIcon there too.
+    // filter sheet's button drew FilterIcon there too. (FilterIcon is back
+    // in the static document since 24 Nov 2026: the Homeroom bot tab's one
+    // project filter, "All projects", is drawn in its head card from the
+    // first render.)
     'M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z',
     'M15.5 8.5l-2 5-5 2 2-5z',
-    'M4 6h16M7 12h10M10 18h4',
     // ── The create dialog is retired ───────────────────────────────────
     //
     // Its "A private community" row drew LockIcon in the static document;
@@ -266,6 +265,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // NewspaperIcon nowhere.
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
+    // StepBackIcon (phone review S4, 23 Nov 2026): Needs you's previous
+    // change beside Yes / No, drawn only once the run has a change open.
+    'M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+    'M9 14 4 9l5-5',
     'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     // ── #2718 moved paths across this line, in both directions ───────
@@ -312,6 +315,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // comment mode.
     'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
+    // CrescentIcon: the before & after viewer's flip to a run's dark shots
+    // (review-flow/shots-viewer.tsx), drawn once a picture is measured.
+    'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z',
     // PhonePlusIcon (#4399): the mark menu's "Add Homeroom to your home
     // screen", drawn only after mount for a private member on a phone.
     'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
@@ -382,9 +388,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // redesign (Nov 2026): How to test draws both chevrons, one hidden.
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
-    // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
-    // whose rows render only after mount, so it is never in a cold document.
-    'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
+    // HashIcon ('M7 20l4-16m2 16l4-16M6 9h14M4 15h14') left this list with
+    // Messages' guide (#7040): the guide is in the empty pane's first render,
+    // so its "Looking for a project's chat?" row draws the glyph in the cold
+    // document. (#2802 had it only in the desktop rail's Recents, after mount.)
     'M7 3v5h8',
     'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
     // THE SPEECH BUBBLE, added by #2718's review. It was the leading glyph of
@@ -405,7 +412,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // "Vote on what changes" and "Ask for what you want". That story's
     // points are numbered now (features/auth/story.tsx), so nothing in the
     // cold document draws either: the lightbulb's other users and the
-    // ballot's render behind state.
+    // ballot's (the page about private communities among them) render
+    // behind state or at their own address.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
     'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
@@ -515,8 +523,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ArrowUpIcon there. The other composers draw both only once a
     // conversation or a dev chat is open. (#6019 follow-up: the AI tab's
     // Ask Homeroom bot bar draws MicrophoneIcon in the static document
-    // again, so only ArrowUpIcon is behind state.)
-    'M12 19V5M5 12l7-7 7 7',
+    // again. One look, 25 Nov 2026: and ArrowUpIcon too, its quiet send, so
+    // neither is behind state any more.)
     // ── #6035: the channel composer's formatting row ───────────────────
     //
     // Bold (two paths), Italic, Underline, Heading, Quote and Bulleted list
@@ -531,6 +539,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
     'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── #6653: the composer's strikethrough ────────────────────────────
     //
+    // FormatTextIcon ("Aa", request #7164) is the "+" menu's row that opens
+    // that row on a phone: in the same composer, so not in the static
+    // document either.
+    'M3.5 18.5 8 5.5l4.5 13M5.2 14h5.6M20.5 12.25v6.25M20.5 15.4a3.1 3.1 0 1 1-6.2 0 3.1 3.1 0 0 1 6.2 0Z',    //
     // StrikethroughIcon (the S and the line through it) draws in a channel's
     // formatting row and its right-click menu, which mount only once a
     // channel is open. LinkIcon is already on this list above.

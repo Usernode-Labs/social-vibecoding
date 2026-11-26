@@ -872,6 +872,11 @@ account for most changes that end up with no shots:
   copies have no model key. A seed cannot help a change to a state that
   already existed, which both copies need: put the steps that make it in
   `hints.setup`, or seed it first, in its own proposal.
+  A seeded request shows on a copy in its project's list and at its own
+  address whenever the project has no repository. In a project that has a
+  repository, a copy without GitHub opens the request's page but keeps the
+  fixture list, because the declared checks read those rows. A seed that
+  writes nothing is named on the run with its reason.
 - **It has no role in your app.** `member` is an ordinary signed-in member:
   not your app's manager or owner, with no linked wallet and nothing it
   made. When a change shows only to someone with a role, put the real
@@ -2595,6 +2600,69 @@ const { members, has_more } = await resp.json();
 - Rate limit: shared with `/users/*` (120/min per app and user). Cache the
   list for a minute rather than asking on every request. `?limit=` defaults
   to 100, at most 200; `has_more` says there are more.
+
+## A member's own assistant: personal access tokens
+
+A member can let their own assistant (an MCP client, a script) call the app
+at the app's own address, with no browser. Homeroom makes the token and
+checks it at the app's door on every request, so the app never meets a
+caller Homeroom has not vouched for. Do not build your own tokens for this.
+
+1. **Declare the path** in `dapp.json`: `"agentPaths": ["/mcp"]` (at most 3,
+   plain paths; a token works on each path and under it, nowhere else). It
+   is part of the app the group votes on.
+2. **Make a token for the member who is using the app**, from the app's
+   server, with both credentials:
+
+   ```js
+   const headers = {
+     'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+     'x-usernode-user-token': userTokenFromThisRequest,
+     'content-type': 'application/json',
+   };
+   const made = await fetch(`${PLATFORM_API_BASE}/access-tokens`,
+     { method: 'POST', headers, body: JSON.stringify({ name: 'My laptop' }) });
+   // 201 { token: 'hrat_…', id, name, hint, created_at, last_used_at, paths }
+   ```
+
+   Show `token` once and never store it: Homeroom keeps only a hash.
+   `GET /access-tokens` lists that member's live tokens
+   (`{ tokens: [{ id, name, hint, created_at, last_used_at }], paths, max }`)
+   and `DELETE /access-tokens/:id` revokes one. Only a member of the project
+   gets an answer (`403 not_a_member` otherwise); a member holds at most 10.
+3. **Read the caller as you read anyone.** The assistant sends
+   `Authorization: Bearer hrat_…` to a declared path. A request that passes
+   reaches the app with that member's identity in `x-usernode-token`, so
+   `req.user` is set. That identity only names the member: the AI proxy,
+   file storage, `/users/*` and `/members` refuse it, so keep the names you
+   need from members' own visits. A call on a declared path is the member's
+   assistant; anything it writes should say so.
+
+4. **Or let the member approve their assistant in a browser, with no token
+   to copy.** Nothing to build: an MCP client given only the declared
+   address (`https://<your app>/mcp`) is told by the door's 401 where to
+   ask, the member presses Allow on Homeroom, and the client gets an
+   hour-long token it renews by itself. Its calls reach the app exactly as
+   a personal token's do. `GET /access-tokens` also answers
+   `connections: [{ id, name, origin, created_at, last_used_at }]`, the
+   assistants that member approved, and
+   `DELETE /access-tokens/connections/:id` disconnects one: list them
+   beside the tokens. It works for clients whose sign-in comes back to
+   claude.ai or ChatGPT; a client that comes back to the member's own
+   computer (a command-line tool) still needs a personal token.
+
+- **The door refuses everything else with a bare 401**: no token, a wrong or
+  revoked one, another app's, a path that was not declared, and a token
+  whose owner has left the project or can no longer see the app (their
+  tokens are then revoked). The app never sees those requests. On a
+  declared path that 401 carries `WWW-Authenticate: Bearer
+  resource_metadata="…"`, which is how a client finds the approval above:
+  do not answer `/.well-known/oauth-protected-resource` yourself.
+- **Production only.** A preview has no app credential, so it cannot make a
+  token, and a token never opens a preview. Show the token screen with a
+  plain "works on the live app" note there, and seed nothing for it.
+- A declared path still needs the app's own `req.user` check: add it to no
+  public list. The scaffold's deny-by-default middleware already covers it.
 
 ## Your people's data: account deletion and export
 

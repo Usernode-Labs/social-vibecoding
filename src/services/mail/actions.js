@@ -532,6 +532,36 @@ const ACTIONS = {
     },
     headers: activityHeaders,
   },
+  app_slots_granted: {
+    label: 'App slots granted',
+    placeholders: {
+      username: text('The person\'s username, at most 60 characters, when known'),
+      hasUsername: flag('True when the person is named'),
+      added: text('How many app slots an admin added'),
+      total: text('How many app slots the person has now'),
+      oneAdded: flag('True when exactly one slot was added'),
+      oneTotal: flag('True when the person has exactly one slot now'),
+      ...ACTIVITY_PLACEHOLDERS,
+    },
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { username: 'maya', added: '2', total: '4', url: 'https://app.onhomeroom.com/', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: (payload) => {
+      const username = payload.username ? clip(payload.username, 60) : '';
+      const added = Math.max(0, Math.trunc(Number(payload.added) || 0));
+      const total = Math.max(0, Math.trunc(Number(payload.total) || 0));
+      return {
+        username,
+        hasUsername: !!username,
+        added: String(added),
+        total: String(total),
+        oneAdded: added === 1,
+        oneTotal: total === 1,
+        ...activityValues(payload),
+      };
+    },
+    headers: activityHeaders,
+  },
 };
 
 // Own properties only, so a kind named "constructor" is not an action.

@@ -78,6 +78,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
+import { capCount } from '../../lib/count-cap';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import {
@@ -112,6 +113,13 @@ import { schedulePress, type PendingPress } from './tab-press';
  * is the SIDEBAR's order, so a keyboard's focus order on a desktop is the
  * order on screen, and app.css lays the phone's five cells out with `order`
  * ("TWO ORDERS, ONE MARKUP" there).
+ *
+ * ONE ORDER NOW (phone review #81, 23 Nov 2026): the sidebar is laid out by
+ * the same `order` as the phone's bar, Home, Communities, Homeroom bot,
+ * Messages, then Recents and you, so turning a phone (an iPhone Duo's cover,
+ * upright and sideways) never moves a tab. The markup keeps this order for
+ * the declared checks; useTabReadingOrder gives the drawn one to screen
+ * readers and the Tab key.
  *
  * THE COMMUNITIES TAB IS BACK (18 Nov 2026). One Home (#6361) had drawn it
  * on neither bar and kept your communities on Home, as Pinned communities.
@@ -254,7 +262,7 @@ function VotesBadge({ count }: { count: number }) {
   if (!(count > 0)) return null;
   return (
     <span className="platform-tab-votes" aria-label={t('core:tabs.votesWaiting', { count })}>
-      {count > 99 ? '99+' : String(count)}
+      {capCount(count)}
     </span>
   );
 }
@@ -296,7 +304,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label, title }: {
       aria-label={label}
       title={count > 0 ? title : undefined}
     >
-      {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
+      {count > 0 ? capCount(count) : ''}
     </span>
   );
 }
@@ -370,15 +378,19 @@ function useRailPeek(peek: boolean) {
  * pill is now what it holds plus the same padding on every tab — 5px over
  * the glyph, 8px either side, 3px under the label — with a floor so a
  * three-letter label still gets a pill rather than a capsule, and the tab
- * under it keeps the whole cell as its target. The desktop rail does not
- * use it at all — its rows carry a fill of their own, and app.css hides the
- * marker there.
+ * under it keeps the whole cell as its target. A look can ask for another
+ * fit (markerFit): the standard look's phone bar takes the lit tab's own box
+ * (tabBoxFor), and its sidebar the lit row's (railLitRow, railBoxFor), where
+ * the marker is the sun that slides from row to row. Elsewhere the desktop
+ * rail's rows carry a fill of their own, and app.css hides the marker there.
  */
 interface TabMarkerBox {
   x: number;
   y: number;
   w: number;
   h: number;
+  /** The lit row's own corner, on the sidebar, whose rows round theirs differently (tabs 12px, places 8px). */
+  r?: number;
   slide: boolean;
 }
 
@@ -438,6 +450,129 @@ export function markerBoxFor(
     w,
     h,
   };
+}
+
+/**
+ * THE PILL IS THE TAB (one look, 25 Nov 2026). Where the look sizes each tab
+ * to its own label and keeps it a step clear of the bar's edges and of its
+ * neighbours (the standard look's phone bar, app.css "ONE PILL, NOT TWO"),
+ * the tab's own box already is the pill people agreed on, so the marker takes
+ * it exactly: the yellow slides from one tab's box to the next and lands where
+ * the tab's own fill used to be, with today's spacing. The look says so with
+ * `--platform-tabs-marker-fit: tab` on the bar; anywhere else the marker hugs
+ * the glyph and label as markerBoxFor measures it. Integers, as markerBoxFor's.
+ */
+export function tabBoxFor(
+  el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
+): Omit<TabMarkerBox, 'slide'> | null {
+  if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  return {
+    x: Math.round(el.offsetLeft),
+    y: Math.round(el.offsetTop),
+    w: Math.round(el.offsetWidth),
+    h: Math.round(el.offsetHeight),
+  };
+}
+
+/**
+ * How the look asks the marker to fit, from `--platform-tabs-marker-fit` on
+ * the bar: `tab` (the phone's bar: the lit tab's own box, tabBoxFor), `row`
+ * (the sidebar: the lit row, railLitRow and railBoxFor), or '' (hug the
+ * glyph and label, markerBoxFor).
+ */
+export function markerFit(bar: Element | null): '' | 'tab' | 'row' {
+  if (!bar || typeof getComputedStyle !== 'function') return '';
+  try {
+    const fit = getComputedStyle(bar).getPropertyValue('--platform-tabs-marker-fit').trim();
+    return fit === 'tab' || fit === 'row' ? fit : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * THE SIDEBAR'S SUN SLIDES TOO (one look, 25 Nov 2026). From 768px the bar
+ * is the sidebar of rows, and the row you are on was its own sun fill, which
+ * jumped. Where the look asks for it (`--platform-tabs-marker-fit: row`) the
+ * marker is that fill instead and slides from row to row, as the phone's does.
+ *
+ * WHICH ROW IS LIT is what app.css draws lit, which is not every row that
+ * says `aria-current`: Settings over You's row ("ON SETTINGS, SETTINGS IS
+ * LIT, NOT YOU"), a community's place over the community's row and the
+ * Communities tab ("THE PARENT ROW GIVES ITS FILL TO THE ROW LIT UNDER IT"),
+ * a community's own row over the tab ("ON A COMMUNITY'S PAGE ITS OWN ROW IS
+ * LIT, NOT COMMUNITIES"), then the tab. Only a row that is laid out counts:
+ * folded to its strip the sidebar draws no places. Null: nothing is lit.
+ *
+ * ON THE WAY FROM ONE COMMUNITY TO ANOTHER the place you left stays lit
+ * inside its part while that part shuts, and the new community's place
+ * lights only once its page has drawn (measured: 690ms after the press, the
+ * parts done by 450). A row in a shutting part is leaving, so it is not the
+ * lit one; until a place lights, the community you went to is, its open row,
+ * which app.css draws at rest: the pill goes there at once and on to the
+ * place when it lights.
+ */
+const RAIL_LIT = [
+  '.platform-rail-settings[aria-current="page"]',
+  ':is(.dev-ws-place, .platform-rail-sub)[aria-current="page"]',
+  '.platform-rail-community:not([data-rail-open])[aria-current="page"]',
+  '.platform-rail-community[data-rail-open][aria-current="page"]',
+  '.platform-tab[aria-current="page"]',
+] as const;
+
+/** How long the sidebar may show no lit row before the pill goes (measureRail): about 400ms, in frames. */
+const RAIL_UNLIT_FRAMES = 24;
+
+export function railLitRow(bar: Element): HTMLElement | null {
+  const communityLit = !!bar.querySelector('.platform-rail-community[aria-current="page"]');
+  for (const selector of RAIL_LIT) {
+    for (const el of Array.from(bar.querySelectorAll<HTMLElement>(selector))) {
+      if (el.getClientRects().length === 0) continue;
+      if (el.closest('.platform-rail-nest[data-nest="closing"]')) continue;
+      if (communityLit && el.id === 'platform-tab-workshop') continue;
+      return el;
+    }
+  }
+  return null;
+}
+
+/**
+ * The lit row's box in the sidebar's own (scrolled) content, where the
+ * marker is laid out: offsets, so a row's own entrance (a nested place fades
+ * in from 4px up) does not move it. A community's places open and shut with
+ * an animation of their height (./rail-nest.tsx, NEST_MS), so a row under
+ * one that is moving is not yet where it will rest: the box is where it WILL
+ * be, each moving part above it taken at the height it is heading for (its
+ * rows' height, or nothing as it shuts). The pill and the parts run for the
+ * same time, so it lands as they settle.
+ */
+export function railBoxFor(el: HTMLElement, bar: HTMLElement): Omit<TabMarkerBox, 'slide'> | null {
+  if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  let x = 0;
+  let y = 0;
+  let node: HTMLElement | null = el;
+  while (node && node !== bar) {
+    x += node.offsetLeft;
+    y += node.offsetTop;
+    node = node.offsetParent as HTMLElement | null;
+  }
+  if (node !== bar) return null;
+  // You and Settings stand at the sidebar's foot, under the space that takes
+  // up what the rows leave, so a part opening or shutting above them does not
+  // move them.
+  const atFoot = el.matches('#platform-tab-me, #platform-rail-settings');
+  for (const part of atFoot ? [] : Array.from(bar.querySelectorAll<HTMLElement>('.platform-rail-nest'))) {
+    if (part.contains(el)) continue;
+    // Only the parts above the row move it, and a part inside another moves with it.
+    if (!(part.compareDocumentPosition(el) & 4)) continue;
+    const outer = part.parentElement?.closest('.platform-rail-nest');
+    if (outer && !outer.contains(el)) continue;
+    const inner = part.firstElementChild as HTMLElement | null;
+    const settled = part.getAttribute('data-nest') === 'closing' ? 0 : (inner ? inner.scrollHeight : part.offsetHeight);
+    y += settled - part.offsetHeight;
+  }
+  const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(el.offsetWidth), h: Math.round(el.offsetHeight), r: Math.round(r) };
 }
 
 /**
@@ -584,6 +719,9 @@ function canSlide(bar: HTMLElement): boolean {
   const marker = bar.querySelector<HTMLElement>('.platform-tabs-marker[data-marker-at]');
   // Unplaced (nothing lit yet), or `display: none` (the desktop rail).
   if (!marker || marker.getClientRects().length === 0) return false;
+  // The sidebar's pill slides once the route has lit the row (useTabMarker):
+  // a press there navigates at once, as it always did.
+  if (markerFit(bar) === 'row') return false;
   return motionWelcome();
 }
 
@@ -619,15 +757,46 @@ function useTabMarker(
   // it, and the callbacks that read it outlive the render they came from.
   const pending = useRef<PendingPress | null>(null);
 
+  // The sidebar's lit row the marker last went to (railLitRow): a move to
+  // another is a selection change, a re-measure of the same one is not.
+  const railLit = useRef<HTMLElement | null>(null);
+  const lastFit = useRef<string | null>(null);
+
   const place = (el: HTMLElement, selectionChanged: boolean) => {
     const inStrip = document.documentElement.hasAttribute('data-side-strip');
-    const next = markerBoxFor(el, tabContentRect(el), inStrip);
+    const bar = barRef.current;
+    const fit = inStrip ? '' : markerFit(bar);
+    // The look's own fit first: the standard look's phone bar draws the pill
+    // as the tab's box (tabBoxFor), its sidebar as the lit row's (railBoxFor).
+    // The side strip keeps its cell's.
+    const next = fit === 'row' && bar
+      ? railBoxFor(el, bar)
+      : fit === 'tab'
+        ? tabBoxFor(el)
+        : markerBoxFor(el, tabContentRect(el), inStrip);
     if (!next) return;
+    if (fit === 'row') railLit.current = el;
+    // The bar changing what it is (a window narrowed from the sidebar to the
+    // phone's bar, or widened back) lands the pill rather than sliding it.
+    if (fit !== lastFit.current) {
+      lastFit.current = fit;
+      selectionChanged = false;
+    }
     setBox((prev) => {
       if (prev && prev.x === next.x && prev.y === next.y
-        && prev.w === next.w && prev.h === next.h) return prev;
+        && prev.w === next.w && prev.h === next.h && prev.r === next.r) return prev;
+      // On the sidebar, a pixel's difference while the pill is still sliding
+      // (a part above it settling a rounding apart from where it was heading)
+      // is not a move: restarting the slide for it would stall it.
+      if (fit === 'row' && prev && !selectionChanged && sliding()
+        && Math.abs(prev.x - next.x) <= 2 && Math.abs(prev.y - next.y) <= 2
+        && Math.abs(prev.w - next.w) <= 2 && Math.abs(prev.h - next.h) <= 2) return prev;
       return { ...next, slide: !!prev && selectionChanged };
     });
+  };
+  const sliding = () => {
+    const marker = markerRef.current;
+    return !!marker && typeof marker.getAnimations === 'function' && marker.getAnimations().length > 0;
   };
 
   // The router lit the tab a press slid to: the press is answered, and the
@@ -648,11 +817,54 @@ function useTabMarker(
     }
     // A slide waiting for the swap's frame to be painted (see afterNextFrame).
     let cancelSlide: (() => void) | null = null;
+    // The sidebar's wait before a row-less moment hides the pill (measureRail).
+    let unlitWait = 0;
     const selector = target === APP_TARGET ? '.platform-side-app[aria-current="page"]' : '.platform-tab[aria-current="page"]';
     const measure = (selectionChanged: boolean) => {
+      if (markerFit(bar) === 'row' && !document.documentElement.hasAttribute('data-side-strip')) {
+        measureRail();
+        return;
+      }
       const el = bar.querySelector<HTMLElement>(selector);
       if (!el) return;
       place(el, selectionChanged);
+    };
+    // The sidebar: the row app.css draws lit, which can change with the tab
+    // standing still (a community's Hub to its Workshop, one community to
+    // another), so the bar's own changes are watched too (below). Nothing
+    // lit, and the marker hides.
+    //
+    // A MOMENT WITH NOTHING LIT IS NOT AN ANSWER. Between one community and
+    // another (or a tab and a community's page) the route lights the
+    // community's row a frame or two before its places are drawn under it,
+    // and that row gives its fill to them, so for those frames no row is lit.
+    // Hiding the pill then made the move a jump; it stays where it was until
+    // the row lands, and goes only if nothing is lit a beat later.
+    // (Counted in frames: the bar's only timer is the rail peek's, ./rail-peek.ts.)
+    const measureRail = () => {
+      const el = railLitRow(bar);
+      if (!el) {
+        if (unlitWait || typeof requestAnimationFrame !== 'function') return;
+        let frames = RAIL_UNLIT_FRAMES;
+        const wait = () => {
+          frames -= 1;
+          if (frames > 0) {
+            unlitWait = requestAnimationFrame(wait);
+            return;
+          }
+          unlitWait = 0;
+          if (railLitRow(bar)) return;
+          railLit.current = null;
+          setBox(null);
+        };
+        unlitWait = requestAnimationFrame(wait);
+        return;
+      }
+      if (unlitWait) {
+        cancelAnimationFrame(unlitWait);
+        unlitWait = 0;
+      }
+      place(el, el !== railLit.current);
     };
     // This run is the tab having changed; the observer's are layout moving.
     // The first placement lands now; a move from a tab already marked waits
@@ -679,8 +891,27 @@ function useTabMarker(
     // once it has loaded), so the label is watched as well.
     const label = bar.querySelector(`${selector} .platform-tab-label`);
     if (label) ro.observe(label);
+    // The sidebar's rows come and go and light without the tab changing:
+    // re-measure once a frame after the bar's own markup has changed.
+    let queued = 0;
+    const mo = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
+      if (queued || markerFit(bar) !== 'row' || typeof requestAnimationFrame !== 'function') return;
+      queued = requestAnimationFrame(() => {
+        queued = 0;
+        if (!cancelSlide) measure(false);
+      });
+    });
+    mo?.observe(bar, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-current', 'data-rail-open', 'data-nest', 'class'],
+    });
     return () => {
       ro.disconnect();
+      mo?.disconnect();
+      if (queued && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(queued);
+      if (unlitWait && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(unlitWait);
       cancelSlide?.();
     };
   }, [barRef, target]);
@@ -774,88 +1005,99 @@ function tabHref(key: string, href: string): string {
 }
 
 /**
- * THE PHONE'S BAR IS READ IN THE ORDER IT IS SEEN (audit N01, 1 Nov 2026).
+ * THE BAR IS READ IN THE ORDER IT IS SEEN (audit N01, 1 Nov 2026), ON
+ * EVERY LAYOUT (phone review #81, 23 Nov 2026).
  *
- * The markup is the rail's order (TWO ORDERS, ONE MARKUP above), and the
- * declared checks pin that sibling chain, so the phone's five cells are laid
- * out with `order`. A screen reader followed the markup: Home, Homeroom bot,
- * Messages, Communities, You, against Home, Communities, Homeroom bot,
- * Messages, You on screen. Below 768px `aria-owns` hands the five tabs to
- * the accessibility tree in the bar's order; the DOM, and so the chain the
- * checks select on, is untouched. Off the phone the attribute goes, and the
- * rail reads in its markup order as before.
+ * The markup is the sidebar's old order (TWO ORDERS, ONE MARKUP above), and
+ * the declared checks pin that sibling chain, so the drawn order is laid out
+ * with `order` in app.css: Home, Communities, Homeroom bot, Messages, then
+ * the sidebar's Recents (the pinned and the recent), then you and your
+ * settings. It used to be the phone's bar alone; the sidebar kept the
+ * markup's order, so turning an iPhone Duo sideways moved Communities from
+ * second to fourth. It is one order everywhere now.
+ *
+ * A screen reader follows the markup, so `aria-owns` hands the bar's
+ * children to the accessibility tree in the drawn order; the DOM, and so the
+ * chain the checks select on, is untouched. What it does not name (iPhone
+ * Duo's Apps section, drawn above the capsule and first in the markup; the
+ * marker, which is aria-hidden) keeps its place, before the owned ones.
  *
  * …AND THE TAB KEY MOVES IN IT TOO (2 Nov 2026, the owner's call after
  * #6102). `aria-owns` reorders what a screen reader reads, not what Tab
- * focuses, which still followed the markup. So below 768px a Tab or
- * Shift+Tab on one of the five moves to its neighbour in the drawn order
- * (`nextPhoneTab`). At the two ends it is left to the browser: Home is
- * first and You last in the markup as on screen, so Tab out of You and
- * Shift+Tab out of Home leave the bar where they always did. No tabindex is
- * written, so the markup, the prerender and every other bar are untouched.
+ * focuses, so a Tab or Shift+Tab inside the bar moves to the next or
+ * previous control in the drawn order (`drawnFocusOrder`). At the two ends
+ * it is left to the browser, which leaves the bar where it always did: the
+ * first and last controls are the same in the markup and on screen.
  *
- * Written from an effect, never rendered: the prerender has no width, and a
- * first client render that differed from it would be a hydration mismatch.
- * The Duo's side strip is left alone: its Apps section is the bar's first
- * child, which this list would not reach.
+ * Written from an effect, never rendered: a first client render that
+ * differed from the prerender would be a hydration mismatch.
  */
-// Five tabs, in the bar's drawn order: Communities is second, next to Home,
-// though it follows Messages in the markup (the sidebar's order).
-export const PHONE_TAB_ORDER = [
+// The bar's children in their drawn order (app.css `order`). Communities is
+// second, next to Home, though it follows Messages in the markup.
+export const TAB_DRAWN_ORDER = [
   'platform-tab-home',
   'platform-tab-workshop',
   'platform-tab-ai',
   'platform-tab-messages',
+  'platform-rail-pinned',
+  'platform-rail-communities',
   'platform-tab-me',
+  'platform-rail-settings',
 ] as const;
 
-export function phoneReadingOrder(phone: boolean, sideStrip: boolean): string | null {
-  return phone && !sideStrip ? PHONE_TAB_ORDER.join(' ') : null;
+/** The value `aria-owns` takes on the bar: the drawn order, on every layout. */
+export function tabReadingOrder(): string {
+  return TAB_DRAWN_ORDER.join(' ');
 }
 
-/** The tab a Tab (or, `back`, a Shift+Tab) on `id` moves to in the phone's drawn order, or null at an end. */
-export function nextPhoneTab(id: string, back: boolean): string | null {
-  const at = (PHONE_TAB_ORDER as readonly string[]).indexOf(id);
-  if (at === -1) return null;
-  return PHONE_TAB_ORDER[at + (back ? -1 : 1)] ?? null;
+/**
+ * Controls in markup order, put in the drawn order. `groupOf` names the
+ * child of the bar each one is inside (an id in TAB_DRAWN_ORDER), or null for
+ * one the order does not name, which keeps its place ahead of the rest. The
+ * sort is stable, so the controls inside one child keep their own order.
+ */
+export function drawnFocusOrder<T>(items: readonly T[], groupOf: (item: T) => string | null): T[] {
+  const rank = (item: T) => {
+    const id = groupOf(item);
+    const at = id ? (TAB_DRAWN_ORDER as readonly string[]).indexOf(id) : -1;
+    return at;
+  };
+  return items.map((item, i) => ({ item, i, r: rank(item) }))
+    .sort((a, b) => (a.r - b.r) || (a.i - b.i))
+    .map(({ item }) => item);
 }
 
-function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void {
+const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function useTabReadingOrder(barRef: React.RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const bar = barRef.current;
-    if (!bar || typeof window === 'undefined' || !window.matchMedia) return undefined;
-    const mq = window.matchMedia('(max-width: 767.98px)');
-    const root = document.documentElement;
-    const apply = () => {
-      const owns = phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'));
-      if (owns) bar.setAttribute('aria-owns', owns);
-      else bar.removeAttribute('aria-owns');
+    if (!bar) return undefined;
+    bar.setAttribute('aria-owns', tabReadingOrder());
+    const groupOf = (el: HTMLElement): string | null => {
+      for (let node: HTMLElement | null = el; node && node !== bar; node = node.parentElement) {
+        if (node.id && (TAB_DRAWN_ORDER as readonly string[]).includes(node.id)) return node.id;
+      }
+      return null;
     };
     // Tab and Shift+Tab, in the drawn order (the note above).
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
-      if (!phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'))) return;
-      const from = (event.target as HTMLElement | null)?.closest?.('a[id], button[id]');
-      let id = from && bar.contains(from) ? from.id : '';
-      while (id) {
-        id = nextPhoneTab(id, event.shiftKey) || '';
-        const to = id ? document.getElementById(id) : null;
-        if (to && to.getClientRects().length > 0) {
-          event.preventDefault();
-          to.focus();
-          return;
-        }
-      }
+      const from = event.target as HTMLElement | null;
+      if (!from || !bar.contains(from)) return;
+      const shown = Array.from(bar.querySelectorAll<HTMLElement>(FOCUSABLE))
+        .filter((el) => el.getClientRects().length > 0 && !el.closest('[inert]'));
+      const order = drawnFocusOrder(shown, groupOf);
+      const at = order.indexOf(from);
+      if (at === -1) return;
+      const to = order[at + (event.shiftKey ? -1 : 1)];
+      if (!to) return;
+      event.preventDefault();
+      to.focus();
     };
-    apply();
-    mq.addEventListener?.('change', apply);
     bar.addEventListener('keydown', onKey);
-    const watch = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null;
-    watch?.observe(root, { attributes: true, attributeFilter: ['data-side-strip'] });
     return () => {
-      mq.removeEventListener?.('change', apply);
       bar.removeEventListener('keydown', onKey);
-      watch?.disconnect();
     };
   }, [barRef]);
 }
@@ -863,7 +1105,7 @@ function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   const t = useMessages();
-  usePhoneReadingOrder(barRef);
+  useTabReadingOrder(barRef);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
@@ -1070,6 +1312,7 @@ export function PlatformTabs() {
           transform: `translate(${marker.x}px, ${marker.y}px)`,
           width: `${marker.w}px`,
           height: `${marker.h}px`,
+          ...(marker.r != null ? { borderRadius: `${marker.r}px` } : null),
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
@@ -1178,7 +1421,7 @@ export function PlatformTabs() {
           phone's marker and the bar's grid count those), and it lights on
           the Settings screen itself — the Me row stays lit too, because
           Settings still belongs to the Me section on both bars. (The
-          standard look's open menu draws Me's row at rest there, so only
+          standard look's menu, open or folded, draws Me's row at rest there, so only
           Settings is lit; Me keeps `aria-current`. app.css, "ON SETTINGS,
           SETTINGS IS LIT, NOT YOU".)
       */}

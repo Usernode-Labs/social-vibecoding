@@ -7,8 +7,9 @@ const { ACTIONS, actionFor } = require('../src/services/mail/actions');
 
 test('covers every kind', () => {
   assert.deepEqual(Object.keys(ACTIONS).sort(), [...templates.KINDS].sort());
-  // 13, then the two waitlist reminders (services/waitlist-reminders.js).
-  assert.equal(templates.KINDS.length, 16);
+  // 13, then the two waitlist reminders (services/waitlist-reminders.js),
+  // then app slot grants (#7043).
+  assert.equal(templates.KINDS.length, 17);
   assert.equal(actionFor('otp'), ACTIONS.otp);
   assert.equal(actionFor('nope'), null);
   assert.equal(actionFor('constructor'), null);
@@ -44,7 +45,7 @@ test('what a mail exists to carry is required, in html and text', () => {
 });
 
 test('activity mails require the unsubscribe link', () => {
-  for (const kind of ['build_ready', 'invite_activity', 'project_opened']) {
+  for (const kind of ['build_ready', 'invite_activity', 'project_opened', 'app_slots_granted']) {
     assert.deepEqual(ACTIONS[kind].required, { html: ['unsubscribeUrl'], text: ['unsubscribeUrl'] }, kind);
   }
 });
@@ -73,7 +74,7 @@ test('words built in code keep the catalog\'s apostrophes in html, and escape a 
 
 test('activity mails and the waitlist reminders carry their unsubscribe headers; nothing else has headers', () => {
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?x=1';
-  for (const kind of ['build_ready', 'invite_activity', 'project_opened', 'waitlist_reminder', 'waitlist_reminder_last']) {
+  for (const kind of ['build_ready', 'invite_activity', 'project_opened', 'app_slots_granted', 'waitlist_reminder', 'waitlist_reminder_last']) {
     assert.deepEqual(ACTIONS[kind].headers({ unsubscribeUrl }), {
       'List-Unsubscribe': `<${unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -81,7 +82,7 @@ test('activity mails and the waitlist reminders carry their unsubscribe headers;
     assert.equal(ACTIONS[kind].headers({ unsubscribeUrl: 'javascript:x' }), null, kind);
     assert.equal(ACTIONS[kind].headers({}), null, kind);
   }
-  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 5);
+  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 6);
 });
 
 test('only what an admin or an operator receives is English only', () => {

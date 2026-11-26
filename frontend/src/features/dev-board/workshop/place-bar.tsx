@@ -145,9 +145,16 @@ export function HeaderPlace({ slug, name }: { slug: string | null; name: string 
  * own (#3271's rule for the header): app.css shows it only on a phone,
  * where the place bar's second row is gone.
  */
-export function HeaderPlaceName({ slug }: { slug: string | null }): ReactNode {
+export function HeaderPlaceName({ slug, fallback }: { slug: string | null; fallback?: PlaceKey }): ReactNode {
   const { slug: mounted, place } = useStoreState(placeStore);
-  if (!slug || mounted !== slug) return null;
+  if (!slug) return null;
+  // `fallback`: the place an item's page is under, where the project's own
+  // page is not mounted to say it.
+  if (mounted !== slug) {
+    return fallback ? (
+      <span className="header-place-name" data-header-place="" aria-hidden="true">{placeName(fallback)}</span>
+    ) : null;
+  }
   // #5683: never a channel from another community beside this one's name.
   const shown = livePlace(slug, place);
   const handle = placeHandle(shown);

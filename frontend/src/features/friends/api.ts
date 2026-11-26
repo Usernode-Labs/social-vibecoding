@@ -53,7 +53,8 @@ function person(input: unknown): FriendPerson | null {
   const row = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const id = Number(row.id);
   if (!Number.isSafeInteger(id) || id <= 0 || typeof row.username !== 'string') return null;
-  const avatarUrl = typeof row.avatarUrl === 'string' && /^\/avatars\/[a-f0-9]{32}$/.test(row.avatarUrl)
+  const avatarUrl = typeof row.avatarUrl === 'string'
+    && /^\/avatars\/(?:[a-f0-9]{32}|g\/[a-f0-9]{20}\.svg)$/.test(row.avatarUrl)
     ? row.avatarUrl : null;
   return {
     id,

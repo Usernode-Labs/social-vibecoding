@@ -78,6 +78,11 @@ test('a DM and a group give their rows a side; a channel does not', () => {
   assert.doesNotMatch(channel, /messages-message-bubble/);
   assert.doesNotMatch(channel, /messages-bubble/);
   assert.match(channel, /class="min-w-0 flex-1"/, 'the plain content column, as before');
+  // #7163: the channel's named row still puts YOUR own message on the right,
+  // face and all, and leaves somebody else's where it was.
+  assert.match(channel, /class="messages-message group  messages-message-self messages-message-end /, 'your own row takes the right');
+  const channelTheirs = row({ message: message(ADA, 3, { content: 'Morning all' }), kind: 'channel' });
+  assert.doesNotMatch(channelTheirs, /messages-message-end/, 'somebody else\'s stays on the left');
 });
 
 test('the row that is not something a person said keeps its full-width named row', () => {
@@ -150,20 +155,30 @@ test('the stylesheet puts your bubble on the right and tints it', () => {
   assert.match(CSS, /\.messages-message-bubble\.messages-message-saved \.messages-bubble \{\n  box-shadow: inset 0 0 0 1\.5px var\(--accent\);/);
 });
 
-// ── 4. The declared checks ────────────────────────────────────────────────
+test('the stylesheet puts your own channel row on the right too, picture and all (#7163)', () => {
+  // The row runs the other way, so your face sits at the trailing edge and
+  // the words stack against it, with nothing tinted and no bubble; a frame
+  // look keeps its own post.
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end \{ flex-direction: row-reverse; \}/);
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end > \.min-w-0 \{\n  display: flex;\n  flex-direction: column;\n  align-items: flex-end;\n\}/);
+  assert.match(CSS, /html:root \.messages-message\.messages-message-end > \.messages-message-gutter \{\n  margin-inline-start: 0;\n  margin-inline-end: -12px;\n  text-align: start;\n\}/);
+});
 
+// ── 4. The declared checks ────────────────────────────────────────────────
 test('the demo DM and group declare the new shape, by #5680', () => {
   const check = (route, needle) => DAPP.tests.find((entry) => entry.path === `/?demo=1#messages/${route}` && entry.name.includes(needle));
   const dm = check('910001', '#5680');
   assert.ok(dm, 'the DM check is rewritten, not dropped');
   assert.match(dm.name, /own message on the right in its tinted bubble/);
   // The wrap is the self row's first child: no avatar before it, then the
-  // head and the bubble. (The selector engine both runners use does not
-  // evaluate `:not(:has())`, and a selector longer than the runner's cap
-  // (`MAX_TEST_SELECTOR_LEN`) is silently truncated — so the shape is
-  // spelled this way and no longer.)
+  // head and the bubble. The other person's avatar is an image now, the photo
+  // they uploaded or the one generated from their account (#7135), rather
+  // than the letter in a span it used to be. (The selector engine both
+  // runners use does not evaluate `:not(:has())`, and a selector longer than
+  // the runner's cap (`MAX_TEST_SELECTOR_LEN`) is silently truncated — so the
+  // shape is spelled this way and no longer.)
   assert.match(dm.expectSelector, /\.messages-message-self>\.messages-bubble-wrap:first-child>\.messages-message-head\+\.messages-bubble$/);
-  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>span\[aria-hidden\]\+\.messages-bubble-wrap>\.messages-bubble\)/);
+  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>img\+\.messages-bubble-wrap>\.messages-bubble\)/);
   assert.ok(dm.expectSelector.length <= 256, `the selector fits the manifest's cap (${dm.expectSelector.length})`);
 
   const group = check('910002', '#5680');

@@ -83,18 +83,21 @@ async function storedKind(pool, sessionId) {
  * proposal machine's DiagramStored, which owes the pull request's body its
  * block (`pr.diagram`, syncPrBlock). Written after the commit instead, a
  * restart in between lost the block for good. Resolves true when a row took
- * it; throws when it could not be stored.
+ * it; throws when it could not be stored. `head`: the revision this turn
+ * declared the diagram on, kept beside the record so a later turn's diagram
+ * is held over this one (routes/internal.js, request #7146).
  */
-async function storeDeclared(pool, sessionId, record) {
+async function storeDeclared(pool, sessionId, record, { head = null } = {}) {
   const id = Number(sessionId);
   const value = diagram.storedDiagram(record);
   if (!pool || !Number.isInteger(id) || id <= 0 || !value) return false;
+  const stored = head ? { ...value, head } : value;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
       `UPDATE chat_sessions SET pr_diagram = $2::jsonb, pr_diagram_source = 'author' WHERE id = $1 RETURNING app_id`,
-      [id, JSON.stringify(value)]
+      [id, JSON.stringify(stored)]
     );
     if (rows[0]) await require('../workflow/platform.ts').diagramStored(client, { sessionId: id, appId: rows[0].app_id });
     await client.query('COMMIT');

@@ -445,10 +445,18 @@ const RETIRED_IDS = {
   'agent-files-save': 'That form\'s Save button, gone with it.',
   'agent-files-cancel': 'That form\'s Cancel button, gone with it.',
   'agent-files-status': 'The pane\'s status line, gone with it.',
+  // ── Settings › User guide is retired (#7162) ───────────────────────
+  // The page explained places and voting, but it duplicated the tour and the
+  // product's own labels, so it left with no replacement. #settings/guide
+  // resolves to the Welcome tour (PART_ALIASES), and these two ids were only
+  // ever ADDED ones.
+  'settings-guide-section': 'The User guide pane root, retired with the page (#7162).',
+  'settings-guide-voting': 'The User guide card saying how a change gets voted in, retired with the page (#7162).',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'admin-open-tabs': 'The Admin console’s open-section tabs, hosted separately from its desktop sidebar so the dashboard keeps its workspace layout.',
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // features/header/connection-status.tsx: the header's word on the
   // connection ("Connecting…", "No internet", "Updated 12:41"), a pill
@@ -486,6 +494,7 @@ const ADDED_IDS = {
   'communities-screen': 'The Communities tab\'s page (frontend/src/features/communities/index.tsx, #communities): the communities you pinned and the others you are in, then the way to the ones to join. One Home (#6361) had retired the screen and listed them on Home. Ships hidden with both groups hidden and empty: the pins and the joined list are read after mount. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   'communities-body': 'The page\'s column inside #communities-screen, Home\'s own (.home-column): the search row, Pinned, Joined and Discover.',
   'communities-search-input': 'The search field at the top of the Communities page, drawn from 768px: filters the Pinned and Joined groups by name. React-owned, and the page\'s own state, unlike Home\'s field.',
+  'communities-search-clear': 'The × inside the Communities page\'s search field (frontend/src/features/communities/index.tsx): empties it, as #home-search-clear does on Home, so the two search rows behave alike (phone review, 23 Nov 2026). Ships hidden: the field starts empty.',
   'communities-pinned-section': 'The Pinned group of the Communities page: the account\'s pinned communities (home_community_pins) as tiles that open their hubs, led by the Needs you tile in a look whose Home has no Needs you card. Ships hidden: the pins load after mount.',
   'communities-joined-section': 'The Joined group of the Communities page: the communities the viewer is a member of and has not pinned, then the New community tile. Ships hidden: the list loads after mount.',
   // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
@@ -515,9 +524,9 @@ const ADDED_IDS = {
   // until 13 Nov 2026. Its look was redrawn as "Paper, simplified, with
   // brand styling" and became the Look menu's first option, so the switch
   // and its id are gone. The id leaves THIS map rather than entering
-  // RETIRED_IDS, because the frozen baseline never recorded it.
-  'settings-look-section': 'Look: the menu\'s own wrapper in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin), or on a device left in one of the menu\'s looks: the looks are an admin\'s preview while they are drawn screen by screen.',
-  'settings-look': 'Look: the menu of the looks (Standard, then brand, which keeps the standard pages in the website\'s colours, then the one frame\'s five: glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from. settings.js paints and saves it through window.Skin.',
+  // RETIRED_IDS, because the frozen baseline never recorded it. The Look
+  // menu's own two, #settings-look-section and #settings-look, left the
+  // same way on 26 Nov 2026, when the brand and Paper looks were removed.
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────
   'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',
@@ -964,9 +973,6 @@ const ADDED_IDS = {
   'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
   'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
   'settings-tour-hint': 'The line under it saying where the tour starts.',
-  // #5973: Settings -> User guide, the tour's places to read.
-  'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
-  'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
   // #session-bridge-enabled and #session-bridge-status (#1281, the
   // session-CLI bridge opt-in in Settings, Experimental) left this map with
   // the CLI's local agent they gated. They were only ever ADDED ids.

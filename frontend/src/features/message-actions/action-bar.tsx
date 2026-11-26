@@ -117,6 +117,17 @@ export function MessageActionBar({
     const place = () => {
       const lift = barLift(target);
       node.style.setProperty('--msgx-bar-lift', `${lift}px`);
+      // Desktop polish 11: a continuation line of somebody else's sits on
+      // its bubble (message-row.tsx `barOnBubble`). Where the bubble is in
+      // the row goes to app.css, which lines the bar up with it.
+      if (node.classList.contains('msgx-bar-on-bubble')) {
+        const box = bubbleBox(target);
+        if (box) {
+          node.style.setProperty('--msgx-bubble-start', `${box.start}px`);
+          node.style.setProperty('--msgx-bubble-w', `${box.width}px`);
+          node.style.setProperty('--msgx-bubble-top', `${box.top}px`);
+        }
+      }
       setBelow(!roomAbove(target, lift));
     };
     target.addEventListener('pointerenter', place);
@@ -303,6 +314,31 @@ export function barLift(row: Element): number {
   if (!grouped || typeof window === 'undefined') return 16;
   const top = parseFloat(getComputedStyle(row).paddingTop);
   return 44 - (Number.isFinite(top) ? top : 0);
+}
+
+/**
+ * Where a continuation row's message is drawn, in the row's own terms
+ * (desktop polish 11): how far its bubble starts from the row's
+ * inline-start edge (its left, or its right in Arabic), how wide it is, and
+ * how far its top is below the row's. Pictures stand above the words and
+ * take the bubble's part when they come first (or alone), so the bar never
+ * covers them. Null when the row draws neither.
+ */
+export function bubbleBox(row: Element): { start: number; width: number; top: number } | null {
+  if (!row || typeof window === 'undefined') return null;
+  const wrap = Array.from(row.children).find((child) => child.classList.contains('messages-bubble-wrap'));
+  const anchor = wrap
+    ? Array.from(wrap.children).find((child) => child.classList.contains('messages-bubble') || child.classList.contains('messages-message-images'))
+    : null;
+  if (!anchor) return null;
+  const r = row.getBoundingClientRect();
+  const b = anchor.getBoundingClientRect();
+  const rtl = getComputedStyle(row).direction === 'rtl';
+  return {
+    start: Math.round(rtl ? r.right - b.right : b.left - r.left),
+    width: Math.round(b.width),
+    top: Math.round(b.top - r.top),
+  };
 }
 
 /**

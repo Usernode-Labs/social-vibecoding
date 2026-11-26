@@ -9,6 +9,25 @@ const { isHealth } = require('./gateway-activity');
 const { APP_SLEEP_LOCK } = require('./advisory-locks');
 const ANNOTATION = 'social.usernode.io/production-asleep-at';
 
+// How often a process records that an awake app is in use. Between two
+// records a request takes no lock and runs no SQL. It does not need to: the
+// claim that puts an app to sleep (sweep) asks, in its own UPDATE, for a
+// last_request_at older than the whole idle window, so an app recorded as
+// used less than a minute ago cannot be asleep, in any process. What is kept
+// decides nothing else, and losing it (a restart) costs one recorded request
+// per app. The gates report their own last request to the sweep as well, and
+// those are exact.
+const RECORD_EVERY_MS = 60 * 1000;
+const RECORDS_KEPT = 5000;
+// pool → { until, going }: the moment each app's record is good for, and the
+// record being made now, which requests arriving meanwhile wait for.
+const records = new WeakMap();
+function recordsOf(pool) {
+  let mine = records.get(pool);
+  if (!mine) records.set(pool, mine = { until: new Map(), going: new Map() });
+  return mine;
+}
+
 function policy(config = null) {
   let excluded = config?.appSleepExcludedApps ?? process.env.APP_SLEEP_EXCLUDED_APPS ?? {};
   if (typeof excluded === 'string') {
@@ -38,29 +57,59 @@ async function requestWake(appId, asleepAt, { deps = {}, now = Date.now() } = {}
   await workflow.reportAppWake(appId, `app-wake:${appId}:${new Date(asleepAt).getTime()}:${Math.floor(now / 10000)}`);
 }
 
-// Called only after the edge has authorized the actual request. The lock is
-// shared with the sleep claim: an access either prevents the claim or sees
-// the completed sleep and waits for a wake. Health probes never wake an app.
+// Called only after the edge has authorized the actual request. Recording a
+// use takes the lock the sleep claim takes: a use either prevents the claim or
+// sees the completed sleep and waits for a wake. Health probes never wake an
+// app and are never a use, so they never start the minute.
 async function access(pool, appId, uri, { config = null, deps = {}, request = {} } = {}) {
   const p = policy(config);
   if (!p.supported) return { eligible: false, ready: true };
   const health = isHealth(uri, request);
+  const clock = deps.clock || (() => performance.now());
+  const id = Number(appId);
+  const mine = recordsOf(pool);
+  if (clock() < (mine.until.get(id) ?? -Infinity)) return { eligible: true, ready: true, waking: !health };
   const locks = deps.locks || require('../db/session-locks');
   let row;
-  await locks.withSessionLock(pool, [APP_SLEEP_LOCK, Number(appId)], async () => {
-    if (health) {
-      ({ rows: [row] } = await pool.query('SELECT asleep_at FROM app_runtime_sleep WHERE app_id = $1', [appId]));
-    } else {
-      ({ rows: [row] } = await pool.query(
-        `INSERT INTO app_runtime_sleep (app_id, last_request_at)
-         SELECT id, now() FROM apps WHERE id = $1 AND self_hosted IS NOT TRUE
-           AND status = 'running' AND runtime_kind = 'kubernetes'
-         ON CONFLICT (app_id) DO UPDATE SET last_request_at = now()
-         RETURNING asleep_at`, [appId]));
+  if (health) {
+    await locks.withSessionLock(pool, [APP_SLEEP_LOCK, id], async () => {
+      ({ rows: [row] } = await pool.query('SELECT asleep_at FROM app_runtime_sleep WHERE app_id = $1', [id]));
+    });
+  } else {
+    let going = mine.going.get(id);
+    if (!going) {
+      // Read before the write, so the record is never kept longer than it holds.
+      const startedAt = clock();
+      going = recordUse(pool, id, { deps, locks }).then((used) => {
+        // Only a row seen awake is kept. An app with none (not a running
+        // Kubernetes app now) or one asleep is asked about every time.
+        if (used && !used.asleep_at) {
+          if (mine.until.size >= RECORDS_KEPT) mine.until.clear();
+          mine.until.set(id, startedAt + Math.min(RECORD_EVERY_MS, p.afterMs > 0 ? p.afterMs / 10 : RECORD_EVERY_MS));
+        }
+        return used;
+      }).finally(() => { mine.going.delete(id); });
+      mine.going.set(id, going);
     }
-  });
-  if (row?.asleep_at && !health) await requestWake(Number(appId), row.asleep_at, { deps });
+    row = await going;
+  }
   return { eligible: true, ready: !row?.asleep_at, waking: !health };
+}
+
+// One use of an app, written where the sweep reads it, and a wake asked for
+// when it is asleep. Returns its row, or undefined when it has none.
+async function recordUse(pool, appId, { deps, locks }) {
+  let row;
+  await locks.withSessionLock(pool, [APP_SLEEP_LOCK, appId], async () => {
+    ({ rows: [row] } = await pool.query(
+      `INSERT INTO app_runtime_sleep (app_id, last_request_at)
+       SELECT id, now() FROM apps WHERE id = $1 AND self_hosted IS NOT TRUE
+         AND status = 'running' AND runtime_kind = 'kubernetes'
+       ON CONFLICT (app_id) DO UPDATE SET last_request_at = now()
+       RETURNING asleep_at`, [appId]));
+  });
+  if (row?.asleep_at) await requestWake(appId, row.asleep_at, { deps });
+  return row;
 }
 
 function idleAt(snapshots, runtimeName, now, afterMs) {

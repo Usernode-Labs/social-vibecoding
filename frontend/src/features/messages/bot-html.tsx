@@ -174,18 +174,47 @@ export interface ReplyLook {
   dark: boolean;
   font: string;
   size: string;
+  /**
+   * Phone review #97 (23 Nov 2026): the leading of the chat's own words, so
+   * a laid-out answer keeps the rhythm of the plain messages beside it (17px
+   * on 22.1px on a phone). Unread, the frame's own 1.4.
+   */
+  leading?: string;
 }
 
-/** The look read off `el` (the bubble's own box), so the frame matches the bubble it is in. */
+/** The classes the chat's words are drawn with (./format.tsx MessageMarkdown). */
+const WORDS_CLASS = 'messages-markdown gc-msg-content';
+
+/**
+ * The look read off `el` (the bubble's own box), so the frame matches the
+ * bubble it is in. Its size and leading are the chat's words' own, read off
+ * a node drawn with their classes for the moment it takes, whether or not
+ * the words are on screen beside the frame.
+ */
 export function lookOf(el: Element): ReplyLook {
   const style = getComputedStyle(el);
   const vars: Record<string, string> = {};
   for (const [name, token, fallback] of REPLY_TOKENS) vars[name] = style.getPropertyValue(token).trim() || fallback;
+  let size = style.fontSize || '17px';
+  let leading: string | undefined;
+  try {
+    const probe = document.createElement('div');
+    probe.className = WORDS_CLASS;
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;inset-inline-start:0;top:0';
+    probe.textContent = 'x';
+    el.appendChild(probe);
+    const words = getComputedStyle(probe);
+    size = words.fontSize || size;
+    leading = /^\d+(\.\d+)?px$/.test(words.lineHeight) ? words.lineHeight : undefined;
+    probe.remove();
+  } catch { /* the bubble's own size, and the frame's leading */ }
   return {
     vars,
     dark: document.documentElement.classList.contains('dark'),
     font: style.fontFamily || 'ui-sans-serif, system-ui, sans-serif',
-    size: style.fontSize || '17px',
+    size,
+    ...(leading ? { leading } : {}),
   };
 }
 
@@ -209,11 +238,13 @@ const BASE_CSS = [
   'th{color:var(--muted);font-size:.8em;font-weight:700;letter-spacing:.06em;text-transform:uppercase}',
   'img,svg{max-width:100%;height:auto}',
   'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}',
+  // A block of code is a block that scrolls sideways, never words that wrap (phone review #29).
+  'pre{margin:0 0 .6em;padding:10px 12px;border-radius:8px;background:var(--surface-2);overflow-x:auto;white-space:pre;line-height:1.5}pre code{font-size:.8125em}',
   'hr{border:0;border-top:1px solid var(--line);margin:.8em 0}',
   'summary{cursor:pointer}',
 ].join('');
 
-// The brand skin's Geist is this site's own file. The frame has an origin of
+// The page's Geist is this site's own file. The frame has an origin of
 // its own and may load nothing, so the file is read once here and written
 // into each document as data.
 const GEIST_PATH = '/fonts/geist/Geist-Variable.woff2';
@@ -254,7 +285,7 @@ export function replyFrameDoc(clean: string, look: ReplyLook, geist: string | nu
     : '';
   return '<!doctype html><html><head><meta charset="utf-8">'
     + `<style>${face}:root{${vars};color-scheme:${look.dark ? 'dark' : 'light'}}`
-    + `body{color:var(--ink);font-family:${font};font-size:${cssValue(look.size)};line-height:1.4}`
+    + `body{color:var(--ink);font-family:${font};font-size:${cssValue(look.size)};line-height:${look.leading ? cssValue(look.leading) : '1.4'}}`
     + `${BASE_CSS}</style></head><body><div class="reply" dir="auto">${clean}</div></body></html>`;
 }
 
@@ -264,9 +295,9 @@ export function botReplyHtml(message: ConversationMessage): string | null {
   return meta?.kind === 'chat' && typeof meta.html === 'string' && meta.html.trim() ? meta.html : null;
 }
 
-// How the page looks right now, as a key: a change of theme, skin, text size
-// or contrast draws the frame again with the new tokens.
-const LOOK_ATTRS = ['class', 'data-skin', 'data-text-size', 'data-contrast', 'data-app-tone'];
+// How the page looks right now, as a key: a change of theme, text size or
+// contrast draws the frame again with the new tokens.
+const LOOK_ATTRS = ['class', 'data-text-size', 'data-contrast', 'data-app-tone'];
 function lookKey(): string {
   if (typeof document === 'undefined') return '';
   const root = document.documentElement;

@@ -11,7 +11,7 @@
  * a ring of the community's colour (lib/community-color.ts) so it never
  * reads as an app. A community's tile opens its hub; an app's tile (Home's
  * Pinned apps) opens the app. Where the page draws a community as a card
- * (the standard look from 768px, the brand look from 1280px), the card is
+ * (from 768px), the card is
  * ../communities/card.tsx, which takes this module's votes number, its edit
  * discs and its door (`openHub`). Beside the tiles, the page's own:
  *
@@ -38,13 +38,14 @@
  * Signed in only. Signed out, the guest Home draws its device's pins with
  * the same tile (features/guest).
  */
-import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, type CSSProperties } from 'react';
 
-import { PlusIcon, SpeechCheckIcon } from '@/components/ui/icons';
+import { PlusIcon } from '@/components/ui/icons';
 
-import { useCommunityColor } from '../../lib/community-color';
+import { bandWash, useCommunityColor, useIconMainColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { capCount } from '../../lib/count-cap';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SectionHeading } from './panels/ui';
 import {
@@ -71,7 +72,6 @@ export function MinusGlyph() {
 }
 const FACE_WRAP = 'relative z-[1] inline-flex';
 export const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
-const ACTION_FACE = 'flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-[18px]';
 
 /** Open a community's hub, as the Communities tab's tile did (the door rule). */
 export function openHub(event: React.MouseEvent<HTMLAnchorElement>, slug: string) {
@@ -101,8 +101,10 @@ const LOGO_SCENES = 6;
 
 /**
  * A community's scene, 1 to LOGO_SCENES: always the same one for the same
- * community. Its kit tile's band (app.css) and its card's background where
- * it has no picture (../communities/card.tsx `cardScene`) are drawn from it.
+ * community. Only the project page's hero still draws it
+ * (../dev-board/workshop/community-card.tsx): since 23 Nov 2026 no card or
+ * tile wears a stock background, and one with no picture is washed in its
+ * icon's colour instead (lib/community-color.ts `bandWash`).
  */
 export function communityScene(slug: string): number {
   // FNV-1a, so slugs that differ by a letter land on different scenes.
@@ -137,8 +139,8 @@ function cssUrl(url?: string | null): string | null {
 
 /**
  * The band's picture on a kit tile: the community's own (its dark twin in
- * the dark theme), as custom properties app.css lays over the tile's brand
- * background, which shows where there is none or it does not load.
+ * the dark theme), as custom properties app.css lays over the band's wash,
+ * which shows where there is none or it does not load.
  */
 function bandStyle(pin: { illustrationUrl?: string | null; illustrationDarkUrl?: string | null }): CSSProperties | undefined {
   const light = cssUrl(pin.illustrationUrl);
@@ -147,27 +149,46 @@ function bandStyle(pin: { illustrationUrl?: string | null; illustrationDarkUrl?:
   return { ['--cm-pic' as string]: light, ...(dark ? { ['--cm-pic-dark' as string]: dark } : {}) };
 }
 
+/**
+ * The kit tile's band under (or instead of) its picture: the wash of the
+ * community's icon colour, or its brand tint (the card with no picture,
+ * ../communities/card.tsx). No icon is drawn in it: the tile's own large
+ * icon stands right under the band, and a second would repeat it. Read only
+ * for a tile drawn as the kit's; `null` asks for nothing.
+ */
+/** The tile's custom properties, or none at all (no empty style attribute). */
+function tileStyle(...parts: Array<Record<string, string> | CSSProperties | undefined>): CSSProperties | undefined {
+  const merged = Object.assign({}, ...parts.filter(Boolean));
+  return Object.keys(merged).length ? merged as CSSProperties : undefined;
+}
+
+function useTileWash(pin: Omit<HomePin, 'member'> | null): { attrs: Record<string, string>; style?: Record<string, string> } | null {
+  const main = useIconMainColor(pin ? { color: pin.iconColor, iconUrl: pin.iconUrl, iconEmoji: pin.iconEmoji, key: pin.slug } : null);
+  return pin ? bandWash(pin.slug, main) : null;
+}
+
 export function PinTile({ pin, votes, editing, faded = false, community = false, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
   faded?: boolean;
-  /** Draw the kit's tile: the community's picture on its band (a brand background where it has none) and its own icon over it. */
+  /** Draw the kit's tile: the community's picture on its band (its icon's wash where it has none) and its own icon over it. */
   community?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
   const t = useMessages('home');
   const tc = useMessages('communities');
+  const wash = useTileWash(community ? pin : null);
   return (
     <a
       href={`/app/${encodeURIComponent(pin.slug)}/workshop`}
       className={faded ? `${TILE} opacity-60` : TILE}
       data-home-community={pin.slug}
       data-home-community-pinned={faded ? undefined : ''}
-      data-home-community-scene={community ? String(communityScene(pin.slug)) : undefined}
+      {...wash?.attrs}
       data-home-community-picture={community && bandStyle(pin) ? '' : undefined}
-      style={community ? bandStyle(pin) : undefined}
+      style={community ? tileStyle(wash?.style, bandStyle(pin)) : undefined}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
       {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)
@@ -179,7 +200,7 @@ export function PinTile({ pin, votes, editing, faded = false, community = false,
         {community
           ? <CommunityTileIcon slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} />
           : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
-        {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
+        {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{capCount(votes)}</span> : null}
         {editing && onUnpin ? (
           <button
             type="button"
@@ -204,50 +225,6 @@ export function PinTile({ pin, votes, editing, faded = false, community = false,
       <span className={NAME}>{pin.name}</span>
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
-  );
-}
-
-/**
- * Needs you's tile: a link to the page (`#needs`), so a modified click opens
- * it in a new tab, wearing the votes-waiting number a community's tile wears.
- */
-export function NeedsTile({ count }: { count: number }) {
-  const t = useMessages('home');
-  return (
-    <a
-      href="#needs"
-      id="communities-needs-tile"
-      className={TILE}
-      data-home-needs={String(count)}
-      aria-label={t('home:communities.needsNamed', { count })}
-    >
-      <span className="relative inline-flex">
-        <span className={`${ACTION_FACE} bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300`}>
-          <SpeechCheckIcon className="w-7 h-7" aria-hidden="true" />
-        </span>
-        <span className={VOTES} aria-hidden="true">{count > 99 ? '99+' : count}</span>
-      </span>
-      <span className={NAME}>{t('home:communities.needs')}</span>
-    </a>
-  );
-}
-
-export function ActionTile({ label, icon, onClick, dashed = false, muted = false, pressed, id, attrs }: {
-  label: string; icon: ReactNode; onClick: () => void; dashed?: boolean; muted?: boolean; pressed?: boolean; id?: string;
-  attrs?: Record<string, string | undefined>;
-}) {
-  const face = pressed
-    ? `${ACTION_FACE} bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]`
-    : dashed
-      ? (muted
-        ? `home-create-glyph ${ACTION_FACE} border-2 border-dashed transition-colors text-zinc-300 dark:text-zinc-600`
-        : `home-create-glyph ${ACTION_FACE} border-2 border-dashed transition-colors text-zinc-500 dark:text-zinc-400`)
-      : `${ACTION_FACE} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`;
-  return (
-    <button type="button" id={id} className={`${TILE} cursor-pointer`} aria-pressed={pressed} onClick={onClick} {...attrs}>
-      <span className={face}>{icon}</span>
-      <span className={pressed ? `${NAME} text-[color:var(--lit-ink)]` : `${NAME} text-zinc-600 dark:text-zinc-300`}>{label}</span>
-    </button>
   );
 }
 

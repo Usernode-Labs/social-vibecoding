@@ -1481,7 +1481,8 @@ function buildWorkOrder({
       '   same screen are one declared change. Text, counts, loading,',
       '   error and status changes are visible even when existing markup and',
       '   styles are reused. A state a fresh staging copy lacks is seeded in this',
-      '   change: the seed reaches the after copy, the side a new state needs. One',
+      '   change: it reaches both copies when main\'s schema can hold it, and a seed',
+      '   that needs a table or column main lacks reaches the after copy only. One',
       '   that can be neither reached nor seeded is a blocker to report, not a',
       '   reason to call a visible change non-visual.',
       ...copyLimitsLines({ width: 78, indent: '   ', rule: false }),
@@ -1684,7 +1685,10 @@ function buildWorkOrder({
       ...handIn,
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
       ...lands,
-      '   proposal — give that link to the user and tell them it is up for the',
+      // Which link: the result carries the pull request's GitHub address
+      // beside it, and an agent used to pull requests reaches for that one.
+      '   proposal — give that link (`link`, its page on Homeroom, never `prUrl`,',
+      '   the GitHub pull request) to the user and tell them it is up for the',
       '   group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows
@@ -1724,10 +1728,14 @@ function buildWorkOrder({
       '   visible even when existing markup and styles are reused. If a fresh',
       '   staging copy lacks the state a change shows, seed it in this change,',
       '   idempotent and obviously fake ("Who the before & after shots see" in',
-      '   the conventions): the seed reaches the after copy, the side a new state',
-      '   needs. If a state can be neither reached nor seeded,',
-      '   report that blocker; do not label a visible change "none" because it',
-      '   is hard to reach.',
+      '   the conventions): it reaches both copies when main\'s schema can hold it,',
+      '   and a seed that needs a table or column main lacks reaches the after copy',
+      '   only. A seeded request shows in its project\'s list and at its own',
+      '   address whenever the project has no repository; a project with one',
+      '   keeps the fixture list on a copy without GitHub. A seed that writes',
+      '   nothing is named on the run with its reason. If a state can be',
+      '   neither reached nor seeded, report that blocker; do not label a',
+      '   visible change "none" because it is hard to reach.',
       ...copyLimitsLines({ width: 78, indent: '   ', rule: false }),
       '   Check each state you declare against that list first. For an error',
       '   state that needs a failed request, declare its exact GET /api/ path',
@@ -2115,6 +2123,46 @@ function describeTargetProposal(session, user, app, origin) {
   };
 }
 
+// #7160: the proposal's current head, read the way a NEW update work order
+// reads its base. `sha` is null with `err` when the git host could not be
+// read; a fork-home proposal answers its tracked head, which Homeroom holds.
+async function currentProposalHead(update, { owner, repo, gh }) {
+  if (update.branchHome === 'user_fork') return { sha: update.trackedHead, err: null };
+  try {
+    return { sha: await gh.getBranchSha(owner, repo, update.branchName), err: null };
+  } catch (err) {
+    return { sha: null, err };
+  }
+}
+
+// #7160: a REUSED update work order records the base it was first made from,
+// and that value only advances when an update lands through it. If the
+// proposal moved another way (the bot's fix, a sync with main, another
+// update) the reused order still names the old commit, and a patch made
+// against it is refused `branch_moved` although nothing moved: refresh it to
+// the proposal's current head and say it moved.
+async function refreshReusedBase(pool, existing, update, { owner, repo, gh, userId }) {
+  if (!update || !existing) return null;
+  const head = await currentProposalHead(update, { owner, repo, gh });
+  const to = head.sha ? String(head.sha).trim().toLowerCase() : null;
+  if (!to || !BASE_SHA_RE.test(to)) return null;
+  const from = existing.base_sha == null ? null : String(existing.base_sha).trim().toLowerCase();
+  if (from === to) return null;
+  try {
+    await pool.query(
+      `UPDATE external_agent_tasks SET base_sha = $2 WHERE id = $1 AND user_id = $3 AND status = 'open'`,
+      [existing.id, to, userId]
+    );
+    existing.base_sha = to;
+    return { from, to };
+  } catch (err) {
+    log.warn('external-agent-tasks', 'could not refresh a reused work order\'s base', {
+      taskId: existing.id, err: err.message,
+    });
+    return null;
+  }
+}
+
 // ── prepare_work ───────────────────────────────────────────────────────
 //
 // deps: { pool, config, gh, githubLink, limits, prompts }
@@ -2248,10 +2296,12 @@ async function prepareWork(deps, params) {
       // being told "you already have this" only helps if you can then see it.
       const moved = await adoptTaskForSession(pool, existing.id, user.id, originSessionId);
       if (moved) existing.origin_session_id = moved;
+      // #7160: the proposal may have moved since this order was prepared.
+      const baseMoved = await refreshReusedBase(pool, existing, update, { owner, repo, gh, userId: user.id });
       return renderPreparedTask({
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: existing, app, owner, repo, origin, clientId, clientName, userId: user.id,
-        prompts, agent, reused: true, targetProposal: update, openProposals,
+        prompts, agent, reused: true, targetProposal: update, openProposals, baseMoved,
         patchUpload: await uploadFor(existing),
       });
     }
@@ -2287,32 +2337,28 @@ async function prepareWork(deps, params) {
   let baseSha;
   let baseErr = null;
   if (update) {
-    if (update.branchHome === 'user_fork') {
-      // The head of an imported proposal is a branch in the author's own
-      // fork; the platform only tracks its SHA, and that tracked value is
-      // what the votes and checks describe.
-      baseSha = update.trackedHead;
-    } else {
-      try {
-        baseSha = await gh.getBranchSha(owner, repo, update.branchName);
-      } catch (err) {
-        log.warn('external-agent-tasks', 'proposal head lookup failed', {
-          app: app.slug, sessionId: update.proposalId, err: err.message,
-        });
-        // On the git host a missing branch is not a hiccup: it is a change
-        // whose code did not come across from GitHub (services/code-missing.js),
-        // and no retry brings it back.
-        if (hosted && err && err.status === 404) {
-          return fail(
-            'code_missing',
-            `${update.targetKind === 'session' ? `Session ${update.proposalId}` : `Proposal ${update.proposalId}`}'s `
-            + 'code is not on Homeroom\'s git host: it did not come across when Homeroom moved off GitHub, so it '
-            + 'cannot be revised from here. Start a new change instead.'
-          );
-        }
-        baseErr = err;
-        baseSha = null;
+    // The head of an imported proposal is a branch in the author's own fork;
+    // the platform only tracks its SHA, and that tracked value is what the
+    // votes and checks describe.
+    const head = await currentProposalHead(update, { owner, repo, gh });
+    baseSha = head.sha;
+    if (head.err) {
+      log.warn('external-agent-tasks', 'proposal head lookup failed', {
+        app: app.slug, sessionId: update.proposalId, err: head.err.message,
+      });
+      // On the git host a missing branch is not a hiccup: it is a change
+      // whose code did not come across from GitHub (services/code-missing.js),
+      // and no retry brings it back.
+      if (hosted && head.err && head.err.status === 404) {
+        return fail(
+          'code_missing',
+          `${update.targetKind === 'session' ? `Session ${update.proposalId}` : `Proposal ${update.proposalId}`}'s `
+          + 'code is not on Homeroom\'s git host: it did not come across when Homeroom moved off GitHub, so it '
+          + 'cannot be revised from here. Start a new change instead.'
+        );
       }
+      baseErr = head.err;
+      baseSha = null;
     }
   } else {
     try {
@@ -2424,10 +2470,11 @@ async function prepareWork(deps, params) {
   if (!row) {
     const raced = await findOpenTaskByRequest(pool, user.id, app.id, requestKey);
     if (raced) {
+      const baseMoved = await refreshReusedBase(pool, raced, update, { owner, repo, gh, userId: user.id });
       return renderPreparedTask({
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: raced, app, owner, repo, origin, clientId, clientName, userId: user.id,
-        prompts, agent, reused: true, targetProposal: update, openProposals,
+        prompts, agent, reused: true, targetProposal: update, openProposals, baseMoved,
         patchUpload: await uploadFor(raced),
       });
     }
@@ -2644,7 +2691,7 @@ async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) 
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts, userId,
   forkStatus, reused, agent: requestedAgent, targetProposal, openProposals, specs = [],
-  patchUpload = null,
+  patchUpload = null, baseMoved = null,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
@@ -2681,6 +2728,13 @@ function renderPreparedTask({
     openProposals: duplicates,
     gitHost,
   });
+  // #7160: a reused order whose proposal moved says so, in the words the
+  // agent starts from — before every step that assumes the old base.
+  if (baseMoved) {
+    guidance.unshift(`The proposal's head moved since this work order was first prepared (from `
+      + `${String(baseMoved.from || '').slice(0, 7)} to ${String(baseMoved.to).slice(0, 7)}); start from `
+      + `${baseMoved.to}.`);
+  }
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -2746,6 +2800,9 @@ function renderPreparedTask({
     guidance,
     workOrder,
     reused: !!reused,
+    // { from, to } when a reused update order now names a newer head than
+    // the one it was first prepared from; null otherwise.
+    baseMoved: baseMoved || null,
   };
 }
 
@@ -4660,16 +4717,30 @@ async function submitWorkLocked(deps, params) {
     const platformMessage = (imported && imported.body
       && (imported.body.message || imported.body.error))
       || 'Homeroom could not turn that pull request into a proposal.';
+    // #7160: a head Homeroom created itself (a patch or upload submission)
+    // lives on Homeroom's own repository, so the slug + prNumber retry the
+    // old sentence offered is refused: only the caller's OWN fork can be
+    // imported that way. Submitting again with the same taskId is the retry
+    // that works — it reuses the open pull request and makes no duplicate.
+    const platformOwnedKept = !!platformOwnedHead && !!task && (retryable || headInUse);
+    let message = platformMessage;
+    let recovery = null;
+    if (platformOwnedKept) {
+      message = `${platformMessage} PR #${pr.number} remains open; submit again with the same taskId `
+        + `${task.id}: it reuses this pull request and makes no duplicate.`;
+      recovery = 'resubmit_task';
+    } else if (retryable) {
+      message = `${platformMessage} PR #${pr.number} remains open; retry with slug "${slug}" and prNumber ${pr.number}.`;
+      recovery = 'retry_existing_pr';
+    }
     return {
       ok: false,
       code: 'import_failed',
-      message: retryable
-        ? `${platformMessage} PR #${pr.number} remains open; retry with slug "${slug}" and prNumber ${pr.number}.`
-        : platformMessage,
+      message,
       retryable,
       stage: context.stage,
       field: context.field,
-      recovery: retryable ? 'retry_existing_pr' : null,
+      recovery,
       status: imported ? imported.status : 0,
       prNumber: pr.number,
       prUrl: pr.html_url || null,

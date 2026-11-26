@@ -97,6 +97,8 @@ export interface PublicApp {
   icon_url?: string | null;
   icon_emoji?: string | null;
   requires_login?: boolean;
+  /** The app answers a visitor with no credential with a guest's view (src/services/edge-gate.js). */
+  guest_ready?: boolean;
 }
 
 /** Full zoom opts, forwarded to the kit verbatim by {@link zoomFx}. */

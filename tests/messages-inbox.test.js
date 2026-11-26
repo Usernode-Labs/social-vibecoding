@@ -78,10 +78,10 @@ test('a row with no timestamp sorts last, not first', () => {
   assert.deepEqual(merged.map((e) => e.key), ['person:3', 'person:2', 'person:1']);
 });
 
-test('one heading, People, and there are no filter chips and no Agents', () => {
+test('one heading, DMs & groups, and there are no filter chips and no Agents', () => {
   assert.equal(inbox.INBOX_SECTIONS, undefined, 'one section: there is no list of them');
-  assert.equal(message('messages:inbox.section.people'), 'People',
-    'audit C02: it holds group chats too, so it is not headed "Direct messages"');
+  assert.equal(message('messages:inbox.section.people'), 'DMs & groups',
+    'audit C02: it holds group chats too, so it is not headed "Direct messages" (desktop polish 09: nor "People")');
   assert.throws(() => message('messages:inbox.section.agents'), 'Agents is no heading of Messages any more');
   assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the heading says what the rows are');
   assert.equal(inbox.admits, undefined);
@@ -142,7 +142,7 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   const button = SCREEN.slice(SCREEN.indexOf('function NewMessageButton'));
   const fn = button.slice(0, button.indexOf('\n}\n'));
   assert.match(fn, /id="messages-new"/);
-  assert.match(fn, /aria-haspopup="menu"/);
+  assert.match(fn, /aria-haspopup=\{touch \? 'dialog' : 'menu'\}/, 'a menu for a pointer, the dialog itself on touch');
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
   assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
@@ -150,7 +150,11 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* NEW_CHOICES\.length \+ 2 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
   assert.match(fn, /role="menu"/);
-  assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
+  // Phone review #124 (23 Nov 2026): on touch the "+" opens the create
+  // dialog on Direct, whose switch is the one place the kind is chosen; the
+  // kit's action sheet asked the same question first.
+  assert.doesNotMatch(fn, /actionSheet/, 'no sheet asks Direct or Group before the dialog does');
+  assert.match(fn, /if \(isTouchScreen\(\)\) \{\n\s*startNew\('direct'\);\n\s*return;\n\s*\}/);
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
   assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
@@ -277,12 +281,12 @@ test('one row shape, under one People heading; nothing folds and nothing waits b
   assert.match(fn, /<h3 className="messages-section-head" data-inbox-section="people">\s*<span className="messages-section-name">\{t\('messages:inbox\.section\.people'\)\}<\/span>\s*\{aside \? <span className="messages-section-aside">\{aside\}<\/span> : null\}\s*<\/h3>/);
   assert.doesNotMatch(fn, /<button|onClick/, 'the heading is no button: nothing folds');
   // The rows, in a card under it, once there are any to show.
-  assert.match(SCREEN, /\{found\.length \? \(\s*<>\s*<PeopleHead aside=\{unreadAside\} \/>\s*<div className="messages-section-card" data-inbox-card="people">\s*\{found\.map\(inboxRow\)\}\s*<\/div>/,
-    'the rows in a card of their own, so the last row drops its separator');
+  assert.match(SCREEN, /\{found\.length \? \(\s*<>\s*<PeopleHead aside=\{unreadAside\} \/>\s*<GroupedList className="mx-0 mb-4" data-inbox-card="people">\s*\{found\.map\(inboxRow\)\}\s*<\/GroupedList>/,
+    'the rows in the shared card of their own, so the last row drops its separator');
   for (const id of ['messages:inbox.older.show_one', 'messages:inbox.older.show_other', 'messages:inbox.older.hide']) {
     assert.throws(() => message(id), `${id} went with the Agents fold`);
   }
-  const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('const GeneralChannelRow = memo('));
+  const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('const NEW_CHOICES = ['));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
 });
@@ -309,9 +313,13 @@ test('the bot\'s row says what waits on you, and the heading counts what is unre
   assert.doesNotMatch(SCREEN, /loadBotWork\(\);\s*\}, POLL_MS\)/, 'no timer');
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
   // #5393: a group's preview names its last sender ahead of this; the bot's
-  // own line (`preview`) still leads the fallback the DM rows draw.
-  assert.match(SCREEN, /: groupPreview \?\? \(ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)\)/,
+  // own line still leads the fallback the DM rows draw. #44 (23 Nov 2026):
+  // the line is put together once, in rowPreview, which the row draws and
+  // the search reads.
+  assert.match(SCREEN, /return ownDirection\(botLine \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\);/,
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
+  assert.match(SCREEN, /subtitle=\{rowPreview\(conversation, t, preview\)\}/,
+    'the row draws that line');
   assert.throws(() => message('messages:inbox.section.working', { count: 1 }), 'no Agents heading to say "1 working"');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
   assert.match(SCREEN, /const unreadAside = unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null;/,
@@ -333,19 +341,24 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.match(faces, /<UserAvatar user=\{others\[0\]\} size="sm" shape="square" \/>/, 'each face the kit\'s own sm square');
   // The row draws it for a group the viewer is in; a DM and an unanswered
   // invitation keep today's tile.
-  const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const GeneralChannelRow = memo('));
-  assert.match(row, /conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
+  const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const NEW_CHOICES = ['));
+  assert.match(row, /leading=\{conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
   assert.doesNotMatch(row.slice(row.indexOf('<UserAvatar')), /<GroupFaces/, 'the fallback tile is the old one');
-  // The preview names its last sender, the way #general's row already does.
-  assert.match(row, /const groupSender = conversation\.kind === 'group' && !invited\s*\? conversation\.latestMessage\?\.sender \|\| null\s*: null;/);
-  assert.match(row, /t\('messages:inbox\.previewYou', \{ message: ownDirection\(conversation\.latestSummary\) \}\)/, 'the viewer\'s own message reads "You: …"');
-  assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
+  // The preview names its last sender, the way #general's row already does
+  // (rowPreview, which the search reads too since #44): an invitation has
+  // said it is one before the sender is looked at.
+  const preview = SCREEN.slice(SCREEN.indexOf('function rowPreview('), SCREEN.indexOf('const ConversationRow = memo('));
+  assert.ok(preview.indexOf("if (conversation.membershipStatus === 'invited') {") < preview.indexOf('const groupSender'), 'an invitation first');
+  assert.match(preview, /const groupSender = conversation\.kind === 'group' \? conversation\.latestMessage\?\.sender \|\| null : null;/);
+  assert.match(preview, /t\('messages:inbox\.previewYou', \{ message: ownDirection\(conversation\.latestSummary\) \}\)/, 'the viewer\'s own message reads "You: …"');
+  assert.match(preview, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
   assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
   assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
-  // The pair keeps the row's own geometry: a 44px box on the 74px inset.
+  // The pair keeps the shared row's tile geometry: a 44px box, so the row's
+  // tile inset (16 + 44 + 16, ListRow's start-[4.75rem]) holds.
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
-  assert.match(css, /\.messages-conversation-row::after \{[^}]*inset-inline-start: 74px;/);
+  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /after:start-\[4\.75rem\]/);
   assert.match(css, /\.messages-group-faces > :last-child \{ inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
   // The sidebar nested the latest conversations with one face each (v3)
   // until 7 Nov 2026; nothing is nested under Messages now.
@@ -411,8 +424,8 @@ test('#name is a channel only when the viewer has one; #123 stays an issue and P
   assert.deepEqual(segs.filter((s) => s.type !== 'text'), [
     { type: 'channel', handle: 'general' },
     { type: 'channel', handle: 'recipe-box' },
-    { type: 'ref', isPr: false, num: '123' },
-    { type: 'ref', isPr: true, num: '9' },
+    { type: 'ref', isPr: false, num: '123', label: '#123' },
+    { type: 'ref', isPr: true, num: '9', label: 'PR#9' },
     { type: 'mention', name: 'ada' },
   ]);
   assert.equal(segs.map((s) => s.value || '').join('').includes('#todo'), true, 'an unknown #word is left as text');
@@ -498,18 +511,17 @@ test('bug h: the discussion header draws the tile the inbox row draws', () => {
   // The row, once, feeding both the #handle and the artwork.
   assert.match(body, /const row = snap\.discussions\.find\(\(item\) => item\.slug === slug\) \|\| null;/);
   assert.match(body, /const handle = row\?\.channel \|\| null;/);
-  // The row's own two fields first — the same pair AppChannelRow hands the
-  // tile — and the fetched app record when there is no row.
+  // The row's own two fields first (the pair an app tile is drawn from)
+  // and the fetched app record when there is no row.
   assert.match(body, /icon_url: row \? row\.iconUrl : \(ready \? context\.iconUrl : null\),/);
   assert.match(body, /icon_emoji: row \? row\.iconEmoji : \(ready \? context\.iconEmoji : null\),/);
   const header = body.slice(body.indexOf('<header className="messages-thread-header">'));
   assert.match(header, /data-icon=\{appIconKind\(iconRecord as never\)\}/);
   assert.match(header, /<AppIconContent app=\{iconRecord as never\} \/>/);
   assert.doesNotMatch(header, /\{ name \} as never/, 'never the name alone again');
-  // ...which is what the row itself does, so the two tiles are one recipe.
-  const rowFn = SCREEN.slice(SCREEN.indexOf('function AppChannelRow'));
-  assert.match(rowFn.slice(0, rowFn.indexOf('\n}\n')),
-    /icon_url: discussion\.iconUrl,\s*icon_emoji: discussion\.iconEmoji,/);
+  // The inbox's own channel rows that drew the same pair were never
+  // rendered, and went with the move onto the shared row.
+  assert.doesNotMatch(SCREEN, /function (AppChannelRow|GeneralChannelRow)\b/);
 });
 
 test('bug h: the discussion context carries the app artwork, for a header with no inbox row', async () => {
@@ -575,7 +587,7 @@ test('a new account\'s Messages says it is empty: #general is read but never lis
 });
 
 
-test('the oldest-chats shortcut shows only above the end of a visible overflowing inbox', () => {
+test('the jump-to-bottom shortcut shows only above the end of a visible overflowing inbox', () => {
   const { showsToEnd } = loadTsx('frontend/src/features/messages/inbox-to-end.tsx');
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 500, scrollTop: 0 }), false);
   assert.equal(showsToEnd({ clientHeight: 0, scrollHeight: 900, scrollTop: 0 }), false);
@@ -583,5 +595,7 @@ test('the oldest-chats shortcut shows only above the end of a visible overflowin
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 580 }), false);
   assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 579 }), true);
   assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>/);
-  assert.equal(message('messages:inbox.toEnd.label'), 'Oldest chats');
+  // Desktop polish 10: it says what it does, not where it lands.
+  assert.equal(message('messages:inbox.toEnd.label'), 'Jump to bottom');
+  assert.equal(message('messages:inbox.toEnd.name'), 'Jump to the bottom of the list');
 });

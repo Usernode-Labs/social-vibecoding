@@ -83,14 +83,24 @@ const BOT_SIGNAL_IDS: Record<string, string> = {
   phone: 'auth:verify.bot.signal.phone',
   x: 'auth:verify.bot.signal.x',
   github: 'auth:verify.bot.signal.github',
+  github_x_age: 'auth:verify.bot.signal.githubXAge',
   zkpassport: 'auth:verify.bot.signal.zkpassport',
   oauth: 'auth:verify.bot.signal.oauth',
   email: 'auth:verify.bot.signal.email',
 };
 
-/** "a phone number, X or GitHub", in the page's language. */
-export function botSignalList(signals: readonly string[], t: (id: string) => string): string {
-  const names = signals.filter((signal) => BOT_SIGNAL_IDS[signal]).map((signal) => t(BOT_SIGNAL_IDS[signal]));
+/** The minimum age of both accounts for github_x_age when nothing says (homeroom-bot-verified.js). */
+export const DEFAULT_MIN_ACCOUNT_AGE_DAYS = 365;
+
+/**
+ * "a phone number, X or GitHub", in the page's language. `minAccountAgeDays`
+ * is how old both accounts must be for github_x_age.
+ */
+export function botSignalList(signals: readonly string[], t: (id: string, params?: Record<string, unknown>) => string,
+  minAccountAgeDays: number = DEFAULT_MIN_ACCOUNT_AGE_DAYS): string {
+  const names = signals.filter((signal) => BOT_SIGNAL_IDS[signal]).map((signal) => (signal === 'github_x_age'
+    ? t(BOT_SIGNAL_IDS[signal], { count: minAccountAgeDays })
+    : t(BOT_SIGNAL_IDS[signal])));
   try {
     const lang = (typeof document !== 'undefined' && document.documentElement.lang) || undefined;
     return new Intl.ListFormat(lang, { style: 'long', type: 'disjunction' }).format(names);
@@ -119,9 +129,11 @@ export function identityNeededHere(): boolean {
   return app?.user?.identityNeeded === true;
 }
 
-export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-4 pb-5', linkId, onVerified, onSettings, onNotNow }: {
+export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-4 pb-5', linkId, note, onVerified, onSettings, onNotNow }: {
   phoneOffered: boolean;
   copy?: VerifyCopy;
+  /** A line under the Settings line, such as how old linked accounts must be. */
+  note?: string | null;
   /** The line that sends them to Settings, instead of "Link both GitHub and X"; null for none. */
   linkId?: string | null;
   className?: string;
@@ -150,6 +162,9 @@ export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-
           ]} />
         </p>
       )}
+      {note ? (
+        <p className="mt-2 text-center text-[13px] text-zinc-500 dark:text-zinc-400" data-verify-identity-note="">{note}</p>
+      ) : null}
       {onNotNow ? (
         <div className="mt-1 flex justify-center">
           <button type="button" data-verify-identity-not-now="" className={QUIET} onClick={() => onNotNow()}>{t('auth:verify.notNow')}</button>
@@ -160,10 +175,12 @@ export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-
 }
 
 /** The sheet's contents, once the options say whether phone sign-in is offered. */
-function VerifySheet({ copy, botSignals, onVerified, onSettings, onNotNow }: {
+function VerifySheet({ copy, botSignals, minAccountAgeDays = DEFAULT_MIN_ACCOUNT_AGE_DAYS, onVerified, onSettings, onNotNow }: {
   copy: VerifyCopyIds;
   /** #6632: the bot's rule, with what counts for it; the phone and the Settings line follow the list. */
   botSignals?: readonly string[];
+  /** How old both GitHub and X must be, when github_x_age counts. */
+  minAccountAgeDays?: number;
   onVerified: () => void;
   onSettings: () => void;
   onNotNow?: () => void;
@@ -177,14 +194,16 @@ function VerifySheet({ copy, botSignals, onVerified, onSettings, onNotNow }: {
   }, []);
   if (phoneOffered === null) return null;
   if (botSignals) {
-    const params = { signals: botSignalList(botSignals, t) };
+    const params = { signals: botSignalList(botSignals, t, minAccountAgeDays) };
     const phone = phoneOffered && botSignals.includes('phone');
-    const linkable = botSignals.includes('x') || botSignals.includes('github');
+    const aged = botSignals.includes('github_x_age');
+    const linkable = aged || botSignals.includes('x') || botSignals.includes('github');
     return (
       <VerifyIdentityBody
         phoneOffered={phone}
         copy={{ title: t(copy.title), lead: t(copy.lead, params), reason: t(copy.reason, params) }}
         linkId={linkable ? (phone ? 'auth:verify.bot.linkAccountInstead' : 'auth:verify.bot.linkAccount') : null}
+        note={aged ? t('auth:verify.bot.accountAgeNote', { count: minAccountAgeDays }) : null}
         onVerified={onVerified}
         onSettings={onSettings}
         onNotNow={onNotNow}
@@ -206,7 +225,7 @@ let open: Promise<VerifyOutcome> | null = null;
  * the open one's outcome. `notNow` adds a "Not now". Closed or "Not now",
  * the person has been asked: Home's card follows up.
  */
-export function openVerifySheet({ copy = VOTE_COPY, notNow = false, botSignals }: { copy?: VerifyCopyIds; notNow?: boolean; botSignals?: readonly string[] } = {}): Promise<VerifyOutcome> {
+export function openVerifySheet({ copy = VOTE_COPY, notNow = false, botSignals, minAccountAgeDays }: { copy?: VerifyCopyIds; notNow?: boolean; botSignals?: readonly string[]; minAccountAgeDays?: number } = {}): Promise<VerifyOutcome> {
   if (open) return open;
   const kit = (typeof window !== 'undefined' ? (window as unknown as { PlatformUI?: SheetKit }).PlatformUI : null);
   if (!kit || typeof kit.sheet !== 'function' || typeof document === 'undefined') return Promise.resolve('unavailable');
@@ -229,6 +248,7 @@ export function openVerifySheet({ copy = VOTE_COPY, notNow = false, botSignals }
       <VerifySheet
         copy={copy}
         botSignals={botSignals}
+        minAccountAgeDays={minAccountAgeDays}
         onVerified={() => leave('verified')}
         onSettings={() => leave('settings')}
         onNotNow={notNow ? () => leave('not-now') : undefined}
@@ -290,11 +310,13 @@ export function askToVerifyForPublic(): Promise<boolean> {
  * the phone counts: the shell's copy of the account then says the bot is
  * theirs, and the caller sends the press again.
  */
-export function askToVerifyForBot(signals?: readonly string[]): Promise<boolean> {
+export function askToVerifyForBot(signals?: readonly string[], opts: { minAccountAgeDays?: number } = {}): Promise<boolean> {
   const w = window as unknown as { App?: { user?: Record<string, any> | null; saveSessionSnapshot?: (user: unknown) => void } };
   const known = Array.isArray(signals) && signals.length ? signals : w.App?.user?.homeroomBotVerify?.signals;
-  const list: readonly string[] = Array.isArray(known) && known.length ? known : ['phone', 'x', 'github'];
-  return openVerifySheet({ copy: BOT_COPY, botSignals: list }).then((outcome) => {
+  const list: readonly string[] = Array.isArray(known) && known.length ? known : ['phone', 'github_x_age'];
+  const days = [opts.minAccountAgeDays, w.App?.user?.homeroomBotVerify?.minAccountAgeDays]
+    .find((n) => Number.isInteger(n) && (n as number) >= 0) as number | undefined;
+  return openVerifySheet({ copy: BOT_COPY, botSignals: list, minAccountAgeDays: days ?? DEFAULT_MIN_ACCOUNT_AGE_DAYS }).then((outcome) => {
     if (outcome !== 'verified') return false;
     noteVerified();
     if (w.App?.user) {

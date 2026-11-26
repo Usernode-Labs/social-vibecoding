@@ -124,7 +124,8 @@ test('the badge, the Hub card and the Communities tab are all the queue\'s vote 
   assert.match(WORKSHOP_TSX, /const owedRows = \(v\.queue \|\| \[\]\)\.filter\(\(row\) => row\.kind === 'vote'\);/);
   assert.match(WORKSHOP_TSX, /owedCount: owedRows\.length,/, 'what the Communities tab learns');
   assert.match(WORKSHOP_TSX, /publishPlace\(v\.slug, tab, owed, unreadElsewhere, trayOpen\)/, 'the place\'s badge');
-  assert.match(WORKSHOP_TSX, /needs=\{owedRows\.length \? \{\s+count: owed,/, 'the Hub\'s For you row');
+  const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  assert.match(hub, /const votes = queue\.filter\(\(row\) => row\.kind === 'vote'\);/, 'the Hub\'s For you row');
 });
 
 // ── 3. The page ─────────────────────────────────────────────────────────
@@ -307,6 +308,6 @@ test('a project\'s own page says nothing waits in that project; Needs you speaks
   assert.match(own, /data-needs-empty=""[^>]*>Nothing is waiting on your vote in Garden Club\.<\/p>/);
   assert.doesNotMatch(own, /in any of your projects/);
   assert.match(html({}), /data-needs-empty=""[^>]*>Nothing is waiting on your vote in any of your projects\.<\/p>/);
-  assert.match(WORKSHOP_TSX, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/);
+  assert.match(WORKSHOP_TSX, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => upTab\('status'\)\} project=\{projectName\} \/>/);
   assert.match(FLOW_SRC, /project=\{project\}\s+grows/);
 });

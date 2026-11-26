@@ -123,14 +123,15 @@ type ProfileRows = {
 
 /**
  * A row's second line whose words are still on their way: a muted bar at
- * the line's own height (ListRow's subtitle is 1.125rem leading), so the row
+ * the line's own height (ListRow's subtitle is 1.1875rem leading on a phone,
+ * 1.125rem from 768px), so the row
  * is already the height it will be and nothing under it moves when they
  * land. Your requests' counts come after the rest of Profile (profile.js
  * _load).
  */
 function PendingLine({ label }: { label: string }): ReactNode {
   return (
-    <div className="flex h-[1.125rem] items-center">
+    <div className="flex h-[1.1875rem] md:h-[1.125rem] items-center">
       <span className="sr-only">{label}</span>
       <Skeleton shape="muted" className="w-32 animate-pulse" aria-hidden="true" />
     </div>
@@ -247,6 +248,7 @@ export function AccountPanel({ rows }: {
 }): ReactNode {
   const allowance = useAppAllowance();
   const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
+  const unlimited = !!allowance.quota && allowance.quota.limit === null;
   const t = useMessages('profile');
   return (
     <section id="profile-account" className="mt-2">
@@ -267,7 +269,7 @@ export function AccountPanel({ rows }: {
           subtitle={rows.friends || t('profile:more.friends.hint')}
           subtitleClassName={SUBTITLE}
         />
-        <ListRow
+        {!unlimited ? (<ListRow
           as="a"
           id="profile-row-app-slots"
           href="#profile?slots"
@@ -284,7 +286,20 @@ export function AccountPanel({ rows }: {
           titleClassName={TITLE}
           subtitle={slotsLine || t('profile:more.appSlots.hint')}
           subtitleClassName={SUBTITLE}
-        />
+        />) : (
+          // Phone review #125 (23 Nov 2026): with no limit there is nothing
+          // to request, and the card only said the row's own line again under
+          // a second name. The row says it and opens nothing.
+          <ListRow
+            id="profile-row-app-slots"
+            leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
+            title={t('profile:more.appSlots.title')}
+            titleClassName={TITLE}
+            subtitle={slotsLine}
+            subtitleClassName={SUBTITLE}
+            chevron={false}
+          />
+        )}
       </GroupedList>
     </section>
   );

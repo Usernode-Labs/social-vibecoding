@@ -122,3 +122,66 @@ test('one attempt means no retry at all', async () => {
   }, { attempts: 1, wait: async () => { throw new Error('must not pause'); } }), /deadlock detected/);
   assert.equal(calls, 1);
 });
+
+// ── A connection the database would not give (23 Nov 2026) ─────────────
+
+// pg-pool and pg's Client throw plain Errors with no code for these.
+const poolTimeout = () => new Error('timeout exceeded when trying to connect');
+const clientTimeout = () => new Error('Connection terminated due to connection timeout');
+const errno = (code) => Object.assign(new Error(`connect ${code} 10.0.0.5:5432`), { code, errno: -1, syscall: 'connect' });
+
+test('a connection the database would not give is recognised by its shape', () => {
+  const shapes = [
+    ['pg-pool checkout timeout', poolTimeout()],
+    ['pg Client connect timeout', clientTimeout()],
+    ['refused', errno('ECONNREFUSED')],
+    ['reset', errno('ECONNRESET')],
+    ['timed out', errno('ETIMEDOUT')],
+    ['no route', errno('EHOSTUNREACH')],
+    ['admin shutdown', pgError('57P01', 'terminating connection due to administrator command')],
+    ['crash shutdown', pgError('57P02', 'terminating connection because of crash of another server process')],
+    ['cannot connect now', pgError('57P03', 'the database system is starting up')],
+    ['too many connections', pgError('53300', 'sorry, too many clients already')],
+    ...['08000', '08001', '08003', '08004', '08006'].map((code) => [`connection exception ${code}`, pgError(code, 'connection failure')]),
+    // psql and pg_dump say the same in their stderr (db-manager.execInTarget).
+    ['psql too many clients', Object.assign(new Error('Command failed: psql -X -c SELECT 1'),
+      { code: 2, stderr: 'psql: error: connection to server at "pg" (10.0.0.5), port 5432 failed: FATAL:  sorry, too many clients already\n' })],
+    ['psql refused', Object.assign(new Error('Command failed: pg_dump app_x'),
+      { code: 1, stderr: 'pg_dump: error: connection to server at "pg" (10.0.0.5), port 5432 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n' })],
+    ['psql shutting down', Object.assign(new Error('Command failed: psql'), { code: 2, stderr: 'psql: error: FATAL:  the database system is shutting down\n' })],
+    // Wrapped, the way a caller keeps the error it met.
+    ['as a cause', new Error('Could not prepare the copies', { cause: poolTimeout() })],
+    ['inside an AggregateError', Object.assign(new AggregateError([errno('ECONNREFUSED'), errno('ECONNREFUSED')], ''), { code: undefined })],
+    // Trimmed, as a message is sometimes stored.
+    ['with whitespace', new Error('timeout exceeded when trying to connect\n')],
+  ];
+  for (const [name, error] of shapes) assert.equal(dbRetry.isConnectionError(error), true, name);
+});
+
+test('an ordinary query error, a syntax error and words in a sentence are not a connection error', () => {
+  for (const [name, error] of [
+    ['duplicate key', pgError('23505', 'duplicate key value violates unique constraint "users_pkey"')],
+    ['syntax error', pgError('42601', 'syntax error at or near "SELEC"')],
+    ['missing relation', pgError('42P01', 'relation "nope" does not exist')],
+    ['statement timeout', pgError('57014', 'canceling statement due to statement timeout')],
+    ['deadlock', pgError('40P01', 'deadlock detected')],
+    ['in use', pgError('55006', 'database "x" is being accessed by other users')],
+    ['query read timeout', new Error('Query read timeout')],
+    ['a sentence that quotes the words', new Error('The agent said: timeout exceeded when trying to connect')],
+    ['psql query error', psqlError('SELECT 1', 'relation "nope" does not exist')],
+    ['a bad password is not transient', Object.assign(new Error('Command failed: psql'),
+      { code: 2, stderr: 'psql: error: connection to server at "pg" (10.0.0.5), port 5432 failed: FATAL:  password authentication failed for user "x"\n' })],
+    ['an exit status that looks like nothing', Object.assign(new Error('Command failed'), { code: 1 })],
+    ['nothing', null],
+    ['not an object', 'timeout exceeded when trying to connect'],
+  ]) {
+    assert.equal(dbRetry.isConnectionError(error), false, name);
+  }
+});
+
+test('a cycle of causes ends', () => {
+  const a = new Error('outer');
+  const b = new Error('inner', { cause: a });
+  a.cause = b;
+  assert.equal(dbRetry.isConnectionError(a), false);
+});

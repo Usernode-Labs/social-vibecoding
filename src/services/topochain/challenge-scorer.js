@@ -293,19 +293,25 @@ const PROPOSAL_ACCEPTED_SQL = `
 // and the project they made in their first session is the one they have
 // something to say about. It is paid once in a life, so it is never paid
 // twice; the weekly and repeatable challenges still leave it out.
+// The eligibility test USEFUL_FEEDBACK_SQL applies, lifted out so the
+// challenge page's itemized report list (./challenge-items.js) reads the
+// same rule rather than retyping it. Both use `$4` for the own-apps flag
+// (a First challenge's `first_challenge`) and the same `fr`/`a` aliases.
+const USEFUL_FEEDBACK_ELIGIBLE_SQL = `fr.app_id IS NULL
+          OR $4::boolean
+          OR (a.created_by IS DISTINCT FROM fr.user_id
+              AND (a.view_visibility = 'public'
+                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+                   OR EXISTS (SELECT 1 FROM app_collaborators ic
+                               WHERE ic.app_id = a.id AND ic.status = 'invited')))`;
+
 const USEFUL_FEEDBACK_SQL = `
   SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
     FROM feedback_reports fr
     LEFT JOIN apps a ON a.id = fr.app_id
    WHERE fr.created_at >= $1 AND fr.created_at <= $2
      AND fr.issue_number IS NOT NULL
-     AND (fr.app_id IS NULL
-          OR $4::boolean
-          OR (a.created_by IS DISTINCT FROM fr.user_id
-              AND (a.view_visibility = 'public'
-                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
-                   OR EXISTS (SELECT 1 FROM app_collaborators ic
-                               WHERE ic.app_id = a.id AND ic.status = 'invited'))))
+     AND (${USEFUL_FEEDBACK_ELIGIBLE_SQL})
    ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
    LIMIT $3
 `;
@@ -1530,6 +1536,7 @@ module.exports = {
   CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
   INVITES_FIRST_TAKEN_SQL,
+  USEFUL_FEEDBACK_ELIGIBLE_SQL,
   ONBOARDING_LIMIT,
   CADENCE_RULES_SQL,
   CREDITED_SQL,

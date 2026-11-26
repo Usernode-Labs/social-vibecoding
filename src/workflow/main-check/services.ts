@@ -40,6 +40,8 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
           // A first run on an unpaused main may copy a pass of its tree
           // (the machine's suiteWork); an item from before the flag runs it.
           reuse: ctx.input.reuse === true,
+          // A recheck a newer merge supersedes is stopped: nobody reads it.
+          phase: typeof ctx.input.phase === 'string' ? ctx.input.phase : null,
           // A save that fails for another reason than a lost claim costs
           // only the carry-on after a crash: the run goes on.
           onRunId: (runId: string) => ctx.checkpoint({ runId }).catch((err: any) => {

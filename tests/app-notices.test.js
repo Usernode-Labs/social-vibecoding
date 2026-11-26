@@ -102,13 +102,13 @@ test('what feeds it: the lock toggle and the Friday sweep record events, not cha
   assert.equal(EVENT_TYPES.WEEKLY_DIGEST, 'weekly_digest');
 });
 
-test('the Workshop tab draws no "Lately in this project" panel: Overview leads straight into Your work', () => {
+test('the Workshop draws no "Lately in this project" panel', () => {
   assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/dev-board/workshop/notices.tsx')), 'the panel is gone');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(lander, /WorkshopNotices|NoticesPanel|data-ws-notices|from '\.\/notices'/);
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
-  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── YOUR WORK ──/,
-    'the Overview card, then Your work (5 Nov 2026: it was What\'s happening)');
+  // The Workshop is the front page (./front-page.tsx), which has no such panel either; the
+  // brand look's own tab, which led its Overview card into Your work, went with that look (26 Nov 2026).
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/front-page.tsx'), /WorkshopNotices|NoticesPanel|data-ws-notices/);
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-notice/, 'and none of its CSS');
   assert.doesNotMatch(read('frontend/locales/en/project.json'), /"notices\./, 'and none of its words');
 });
@@ -118,7 +118,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // #3555: the hub's door is the general one turned to the hub, so a Recents
   // channel can open its project's Discussion tab the same way.
   assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
-  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\._isWorkshopPlace\(tab\) \? tab : 'status';\n\s*AppView\._notePlaceDecided\(slug\);\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
+  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\._isWorkshopPlace\(tab\) \? tab : 'status';\n\s*AppView\._notePlaceDecided\(slug\);\n\s*AppView\._setWorkshopTab\(key, slug\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);
@@ -126,23 +126,22 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // straight from one project's page to another's keeps the host, so the
   // page is not mounted again; it reads the tab afresh when its project
   // changes, as a mount does.
-  assert.match(lander, /useLayoutEffect\(\(\) => \{\n\s*if \(!v\.slug\) return;\n\s*const was = tabSlug\.current;\n\s*tabSlug\.current = v\.slug;\n\s*if \(was && was !== v\.slug\) setTab\(freshTab\(\) \|\| 'status'\);\n\s*\}, \[v\.slug\]\);/);
+  assert.match(lander, /useLayoutEffect\(\(\) => \{\n\s*if \(!v\.slug\) return;\n\s*const was = tabSlug\.current;\n\s*tabSlug\.current = v\.slug;\n\s*if \(was && was !== v\.slug\) setTab\(freshTab\(v\.slug\) \|\| 'status'\);\n\s*\}, \[v\.slug\]\);/);
   // Seeded from a fresh read, not the store's last publish: that one can be
   // a tab the viewer has since left, which is what Back used to reopen on.
-  assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
-  assert.match(lander, /export function freshTab\(\): TabKey \| null \{\n\s*const tab = callAppView\('_workshopTab'\);/);
+  assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(v\.slug\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(lander, /export function freshTab\(slug\?: string \| null\): TabKey \| null \{\n\s*\/\/ #43[^\n]*\n\s*const tab = callAppView\('_workshopTab', slug \|\| undefined\);/);
   // The doors: the logo menu row, Home's "Go to community" and a Needs you card's
   // project name. Back and Forward are not doors, and nor is a row of All
   // communities: a switch keeps the place you were on (landKeepingPlace).
   // The menu row lands on the hub before it follows its link, which is full
   // width everywhere, beside a running app too: a community's page is never
   // the side panel's (side-panel/routes.ts).
-  // #5927 item 3: while its badge counts decisions waiting on you, the row
-  // is a door to the list of them, Needs you, instead of the hub; a plain
-  // click only (tests/app-menu-title-version.test.js presses it).
+  // #7049: the row always opens the hub, even while its badge counts
+  // decisions waiting on you; a plain click only (the same suite presses it).
   const sheetSrc = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheetSrc, /onClick=\{\(e\) => openCommunityRow\(e, slug, owed\)\}/);
-  assert.match(sheetSrc, /if \(communityRowPlace\(owed\) === 'needs'\) view\?\._landOnTab\?\.\(slug, 'needs'\);\n\s*else view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
+  assert.match(sheetSrc, /if \(slug\) \{\n\s*const view = \(window as any\)\.AppView;\n\s*view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
   // One Home (#6361): a Home card's "Go to community" and an old
   // `#apps/<slug>` details address are doors to the hub too.
   assert.match(read('frontend/src/features/home/home.js'), /openHub\(slug\) \{\n\s*if \(!slug\) return;\n\s*try \{ window\.AppView\?\._landOnHub\?\.\(slug\); \}/);

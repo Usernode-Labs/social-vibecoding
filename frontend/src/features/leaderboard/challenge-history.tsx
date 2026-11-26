@@ -62,8 +62,12 @@ export type HistoryView =
 // ./challenges-pane.tsx's GRID): a column is never narrower than 21rem while
 // there are two or more, and one full-width column below that.
 const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
+// Every group heading stands the kit's section gap (24px) clear of what is
+// above it. The first one used to sit flush (`pt-0`), as on the Challenges
+// tab where it follows the summary; here the How points work card is above
+// it, so "Done" sat 12px under that card and read as its footer (phone
+// review #108).
 const GROUP_HEADING = 'px-1 pt-6 pb-2';
-const GROUP_HEADING_FIRST = 'px-1 pt-0 pb-2';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
   + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
 const DONE_MARK = 'shrink-0 text-emerald-700 dark:text-emerald-400';
@@ -71,12 +75,15 @@ const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium 
   + 'text-emerald-700 dark:text-emerald-400';
 const SO_FAR_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 '
   + 'text-zinc-500 dark:text-zinc-400';
-const CARD_NAME = 'min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100';
+// Two lines before an ellipsis, as the Challenges tab's card titles (phone
+// review #33): "Get 2 proposals accepted (staging…" lost its end beside the
+// points.
+const CARD_NAME = 'min-w-0 flex-1 line-clamp-2 break-words text-sm font-semibold text-zinc-900 dark:text-zinc-100';
 
 function HistoryCard({ view }: { view: HistoryChallenge }): ReactNode {
   return (
     <div className={CHALLENGE_HISTORY_FACE} data-history-challenge={view.key}>
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-start gap-2.5">
         {view.done ? <span className={DONE_MARK}><StateMark state="done" /></span> : null}
         <span className={CARD_NAME}>{view.goal}</span>
         {view.points ? (
@@ -143,13 +150,13 @@ function HistorySkeleton(): ReactNode {
   );
 }
 
-function Group({ groupKey, heading, cards, first }: {
-  groupKey: string; heading: string; cards: HistoryChallenge[]; first: boolean;
+function Group({ groupKey, heading, cards }: {
+  groupKey: string; heading: string; cards: HistoryChallenge[];
 }): ReactNode {
   if (!cards.length) return null;
   return (
     <>
-      <SectionHeader className={first ? GROUP_HEADING_FIRST : GROUP_HEADING}>{heading}</SectionHeader>
+      <SectionHeader className={GROUP_HEADING}>{heading}</SectionHeader>
       <div id={`tc-se-history-${groupKey}`} className={GRID}>
         {cards.map((c) => <HistoryCard key={c.key} view={c} />)}
       </div>
@@ -207,8 +214,8 @@ export function ChallengeHistory({ view }: { view: HistoryView | null }): ReactN
           <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('leaderboard:history.how.standings')}</p>
         </div>
       </GroupedList>
-      <Group groupKey="done" heading={t('leaderboard:history.groups.done')} cards={view.done} first />
-      <Group groupKey="progress" heading={t('leaderboard:history.groups.progress')} cards={view.progressGroup} first={!view.done.length} />
+      <Group groupKey="done" heading={t('leaderboard:history.groups.done')} cards={view.done} />
+      <Group groupKey="progress" heading={t('leaderboard:history.groups.progress')} cards={view.progressGroup} />
     </>
   );
 }

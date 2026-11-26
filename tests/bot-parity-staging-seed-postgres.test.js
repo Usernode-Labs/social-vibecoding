@@ -268,6 +268,58 @@ test('the staging already-works request carries its note and its bell row', { ti
   assert.match(copy.body, /^Already works: .* Propose to close it\?$/);
 });
 
+// #6988: the gone close offer's staging fixture (src/db/migrate.js
+// seedStagingBotGoneCloseOffer). It rides the already-works request the
+// seed above stages: its thread gains one bot note whose offer has gone, so
+// the line says the offer is no longer available and Propose to close sits
+// under it. Seeded twice: one gone note, and the open offer's own buttons
+// are left alone.
+test('the staging gone close offer rides the already-works request', { timeout: 60000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, self_hosted) VALUES ('Homeroom', 'usernode-seed-gone-offer', TRUE) RETURNING id`,
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('usernode-capture', 'not-a-login', FALSE),
+       ('homeroom_bot', 'not-a-login', TRUE)`,
+  );
+
+  const { seedStagingBotAlreadyWorks, seedStagingBotGoneCloseOffer } = require('../src/db/migrate');
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    await seedStagingBotAlreadyWorks(pool);
+    await seedStagingBotGoneCloseOffer(pool);
+    await seedStagingBotGoneCloseOffer(pool);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
+
+  const gone = await pool.query(
+    `SELECT content, metadata FROM chat_messages
+      WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9110
+        AND metadata->>'stagingDemo' = 'gone-close-offer-note'`,
+    [app.id],
+  );
+  assert.equal(gone.rows.length, 1, 'one gone note, not two');
+  assert.match(gone.rows[0].content, /^Already works: /);
+  assert.deepEqual(gone.rows[0].metadata.homeroomBot.offer, {
+    kind: 'close_request',
+    status: 'gone',
+    forUserId: null,
+    issueNumber: 9110,
+    why: 'Staging demo: visitors can already get in and play without an account.',
+  }, 'the offer says it is gone, and which request and reason it was about');
+  assert.deepEqual(gone.rows[0].metadata.homeroomBot.actions, [], 'its buttons are gone');
+  const offers = await pool.query(
+    `SELECT status FROM bot_cards WHERE place = 'thread' AND app_id = $1`, [app.id],
+  );
+  assert.deepEqual(offers.rows, [{ status: 'open' }], 'the already-works offer keeps its own buttons');
+});
+
 // #6399: the out-of-date hand-back fixture (src/db/migrate.js
 // seedStagingBotOutdatedReason). A fresh staging copy has no request whose
 // reason a later release lifted, so the before & after shots of "Ask

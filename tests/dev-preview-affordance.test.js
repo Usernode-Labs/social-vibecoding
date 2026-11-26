@@ -30,6 +30,8 @@ const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8');
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+const CARD_TSX = fs.readFileSync(path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf8');
 
 const ME = 42;
 
@@ -241,6 +243,21 @@ test('iconOnly:false gives the detail view a labelled affordance', () => {
   const err = previewHtml(AppView, { id: 7, staging_error: 'boom' },
     { sessionId: 7, iconOnly: false });
   assert.match(err, /Preview unavailable/);
+});
+
+// #7176. EyeIcon carries no size of its own (icons.tsx says every call site
+// passes one). The board and the change cards set 16px in app.css, but the
+// request foot's action row (.dev-thread-foot-acts) sets none, so the eye in
+// the labelled Preview pill stretched to fill the 40px button. The labelled
+// form now carries its size itself; the eye-only form keeps the 14px rule.
+test('#7176: the labelled live Preview sizes its eye at 16px; the eye-only form keeps its own size', () => {
+  const branches = CARD_TSX.match(
+    /spec\.iconOnly \? <EyeIcon ([^>]*?)\/> : <><EyeIcon ([^>]*?)\/>/);
+  assert.ok(branches, 'the live branch still draws both forms of the eye');
+  assert.match(branches[2], /className="h-4 w-4 shrink-0"/,
+    'the labelled eye is 16px whatever container draws it');
+  assert.doesNotMatch(branches[1], /className=/,
+    'the eye-only form still takes its size from .gc-vote-btn-icon');
 });
 
 // #2585. The building state used to render as a bare `.gc-checks-running-badge`

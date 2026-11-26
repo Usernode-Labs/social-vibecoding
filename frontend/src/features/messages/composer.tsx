@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 
 import { Button } from '@/components/ui/button';
 import { ChatComposerBar } from '@/components/ui/chat';
-import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, CopyIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, SaveDraftIcon, StrikethroughIcon, UnderlineIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, CheckIcon, CopyIcon, FormatTextIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, SaveDraftIcon, StrikethroughIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
 import { applyFormat, hasFormatting, normalizeLinkUrl, type FormatKind } from './composer-format';
@@ -17,6 +17,7 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { useComposerStack } from '../../lib/use-composer-stack';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { PendingStripRows } from '../attachments/pending-strip';
@@ -155,6 +156,12 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   const menuRef = useRef<HTMLDivElement>(null);
   const menuRange = useRef<{ start: number; end: number } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  // Request #7164 (phone audit): under 768px a channel's box stands alone and
+  // the formatting row waits behind "Formatting" in the "+" menu. Closed to
+  // begin with, and it stays as the person left it: sending does not close
+  // it. A desktop draws the row always and never the menu's row (app.css).
+  const [formatOpen, setFormatOpen] = useState(false);
+  const formatBarId = useId();
   const [linkValue, setLinkValue] = useState('');
   const linkRange = useRef<{ start: number; end: number } | null>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
@@ -165,6 +172,8 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   // #6810: and, after a deletion collapses the box, keep the transcript above
   // it at its newest line when that is where it was.
   useAutoGrow(inputRef, value, scroller);
+  // Phone review #58: once the text wraps, it has the card's whole width.
+  const stacked = useComposerStack(inputRef, value);
   // Plain Enter sends on this device (lib/enter-sends.ts): what the hint
   // under the box and the send button's tooltip say. False on the first
   // render, so the prerender and the hydration draw neither.
@@ -883,6 +892,13 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
     ? (snap.thread?.rootId === threadRootId ? snap.thread.root : null) || snap.messages.find((item) => item.id === threadRootId) || null
     : null;
   const botRequest = botRoot?.sender.bot && botRoot.metadata?.homeroomBot ? botRequestNames(botRoot.metadata.homeroomBot) : null;
+  // ONE LOOK (25 Nov 2026): the box names who it goes to, as the agreed
+  // mockups draw it ("Message pat_parrot"): the other person of a direct
+  // message, or a group's name. A person with no name keeps "Message…".
+  const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || 0 : 0;
+  const toPeer = active.kind === 'direct' ? active.peer || active.members.find((member) => Number(member.id) !== viewerId) || null : null;
+  const toName = active.kind === 'group' ? active.title : toPeer && !toPeer.unnamed ? senderName(toPeer, { bare: true }) : '';
+  const mainPlaceholder = toName ? t('messages:composer.placeholderTo', { name: toName }) : t('messages:composer.placeholder');
   const threadPlaceholder = !botRequest ? t('messages:composer.placeholderThread')
     : botRequest.firstVersion ? t('messages:composer.placeholderBotThreadFirstVersion')
       : botRequest.title || botRequest.number ? t('messages:composer.placeholderBotThread')
@@ -995,7 +1011,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
         </div>
       ) : null}
       {isChannel ? (
-        <div className="messages-format-bar" role="toolbar" aria-label={t('messages:composer.format.bar')} style={linkOpen ? { display: 'none' } : undefined}>
+        <div className="messages-format-bar" role="toolbar" id={formatBarId} data-open={formatOpen ? '' : undefined} aria-label={t('messages:composer.format.bar')} style={linkOpen ? { display: 'none' } : undefined}>
           {FORMAT_BUTTONS.map(({ kind, label, Icon }) => (
             <button key={kind} type="button" className="messages-format-btn" data-format={kind} onMouseDown={(event) => event.preventDefault()} onClick={() => (kind === 'link' ? openLinkField() : formatSelected(kind))} disabled={dictating} aria-label={t(label)} title={t(label)}>
               <Icon aria-hidden="true" />
@@ -1011,7 +1027,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
           <RichMessage id="messages:composer.saveNote" components={[<span className="font-semibold" />]} />
         </p>
       ) : null}
-      <div className="flex items-end gap-1.5">
+      <div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? '' : undefined}>
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
           <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
@@ -1030,10 +1046,20 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
                   <span>{t('messages:composer.shareItem')}</span>
                 </button>
               )}
+              {/* Request #7164: a channel's alone, and a phone's alone
+                  (app.css hides it from 768px, where the row always shows).
+                  A checked row, so the menu says whether the row is open. */}
+              {isChannel ? (
+                <button type="button" role="menuitemcheckbox" className="messages-composer-menu-format" aria-checked={formatOpen} aria-controls={formatBarId} onMouseDown={(event) => event.preventDefault()} onClick={() => { setAddOpen(false); setFormatOpen((open) => !open); }}>
+                  <FormatTextIcon aria-hidden="true" />
+                  <span>{t('messages:composer.format.toggle')}</span>
+                  {formatOpen ? <CheckIcon aria-hidden="true" className="messages-composer-menu-check" /> : null}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : t('messages:composer.placeholder')} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : mainPlaceholder} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         {/* Task 2148: while Homeroom bot works on the viewer's message here and
             the box is empty, Send's place is Stop (./bot-stop.ts): the same

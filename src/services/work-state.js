@@ -1,6 +1,7 @@
 'use strict';
 
 const { planRecordSql } = require('./request-specs');
+const { draftSessionSql } = require('./live-drafts');
 
 // One work state per request and per change (5 Nov 2026, step 3 of one bot
 // per thread: docs/plans/bot-one-model.md).
@@ -1121,6 +1122,8 @@ const REQUEST_FACTS_SQL = `
        WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
          AND c.is_headless = FALSE
          AND NOT ${planRecordSql('c')}
+         -- 24 Nov 2026: a live app draft is not a change until it is proposed.
+         AND NOT ${draftSessionSql('c')}
          AND c.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        ORDER BY CASE c.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END, c.id DESC
        LIMIT 1

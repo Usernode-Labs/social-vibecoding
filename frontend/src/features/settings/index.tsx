@@ -59,9 +59,10 @@
  * the init() the panes call once they exist.
  */
 
-import type { ComponentType } from 'react';
+import { useRef, type ComponentType } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useStoreState } from '../../lib/use-store-state';
@@ -77,8 +78,13 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
+import { SettingsMobileMenu, SettingsNavDesktop, SettingsPagePin, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
+
+/** Whether this screen is its own scroller: not paged through the document by a phone browser (lib/browser-scroll.ts). */
+function scrollsItself(): boolean {
+  return typeof document === 'undefined' || !document.documentElement.dataset.browserScroller;
+}
 
 interface SettingsChunkState {
   Sections: ComponentType | null;
@@ -127,8 +133,19 @@ export function SettingsScreen() {
     if (mounted) ensureSettings();
   }, [mounted]);
 
+  // WITH THE KEYS UP, THE FORM STAYS ON SCREEN (phone review #14, 23 Nov
+  // 2026). A tap on a field here is focused without iOS's pan, which carried
+  // the platform's header off under the clock, and once the keys settle the
+  // field is revealed with its form's buttons: app.css ends the screen on
+  // the keys ("THE SHELL HOLDS STILL"), so they can be. Only where this
+  // screen is its own scroller: a phone browser pages Settings through the
+  // document (#1518), and there the browser's own reveal moves the page.
+  const screenRef = useRef<HTMLElement | null>(null);
+  useKeyboardSurface(screenRef, { when: scrollsItself });
+
   return (
     <main
+      ref={screenRef}
       id="settings-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip"
       style={{ position: "relative" }}
@@ -142,21 +159,22 @@ export function SettingsScreen() {
       */}
       <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
         {/*
-            THE PAGE'S HEAD UNDER A LOOK (looks v2, s56): "Settings" and one
-            sentence, above the two columns. Always in the document and never
-            drawn by the standard look (app.css `.settings-frame-head`), so
-            this prerendered chassis is the same markup whatever the look;
-            the look dresses it through the wear map (frontend/looks/
-            looks.json: head, title, purpose). A <header>, not a <div>: the
-            standard sheet's rules lay out `#settings-root > div`.
+            THE PAGE'S HEAD (looks v2, s56; the editorial pages, #7072):
+            "Settings" and one sentence, above the two columns (app.css
+            `.settings-frame-head`). A <header>, not a <div>: the sheet's
+            rules lay out `#settings-root > div`.
+
+            THE TITLE IS A LEVEL-1 HEADING BY ROLE, NOT AN <h1> (request
+            #7166, point 4): this screen is in the served document while
+            hidden, and an <h1> here was one of three on every address. A
+            screen reader hears the same heading as before.
         */}
         <header className="settings-frame-head">
           <div className="settings-frame-head-tx">
-            <h1 className="settings-frame-title">{t('settings:screen.title')}</h1>
+            <div role="heading" aria-level={1} className="settings-frame-title">{t('settings:screen.title')}</div>
             <p className="settings-frame-purpose">{t('settings:frame.head.purpose')}</p>
           </div>
         </header>
-        <SettingsFrameCrumb />
         <div className="lg:flex lg:items-start lg:gap-6">
           {/*
               Desktop sidebar menu, from lg (1024px; settings.js
@@ -202,6 +220,7 @@ export function SettingsScreen() {
             */}
             <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
               <SettingsPageTitle />
+              <SettingsPagePin />
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">

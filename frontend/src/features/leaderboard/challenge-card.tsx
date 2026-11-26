@@ -10,17 +10,13 @@
 // uses; its reward tan is the amber of the shell's medium-priority chip. No
 // hue is added and nothing in tailwind.config.js moved.
 //
-// ── One card, two surfaces ─────────────────────────────────────────────
+// ── One card ───────────────────────────────────────────────────────────
 //
-// `ChallengeCard` below is the whole card, and both places that list
-// challenges draw it: the Leaderboard screen's Challenges tab
-// (./challenges-pane.tsx) and Home's Challenges block
-// (../home/panels/challenges.tsx). They used to be two designs of one thing —
-// a white card with a rail here, a tinted card with a count capsule and a
-// deadline on Home — and a viewer moving between them read two different
-// states for the same challenge. Each surface keeps its own root class
-// (`tc-se-card`, `home-challenge-card`) because declared checks and legacy
-// hooks select on them; everything inside is this file.
+// `ChallengeCard` below is the whole card the Leaderboard screen's Challenges
+// tab (./challenges-pane.tsx) draws. Home's Challenges block draws its own
+// posters instead (../home/panels/challenges.tsx). The root class
+// (`tc-se-card`) stays because declared checks and legacy hooks select on it;
+// everything inside is this file.
 //
 // It is not in @/components/ui: it is a domain card, not a primitive.
 //
@@ -61,10 +57,16 @@
 //
 // ── Copy never wraps ───────────────────────────────────────────────────
 //
-// Every line is one line. A 320px phone leaves the card body about 170px.
-// The title truncates and the points never shrink (a short token, "500 pts"
-// is about 50px); the rail is the body's full width and its label truncates
-// inside it. The labels are composed short in ./topochain-challenges.js
+// Every line is one line on Home, whose rows are a fixed height. A 320px
+// phone leaves the card body about 170px. There the title truncates and the
+// points never shrink (a short token, "500 pts" is about 50px); the rail is
+// the body's full width and its label truncates inside it.
+//
+// The Challenges tab's card has room for a second line, and a phone showed
+// why it needs one (phone review #33, 23 Nov 2026): "Get a proposal ac…"
+// beside "Up to 1,000 pts". It passes `wrapTitle`, and its title wraps to
+// two lines (clamped there) with the points still on the first line's
+// baseline at the right. The labels are composed short in ./topochain-challenges.js
 // (`_stateOf`), because the ring already says which state it is.
 //
 // ── The detail page draws the same parts ──────────────────────────────
@@ -116,6 +118,8 @@ const RAIL_LABEL = 'relative min-w-0 truncate';
 // to nothing.
 const TITLE_LINE = 'flex min-w-0 items-baseline gap-2';
 const TITLE = 'min-w-0 flex-1 truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100';
+// `wrapTitle`: the same title on up to two lines (the Challenges tab).
+const TITLE_WRAP = 'min-w-0 flex-1 line-clamp-2 break-words text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100';
 const POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-amber-800 dark:text-amber-300';
 const POINTS_EARNED = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
 // The detail page's points line, under its large title.
@@ -354,11 +358,14 @@ const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium 
 // the card no longer sits unchanged under a finger until the page swaps. On
 // touch that press waits a beat (app.css), so a scroll that starts on a card
 // does not flash it. A card with no onClick stays a plain, inert div.
-export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: {
+export function ChallengeCard({ view, className, onClick, onKeyDown, wrapTitle = false, ...rest }: {
   view: ChallengeCardView;
   className?: string;
+  /** Let the title run to two lines (the Challenges tab; Home keeps one). */
+  wrapTitle?: boolean;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
   const reward = view.earned || view.reward;
+  const title = wrapTitle ? TITLE_WRAP : TITLE;
   const pressable = onClick
     ? {
       role: 'button',
@@ -383,7 +390,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
         {...rest}
       >
         <span className={DONE_MARK}><StateMark state="done" /></span>
-        <div className={TITLE}>{view.goal}</div>
+        <div className={title}>{view.goal}</div>
         {view.earned ? (
           <>
             <span className="sr-only">{view.stateLabel}</span>
@@ -398,7 +405,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
       <ChallengeTile icon={view.icon} illustration={view.illustration} illustrationTone={view.illustrationTone} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className={TITLE_LINE}>
-          <div className={TITLE}>{view.goal}</div>
+          <div className={title}>{view.goal}</div>
           {reward ? <span className={view.earned ? POINTS_EARNED : POINTS}>{reward}</span> : null}
         </div>
         <div className={RAIL_ROW}>

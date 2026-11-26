@@ -198,6 +198,20 @@ const DENIED_COLUMNS = {
     'input_hash',
     'sealed_input',
   ],
+  app_access_tokens: [
+    // SHA-256 of a member's personal access token for one app
+    // (services/app-access-tokens.js): derived from a live credential.
+    'token_hash',
+  ],
+  // An assistant a member approved for one app (services/app-agent-oauth.js):
+  // digests of its codes and tokens, and a code's PKCE challenge.
+  app_agent_codes: [
+    'code_hash',
+    'code_challenge',
+  ],
+  app_agent_tokens: [
+    'token_hash',
+  ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)

@@ -74,6 +74,12 @@ function makeAppView(opts) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // A test that presses a row which copies a link supplies its own clipboard
+  // stub and the origin the link is built from.
+  if (opts && opts.platformUI) {
+    sandbox.location = { origin: opts.origin || 'https://homeroom.test' };
+    sandbox.PlatformUI = opts.platformUI;
+  }
   // The ⋯ rows and meta links to GitHub decide by the address
   // (frontend/src/lib/repo-link.js, published as window.RepoLink).
   require('./lib/repo-link').installRepoLink(sandbox);
@@ -594,7 +600,7 @@ test('#17: a request the bot is on is in progress, in its own state, naming nobo
   assert.equal(st.key, 'bot');
   assert.equal(st.label, 'Homeroom bot is building this');
   assert.equal(st.spinner, true, 'it is working this minute');
-  assert.equal(st.tone, 'sky');
+  assert.equal(st.tone, 'bot', '#7182: the bot\'s own periwinkle, not the shared running tone');
   assert.equal(st.who, null, 'there is no person to name');
   assert.equal(st.note, 'The Homeroom bot started building this request 20 minutes ago. Anyone can still pick it up and work on it alongside the bot.');
   assert.ok(!/nobody needs to claim/.test(st.note), '#4190: it no longer tells people not to claim');
@@ -613,6 +619,20 @@ test('#17: a request the bot is on is in progress, in its own state, naming nobo
   assert.match(chip, /<span[^>]*data-work-state="bot"/, 'an informational chip');
   assert.match(chip, /Homeroom bot is building this/);
   assert.ok(!chip.includes(' · '), 'no name on a bot state');
+  // #7182: the chip wears the bot's own periwinkle, and the Workshop's row
+  // tag says the same tone (spinning), so both surfaces read alike.
+  assert.match(chip, /text-\[color:var\(--bot-ink\)\]/, chip);
+  assert.match(chip, /bg-\[color:var\(--bot-tint\)\]/, chip);
+  const brief = AppView._workshopBrief('issue', baseIssue({ bot: building() }), null);
+  const tag = brief.tags.find((t) => t.label === 'Homeroom bot is building this');
+  assert.ok(tag, JSON.stringify(brief.tags));
+  assert.equal(tag.tone, 'bot');
+  // Other running work keeps the shared tone.
+  const running = AppView._workshopBrief('issue', baseIssue({
+    in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], target: null,
+      sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: true, lastActivityAt: null }] },
+  }), null);
+  assert.ok(running.tags.every((t) => t.tone !== 'bot'), JSON.stringify(running.tags));
 });
 
 test('#17: precedence: a person in review or at work outranks the bot; the bot outranks the rest', () => {
@@ -656,6 +676,52 @@ test('#4190: the card: a disabled "Homeroom bot is building…" beside a Claim, 
   assert.ok(rows(baseIssue()).includes('Claim it'), 'as on any request');
   // Still never Build it now / Start work beside the bot.
   assert.ok(!rows(baseIssue({ bot: building() })).includes('Build it now'));
+});
+
+test('#7000: a request\'s ⋯ menu copies the request\'s address, never its title', async () => {
+  const AppView = makeAppView();
+  const labels = (av, issue) => Array.from(av._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
+  // A member gets it directly above Share to…, on an open request and a closed
+  // one (sharing a closed request changes nothing).
+  for (const issue of [baseIssue(), baseIssue({ state: 'closed' })]) {
+    const rows = labels(AppView, issue);
+    assert.equal(rows[rows.indexOf('Share to…') - 1], 'Copy link', 'just above Share to…');
+  }
+  // A read-only viewer's ⋯ is the two rows it has always had, and this change
+  // does not add a third (`tests/card-action-layout.test.js` pins that list);
+  // the side panel's own Copy link covers that page.
+  const readOnlyRows = labels(makeAppView({ readOnly: true }), baseIssue());
+  assert.equal(readOnlyRows.join('|'), 'Share to…|Open on GitHub',
+    'a read-only viewer keeps the menu it had');
+  // The request page's ⋯ is the same list, so it says it once.
+  assert.equal(
+    AppView._requestMenuItems(baseIssue()).filter((it) => it.label === 'Copy link').length, 1
+  );
+
+  // Pressing it puts the request's own address on the clipboard and says so.
+  const copied = [];
+  const toasts = [];
+  const pressing = makeAppView({
+    platformUI: {
+      copyText: async (text) => { copied.push(text); return true; },
+      toast: (text) => { toasts.push(text); },
+    },
+  });
+  const row = pressing._issueMenuItems(baseIssue(), { progressOnFace: false }).find((it) => it.copyLink);
+  assert.ok(row, 'the row is marked so the side panel can drop its duplicate');
+  await row.act();
+  // The row's copy runs in a `.then`, as a change's does; let it land.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(copied, ['https://homeroom.test/#app/demo/dev/issues/3']);
+  assert.ok(!copied[0].includes('Fix the thing'), 'the title is never what is copied');
+  assert.deepEqual(toasts, ['Link copied']);
+
+  // A refused clipboard (copyText resolves falsy) shows no notice, as on a
+  // change's page.
+  const refused = makeAppView({ platformUI: { copyText: async () => false, toast: (t) => toasts.push(t) } });
+  await refused._issueMenuItems(baseIssue(), { progressOnFace: false }).find((it) => it.copyLink).act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(toasts, ['Link copied'], 'nothing new said');
 });
 
 test('#4190: the request page says so in a sentence and offers Claim in its actions', () => {
@@ -928,6 +994,7 @@ test('a request waiting for its plan\'s OK: the chip says the row\'s word, not t
     const got = named(state);
     assert.equal(got.key, 'bot', JSON.stringify(state));
     assert.equal(got.label, message(id), JSON.stringify(state));
+    assert.equal(got.tone, 'bot', `#7182: ${JSON.stringify(state)} wears the bot tone`);
     assert.equal(got.rowWords, undefined, JSON.stringify(state));
   }
   // A credit wait is in the bot's queue, as the server reads it.

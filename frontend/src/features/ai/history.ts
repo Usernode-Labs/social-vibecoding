@@ -11,7 +11,7 @@
  *     ✓ #392  Watering reminders                    Live Oct 24
  *     ✕ #380  Sign in with a code                        Closed
  *     ☑       A new card picture              You: yes · passed
- *   [tile] Book swap · You left
+ *   [tile] Book swap
  *     ✓ #31   Swap requests                          Live Oct 3
  *   September …
  *                Earlier months ⌄
@@ -43,7 +43,11 @@ export interface HistoryRow {
   app: AiApp | null;
   href: string | null;
   at: string | null;
-  kind: HistoryKind;
+  /**
+   * One of the four kinds its chips narrow to, or (24 Nov 2026, mobile 04)
+   * `thread`: a thread you only wrote or were named in, which only All lists.
+   */
+  kind: HistoryKind | 'thread';
   outcome: 'live' | 'closed' | 'shipped' | 'merged' | 'passed' | 'withdrawn' | 'done' | 'put_away' | 'filed_shipped' | 'filed_closed';
   by?: 'you' | 'bot';
   myVote?: 'yes' | 'no';
@@ -81,13 +85,6 @@ export function byMonth<T extends { at: string | null }>(rows: readonly T[]): { 
     months[index.get(key)!].rows.push(row);
   }
   return months;
-}
-
-/** Pure: a month's name in the interface's language: "October", or "October 2025" in another year. */
-export function monthName(at: string, locale: string | undefined, now = new Date()): string {
-  const d = new Date(at);
-  const other = zonedDay(d).year !== zonedDay(now).year;
-  return d.toLocaleDateString(locale, inZone({ month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
 /** Pure: a day as History's rows say it, "Oct 24". */

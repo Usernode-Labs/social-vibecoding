@@ -154,7 +154,7 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /presents as an iPhone running Safari, with a phone's\s+user agent, touch and screen density/);
   assert.match(prompt, /screenBrowsers names the browser for every change and\s+screen: use that one, and never shoot a phone screen in a desktop browser/);
   assert.match(prompt, /In the browser screenBrowsers names for that change and screen, call/);
-  assert.match(prompt, /record a clip of each side in that screen's browser/);
+  assert.match(prompt, /record a clip of each side in that side's browser \(the twin for the\s+before side, when there is one\)/);
   // Every shots page dismisses Homeroom's install strip; a change to the
   // strip itself opens its start path with the brief's flag (4420, 4321).
   assert.match(prompt, /If the brief has installStrip, Homeroom's "Add it to your home screen" strip\s+is dismissed on every page these browsers open/);
@@ -183,12 +183,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
     'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
-  assert.match(prompt, /Save both in one save_shot call, before you leave that state: list each\s+file with the change id, the\s+screen name, side "after"/);
+  assert.match(prompt, /Save them in one save_shot call, before you leave that state, with the\s+before twin's shots of the same state in the same call/);
   // Fewer round trips: each tool call is a model turn, which is what the
   // first production run spent its time on.
   assert.match(prompt, /list the\s+screenshot again for that change in the same call instead of shooting it\s+twice/);
   assert.match(prompt, /make calls that do not depend on each other\s+in the same turn/);
-  assert.match(prompt, /on the before address with side "before"/);
+  assert.match(prompt, /without one, do the same on the\s+before address afterwards, in the same browser/);
   assert.match(prompt, /kind "screen" or "element"/);
   // What the dry run on real proposals showed the agent getting wrong.
   assert.match(prompt, /call\s+browser_wait_for with text you expect/, 'waits for the finished state');
@@ -277,9 +277,32 @@ test('the shots agent takes only the after side when the brief has afterOnly', (
   assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
   assert.match(prompt, /create hints\.setup data on the after address only/);
   assert.match(prompt, /A change is ready with its after shots\./);
-  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save\s+the after side only\./);
   assert.match(agent.TASK_PROMPT,
-    /When the brief has\s+darkMode, save_shot takes the dark shots as you save the light ones; take\s+one yourself \(theme "dark"\) only for what its answers list in darkLeft,\s+after all the light ones\./);
+    /When the brief has\s+darkMode, save_shot takes the dark\s+shots as you save the light ones; take\s+one yourself \(theme "dark"\) only for\s+what its answers list in darkLeft,\s+after all the light ones\./);
+});
+
+// 25 Nov 2026: one run's agent spent half its time waiting on save_shot and
+// walked the before side after the after side, a model turn a step.
+test('the shots agent takes each step on both sides at once, and saves behind save_shot\'s answer until finish_shots', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has beforeScreenBrowsers, every one of those browsers has a\s+twin for the before side: the same name with _before/);
+  assert.match(prompt, /in one turn, the same call in the\s+browser screenBrowsers names on the after address and in its twin on the\s+before address/);
+  assert.match(prompt, /you save both sides of it in one save_shot call/);
+  assert.match(prompt, /Without\s+beforeScreenBrowsers \(an after-only run\), one browser does both sides, the\s+after side first/);
+  // Only on a worker whose bridge has finish_shots: a warm worker can stay
+  // on an older image, whose save_shot still answers once Homeroom has the files.
+  assert.match(prompt, /When you have a finish_shots tool, save_shot answers as soon as it has\s+checked the files here and handed them on/);
+  assert.match(prompt, /Without\s+it, save_shot answers once Homeroom has the files, and that answer is all\s+Homeroom says about them/);
+  assert.match(prompt, /What Homeroom says about them\s+comes back as earlier in the next\s+save_shot answer, and in finish_shots/);
+  assert.match(prompt, /a refusal or a warning means\s+going back to that state and taking it\s+again/);
+  assert.match(prompt, /With finish_shots, you are done only when it answers\s+pendingUploads 0 with nothing left in earlier or darkLeft to act on/);
+  assert.match(prompt, /the same step in a browser and its twin/);
+  assert.match(prompt, /Finish once every\s+change is saved or skipped \(and, when you have finish_shots, it has answered\s+pendingUploads 0 with nothing left to act on\), and do not end with only\s+prose/);
+  assert.doesNotMatch(prompt, /Finish once every\s+change is saved or skipped and finish_shots/, 'never required of an older worker');
+  assert.match(agent.TASK_PROMPT, /When the brief has beforeScreenBrowsers, take each step on both sides at once/);
+  assert.match(agent.TASK_PROMPT, /When you have a\s+finish_shots tool, finish by calling it/);
+  assert.doesNotMatch(agent.TASK_PROMPT, /Finish by\s+calling finish_shots/);
 });
 
 // reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to

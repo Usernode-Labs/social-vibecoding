@@ -52,14 +52,18 @@
  * (../dictation/speak-button.tsx) and the accent send disc.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
 import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
+import { NewChatInBar, publishNewChatWords } from '../ai/new-chat-bar';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { wantsKeyboardFocus } from '../message-actions/focus';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { useComposerStack } from '../../lib/use-composer-stack';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
@@ -101,7 +105,8 @@ export const NEW_THREAD_STARTS = [
  * live. Homeroom bot opens a live draft of it beside the chat
  * (homeroom-bot-mayor.js open_app_preview, services/live-drafts.js) and
  * changes it as they talk. Its kind is any: the thread is no particular kind
- * of change.
+ * of change. It writes "I want to make changes to a live preview of" and the
+ * project's name, which the bot reads as the request for that draft.
  */
 export const LIVE_START = {
   key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
@@ -162,12 +167,23 @@ export interface NewThreadPreset {
   object?: StagedObject | null;
   /** What the box asks while that item is attached (a catalog text, already read). */
   placeholder?: string | null;
+  /**
+   * 24 Nov 2026: words for the box, as a project's Workshop box took them
+   * (./new-chat-carry.ts carryWordsToNewChat). They wait in the box, ready
+   * to send; nothing is sent for the person.
+   */
+  words?: string | null;
+  /** And a start to choose, by its key, as pressing it here would (`begin`). */
+  start?: string | null;
 }
 
 // The last door's settings, and how many doors have named any: a thread
 // already open takes a later door's too.
 let preset: NewThreadPreset | null = null;
 let presetTurn = 0;
+// #7069: how many times New chat has been pressed. The caret goes in the box
+// on every open, including one pressed again over a chat already open.
+let openTurn = 0;
 
 /**
  * Open a new chat in the bot chat `conversationId` (closing a thread open
@@ -180,13 +196,27 @@ export function startNewThread(conversationId: number, fresh?: NewThreadPreset |
   closeThread();
   const held = takeCarried();
   // What a door just carried is what this chat is about, over anything the
-  // page would have attached on its own.
+  // page would have attached on its own. Words and a start (a project's
+  // Workshop box) carry no item, so the page's own item, if any, stays.
   preset = held
-    ? { project: fresh?.project ?? null, builder: fresh?.builder || 'homeroom', object: held.object, placeholder: held.placeholder }
+    ? {
+        project: fresh?.project ?? null,
+        builder: fresh?.builder || 'homeroom',
+        object: held.object || (held.words || held.start ? fresh?.object || null : null),
+        placeholder: held.object ? held.placeholder : (fresh?.placeholder ?? null),
+        words: held.words,
+        start: held.start,
+      }
     : fresh || null;
   if (preset) presetTurn += 1;
   blankIn = conversationId;
+  openTurn += 1;
   notify();
+}
+
+/** The chat a new chat is open in right now, else null: the live answer, for a caller that cannot wait for a render. */
+export function newThreadIn(): number | null {
+  return blankIn;
 }
 
 /** Close the new chat. */
@@ -227,9 +257,22 @@ function key(): string {
   return out;
 }
 
+/**
+ * THE DOCKED COLUMN'S RESTING STATE (24 Nov 2026). From 768px the bot tab's
+ * column is never empty (../ai/index.tsx, THE COLUMN IS NEVER EMPTY BESIDE
+ * THE LISTS, #7039): with nothing else open there it holds a new chat. A ✕
+ * on that new chat closed it only for the page to start another at once,
+ * so there it has none, and it is drawn as a thread is (app.css, NEW CHAT
+ * IS DRAWN AS CARDS); opening a thread is how it is left. The bot tab says
+ * so around its docked column only: a phone's drawer and Messages keep the
+ * ✕, and it still works there.
+ */
+export const NewThreadDocked = createContext(false);
+
 /** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
+  const docked = useContext(NewThreadDocked);
   // #6963: the bot tab's list is hidden, and a new chat under its own head
   // offers the same way back to it.
   const showList = useShowListButton();
@@ -272,10 +315,26 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const ownName = own ? BUILDER_NAME[own] : '';
   // Its connector is known to be missing: the steps take the thread's place.
   const setup = !!own && links.phase === 'ready' && !links.connected[own];
+  // ONE LOOK (25 Nov 2026): in the Homeroom bot tab's drawer on a phone the
+  // bar names the new chat, with its back disc (../ai/new-chat-bar.ts), and
+  // app.css draws no head here: its words go up to the bar instead.
+  const inBar = useContext(NewChatInBar);
+  const barTitle = setup ? t('messages:newThread.builder.setup.title', { builder: ownName }) : t('messages:newThread.title');
+  const barSub = setup
+    ? t('messages:newThread.builder.setup.sub')
+    : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.barSub');
+  useIsomorphicLayoutEffect(() => {
+    if (!inBar) return undefined;
+    publishNewChatWords({ title: barTitle, sub: barSub });
+    return undefined;
+  }, [inBar, barTitle, barSub]);
+  useEffect(() => (inBar ? () => publishNewChatWords(null) : undefined), [inBar]);
   // The kit's keyboard avoidance, as a thread's own scroller has it.
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   useAutoGrow(inputRef, words);
+  // Phone review #58: once the text wraps, it has the card's whole width.
+  const stacked = useComposerStack(inputRef, words);
   // Plain Enter sends on this device: the hint and the tooltip say so.
   const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
@@ -286,9 +345,21 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     platformSlug: platformSlug(),
     isAdmin: typeof window !== 'undefined' && !!(window as any).App?.user?.isAdmin,
   }) ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
-  const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
+  // The name the live start says: the project's own, or its address name
+  // until the communities you are in are read.
+  const appName = (project && scope.info[project]?.name) || project || '';
+  const starts = offered.map((start) => ({ ...start, text: t(start.text, { app: appName }) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
+  // What a door carried for the box (a project's Workshop): its words, and
+  // the start it chose, written in as pressing that start here would.
+  const takeWords = (from: NewThreadPreset | null) => {
+    if (!from || (!from.words && !from.start)) return false;
+    const chosen = from.start ? starts.find((start) => start.key === from.start) || null : null;
+    const said = String(from.words || '');
+    setWords((chosen ? withStart(said, chosen, starts) : said).slice(0, 8000));
+    return true;
+  };
 
   // A door named the project or who works on it while this thread was
   // already open: it takes them too. The first render read them above.
@@ -306,10 +377,21 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     setObject(preset.object || null);
     setPrompt(preset.placeholder || null);
     setMissed(false);
-    if (preset.object) toField();
+    if (takeWords(preset) || preset.object) toField();
   }, [turn]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The words a door carried go in once the starts are read, with the caret after them.
+  useEffect(() => { if (takeWords(preset)) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // A door's item arrives with the caret in the box, ready for the question.
   useEffect(() => { if (object) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // #7069: New chat puts the caret in the box, so the person can type at
+  // once. On a touch-only phone it does not, so the keyboard stays down over
+  // the starts they may want to tap (../message-actions/focus).
+  const opened = useSyncExternalStore(
+    (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+    () => openTurn,
+    () => 0,
+  );
+  useEffect(() => { if (wantsKeyboardFocus()) toField(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A door named the project: the chip says its name once the communities
   // you are in are known, which the picker would otherwise read on opening.
@@ -492,7 +574,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   };
 
   return (
-    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
+    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-docked={docked ? '' : undefined} data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
       <header className="messages-thread-header">
         {showList ? (
           <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
@@ -509,9 +591,11 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.sub')}
           </div>
         </div>
-        <button type="button" className="messages-thread-action" aria-label={t('messages:newThread.close')} title={t('messages:newThread.close')} onClick={() => closeNewThread()}>
-          <XIcon aria-hidden="true" />
-        </button>
+        {docked ? null : (
+          <button type="button" className="messages-thread-action" aria-label={t('messages:newThread.close')} title={t('messages:newThread.close')} onClick={() => closeNewThread()}>
+            <XIcon aria-hidden="true" />
+          </button>
+        )}
       </header>
       {/* Claude Code or ChatGPT picked, and Homeroom's connector is not in it
           yet: the steps to add it, where the starts and the box go. Those two
@@ -551,7 +635,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
                 onClick={() => begin(start)}
               >
                 <start.Icon aria-hidden="true" />
-                <span><RichMessage id={start.label} components={[<span className="messages-start-more" />]} /></span>
+                <span><RichMessage id={start.label} values={{ app: appName }} components={[<span className="messages-start-more" />]} /></span>
               </button>
             ))}
           </div>
@@ -612,7 +696,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
             </div>
           ) : null}
-          <div className="flex items-end gap-1.5">
+          <div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? '' : undefined}>
             <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
             {/* The same "+" and menu a reply thread offers. The cap disables the
                 Attach files ROW, never the "+" itself. */}

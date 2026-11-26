@@ -157,10 +157,15 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
   const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
   assert.equal((fn.match(/<VotePicker\b/g) || []).length, 1, 'one VotePicker element');
   assert.equal((fn.match(/\{picker\}/g) || []).length, 2, 'rendered into the popover and into the sheet');
-  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label=\{heading\}\s+data-side=\{side\}/,
+  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label=\{heading\}\s+data-side=\{side\}\s+data-vote-look=\{voteLook\}/,
     'desktop: the anchored popover, a dialog now that it holds a form');
-  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label=\{heading\} data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
+  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label=\{heading\} data-vote-sheet="" data-side=\{side\} data-vote-look=\{voteLook\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
     'touch: the same panel inside the kit sheet\'s content element');
+  // #7065: the All items board's portaled picker is marked so the board's own
+  // colours can reach it; the thread page's marker is checked first.
+  assert.match(fn, /const threadLook = !!btnRef\.current\?\.closest\('#dev-topic-thread'\);/);
+  assert.match(fn, /const boardLook = !threadLook && !!btnRef\.current\?\.closest\('\.dev-ws\[data-ws-tab="all"\] #dev-kanban'\);/);
+  assert.match(fn, /const voteLook = threadLook \? 'thread' : \(boardLook \? 'board' : undefined\);/);
   // #3977: both homes are named by the picker's own header, which is "Your
   // approval" on a solo change whose Yes is the one it needs.
   assert.match(fn, /const heading = approve \? t\('project:card\.vote\.dialog\.approval'\) : t\('project:card\.vote\.dialog\.vote'\);/);
@@ -195,6 +200,26 @@ test('on touch the kit sheet comes first; the action sheet and the prompt card a
     'and so does the card going away under it');
   assert.match(SRC, /useIsoLayoutEffect\(\(\) => \{\s*if \(open\) boxRef\.current\?\.focus\(\);\s*\}, \[open\]\);/,
     'focus with the desktop popover only — the answers come first now, and a phone keyboard would cover them');
+});
+
+// #7101: a Yes on a row whose yes is already recorded says so and sends
+// nothing, so nobody votes twice or thinks the first press failed. The same
+// guard covers the desktop picker, the touch sheet's Yes row and the action
+// sheet's approval row; No and a change of side are untouched.
+test('#7101: pressing Yes where the yes is recorded shows the note and sends nothing', () => {
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /const recordedYes = isVote && yes\.act\?\.fn === 'castVote' && mine === 'yes';/,
+    'a recorded yes is a castVote on the row, not a governance vote');
+  assert.match(fn, /t\('project:card\.vote\.alreadyYes'\)/, 'the note the app shows');
+  assert.match(fn, /const submit = \(\) => \{\s*if \(!isVote\) \{ send\(spec, null\); return; \}\s*if \(side === 'yes' && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'the picker\'s Vote yes takes the guard before it sends');
+  assert.match(fn, /const send = \(a: ActionSpec, reason: string \| null\) => \{\s*if \(a === yes && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'the action sheet\'s approval row does too');
+  assert.match(fn, /const pickTouch = \(a: ActionSpec\) => \{\s*if \(a === yes && recordedYes\) \{ noteAlready\(\); return; \}/,
+    'and the touch sheet\'s Yes row');
+  // No and a change of side still send, the branch unchanged.
+  assert.match(fn, /if \(side === 'no'\) \{\s*if \(!noChoice\) return;\s*send\(no, composeNoReason\(/);
+  assert.equal(message('project:card.vote.alreadyYes'), 'Your yes is already recorded.');
 });
 
 // ── 3. The styles ─────────────────────────────────────────────────────

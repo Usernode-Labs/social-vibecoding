@@ -83,6 +83,22 @@
        dark value in either. -->
   <meta name="theme-color" content="#fffeea" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0d1b" media="(prefers-color-scheme: dark)">
+  <!-- THE ONE FONT THE FIRST SCREEN IS SET IN, asked for before the
+       stylesheet that names it has arrived (request #7165, point 6). Geist
+       is declared in app.css, which is over a megabyte: without this line
+       the browser learns the font exists only once that sheet is parsed
+       and a rule naming it has matched, so on a cold load the words paint
+       in the system face and then change. Both looks (standard and brand)
+       set Home, Communities, Profile, Settings and the signed-out pages
+       in it.
+       ONE face only. Geist Mono and the serifs are drawn on a few screens
+       each, and a preload nothing uses costs a phone the download and logs
+       a warning. `crossorigin` is required although the file is ours: a
+       font is always fetched in CORS mode, and a preload without the
+       attribute is a second, wasted download. The address is the one in
+       app.css's @font-face, byte for byte, absolute and not build-scoped;
+       tests/shell-slim-document.test.js holds the two together. -->
+  <link rel="preload" href="/fonts/geist/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
        utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
@@ -467,139 +483,14 @@
     }());
   </script>
   <script>
-    // Skin module — the looks, experiments all (Settings › Experimental,
-    // off by default). The same head-blocking pattern as window.Display:
-    // the stored choice lands on <html> before app.css, whose rules read
-    // it, is applied, so a look never flashes in after first paint.
-    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
-    //                      styling": the standard pages in the website's
-    //                      colours and typefaces. The id is the old New
-    //                      look's, whose switch is gone.
-    //                    → 'wip'    "Homeroom brand kit (WIP)": the
-    //                      standard look with the changes still being
-    //                      tried on it, drawn with the brand kit's
-    //                      token set
-    //                      Both are drawn in light and dark, and are
-    //                      the Look menu's, an admin's preview.
-    //                    → anything else, a retired look's id among them
-    //                      ('brandkit', 'workbench', 'today', 'playground',
-    //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
-    //                      'sunrise', gone 19 Nov 2026; 'paper', the one
-    //                      frame's last look, gone 20 Nov 2026), reads as
-    //                      the standard look
-    //                    → key removed for the standard look (the default)
-    // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
-    // every rule of a look to html[data-skin="<look>"]. Every storage access
-    // sits in try/catch: unreadable storage means the standard look. A pick
-    // is held in memory for the page's life as well (`chosen`), so it always
-    // applies even when the browser refuses to store it; reading storage is
-    // only what restores a pick after a reload.
-    // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
-    // stored: the capture runner reaches the page by URL with a fresh
-    // profile, the same way `?theme=` pins the mode above. A pick takes the
-    // parameter out of the address, so a reload keeps what was picked.
-    window.Skin = (function () {
-      const SKIN_KEY = 'homeroom:skin';
-      // The two looks the Look menu offers after Standard (20 Nov 2026: it
-      // keeps three). The same list is MENU_SKINS in src/lib/skin.ts.
-      // 'brand' keeps the standard pages. 'wip' is the standard look itself,
-      // where a change to it is tried before it is the standard's. It sets no
-      // data-skin (no rule of a look applies), only data-skin-wip for a rule
-      // of its own, and data-wip-tokens for the token set that draws it.
-      const SKINS = ['wip', 'brand'];
-      const _listeners = [];
-
-      let pinned = null;
-      // The pick made on this page, held even when storage refuses it.
-      let chosen = null;
-      try {
-        const want = new URLSearchParams(window.location.search).get('skin');
-        if (want === 'standard' || SKINS.includes(want)) pinned = want;
-      } catch {}
-
-      // The set of --wip-* values that draws 'wip'. It had a choice of four
-      // (as drawn, the brand kit, its second version, Highlighter); since 20
-      // Nov 2026 the brand kit is the one drawing of that look, so
-      // nothing is stored or pinned for it ('homeroom:wip-tokens' and
-      // `?tokens=` are read no more).
-      const WIP_TOKENS = 'brand';
-
-      function get() {
-        if (pinned) return pinned;
-        if (chosen) return chosen;
-        try {
-          const val = window.localStorage.getItem(SKIN_KEY);
-          return SKINS.includes(val) ? val : 'standard';
-        } catch {
-          return 'standard';
-        }
-      }
-
-      // Sets or removes data-skin on <html>. Like data-text-size, the
-      // attribute lives OUTSIDE React's body tree, so hydrating the shell
-      // never disagrees with it.
-      function apply() {
-        const root = document.documentElement;
-        const skin = get();
-        if (skin === 'wip') root.setAttribute('data-skin-wip', '');
-        else root.removeAttribute('data-skin-wip');
-        // Settings > Experimental > Advanced mode, on <html> for the looks
-        // that keep a detail for it (the same device key the switch writes,
-        // features/settings/interface-mode.ts). Advanced unless Basic is saved.
-        let basic = false;
-        try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
-        root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
-        if (skin === 'wip') root.setAttribute('data-wip-tokens', WIP_TOKENS);
-        else root.removeAttribute('data-wip-tokens');
-        if (skin !== 'standard' && skin !== 'wip') {
-          root.setAttribute('data-skin', skin);
-        } else {
-          root.removeAttribute('data-skin');
-        }
-      }
-
-      function set(skin) {
-        pinned = null;
-        // Held for the page's life whether or not the browser stores it.
-        chosen = SKINS.includes(skin) ? skin : 'standard';
-        try {
-          if (SKINS.includes(skin)) {
-            window.localStorage.setItem(SKIN_KEY, skin);
-          } else {
-            window.localStorage.removeItem(SKIN_KEY);
-          }
-        } catch { /* unwritable storage: the pick still holds in memory */ }
-        // A pick replaces a look named in the address, so a reload keeps it.
-        try {
-          const url = new URL(window.location.href);
-          if (url.searchParams.has('skin')) {
-            url.searchParams.delete('skin');
-            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
-          }
-        } catch { /* no address to rewrite */ }
-        apply();
-        _listeners.forEach(function (fn) { try { fn(); } catch {} });
-      }
-
-      function onChange(fn) {
-        _listeners.push(fn);
-      }
-
-      // Other tabs in the same browser follow (the settings pane re-reads
-      // through the same listener). The in-memory pick is dropped first, so
-      // a choice made in another tab still wins here.
-      window.addEventListener('storage', function (e) {
-        if (e.key === SKIN_KEY) {
-          chosen = null;
-          apply();
-          _listeners.forEach(function (fn) { try { fn(); } catch {} });
-        }
-      });
-
-      // Apply before first paint: the no-flash guard.
-      apply();
-
-      return { get, set, apply, onChange };
+    // Settings › Experimental › Advanced mode, on <html> before app.css,
+    // whose rules read it, is applied (the same device key the switch
+    // writes, features/settings/interface-mode.ts). Advanced unless Basic is
+    // saved; unreadable storage means Advanced.
+    (function () {
+      let basic = false;
+      try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
+      document.documentElement.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
     }());
   </script>
   <script>
@@ -1101,7 +992,14 @@
         var bg = s.backgroundColor;
         probe.remove();
         var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
-        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+        // Measured against the root's own size, not a fixed 12px: Settings ›
+        // Accessibility › Text size raises the root to 20px, 22px and 24px at
+        // 125%, 137.5% and 150%, where a healthy 0.65rem is 13px to 15.6px,
+        // and this reported a broken cascade on every load for anyone who had
+        // picked them. A probe that lost the cascade inherits the body's size,
+        // which is the root's, so it still fails this at every text size.
+        var rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        if (!(size > 0 && size < rootSize * 0.75) || weight !== '500' || !tinted) {
           console.error(
             '[tailwind] compiled utilities are losing the cascade to app.css — '
             + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '

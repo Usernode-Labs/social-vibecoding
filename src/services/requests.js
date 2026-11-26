@@ -151,9 +151,8 @@ async function isProposalNumber(appId, n) {
 
 // ── Reads ─────────────────────────────────────────────────────────────
 
-/** The open requests, most recently updated first. */
-async function listOpen(owner, repo) {
-  const app = await appFor(owner, repo);
+/** The open requests of `app` ({ id, slug }), most recently updated first. */
+async function listOpenForApp(app) {
   if (!app) return { issues: [], truncatedList: false, note: 'issues unavailable' };
   const { rows } = await db().query(
     `SELECT ${COLUMNS} FROM requests WHERE app_id = $1 AND state = 'open'
@@ -164,16 +163,49 @@ async function listOpen(owner, repo) {
   };
 }
 
+/** The CLOSED requests of `app`, most recently closed first (#7160). */
+async function listClosedForApp(app) {
+  if (!app) return { issues: [], truncatedList: false, note: 'issues unavailable' };
+  const { rows } = await db().query(
+    `SELECT ${COLUMNS} FROM requests WHERE app_id = $1 AND state = 'closed'
+      ORDER BY closed_at DESC NULLS LAST, number DESC LIMIT $2`, [app.id, LIST_MAX + 1]);
+  return {
+    issues: rows.slice(0, LIST_MAX).map((r) => normalizedOf(r, app.slug)),
+    truncatedList: rows.length > LIST_MAX,
+  };
+}
+
+/** The open requests, most recently updated first. */
+async function listOpen(owner, repo) {
+  const app = await appFor(owner, repo);
+  if (!app) return { issues: [], truncatedList: false, note: 'issues unavailable' };
+  return listOpenForApp(app);
+}
+
+/** The CLOSED requests, most recently closed first (#7160). */
+async function listClosed(owner, repo) {
+  const app = await appFor(owner, repo);
+  if (!app) return { issues: [], truncatedList: false, note: 'issues unavailable' };
+  return listClosedForApp(app);
+}
+
+/** One request of `app` ({ id, slug }), open or closed. */
+async function getOneForApp(app, number) {
+  const n = Number(number);
+  if (!app || !Number.isInteger(n) || n <= 0) return { issue: null, note: 'bad issue number' };
+  const row = await rowOf(app.id, n);
+  if (row) return { issue: normalizedOf(row, app.slug) };
+  if (await isProposalNumber(app.id, n)) return { issue: null, note: 'not an issue (pull request)' };
+  return { issue: null, note: 'not found' };
+}
+
 /** One request, open or closed. */
 async function getOne(owner, repo, number) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) return { issue: null, note: 'bad issue number' };
   const app = await appFor(owner, repo);
   if (!app) return { issue: null, note: 'not found' };
-  const row = await rowOf(app.id, n);
-  if (row) return { issue: normalizedOf(row, app.slug) };
-  if (await isProposalNumber(app.id, n)) return { issue: null, note: 'not an issue (pull request)' };
-  return { issue: null, note: 'not found' };
+  return getOneForApp(app, n);
 }
 
 /** GitHub's raw issue object, or a 404 error as Octokit threw. */
@@ -185,12 +217,10 @@ async function getRaw(owner, repo, number) {
   return rawOf(row, app.slug);
 }
 
-/** Its comments, oldest first: { comments: [{ author, body, createdAt, id }], truncated }. */
-async function comments(owner, repo, number, { max = 300, since = null } = {}) {
+/** The comments of one of `app`'s requests, oldest first. */
+async function commentsForApp(app, number, { max = 300, since = null } = {}) {
   const n = Number(number);
-  if (!owner || !repo || !Number.isInteger(n) || n <= 0) return { comments: [], truncated: false, note: 'bad issue number' };
-  const app = await appFor(owner, repo);
-  if (!app) return { comments: [], truncated: false, note: 'not found' };
+  if (!app || !Number.isInteger(n) || n <= 0) return { comments: [], truncated: false, note: 'bad issue number' };
   const { rows } = await db().query(
     `SELECT id, author_login, body, created_at FROM request_comments
       WHERE app_id = $1 AND number = $2 AND ($3::timestamptz IS NULL OR created_at >= $3)
@@ -201,6 +231,15 @@ async function comments(owner, repo, number, { max = 300, since = null } = {}) {
     })),
     truncated: rows.length > max,
   };
+}
+
+/** Its comments, oldest first: { comments: [{ author, body, createdAt, id }], truncated }. */
+async function comments(owner, repo, number, { max = 300, since = null } = {}) {
+  const n = Number(number);
+  if (!owner || !repo || !Number.isInteger(n) || n <= 0) return { comments: [], truncated: false, note: 'bad issue number' };
+  const app = await appFor(owner, repo);
+  if (!app) return { comments: [], truncated: false, note: 'not found' };
+  return commentsForApp(app, n, { max, since });
 }
 
 /** The most recent `recent` requests whose body carries `marker`, as { number }. */
@@ -325,6 +364,11 @@ module.exports = {
   requestUrl,
   listOpen,
   getOne,
+  listClosed,
+  listOpenForApp,
+  listClosedForApp,
+  getOneForApp,
+  commentsForApp,
   getRaw,
   comments,
   findByMarker,

@@ -57,6 +57,29 @@ test('describe says the proposal and how many changes are not in it yet', () => 
   assert.equal(liveDrafts.describe({ ...proposed, root_message_id: 9, proposal_status: 'merged' }).proposal.open, false);
 });
 
+// 24 Nov 2026: a draft that has not been proposed is not a change, so it has
+// no number of its own even when its working session was numbered before
+// this shipped.
+test('describe gives an unproposed draft no number of its own', () => {
+  const openWith = (extra = {}) => liveDrafts.describe({
+    ...open, root_message_id: 9, session_id: 5, state: 'open', pr_number: 145, ...extra,
+  });
+  assert.equal(openWith().prNumber, null, 'an old numbered draft is not a change any more');
+  assert.equal(openWith({ pr_number: null }).prNumber, null);
+  // A draft on someone else's proposal names that proposal, never its own row.
+  const onTheirs = liveDrafts.describe({
+    ...open, root_message_id: 9, session_id: 5, state: 'open', pr_number: 145,
+    built_on_session_id: 60, built_on_status: 'promoted', built_on_pr_number: 320, built_on_branch: 'dev/sam-320',
+  });
+  assert.equal(onTheirs.prNumber, null);
+  assert.equal(onTheirs.builtOn.prNumber, 320);
+});
+
+test('draftSessionSql names the table predicate every list adds, for its own alias', () => {
+  assert.equal(liveDrafts.draftSessionSql(), 'EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = cs.id)');
+  assert.match(liveDrafts.draftSessionSql('c'), /ld\.session_id = c\.id/);
+});
+
 // ── 20 Nov 2026 (live-draft review, C): Propose and Update proposal as a card ──
 //
 // The bot offers the tap under its reply (offer_propose_draft); only the tap
@@ -216,6 +239,16 @@ test('what the draft\'s gates say at the tap is what the card says', async () =>
   // Typed, with no work to try again, it is said.
   assert.match((await tapOn('propose_draft', refuse(409, 'preview_building', 'The preview is still being built. Propose it once it is up.')).run()).content,
     /^I couldn't propose it: the preview is still being built\./);
+  // 24 Nov 2026: the preview's own Propose tapped with this card is still
+  // running. Tried again, the tap ends as done or as already up for a vote;
+  // with no work to try again it is said as going up, never as a failure.
+  await assert.rejects(tapOn('propose_draft', refuse(409, 'proposing', 'x'), { actKey: 'action:77' }).run(),
+    (err) => err.message === 'proposing' && mayor.retryAct(err, 'action:77'));
+  const racing = tapOn('propose_draft', refuse(409, 'proposing', 'It is being put up for a vote right now.'));
+  const said = await racing.run();
+  assert.equal(said.content, 'It is going up for a vote already.');
+  assert.equal(said.extra.failed, undefined);
+  assert.ok(!racing.queries.some((q) => /UPDATE bot_cards SET status = 'failed'/.test(q.sql)), 'the card is not marked failed');
 });
 
 test('a plain yes typed under the card never proposes: only the tap does', () => {

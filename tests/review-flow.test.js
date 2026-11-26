@@ -202,7 +202,7 @@ test('a still press of a third of a second opens the magnifier; moving early doe
   assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
   assert.match(
     css,
-    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-cap, \.rf-switch, [^}]*\{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
+    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-cap, \.rf-foot, \.rf-switch, [^}]*\{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
     'the magnifier opens at once when motion is reduced',
   );
 });
@@ -269,7 +269,7 @@ test('a placed picture draws its preview and picks a copy at its scaled width', 
   assert.match(lib, /\^\\\/api\\\/apps\\\/\[\^\/\?#\]\+\\\/proposals\\\/\\d\+\\\/shots\\\/\[0-9a-f\]\{32\}\(\?:\\\?\(\?:density=device\|size=\(\?:thumb\|screen\)\)\)\?\$/);
   // The preview is a 20 px WebP data URI, and nothing else.
   assert.match(lib, /\^data:image\\\/webp;base64,\[A-Za-z0-9\+\/=\]\+\$/);
-  assert.match(read('frontend/src/features/dev-board/topic/thread-picture.tsx'), /src=\{shotThumb\(one\.after\) \|\| one\.after\.url\}/,
+  assert.match(read('frontend/src/features/review-flow/shots-viewer.tsx'), /src=\{\(one\.screen \? shotThumb\(one\.screen\.after\) : null\) \|\| one\.thumb\}/,
     'a strip tile loads the thumbnail only');
 });
 
@@ -393,7 +393,7 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.match(src, /<button type="button" className="rf-back" onClick=\{onDone\} aria-label=\{backName\} data-rf-back="">/);
   assert.match(src, /header="project"/);
   assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{leaveNeeds\}/, 'from Needs you, back to Home (One Home, #6361)');
-  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/, 'from a project, back to its hub');
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => upTab\('status'\)\} project=\{projectName\} \/>/, 'from a project, back to its hub');
   // Three ways in, one state.
   assert.match(src, /<button type="button" className="rf-bar-title-btn" onClick=\{\(\) => setDesc\(\(d\) => !d\)\} aria-expanded=\{desc\} aria-controls="rf-desc">\{item\.title\}<\/button>/);
   assert.match(src, /className="rf-bar-toggle"\s+aria-expanded=\{desc\}/);
@@ -885,7 +885,7 @@ test('an opened screen is framed on its declared change, at real size at most', 
 // edge nothing covers it, and the brand look draws its card line there too.
 test('the vote card\'s hairline is drawn outside its edge, so every side shows it', () => {
   const css = read('public/css/app.css');
-  const rule = css.match(/^html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
+  const rule = css.match(/^html:root #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
   assert.ok(rule, 'the standard look\'s Needs you vote card rule is there');
   const shadow = (rule[1].match(/box-shadow:\s*([^;]*);/) || [])[1];
   assert.equal(shadow && shadow.trim(), '0 0 0 1px var(--wip-card-line)',
@@ -1103,13 +1103,12 @@ test('without a frame, the declared areas lead; then any area; then the screen\'
 
 test('the feed shapes a run\'s frames onto its screens, and outlines only its areas', () => {
   const src = read('public/js/app-view.js');
-  const shape = src.slice(src.indexOf('  _workshopVisuals(visuals, shots = null) {'), src.indexOf('  _workshopExcerpt(text'));
+  const shape = src.slice(src.indexOf('  _workshopVisuals(visuals, shots = null, theme = null) {'), src.indexOf('  _workshopExcerpt(text'));
   assert.match(shape, /const frames = \(Array\.isArray\(screen\.frames\) \? screen\.frames : \[\]\)\.map\(\(f\) => \(\{\n\s+n: f && f\.story \? Math\.max\(0, numberOf\(f\.story\)\) : 0,/);
   assert.match(shape, /\.\.\.\(frames\.length \? \{ frames \} : \{\}\),/);
-  // The legacy change page crops to the frame, and outlines its regions.
-  const view = src.slice(src.indexOf('const outlines = (screen, side) => {'), src.indexOf('const cropOf = (screen) => {'));
-  assert.doesNotMatch(view, /frames/, 'a frame is never drawn as an outline');
-  assert.match(src, /const framed = framesOn\(which\);\n\s+const rects = framed\.length \? framed :/);
+  // A change's page draws the same screens with the slider, which frames on
+  // them and outlines nothing (review-flow/shots-viewer.tsx).
+  assert.match(read('frontend/src/features/review-flow/shots-model.ts'), /const shaped = shape \? shape\(null, raw, mode\) : null;/);
   // The Workshop's picture crops to frames first, and outlines regions only.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);

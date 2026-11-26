@@ -47,6 +47,7 @@ const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
+const { generatedAvatarUrl } = require('../services/avatar-url');
 const socialIdentity = require('../services/social-identity');
 const {
   accountRecovery,
@@ -877,7 +878,20 @@ function authRoutes(config) {
     // middleware/auth.js's per-request session hydration — this endpoint
     // already does one users lookup, and every request paying for a join
     // it never renders would be the wrong trade.
-    let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
+    //
+    // #7135: when the profile read below fails, the answer still names this
+    // account's generated picture. A signed-in account is a known account,
+    // so the header must not drop to a letter in a circle just because one
+    // read failed; `hasPhoto` stays false, which is what the editor reads.
+    const fallbackAvatarUrl = generatedAvatarUrl(req.user.id);
+    let profile = {
+      displayName: null,
+      bio: null,
+      avatarUrl: fallbackAvatarUrl,
+      hasPhoto: false,
+      generatedAvatarUrl: fallbackAvatarUrl,
+      links: { github: null, x: null },
+    };
     // App-creation quota: the same live (non-errored) app count enforced by
     // POST /api/apps and /fork. Keep the numbers as well as the derived
     // boolean so the create dialog can say "N of M used" instead of reducing
@@ -998,7 +1012,7 @@ function authRoutes(config) {
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       if (storyFirstSession) waitlistIdea = await firstSession.waitlistIdea(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
-      profile = shapeProfile(rows[0], verifiedLinks);
+      profile = shapeProfile(rows[0], verifiedLinks, req.user.id);
     } catch {}
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
@@ -1018,7 +1032,11 @@ function authRoutes(config) {
       if (!req.user.isSynthetic) {
         homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
         if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
-          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+          const botVerified = require('../services/homeroom-bot-verified');
+          const signals = botVerified.signalsOf(settings);
+          homeroomBotVerify = signals.includes('github_x_age')
+            ? { signals, minAccountAgeDays: botVerified.minAccountAgeDaysOf(settings) }
+            : { signals };
         }
       }
     } catch {}
@@ -1122,11 +1140,16 @@ function authRoutes(config) {
         // Profile customization (#982). `username` stays the permanent
         // sign-in handle and is NOT editable anywhere on the platform;
         // `displayName` is the settable name other people see (it already
-        // feeds the standings' resolveDisplayName chain). `avatarUrl` is
-        // the content-addressed /avatars/<id> path, or null.
+        // feeds the standings' resolveDisplayName chain). `avatarUrl` is the
+        // uploaded photo's /avatars/<id> path, or (since #7135) the picture
+        // generated from the account when there is no photo. `hasPhoto` is
+        // what the editor's "Remove photo" reads; `generatedAvatarUrl` is
+        // what a staged removal previews.
         displayName: profile.displayName,
         bio: profile.bio,
         avatarUrl: profile.avatarUrl,
+        hasPhoto: profile.hasPhoto,
+        generatedAvatarUrl: profile.generatedAvatarUrl,
         links: profile.links,
         // Whether the CLI-credentials surface exists in this deployment.
         // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a
@@ -1350,9 +1373,33 @@ function authRoutes(config) {
     try {
       const currentCredential = await currentNativeCredential(req);
       const phones = await linkedPhones.listLinkedPhones(pool, req.user.id, { currentCredential });
-      res.json({ phones });
+      // #7159: `phones` stays one row per install, as the mobile app may
+      // read it; `devices` is the same list with one row per kind of phone,
+      // which is what the page draws.
+      res.json({ phones, devices: linkedPhones.groupLinkedPhones(phones) });
     } catch (err) {
       log.error('settings', 'Failed to list linked phones', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #7159: unlink a whole device, every install of one kind of phone the
+  // account holds. Registered before the per-install route, whose `:id`
+  // never matches a second path segment anyway.
+  router.delete('/api/me/phones/device/:key', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const key = req.params.key;
+    if (!linkedPhones.isPhoneDeviceKey(key)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const currentCredential = await currentNativeCredential(req);
+      const { unlinked, current } = await withTransaction(pool, (client) => (
+        linkedPhones.unlinkPhoneDevice(client, req.user.id, key, { currentCredential })
+      ));
+      if (!unlinked) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Linked phone device unlinked', { userId: req.user.id, unlinked, current });
+      res.json({ ok: true, unlinked, current });
+    } catch (err) {
+      log.error('settings', 'Failed to unlink phone device', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1385,9 +1432,32 @@ function authRoutes(config) {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
         currentToken: readSessionCookie(req) || null,
       });
-      res.json({ browsers });
+      // #7159: `devices` is the same list with one row per browser on a
+      // system, which is what the page draws.
+      res.json({ browsers, devices: linkedBrowsers.groupLinkedBrowsers(browsers) });
     } catch (err) {
       log.error('settings', 'Failed to list browser sessions', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #7159: sign a whole device out, every sign-in of one browser on one
+  // system the account holds.
+  router.delete('/api/me/browser-sessions/device/:key', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const key = req.params.key;
+    if (!linkedBrowsers.isBrowserDeviceKey(key)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const currentToken = readSessionCookie(req) || null;
+      const { signedOut, current } = await linkedBrowsers.signOutBrowserDevice(pool, req.user.id, key, { currentToken });
+      if (!signedOut) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Browser device signed out', { userId: req.user.id, signedOut, current });
+      if (current) {
+        clearSessionCookies(res);
+      }
+      res.json({ ok: true, signedOut, current });
+    } catch (err) {
+      log.error('settings', 'Failed to sign a browser device out', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

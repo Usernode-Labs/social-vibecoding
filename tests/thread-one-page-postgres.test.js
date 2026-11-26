@@ -71,6 +71,11 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
   const pin = await change(dewi, { pr: 12, linked: [10, 11], title: 'Pin it' });
   const alone = await change(dewi, { pr: 20, title: 'Faster search' });
   const draft = await change(maya, { linked: [10], status: 'active', title: 'Draft' });
+  // 24 Nov 2026: a live app draft's working session, linked to a thread root.
+  const liveDraftSession = await change(maya, { linked: [10], status: 'paused', title: 'Live draft' });
+  await pool.query(
+    `INSERT INTO live_drafts (app_id, user_id, root_message_id, session_id, state) VALUES ($1, $2, $3, $4, 'open')`,
+    [app.id, maya.id, 4242, liveDraftSession.id]);
   const reply = (who, sessionId, content) => pool.query(
     `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, $3, 'session', $4)`,
     [app.id, who.id, content, sessionId]);
@@ -102,12 +107,20 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
       'its owner reads it on the request\'s page');
     assert.equal(await threads.requestHome(pool, { appId: app.id + 1, sessionId: pin.id, viewerId: ana.id }), null, 'only in its own app');
 
-    assert.deepEqual((await read(ana, `/api/apps/op-club/threads/change/${pin.id}`)).body, { request: 10 });
-    assert.deepEqual((await read(null, `/api/apps/op-club/threads/change/${pin.id}`)).body, { request: 10 }, 'signed out, on a public project');
-    assert.deepEqual((await read(ana, `/api/apps/op-club/threads/change/${alone.id}`)).body, { request: null });
-    assert.deepEqual((await read(ana, '/api/apps/op-club/threads/change/999999')).body, { request: null });
-    assert.deepEqual((await read(ana, '/api/apps/op-club/threads/change/0')).body, { request: null });
+    assert.deepEqual((await read(ana, `/api/apps/op-club/threads/change/${pin.id}`)).body, { request: 10, draft: null });
+    assert.deepEqual((await read(null, `/api/apps/op-club/threads/change/${pin.id}`)).body, { request: 10, draft: null }, 'signed out, on a public project');
+    assert.deepEqual((await read(ana, `/api/apps/op-club/threads/change/${alone.id}`)).body, { request: null, draft: null });
+    assert.deepEqual((await read(ana, '/api/apps/op-club/threads/change/999999')).body, { request: null, draft: null });
+    assert.deepEqual((await read(ana, '/api/apps/op-club/threads/change/0')).body, { request: null, draft: null });
     assert.equal((await read(ana, `/api/apps/nope/threads/change/${pin.id}`)).status, 404);
+    // 24 Nov 2026: a live app draft is not a change. Its old address leads its
+    // author to the thread its draft bar is in, and to nobody else.
+    assert.deepEqual((await read(maya, `/api/apps/op-club/threads/change/${liveDraftSession.id}`)).body,
+      { request: 10, draft: { threadRootId: 4242 } });
+    assert.deepEqual((await read(ana, `/api/apps/op-club/threads/change/${liveDraftSession.id}`)).body,
+      { request: null, draft: null });
+    assert.deepEqual((await read(maya, `/api/apps/op-club/threads/change/${draft.id}`)).body,
+      { request: 10, draft: null }, 'a live chat that is no draft keeps its own answer');
   });
 
   await t.test('the request that leads the thread counts its changes\' replies', async () => {
@@ -117,6 +130,8 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.equal(request.replies, 3, 'its own reply and the two on its change; the draft is not Ana\'s to read');
     const asMaya = await threads.threadPage(pool, { thread, viewerId: maya.id });
     assert.equal(asMaya.items.find((i) => i.type === 'request').replies, 4, 'the draft\'s owner counts its reply');
+    assert.equal(asMaya.items.some((i) => i.type === 'change' && i.id === Number(liveDraftSession.id)), false,
+      '24 Nov 2026: a live draft is not one of the thread\'s changes');
   });
 
   await t.test('#6139: a change is ready only with checks passing on its current head and nothing working on it', async () => {

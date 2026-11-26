@@ -528,6 +528,138 @@ rules for `usernode-app-gate` since 23 Oct). Outside the chart (a local or
 standalone run) both stay off unless set. Either goes off again with a value
 and a sync (`docs/kubernetes-operations.md`).
 
+### 25 Nov 2026: a refresh that missed a file stayed for 30 days
+
+On a project with four merges in 40 minutes, one browser showed the new
+page with a new control drawn unstyled: the page was new, its
+`screens.css` was the copy kept from before the change, and reloading never
+replaced it. Another browser showed it right. The refresh on a new build
+was the only thing that replaced a file, and it can miss one two ways:
+
+- It fetches the files the bridge **remembered** from earlier loads. A
+  file it never recorded keeps its old copy.
+- What it fetches while a new build is **replacing** the old one can be the
+  old build's, and that copy is then kept fresh as the new one.
+
+Either way the device counts as up to date, so nothing asks again until the
+next build, and a plain reload uses the fresh copy without a request.
+
+The fix, in the bridge and the gate's rule:
+
+- **The bridge checks the files each load ran on.** Online, two seconds
+  after `load`, it reads each of the app's own files from the cache and asks
+  the app for it again with that copy's validator (`cache: "no-cache"`). An
+  unchanged file is a 304 with no body. A validator that moved means the
+  answer has just put the app's current copy in the cache, and the frame
+  reloads onto it once, marked `un-checked` so that reload checks nothing.
+  The files are this load's own (Resource Timing, without fetch/XHR data
+  reads and without the platform's shared `/usernode-*` files, which bring
+  themselves up to date stale-while-revalidate), at most 60. A check runs at
+  most once per address in 10 minutes; each build's page has its own
+  address, so a new build is checked on its first load. Never offline; a
+  file with no ETag or Last-Modified, or a check that fails, counts as
+  unchanged.
+- **The gate's rule keeps a 304's lifetime.** A browser takes a 304's
+  `Cache-Control` onto the copy it kept. Express answers 304 with
+  `public, max-age=0`, so a check left alone would have ended each copy's
+  30 days and broken the next open with no connection. The rule now gives a
+  304 what it gives a 200.
+
+A device stuck today heals on its first online open after this is live.
+What it costs: one conditional request per file, per app, per device, at
+most every 10 minutes, after the app has loaded. That is what every load
+cost before the cache was turned on.
+
+#### Later the same day: private projects, which no refresh ever reached
+
+The project above was view-private, and the check did not reach it. The
+shell frames a view-private project with the token in its address
+(`forApp` is false for it: its `/` cannot load without the token), so
+nothing in the bridge's offline block ran there. Yet the gate's access
+answer asked for the 30-day lifetime for every production app. So a private
+project kept its files for a month with no refresh at all, and showed its
+new page over its old files after **every** change, not only when a refresh
+missed one.
+
+- **The gate's answer now asks `forApp`'s question.** No long lifetime for a
+  view-private app, nor for one whose cacheable address is off on its live
+  build (`offline_cache_off_sha` = `main_sha`). Their files keep the app's
+  own headers: express's `max-age=0`, a 304 on each load, as before 2 Nov.
+  They lose nothing, since they never opened offline.
+- **The bridge's check runs wherever an app loads it.** In a frame opened
+  the old way, or on the app's own domain, step 5 alone runs and reloads in
+  place. The check is recorded without the token, the gate's retry marker
+  and the theme, so a new token is the same page. With no storage it does
+  not check, since nothing else would stop a second reload. Only the apps'
+  copy, `/usernode-bridge/v1/bridge.js`, does it: Homeroom's own pages load
+  `/usernode-bridge.js` and are never checked. A browser still holding a
+  30-day copy from before heals on its first open more than 10 minutes after
+  its last check. After a month no such copy is left, and the check is a
+  cheap guard.
+
+Measured in headless Chrome, with a private-style frame (token in the
+address) and a new stylesheet:
+
+| | Old files kept 30 days, main's bridge | Same, new bridge | Gate fix |
+|---|---|---|---|
+| First open after the change | old | old, then new (one reload) | new |
+| Reopen | old | new | new |
+
+#### Then Firefox, which the check could not see: each build's files at their own addresses
+
+A Firefox kept drawing a private project's old styling after both fixes.
+Headless Firefox 160 showed why. Firefox keeps a page's own `<link>` and
+`<script>` loads apart from the bridge's `fetch()` copies of the same
+addresses, even across a restart. So the check compared its own copies,
+which were current, saw no change, and the page drew the old CSS and JS
+forever. A forced reload (`location.reload(true)`) drew the new files, but
+shipped, it crashed every project's frame in a real Firefox and was
+reverted the same evening (#7171, #7173).
+
+The fix moves the version into the address, so no browser can draw a kept
+copy of an older build's file:
+
+- **The access answer names the live build.** For a production app while
+  offline apps are on, `X-Usernode-Asset-Version` carries the first 12
+  characters of `apps.main_sha`. A deploy writes that once it has
+  succeeded, so the version changes when the new build serves. Private and
+  opted-out apps get it too (a version is harmless where nothing is kept
+  long, and heals a copy kept before). Previews, self-hosted apps and apps
+  not deployed yet get none. It is gate-only: a visitor's or an app's copy
+  is discarded.
+- **The gate rewrites the app's pages.** On a `GET` answered 200 with
+  `text/html` it adds `un-v=<build>` to every same-site
+  `<link rel="stylesheet|preload|modulepreload">` and `<script src>`. It
+  leaves alone the platform's shared `/usernode-*` files (versioned by
+  platform releases and kept stale-while-revalidate), `/api/`, `/__` paths,
+  `data:`, `blob:` and other sites, and the text inside comments,
+  `<script>` and `<style>`. Everything else is byte for byte as the app
+  sent it (`offlineCache.versionAssetUrls`, a pure function).
+- **Pages are asked for whole.** For a page request the gate drops
+  `If-None-Match` and `If-Modified-Since`, so a 304 never brings back a
+  kept page holding the old addresses. It asks for identity encoding and
+  unpacks gzip, deflate or br when an app sends it anyway. A page over
+  2 MB, or in an encoding it cannot unpack, goes out as the app sent it.
+  The rewritten page drops the app's `ETag` and `Last-Modified`.
+- **The 30-day lifetime is unchanged.** A versioned address is a new
+  address for each build, so a long lifetime can no longer pin an old file.
+
+Measured through the real gate (`createGate`), with the old CSS and JS
+kept 30 days at their plain addresses before the fix:
+
+| Headless browser | Next open after the change | Reopen | Gate and app unreachable |
+|---|---|---|---|
+| Chrome, token address | new CSS and JS, one load | new | |
+| Chrome, cacheable address | new, one load | new, no requests | new |
+| Firefox 160, token address | new, one load | new | |
+| Firefox 160, cacheable address | new, one load | new, no requests | new |
+
+What it does not version: files a script or a stylesheet loads by itself
+(dynamic `import()`, `fetch`, fonts and images named in CSS). The bridge's
+check still covers those in Chrome. While a new build is rolling out the
+answer still names the old one, so the switch lands when the deploy is
+recorded.
+
 Still to do, outside this proposal:
 
 1. After the release: the simulator and emulator pass against real apps

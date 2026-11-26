@@ -66,7 +66,7 @@ test('B9: the chat place\'s turn hands a mention over once it is heard, and only
   assert.doesNotMatch(read('src/services/ws.js'), /noteChatMessage/);
   const chat = read('src/routes/chat.js');
   assert.match(chat, /router\.post\('\/api\/apps\/:slug\/messages\/:id\/request', groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\),/);
-  assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatReadLimiter,/);
+  assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatLoadLimiter,/);
   const policy = require('../src/services/cli-api-policy');
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/x/messages/5/request'), false, 'a person\'s own browser only');
 });
@@ -100,8 +100,10 @@ test('B9: the card, and no chip for the room', () => {
   assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: translate\('chat:group\.menu\.makeRequest'\)/);
-  assert.equal(message('chat:group.menu.makeRequest'), 'Make this a request');
+  assert.match(row, /makeRequest: surface === 'main' && msg\.canAskBot \? \(\) => \{ void chat\?\.makeBotRequest\?\.\(id\); \} : null,/);
+  assert.match(read('frontend/src/features/message-actions/message-menu.ts'),
+    /if \(spec\.makeRequest\) items\.push\(\{ key: 'ask-bot', label: t\('messages:row\.menu\.makeRequest'\)/);
+  assert.equal(message('messages:row.menu.makeRequest'), 'Make this a request');
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
   assert.match(gc, /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');

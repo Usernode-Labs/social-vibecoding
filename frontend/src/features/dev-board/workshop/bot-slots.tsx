@@ -35,7 +35,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
+import { ClockIcon } from '@/components/ui/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { t as translate } from '../../../lib/i18n/runtime';
@@ -119,30 +119,6 @@ export function doorWords(view: Pick<BotSlotsView, 'slots' | 'waiting' | 'buildC
     voting ? translate('project:botSlots.doorVotes', { count: voting }) : null,
     view.waiting.length ? translate('project:botSlots.doorWaiting', { count: view.waiting.length }) : null,
   ].filter(Boolean).join(' \u00b7 ');
-}
-
-/**
- * The Workshop's door to the page: one line in its overview card, above
- * the approval rule (doorWords). Nothing on a project the bot does not
- * build on and holds nothing on.
- */
-export function BotSlotsDoor({ slug, onOpen }: { slug: string; onOpen: () => void }): ReactNode {
-  useMessages('project');
-  const { view } = useBotSlots(slug);
-  if (!view || (!view.acts && !view.slots.length)) return null;
-  const { building, voting } = slotCounts(view);
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-2 border-t border-[color:var(--app-sheet-line)] pt-2.5 text-start text-[13px] font-semibold text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
-      data-ws-bot-slots-door={`${building}/${view.buildCap ?? ''}`}
-      data-ws-bot-slots-door-votes={voting}
-      onClick={onOpen}
-    >
-      <span className="min-w-0 flex-1 truncate">{doorWords(view)}</span>
-      <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-    </button>
-  );
 }
 
 /** Pure: where a row's link goes: its change once it has one, else its request. */

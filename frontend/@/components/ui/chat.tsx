@@ -4,8 +4,6 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 import { useMessages } from '../../../src/lib/i18n/react';
-import { isFrameSkin, useLiveSkin } from '../../../src/lib/skin';
-import { Av as KitAv, Tile as KitTile } from './kit';
 
 /**
  * The conversation widgets: the day separator, the bubble, the named message
@@ -27,10 +25,6 @@ import { Av as KitAv, Tile as KitTile } from './kit';
  */
 
 export function DaySeparator({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  // Under one of the frame's looks a day's label is the kit's (the small
-  // caps between two hairlines), so a look's own rule for it applies.
-  const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <div className={cn('fr-day', className)} {...props} />;
   return (
     <div
       className={cn('py-3 text-center text-[0.9375rem] text-zinc-500 dark:text-zinc-500', className)}
@@ -64,14 +58,6 @@ export function MessageBubble({ className, from, ...props }: MessageBubbleProps)
   );
 }
 
-/** The caller's face as the kit's: a picture is the tile, a letter on a colour the avatar. */
-function kitFace(avatar: React.ReactNode): React.ReactNode {
-  if (!React.isValidElement(avatar)) return avatar;
-  const given = avatar.props as { src?: string; color?: string; children?: React.ReactNode };
-  if (given.src) return <KitTile size={32} src={given.src} />;
-  return <KitAv size={32} name={typeof given.children === 'string' ? given.children : '?'} color={given.color} />;
-}
-
 /**
  * One message in a named transcript. `children` is the body, so a caller can
  * pass rendered markdown, an attachment card, or a reaction row without this
@@ -84,8 +70,9 @@ function kitFace(avatar: React.ReactNode): React.ReactNode {
  * against the right edge rather than reversed, with the controls at the far
  * left, and the body column stacks its children
  * against the right edge, where a bubble hugs the side that says who is
- * speaking. The caller drops the avatar for `me`; a group chat does not
- * draw your own face beside your own words.
+ * speaking. The caller decides whether `me` draws a face: a chat between
+ * two drops it, while a channel's transcript draws your own picture at the
+ * trailing edge beside your words (the row's own order puts it there).
  */
 export function ChatMessageRow({
   className, from = 'them', avatar, name, timestamp, actions, grouped = false, gutter, children, ...props
@@ -111,44 +98,12 @@ export function ChatMessageRow({
   actions?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const me = from === 'me';
-  // UNDER ONE OF THE FRAME'S LOOKS THE ROW IS THE KIT'S POST (the tour's
-  // s31: a channel uses "the one message style shared by Messages and
-  // Homeroom bot"): a face, the name and the time on one line, the words;
-  // yours the same way round as anyone's. The caller's own face is redrawn
-  // as the kit's, from the colour and letter it was given, or as the kit's
-  // tile when it is a picture (Homeroom bot's). app.css gives the few
-  // classes the kit has no word for (THE FRAME IN THE SHELL).
-  const frame = isFrameSkin(useLiveSkin());
-  if (frame) {
-    if (grouped) {
-      return (
-        <div className={cn('fr-post fr-postmore', className)} data-grouped="" {...props}>
-          <span className="fr-postgut gc-msg-gutter">{gutter}</span>
-          <div className="fr-bd"><div className="fr-txt">{children}</div></div>
-          {actions ? <span className="fr-postacts">{actions}</span> : null}
-        </div>
-      );
-    }
-    return (
-      <div className={cn('fr-post', className)} {...props}>
-        {kitFace(avatar)}
-        <div className="fr-bd">
-          <div className="fr-posthead">
-            <span className="fr-who">{name}</span>
-            {timestamp ? <span className="fr-when">{timestamp}</span> : null}
-            {actions ? <span className="fr-postacts">{actions}</span> : null}
-          </div>
-          <div className="fr-txt">{children}</div>
-        </div>
-      </div>
-    );
-  }
   if (grouped) {
     return (
-      <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
-        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-end text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+      <div className={cn('flex gap-3 px-4 py-0.5', me && 'flex-row-reverse', className)} data-grouped="" {...props}>
+        <span className={cn('gc-msg-gutter w-11 shrink-0 pt-0.5 text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500', me ? 'text-start' : 'text-end')}>{gutter}</span>
         <div className="min-w-0 flex-1">
-          <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
+          <div className={cn('text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100', me && 'flex flex-col items-end')}>{children}</div>
         </div>
         {actions ? <span className="flex shrink-0 items-start gap-1">{actions}</span> : null}
       </div>
@@ -158,10 +113,15 @@ export function ChatMessageRow({
     <div className={cn('flex gap-3 px-4 py-2', me && 'flex-row-reverse', className)} {...props}>
       {avatar}
       <div className="min-w-0 flex-1">
-        <div className={cn('flex items-baseline gap-2', me && 'justify-end')}>
-          <span className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
+        {/* The name never gives way to its meta (phone review #24, 23 Nov
+            2026): the line wraps, so a long time and "on Change #6894" go
+            under the name instead of squeezing it to "Ho…". Each part is
+            capped at the line, and only a name longer than the line itself
+            is cut. */}
+        <div className={cn('flex flex-wrap items-baseline gap-x-2', me && 'justify-end')}>
+          <span className="max-w-full truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
           {timestamp ? (
-            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
+            <span className="max-w-full shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
           {actions ? (
             <span className={cn('flex shrink-0 items-center gap-1', me ? 'order-first me-auto' : 'ms-auto')}>{actions}</span>
@@ -251,10 +211,18 @@ const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motio
  * (14 Oct 2026) it sat at the right edge, so as not to cover the middle of
  * a message's words; it is up only while the reader is up the transcript,
  * and centred it is the same control in a chat and on a change's page.
+ *
+ * Docked on the reply box's top edge, half over it (phone review #26, 23
+ * Nov 2026): floating 8px above the composer, the 40px disc landed on
+ * whatever had scrolled there, the before/after switch, "Suggest a change
+ * privately", a sender's line. The foot's box is the scroller's bottom
+ * edge, which is the composer's top, so the pill is centred on that line:
+ * its lower half is over the composer, its upper half over the transcript's
+ * own 12px of end padding, and nothing of the page's sits under it.
  */
 const OVERLAY_EDGE = {
   top: 'top-2 justify-center px-4',
-  foot: 'bottom-2 justify-center px-3',
+  foot: 'top-0 -translate-y-1/2 justify-center px-3',
 } as const;
 
 export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
@@ -292,9 +260,9 @@ export function NewMessagesBanner({
 }
 
 /**
- * Jump to latest: a round disc with a down chevron at the transcript's
- * foot, up whenever the reader is not at the bottom, centred over it
- * (TranscriptOverlay, above). The disc is the language's floating control, white on the sheet; `dot` is the
+ * Jump to latest: a small pill with a down chevron on the reply box's top
+ * edge, up whenever the reader is not at the bottom, centred over it
+ * (TranscriptOverlay, above). 32px tall, its tap area 48px. The disc is the language's floating control, white on the sheet; `dot` is the
  * accent, for messages that arrived while the reader was up the
  * transcript, and the button's name says how many.
  */
@@ -307,16 +275,16 @@ export function JumpToLatestButton({
       inert={!shown}
       data-jump-latest=""
       className={cn(
-        'pointer-events-auto relative flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200',
+        'pointer-events-auto relative flex h-8 w-14 items-center justify-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] after:absolute after:-inset-2 after:content-[\'\'] dark:bg-zinc-800 dark:text-zinc-200',
         FLOAT_MOTION,
         shown ? 'translate-y-0 scale-100 opacity-100' : 'pointer-events-none translate-y-2 scale-90 opacity-0',
         className,
       )}
       {...props}
     >
-      <ChevronDownIcon aria-hidden="true" className="h-5 w-5" />
+      <ChevronDownIcon aria-hidden="true" className="h-[1.125rem] w-[1.125rem]" />
       {dot ? (
-        <span aria-hidden="true" className="absolute end-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
+        <span aria-hidden="true" className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
       ) : null}
     </button>
   );

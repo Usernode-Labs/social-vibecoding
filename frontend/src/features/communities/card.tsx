@@ -5,24 +5,37 @@
  * visitor's landing (../guest/guest-discover.tsx `Card`).
  *
  *   picture   first, edge to edge, 16:9, cover, not shaded: the picture its
- *             group chose (its dark twin in the dark theme), else one of
- *             the brand kit's six backgrounds, always the same one for the
- *             same community (`cardScene`). A picture that does not load
- *             falls back to that background.
+ *             group chose (its dark twin in the dark theme).
  *   icon      the community's own icon (its image, else its emoji or initial
  *             on a white tile), standing mostly below the picture with its
  *             top over the picture's lower edge, on a thin light outline.
  *   beside it the name over how many members, in words.
- *   then      what it says it is, two lines at most, and this week on one
- *             line: "33 active · 5 changes live this week", "6 active this
- *             week", or nothing when both are zero. It follows the words;
- *             it is not held to the card's foot. Under 640px it is two
- *             glyphs with their numbers, so it is always one line, and a
- *             screen reader hears the words.
+ *   then      what it says it is, two lines at most, and this week, in
+ *             words at every width (phone review S3, 23 Nov 2026): "33
+ *             active · 5 changes live this week", "6 active this week", or
+ *             nothing when both are zero. A line too long for its card wraps
+ *             between the two parts. It stands at the card's foot, so every
+ *             card of a row has it on the same line.
+ *
+ * THE CARD WITH NO PICTURE (decided 23 Nov 2026, phone review #39, #66,
+ * #134, S10) draws its ICON AS THE PICTURE: the band shows the icon large
+ * and centred (64px, 16px corners, a soft shadow; an emoji or initial on a
+ * white tile) on a soft wash of the icon's main colour, or of one of the
+ * brand's tints, chosen from the slug, where the icon has little colour or
+ * is an emoji or a letter (lib/community-color.ts `useIconMainColor`,
+ * `bandWash`). Nothing is beside the name then: it starts at the card's
+ * left edge, the members under it, and the rest as above. A picture that
+ * does not load falls back to this card. No stock background is drawn on
+ * any card.
  *
  * THE COMPACT CARD is the same card with its picture taken off: the icon
- * smaller beside the name and the members, and nothing else (the Communities
- * page's Joined).
+ * smaller beside the name, and under the name its week in two plain lines
+ * (the Communities page's Joined; approved 23 Nov 2026, "F, without the
+ * little people icons"): "34 members, 6 active this week" in grey, then
+ * "6 changes live this week" after a tick in the link's blue. A quiet
+ * community is "16 members" alone, and the second line is drawn only when
+ * something went live. No faces, no description. A narrow card wraps the
+ * first line between its two facts, never inside one.
  *
  * Everything here is markup with fixed class names; the sizes, inks, edges
  * and corners are app.css's (`.cm-card`, "A COMMUNITY'S CARD"), read from
@@ -30,16 +43,19 @@
  * colours. The root (a link, or an article with a stretched link) is the
  * caller's, so each place keeps its own ids, `data-*` and behaviour.
  */
-import { type ReactNode, useEffect, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 
-import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { bandWash, useIconMainColor } from '../../lib/community-color';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMinWidth } from '../../lib/use-min-width';
+import { capCount } from '../../lib/count-cap';
+import { sizedPicture } from '../apps/app-card.js';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  CORNER, CORNER_PIN, CORNER_UNPIN, MinusGlyph, VOTES, WIGGLE, communityScene, openHub,
+  CORNER, CORNER_PIN, CORNER_UNPIN, MinusGlyph, VOTES, WIGGLE, openHub,
 } from '../home/pinned-communities';
 
 /** What a card draws of a community. A number left out says nothing. */
@@ -48,6 +64,8 @@ export interface CardCommunity {
   name: string;
   iconUrl?: string | null;
   iconEmoji?: string | null;
+  /** The colour dapp.json sets beside the icon, if any: the band's wash when there is no picture. */
+  iconColor?: string | null;
   /** The picture its group chose for its card, and that picture's dark twin. */
   pictureUrl?: string | null;
   pictureDarkUrl?: string | null;
@@ -59,118 +77,145 @@ export interface CardCommunity {
   liveWeek?: number | null;
 }
 
-/** How many of the brand kit's backgrounds a card without a picture takes from (app.css `.cm-card-pic[data-cm-scene]`). */
-const SCENES = 6;
+const count = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
 
 /**
- * The background a community's card wears when it has no picture of its
- * own, 1 to 6 (sky, halftone, dream, stars, collage, stripes): the one the
- * pinned card's band has worn since 19 Nov 2026, three on from
- * `communityScene`, so a community keeps its background.
+ * The width a card's picture is asked for (request #7165, point 5): a phone's
+ * card is at most about 170px wide, so 512 is sharp at 3x; a wide screen's
+ * first row can be several hundred, so it takes the next size up. Read when
+ * the card draws: cards come from data loaded after the first render.
  */
-export function cardScene(slug: string): number {
-  return ((communityScene(slug) + 2) % SCENES) + 1;
+function cardPictureWidth(): number {
+  return typeof window !== 'undefined' && window.innerWidth >= 768 ? 1024 : 512;
 }
-
-const count = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
 
 /** What goes over a picture: drawn as it is, or asked whether the picture itself is shown (a preview loop plays only over one). */
 export type PictureOverlay = ReactNode | ((picture: boolean) => ReactNode);
 
 /**
- * The card's picture, or its background. `attrs` and `children` are the
- * caller's: the hooks a card-to-page morph finds, a "New" pill, a preview
- * loop that plays over the picture.
+ * The card's picture, or, where it has none or it does not load, its icon
+ * as the picture on its wash (the card with no picture, in the header).
+ * `attrs` and `children` are the caller's: the hooks a card-to-page morph
+ * finds, a "New" pill, a preview loop that plays over the picture. `face`
+ * is drawn on the band's icon (a count, the edit discs) and `faceClass`
+ * moves it, as they are on the small icon of a card with a picture;
+ * `onPicture` hears whether the picture is the one shown.
  */
-export function CommunityPicture({ community, eager = false, attrs, children }: {
+export function CommunityPicture({ community, eager = false, attrs, children, face, faceClass, onPicture }: {
   community: CardCommunity;
   eager?: boolean;
   attrs?: Record<string, string | undefined>;
   children?: PictureOverlay;
+  face?: ReactNode;
+  faceClass?: string;
+  onPicture?: (picture: boolean) => void;
 }) {
-  const { pictureUrl: url, pictureDarkUrl: dark } = community;
+  // Asked for at the card's size, not the whole stored file (up to 1 MB).
+  const width = cardPictureWidth();
+  const url = sizedPicture(community.pictureUrl, width) as string | null | undefined;
+  const dark = sizedPicture(community.pictureDarkUrl, width) as string | null | undefined;
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [url, dark]);
   const picture = !!url && !failed;
+  useEffect(() => { onPicture?.(picture); }, [picture]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The icon's colour is read only where it is drawn: a card with a picture asks for nothing.
+  const main = useIconMainColor(picture ? null : { color: community.iconColor, iconUrl: community.iconUrl, iconEmoji: community.iconEmoji, key: community.slug });
+  const wash = picture ? null : bandWash(community.slug, main);
   return (
-    <span className="cm-card-pic" data-cm-scene={picture ? undefined : String(cardScene(community.slug))} {...attrs}>
+    <span className="cm-card-pic" {...wash?.attrs} style={wash?.style as CSSProperties | undefined} {...attrs}>
       {picture ? (
         <>
           <img
             src={url!}
             alt=""
             loading={eager ? 'eager' : 'lazy'}
+            decoding={eager ? undefined : 'async'}
             draggable={false}
             onError={() => setFailed(true)}
             className={dark ? 'cm-card-img dark:hidden' : 'cm-card-img'}
           />
           {dark ? (
-            <img src={dark} alt="" loading={eager ? 'eager' : 'lazy'} draggable={false} onError={() => setFailed(true)} className="cm-card-img hidden dark:block" />
+            <img src={dark} alt="" loading={eager ? 'eager' : 'lazy'} decoding={eager ? undefined : 'async'} draggable={false} onError={() => setFailed(true)} className="cm-card-img hidden dark:block" />
           ) : null}
         </>
-      ) : null}
+      ) : (
+        <span className={faceClass ? `cm-band-face ${faceClass}` : 'cm-band-face'}>
+          <CommunityIcon community={community} eager={eager} band />
+          {face}
+        </span>
+      )}
       {typeof children === 'function' ? children(picture) : children}
     </span>
   );
 }
 
-/** The community's own icon: its image, else its emoji or its initial on a white tile. */
-export function CommunityIcon({ community, eager = false }: { community: CardCommunity; eager?: boolean }) {
+/** The community's own icon: its image, else its emoji or its initial on a white tile. `band`: the large one a card with no picture draws as its picture. */
+export function CommunityIcon({ community, eager = false, band = false }: { community: CardCommunity; eager?: boolean; band?: boolean }) {
   const app = { slug: community.slug, name: community.name, icon_url: community.iconUrl || null, icon_emoji: community.iconEmoji || null };
   return (
-    <span className="cm-card-icon" data-icon={appIconKind(app)} aria-hidden="true">
+    <span className={band ? 'cm-band-icon' : 'cm-card-icon'} data-icon={appIconKind(app)} aria-hidden="true">
       <AppIconContent app={app} eager={eager} />
     </span>
   );
 }
 
 /**
- * This week, on one line. In words from 640px: "33 active", a dot, "5
- * changes live this week" in the link's blue; "6 active this week" alone
- * when nothing went live; nothing at all for a quiet week. A line too long
- * for its card wraps between the two, and the dot is drawn before each part
+ * This week, in words at every width (phone review S3, 23 Nov 2026: a
+ * glyph and a bare number needed a legend): "33 active", a dot, "5 changes
+ * live this week" in the link's blue; "6 active this week" alone when
+ * nothing went live; nothing at all for a quiet week. A line too long for
+ * its card wraps between the two, and the dot is drawn before each part
  * where a wrapped line's first one is cut off (app.css), so no line starts
- * with it. Under 640px the same two numbers each after its glyph (people,
- * a tick), so the line is always one line; the words are then the screen
- * reader's alone.
+ * with it.
  */
 export function CommunityWeek({ active, live }: { active?: number | null; live?: number | null }) {
   const t = useMessages('home');
   const a = count(active);
   const l = count(live);
   if (!a && !l) return null;
-  const people = a ? t('home:communities.activeWeek', { count: a, formatted: a.toLocaleString() }) : null;
+  const people = a ? t(l ? 'home:communities.activeShort' : 'home:communities.activeWeek', { count: a, formatted: a.toLocaleString() }) : null;
   const changes = l ? t('home:communities.liveThisWeek', { count: l, formatted: l.toLocaleString() }) : null;
   return (
     <span className="cm-card-week" data-cm-week="">
-      <span className="cm-week-words">
-        <span className="cm-week-in">
-          {a ? <span>{l ? t('home:communities.activeShort', { count: a, formatted: a.toLocaleString() }) : people}</span> : null}
-          {l ? <span className="cm-week-live">{changes}</span> : null}
-        </span>
-      </span>
-      <span className="cm-week-glyphs" aria-hidden="true">
-        {a ? <span><UserGroupIcon className="cm-week-glyph" />{a.toLocaleString()}</span> : null}
-        {l ? <span className="cm-week-live"><CheckIcon className="cm-week-glyph" />{l.toLocaleString()}</span> : null}
-      </span>
-      <span className="cm-week-sr sr-only">
+      <span className="cm-week-in">
         {people ? <span>{people}</span> : null}
-        {changes ? <span>{changes}</span> : null}
+        {changes ? <span className="cm-week-live">{changes}</span> : null}
       </span>
     </span>
   );
 }
 
-/** The name over how many members, beside the icon. `name` replaces the plain name (a card whose name is its link). */
-function CardId({ community, name }: { community: CardCommunity; name?: ReactNode }) {
+/**
+ * The name over how many members, beside the icon (or alone, on a card with
+ * no picture). `name` replaces the plain name (a card whose name is its
+ * link). `week` is the compact card's: the members line says who was active
+ * this week too, and a second line what went live (see the header). A zero
+ * says nothing.
+ */
+function CardId({ community, name, week = false }: { community: CardCommunity; name?: ReactNode; week?: boolean }) {
   const t = useMessages('home');
   const members = count(community.members);
+  const active = week ? count(community.activeWeek) : 0;
+  const live = week ? count(community.liveWeek) : 0;
+  const membersText = t('home:communities.members', { count: members, formatted: members.toLocaleString() });
   return (
     <span className="cm-card-id">
       {name ?? <span className="cm-card-name">{community.name}</span>}
       {members ? (
         <span className="cm-card-members" data-cm-members="">
-          {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
+          {active ? (
+            <RichMessage
+              id="home:communities.compactMembersActive"
+              values={{ count: active, formatted: active.toLocaleString(), members: membersText }}
+              components={[<span className="cm-card-fact" />, <span className="cm-card-fact" />]}
+            />
+          ) : membersText}
+        </span>
+      ) : null}
+      {live ? (
+        <span className="cm-card-live" data-cm-live="">
+          <CheckIcon className="cm-card-live-tick" aria-hidden="true" />
+          <span className="cm-card-fact">{t('home:communities.compactLive', { count: live, formatted: live.toLocaleString() })}</span>
         </span>
       ) : null}
     </span>
@@ -180,7 +225,9 @@ function CardId({ community, name }: { community: CardCommunity; name?: ReactNod
 /**
  * The big card's insides, inside the caller's root (`.cm-card`). `face` is
  * drawn on the icon (a count, the edit discs) and `faceClass` moves it (the
- * edit wiggle); `picture` goes over the picture.
+ * edit wiggle): the small icon under a picture, or the band's icon on a
+ * card with no picture, which has nothing beside its name. `picture` goes
+ * over the picture.
  */
 export function CommunityCardContent({ community, eager = false, name, face, faceClass, picture, pictureAttrs, aboutAttrs }: {
   community: CardCommunity;
@@ -194,15 +241,28 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
   aboutAttrs?: Record<string, string | undefined>;
 }) {
   const about = (community.description || '').trim();
+  // Whether the picture is shown: it can stop being, when it does not load.
+  const [shown, setShown] = useState(!!community.pictureUrl);
   return (
     <>
-      <CommunityPicture community={community} eager={eager} attrs={pictureAttrs}>{picture}</CommunityPicture>
-      <span className="cm-card-body">
+      <CommunityPicture
+        community={community}
+        eager={eager}
+        attrs={pictureAttrs}
+        face={shown ? undefined : face}
+        faceClass={faceClass}
+        onPicture={setShown}
+      >
+        {picture}
+      </CommunityPicture>
+      <span className="cm-card-body" data-cm-bare={shown ? undefined : ''}>
         <span className="cm-card-head">
-          <span className={faceClass ? `cm-card-face ${faceClass}` : 'cm-card-face'}>
-            <CommunityIcon community={community} eager={eager} />
-            {face}
-          </span>
+          {shown ? (
+            <span className={faceClass ? `cm-card-face ${faceClass}` : 'cm-card-face'}>
+              <CommunityIcon community={community} eager={eager} />
+              {face}
+            </span>
+          ) : null}
           <CardId community={community} name={name} />
         </span>
         {about ? <span className="cm-card-desc" data-cm-desc="" {...aboutAttrs}>{about}</span> : null}
@@ -212,9 +272,11 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
   );
 }
 
-/** The compact card's insides: the icon beside the name and the members, no picture. */
-export function CommunityCardCompactContent({ community, face, faceClass }: {
+/** The compact card's insides: the icon beside the name and its week (the members, who was active, what went live), no picture. */
+export function CommunityCardCompactContent({ community, name, face, faceClass }: {
   community: CardCommunity;
+  /** Replaces the plain name (the name with the votes waiting as a tag beside it). */
+  name?: ReactNode;
   face?: ReactNode;
   faceClass?: string;
 }) {
@@ -224,7 +286,7 @@ export function CommunityCardCompactContent({ community, face, faceClass }: {
         <CommunityIcon community={community} />
         {face}
       </span>
-      <CardId community={community} />
+      <CardId community={community} name={name} week />
     </span>
   );
 }
@@ -237,21 +299,33 @@ export function CommunityCardCompactContent({ community, face, faceClass }: {
  * the icon's corner with their words for a screen reader, and, while the
  * page is edited, the − that unpins it (the icon wiggles) or the + that
  * pins it.
+ *
+ * `voteTag` (the standard look, ONE LOOK of 25 Nov 2026): the votes waiting
+ * are a tag beside the name, in words ("2 to vote"), not a count on the
+ * icon's corner, and the words a screen reader had are the tag's own.
  */
-export function CommunityPageCard({ community, votes, editing, compact = false, onUnpin, onPin }: {
+export function CommunityPageCard({ community, votes, editing, compact = false, voteTag = false, onUnpin, onPin }: {
   community: CardCommunity;
   votes: number;
   editing: boolean;
   compact?: boolean;
+  voteTag?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
   const t = useMessages('home');
   const tc = useMessages('communities');
   const { slug, name } = community;
+  const tagged = voteTag && votes > 0 && !editing;
+  const named = tagged ? (
+    <span className="cm-card-name-row">
+      <span className="cm-card-name">{name}</span>
+      <span className="one-tag cm-card-votes" data-home-community-votes={String(votes)}>{tc('communities:row.toVote', { count: votes })}</span>
+    </span>
+  ) : undefined;
   const face = (
     <>
-      {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
+      {votes > 0 && !editing && !voteTag ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{capCount(votes)}</span> : null}
       {editing && onUnpin ? (
         <button
           type="button"
@@ -285,9 +359,9 @@ export function CommunityPageCard({ community, votes, editing, compact = false, 
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, slug); }}
     >
       {compact
-        ? <CommunityCardCompactContent community={community} face={face} faceClass={faceClass} />
-        : <CommunityCardContent community={community} face={face} faceClass={faceClass} />}
-      {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
+        ? <CommunityCardCompactContent community={community} name={named} face={face} faceClass={faceClass} />
+        : <CommunityCardContent community={community} name={named} face={face} faceClass={faceClass} />}
+      {votes > 0 && !tagged ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
   );
 }
@@ -341,7 +415,7 @@ export function useLeadCount(probe: HTMLElement | null): number {
 
 /** A row of the public directory (GET /api/public/apps) as the card draws it. */
 export function communityFromDirectory(app: {
-  slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null;
+  slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null; icon_color?: string | null;
   illustration_url?: string | null; illustration_dark_url?: string | null; member_count?: number;
   description?: string | null; active_users?: number; merged_week?: number;
 }): CardCommunity {
@@ -350,6 +424,7 @@ export function communityFromDirectory(app: {
     name: app.name,
     iconUrl: app.icon_url,
     iconEmoji: app.icon_emoji,
+    iconColor: app.icon_color,
     pictureUrl: app.illustration_url,
     pictureDarkUrl: app.illustration_dark_url,
     members: app.member_count,

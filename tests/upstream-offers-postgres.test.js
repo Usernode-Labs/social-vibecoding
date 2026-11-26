@@ -74,6 +74,20 @@ test('upstream offers: mark, the clock\'s reads, one open update, keeps, members
     await save(legacy.id, 'skipped', { fromSha: B });
     assert.equal((await pool.query(SQL.mark)).rowCount, 1);
 
+    // ── A re-armed offer is a new one, and its date restarts ──
+    const createdAtOf = async (appId) => (await pool.query(
+      'SELECT created_at FROM upstream_offers WHERE app_id = $1', [appId])).rows[0].created_at;
+    await save(legacy.id, 'skipped', { fromSha: B });
+    // Dated an hour back: the driver reads the column to the millisecond, and
+    // on a fast machine two statements in a row share one.
+    await pool.query("UPDATE upstream_offers SET created_at = created_at - INTERVAL '1 hour' WHERE app_id = $1", [legacy.id]);
+    const firstDate = await createdAtOf(legacy.id);
+    await pool.query(SQL.mark);
+    const secondDate = await createdAtOf(legacy.id);
+    assert.ok(secondDate > firstDate, 'a skipped row re-armed for a newer commit takes the new offer\'s date');
+    assert.equal((await pool.query(SQL.mark)).rowCount, 0, 'an available row stands');
+    assert.equal((await createdAtOf(legacy.id)).getTime(), secondDate.getTime(), 'a row that is not re-armed keeps its date');
+
     // ── One open update per version ──
     const insert = (appId, branch, n) => pool.query(SQL.insertSession,
       [appId, platform, branch, n, null, 'Update from tier', 'body', original.id]);
