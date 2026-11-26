@@ -1842,7 +1842,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // `?demo=1&challenges=many`: the default demo route holds three unfinished
   // open challenges, which draws no toggle, and no existing check opens the
   // five-open route. 709 leaves 171 slots.
-  checkCap.assertPinned(DAPP.tests.length, 709);
+  // 709 → 710: +1 (the hub's Discussion, 26 Nov 2026) a phone's Discussion
+  // card opens the Discussion as a page under the Hub, `?ws=posts`: its own
+  // route, which no check opens, so nothing could take it in a :has(). The
+  // hub's own Discussion card rides the rewritten "#852 review, B8" check on
+  // the hub's route. 710 leaves 170 slots.
+  checkCap.assertPinned(DAPP.tests.length, 710);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -10,8 +10,10 @@
  *   discussion                  #general, the project's own channel
  *   c:<handle>                  a topic's channel (`c:onboarding`)
  *
- * and two pages UNDER a place, which are not in the list: `all` (All items,
- * under the Workshop) and `plan` (the first version's plan, under the Hub).
+ * and pages UNDER a place, which are not in the list: `all` (All items,
+ * under the Workshop), `plan` (the first version's plan, under the Hub) and
+ * `posts` (the Discussion whole, under the Hub: where a phone's Discussion
+ * card opens, ./hub-discussion.tsx).
  *
  * A TOPIC is a lasting conversation about one part of the project, a channel
  * and a category at once. In the code it is a category with origin 'topic'
@@ -25,7 +27,7 @@ import { t as translate } from '../../../lib/i18n/runtime';
 import type { PlaceChannel, PlacesPayload } from './community-card';
 
 /** Every key the page can be on, places and the pages under them. */
-export type PlaceKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan' | 'bot' | `c:${string}`;
+export type PlaceKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan' | 'posts' | 'bot' | `c:${string}`;
 
 /**
  * The three pages at the head of the list, in order. `label` is a message id
@@ -38,7 +40,8 @@ export const PAGE_PLACES: ReadonlyArray<{ key: 'status' | 'needs' | 'workshop'; 
 ];
 
 // `bot`: Homeroom bot's slots, a page under the Workshop (./bot-slots.tsx).
-const PAGE_KEYS = new Set(['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'bot']);
+// `posts`: the Discussion whole, a page under the Hub (./hub-discussion.tsx).
+const PAGE_KEYS = new Set(['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'posts', 'bot']);
 /** A topic channel's handle, as dapp.json allows it (a letter first). */
 const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
@@ -73,11 +76,12 @@ export function isChannelPlace(key: string | null | undefined): boolean {
 
 /**
  * The place an entry in the list lights for `key`: All items and the bot's
- * slots light the Workshop, the plan lights the Hub, a channel itself.
+ * slots light the Workshop, the plan and the Discussion light the Hub, a
+ * channel itself.
  */
 export function litPlace(key: PlaceKey): PlaceKey {
   if (key === 'all' || key === 'bot') return 'workshop';
-  if (key === 'plan') return 'status';
+  if (key === 'plan' || key === 'posts') return 'status';
   return key;
 }
 
@@ -116,7 +120,7 @@ export function mergedInto(places: PlacesPayload | null | undefined, topic: Plac
 
 /** What a place is called on its own bar: the page's name, or the channel's handle. */
 export function placeName(key: PlaceKey): string {
-  if (key === 'status' || key === 'plan') return translate('project:places.bar.hub');
+  if (key === 'status' || key === 'plan' || key === 'posts') return translate('project:places.bar.hub');
   if (key === 'needs') return translate('project:places.bar.needsYou');
   if (key === 'workshop' || key === 'all' || key === 'bot') return translate('project:places.bar.workshop');
   return placeHandle(key) || 'general';

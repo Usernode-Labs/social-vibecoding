@@ -104,7 +104,16 @@ const VOTES = [
   { id: 501, pr_number: 41, title: 'Named sections in the list', pr_summary_md: '## What changes\n\nYou can **name** a [section](https://x.test).\n\nSecond paragraph.', promoted_at: '2026-06-11T00:00:00.000Z', yes_count: '4', no_count: '1' },
 ];
 const MERGED = [
-  { id: 480, pr_number: 37, title: 'Swipe to archive', pr_summary_md: 'Swipe a done task away.', merged_at: '2026-06-09T00:00:00.000Z' },
+  { id: 480, pr_number: 37, title: 'Swipe to archive', pr_summary_md: 'Swipe a done task away.', merged_at: '2026-06-09T00:00:00.000Z', yes_people: '3', creator_yes: true },
+  { id: 470, pr_number: 35, title: 'Bigger buttons', pr_summary_md: null, merged_at: '2026-06-08T00:00:00.000Z', yes_people: '1', creator_yes: true },
+  { id: 460, pr_number: 33, title: 'A first look', pr_summary_md: null, merged_at: '2026-06-07T00:00:00.000Z', yes_people: '0', creator_yes: false },
+];
+
+// The hub's Top contributors read (communities.js contributorsSummary): who
+// took part, with ids and display names the public route must not pass on.
+const TOP_CONTRIBUTORS = [
+  { id: 10, username: 'alice', display_name: 'Alice A', all_time: 9, month: 2, last_at: '2026-06-10T00:00:00.000Z' },
+  { id: 11, username: 'bob', display_name: null, all_time: 4, month: 0, last_at: '2026-05-10T00:00:00.000Z' },
 ];
 
 // Per-slug resolve table for the contributors route.
@@ -139,6 +148,18 @@ function makeMockPool() {
     // The pictures anybody may see of those changes (services/shots-public.js):
     // none here; tests/shots-public-postgres.test.js runs that query.
     if (/FROM shot_artifacts|JOIN shot_artifacts f/i.test(s)) return { rows: [] };
+    // Contributor UNION CTE — params[0] is an int[] of app ids. Read before
+    // the change queries below: the merged branch is itself a `chat_sessions
+    // cs` read with `status = 'merged'` (#7189 credited a bot build to its
+    // requester there), and would answer these with session rows.
+    if (/contributor_ids/i.test(s)) {
+      const ids = params[0] || [];
+      const rows = [];
+      for (const id of ids) {
+        for (const r of CONTRIBUTORS[id] || []) rows.push({ ...r });
+      }
+      return { rows };
+    }
     // The overview's changes up for a vote, and voted in.
     if (/FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
       return { rows: params[0] === 1 ? VOTES.map((r) => ({ ...r })) : [] };
@@ -158,14 +179,9 @@ function makeMockPool() {
       const app = APP_BY_SLUG[params[0]];
       return { rows: app ? [{ ...app }] : [] };
     }
-    // Contributor UNION CTE — params[0] is an int[] of app ids.
-    if (/contributor_ids/i.test(s)) {
-      const ids = params[0] || [];
-      const rows = [];
-      for (const id of ids) {
-        for (const r of CONTRIBUTORS[id] || []) rows.push({ ...r });
-      }
-      return { rows };
+    // The hub's Top contributors (contributorsSummary), for app-one.
+    if (/WITH acts AS/.test(s) && /AS all_time/.test(s)) {
+      return { rows: params[0] === 1 ? TOP_CONTRIBUTORS.map((r) => ({ ...r })) : [] };
     }
     throw new Error(`unhandled mock SQL: ${s.slice(0, 80)}`);
   }
@@ -452,6 +468,54 @@ test('overview: the card, the votes with plain summaries and tallies, and the ch
     // GitHub is not configured in the test process: the open requests are
     // unknown, which the page shows as nothing rather than "none".
     assert.equal(body.requests, null);
+  } finally { await srv.close(); }
+});
+
+test('overview: each change that went live says who said yes, in words that name nobody', async () => {
+  const { approvedBy } = require('../src/services/public-project');
+  assert.equal(approvedBy('3', true), 'community');
+  assert.equal(approvedBy(2, false), 'community');
+  assert.equal(approvedBy(1, true), 'creator');
+  assert.equal(approvedBy('1', false), 'member');
+  assert.equal(approvedBy(0, false), null);
+  assert.equal(approvedBy(null, false), null);
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/apps/app-one/overview');
+    assert.deepEqual(body.merged.map((m) => [m.title, m.approved_by]), [
+      ['Swipe to archive', 'community'],
+      ['Bigger buttons', 'creator'],
+      ['A first look', null],
+    ]);
+    assert.ok(!('yes_people' in body.merged[0]) && !('creator_yes' in body.merged[0]));
+    // The yeses are the counted ones (the tallies' own predicate), on that revision.
+    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/public-project.js'), 'utf8');
+    assert.match(src, /COUNT\(DISTINCT pv\.user_id\) FROM pr_votes pv\s+WHERE pv\.session_id = cs\.id AND pv\.vote = 'yes'\s+AND \$\{countedVotePredicateSql\('pv', 'cs'\)\}\) AS yes_people/);
+    assert.match(src, /pv\.user_id = a\.created_by\s+AND \$\{countedVotePredicateSql\('pv', 'cs'\)\}\) AS creator_yes/);
+  } finally { await srv.close(); }
+});
+
+test('top contributors: a public project\'s five most, this month and all time, each a username and a count and nothing else', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/apps/app-one/top-contributors');
+    assert.equal(status, 200);
+    assert.deepEqual(body, {
+      month: [{ username: 'alice', n: 2 }],
+      all_time: [{ username: 'alice', n: 9 }, { username: 'bob', n: 4 }],
+    });
+    assert.ok(!/display_name|Alice A|"id"|wallet/.test(JSON.stringify(body)));
+  } finally { await srv.close(); }
+});
+
+test('top contributors: 404 for everything the public directory does not list', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    for (const slug of ['secret-app', 'self-app', 'suspended-app', 'error-app', 'no-such-app', 'Bad_Slug']) {
+      const { status, body } = await get(srv.baseUrl, `/api/public/apps/${slug}/top-contributors`);
+      assert.equal(status, 404, slug);
+      assert.deepEqual(body, { error: 'App not found' });
+    }
   } finally { await srv.close(); }
 });
 

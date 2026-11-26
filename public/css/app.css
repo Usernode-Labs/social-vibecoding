@@ -8668,17 +8668,17 @@ html:root #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row:has([data-ws-invit
    (`display: contents`), so they can be placed apart, each on the look's
    card. Everything else the page may draw between (a first version, an
    update, Share it) keeps its place under the head. */
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you],
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
 html:root #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
 html:root #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
 html:root #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] { order: 4; }
 /* Top contributors (request 6837) comes last, after Recently live, on the look's card, its switch from the look's tokens. */
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] { order: 5; }
 html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
 html:root #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
 html:root #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
@@ -11841,7 +11841,7 @@ html:root #profile-root .profile-section-links > [aria-current="page"] { border-
 html:root #profile-root :is(section[id^="profile-"] > h2, #profile-activity h2) { padding: 0; margin: 0 0 0.625rem; font-size: 1.5rem; font-weight: 460; }
 html:root #profile-root section[id^="profile-"] > .ui-glist,
 html:root #profile-root #profile-activity { background: var(--ed-paper); border-radius: 1rem; box-shadow: inset 0 0 0 1px var(--ed-line); }
-html:root #profile-root :is(#profile-work, #profile-account, #profile-settings, #profile-admin, #profile-rewards) { margin-top: 1.5rem; }
+html:root #profile-root :is(#profile-work, #profile-account, #profile-settings, #profile-rewards) { margin-top: 1.5rem; }
 html:root #profile-root #profile-work .ui-lrow { padding-block: 0.625rem; }
 html:root #profile-root #profile-work .ui-icon-tile { border-radius: 0.625rem; }
 html:root #profile-root #profile-activity { margin-top: 1.5rem; padding: 1.25rem; }
@@ -35747,32 +35747,32 @@ html:root #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn 
 /* FOR YOU: Needs you, the Workshop and the discussion, each on its own coloured tile (the inbox in the pale sun, the
    board in the sky, the chat in green) and with today's count as a tag. One card of rows on a phone; from 768px each
    is a door of its own, three side by side where they fit. */
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-radius: 20px;
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--one-hair);
   min-height: 0;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) {
   gap: 12px;
   padding: 10px 14px;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
   width: 30px;
   height: 30px;
   border-radius: 8px;
   background-color: var(--one-tile-y-bg);
   color: var(--one-tile-y-ink);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child > svg { width: 18px; height: 18px; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--one-tile-b-bg); color: var(--one-tile-b-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-title { font: var(--one-row-title); color: var(--one-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-sub { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-handle { font-weight: inherit; color: inherit; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child > svg { width: 18px; height: 18px; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--one-tile-b-bg); color: var(--one-tile-b-ink); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-title { font: var(--one-row-title); color: var(--one-ink); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .wip-hub-door-sub { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-handle { font-weight: inherit; color: inherit; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
 /* A door's count is a tag at its title's end ("1 to vote" in ink, "3 new" in grey), never a button. */
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-tag {
   height: 24px;
@@ -35791,7 +35791,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-ta
 /* On a phone the three are one card of rows (the markup's own card, which the page split into three), parted by
    hairlines from the text's edge; the rows do not lift under the pointer as the doors do. */
 @media (max-width: 767.98px) {
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou {
     display: block;
     order: 3;
     overflow: hidden;
@@ -35800,7 +35800,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-ta
     background-color: var(--one-surface);
     box-shadow: inset 0 0 0 1px var(--one-hair);
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * {
     position: relative;
     margin: 0;
     border-radius: 0;
@@ -35808,9 +35808,9 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-ta
     box-shadow: none;
     transform: none;
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > :hover { transform: none; box-shadow: none; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + *::before {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > :hover { transform: none; box-shadow: none; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * + *::before {
     content: "";
     position: absolute;
     z-index: 1;
@@ -35823,27 +35823,27 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill.one-ta
 }
 @media (min-width: 768px) {
   html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { column-gap: 12px; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > :hover { box-shadow: inset 0 0 0 1px var(--one-field-line); }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > :hover { box-shadow: inset 0 0 0 1px var(--one-field-line); }
 }
 /* Stacked one to a row (768 to 1199px), the doors stand 8px apart. */
 @media (min-width: 768px) and (max-width: 1199.98px) {
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: -2px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: -2px; }
 }
 
 /* RECENTLY LIVE: on a phone one card of rows, each a small square (the change's picture, or the project's icon on a
    pale wash of its colour), its title on one line and who made it and when under it, and the "N more" at its foot;
    from 768px each change its own card, side by side. */
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent {
   padding: 0;
   overflow: hidden;
   border-radius: 20px;
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--one-hair);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-list { gap: 0; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-item { position: relative; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-list { gap: 0; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-item { position: relative; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-card {
   grid-template-columns: 36px minmax(0, 1fr);
   grid-template-rows: auto auto;
   column-gap: 12px;
@@ -35854,15 +35854,15 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   padding: 10px 14px;
   border-radius: 0;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic {
   width: 36px;
   height: 36px;
   border-radius: 9px;
   background-color: hsl(from var(--wip-hero-tint) h 40% 90%);
   box-shadow: none;
 }
-html:root.dark #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic { background-color: hsl(from var(--wip-hero-tint) h 30% 30%); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app {
+html:root.dark #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic { background-color: hsl(from var(--wip-hero-tint) h 30% 30%); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app {
   width: 100%;
   height: 100%;
   border: 0;
@@ -35871,8 +35871,8 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   box-shadow: none;
   font-size: 18px;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app > span { font-size: inherit; line-height: 1; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-title {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app > span { font-size: inherit; line-height: 1; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-title {
   align-self: end;
   display: block;
   overflow: hidden;
@@ -35881,13 +35881,13 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   font: var(--one-row-title);
   color: var(--one-ink);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-meta {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-meta {
   align-self: start;
   font: var(--one-row-sub);
   color: var(--one-ink-2);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--one-sky-ink); font-weight: 600; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--one-sky-ink); font-weight: 600; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-more {
   position: relative;
   min-height: 44px;
   margin: 0;
@@ -35897,7 +35897,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   box-shadow: none;
   color: var(--one-ink);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more-words {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-more-words {
   font-size: 15px;
   font-weight: 600;
   text-decoration: underline;
@@ -35905,9 +35905,9 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more > svg { color: var(--one-ink-3); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-more > svg { color: var(--one-ink-3); }
 @media (max-width: 767.98px) {
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] :is(.dev-ws-recent-item + .dev-ws-recent-item, .dev-ws-recent-more)::before {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] :is(.dev-ws-recent-item + .dev-ws-recent-item, .dev-ws-recent-more)::before {
     content: "";
     position: absolute;
     z-index: 1;
@@ -35919,7 +35919,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   }
 }
 @media (min-width: 768px) {
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent {
     display: grid;
     gap: 10px;
     overflow: visible;
@@ -35927,11 +35927,11 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
     background: transparent;
     box-shadow: none;
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-list {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-list {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
     gap: 12px;
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-card {
     grid-template-columns: 52px minmax(0, 1fr);
     height: 100%;
     padding: 12px 14px;
@@ -35939,10 +35939,10 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
     background-color: var(--one-surface);
     box-shadow: inset 0 0 0 1px var(--one-hair);
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic { width: 52px; height: 52px; border-radius: 12px; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { font-size: 24px; }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-title {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line); }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic { width: 52px; height: 52px; border-radius: 12px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { font-size: 24px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -35950,7 +35950,7 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
     white-space: normal;
     line-height: 1.25;
   }
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] .dev-ws-recent-more {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-recent] .dev-ws-recent-more {
     min-height: 40px;
     padding: 0 14px;
     border-radius: 20px;
@@ -35977,17 +35977,17 @@ html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg 
   font-weight: 600;
 }
 html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button[aria-pressed="true"] { background-color: transparent; color: var(--one-seg-on-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou {
   overflow: hidden;
   padding: 0;
   border-radius: 20px;
   background-color: var(--one-surface);
   box-shadow: inset 0 0 0 1px var(--one-hair);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou > * + * { border-top: 0; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou > * + * { border-top: 0; }
 /* Topics and From its versions are the same card of rows: a small tile, the row's two lines at the ramp. */
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row { position: relative; gap: 12px; margin: 0; padding: 10px 14px; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row + .dev-ws-foryou-row::before {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row { position: relative; gap: 12px; margin: 0; padding: 10px 14px; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row + .dev-ws-foryou-row::before {
   content: "";
   position: absolute;
   top: 0;
@@ -35995,17 +35995,17 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([d
   height: 1px;
   background: var(--one-line);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row > :first-child:not(.ui-lrow-tx) { width: 30px; height: 30px; border-radius: 8px; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row > :first-child:not(.ui-lrow-tx) { width: 30px; height: 30px; border-radius: 8px; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou-row .ui-lrow-go { width: 17px; height: 17px; color: var(--one-ink-3); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row {
   position: relative;
   gap: 12px;
   margin: 0;
   padding: 10px 14px;
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row + .dev-ws-contrib-row::before {
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row + .dev-ws-contrib-row::before {
   content: "";
   position: absolute;
   top: 0;
@@ -36013,12 +36013,12 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-
   height: 1px;
   background: var(--one-line);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-face { width: 32px; height: 32px; font-size: 14px; font-weight: 650; }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-foryou-count { font: inherit; color: inherit; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-face { width: 32px; height: 32px; font-size: 14px; font-weight: 650; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-foryou-count { font: inherit; color: inherit; }
 @media (min-width: 768px) {
-  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] .dev-ws-contrib-row { padding: 8px 14px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row { padding: 8px 14px; }
   html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg { width: 200px; min-height: 30px; }
   html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button { min-height: 26px; padding: 0 10px; font-size: 13px; }
 }
@@ -36268,6 +36268,283 @@ html:root #dev-workshop .dev-ws-hero-summary .wip-hub-meta-kind::before,
 html:root #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people .dev-ws-hero-faces { display: none; }
 html:root #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people { display: inline; padding: 0; margin: 0; border: 0; background: none; font: inherit; color: inherit; }
 html:root #dev-workshop .dev-ws-hero-summary .wip-hub-meta-people::before { content: "\00B7"; content: "\00B7" / ""; margin-inline: 0.3em; }
+/* ── THE HUB IN TWO COLUMNS, AND ITS DISCUSSION (owner, 26 Nov 2026) ── The hero and the community's picture stay as
+   they are, across the page. Under them, from 1024px, the hub is two columns: a thin one of today's parts, one under
+   another (For you, Recently live as a list, Top contributors), and the Discussion card filling the rest
+   (hub-discussion.tsx: #general drawn as posts with replies). Under 1024px it is one column: For you, the
+   Discussion, then the rest; on a phone the Discussion is a card of its newest posts that opens its own page. The
+   parts keep their own rules above; these only place them. */
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side { display: contents; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > *,
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * { order: 1; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols > [data-ws-hub-discussion] { order: 2; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > :not([data-ws-hub-for-you]) { order: 3; }
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
+/* The full card, or on a phone the preview of it: both are in the page, one drawn. */
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-discussion="preview"] { display: none; }
+@media (max-width: 767.98px) {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-discussion="preview"] { display: flex; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-discussion="full"] { display: none; }
+}
+@media (min-width: 1024px) {
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] {
+    display: grid;
+    grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] > .dev-ws-hub-side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] > [data-ws-hub-discussion] { grid-column: 2; grid-row: 1; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] [data-ws-hub-for-you] > *,
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] [data-ws-hub-for-you] > .dev-ws-foryou > *,
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] .dev-ws-hub-side > * { order: 0; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > .dev-ws-hub-section + .dev-ws-hub-section,
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > [data-ws-hub-for-you] + .dev-ws-hub-section { margin-top: 4px; }
+  /* RECENTLY LIVE in the thin column is one card of rows, as on a phone: a small square, the title on one line, who
+     made it and when under it, hairlines between, and "N more" at its foot. */
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent {
+    display: block;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 20px;
+    background-color: var(--one-surface);
+    box-shadow: inset 0 0 0 1px var(--one-hair);
+  }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+    height: auto;
+    padding: 10px 14px;
+    border-radius: 0;
+    background-color: transparent;
+    box-shadow: none;
+  }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--one-quiet); box-shadow: none; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-pic { width: 36px; height: 36px; border-radius: 9px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { font-size: 18px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-title { display: block; white-space: nowrap; line-height: inherit; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] :is(.dev-ws-recent-item + .dev-ws-recent-item, .dev-ws-recent-more)::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    inset-inline: 62px 0;
+    height: 1px;
+    background: var(--one-line);
+    pointer-events: none;
+  }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-recent] .dev-ws-recent-more {
+    min-height: 44px;
+    padding-block: 0;
+    padding-inline: 62px 14px;
+    border-radius: 0;
+    background-color: transparent;
+    box-shadow: none;
+  }
+  /* TOP CONTRIBUTORS in the thin column: its label on one line beside a smaller switch. */
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-contributors] .dev-ws-hub-sechead > h2 { white-space: nowrap; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button { min-height: 26px; padding: 0 10px; font-size: 13px; }
+  /* The Discussion card is at least as tall as the column beside it. */
+  html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols[data-ws-hub-cols="two"] > [data-ws-hub-discussion="full"] { min-height: 100%; }
+}
+
+/* THE DISCUSSION CARD: one card, "Discussion" and one line under it, the box to start a post with the viewer's face,
+   "Sort by: Newest · Most replies", then the posts. Each post is its own outlined box (a 1px outline at 18% ink, 8px
+   corners, white); its replies hang in a second box joined under it, the same outline on a faint off-white, stepped
+   in 14px from the left, so the two read as one wide box with a narrower one hanging off it. */
+html:root #dev-workshop .dev-ws-hub-discussion {
+  --dh-outline: rgb(18 26 14 / 0.18);
+  --dh-reply-ground: #fafaf7;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  padding: 0 0 12px;
+  border-radius: 20px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:root.dark #dev-workshop .dev-ws-hub-discussion { --dh-outline: rgb(255 254 234 / 0.22); --dh-reply-ground: rgb(255 254 234 / 0.04); }
+html:root #dev-workshop .dev-ws-hub-discussion-head { padding: 12px 16px 4px; }
+html:root #dev-workshop .dev-ws-hub-discussion .dev-ws-hub-discussion-head > .dev-ws-hub-discussion-title {
+  margin: 0;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: -0.006em;
+  text-transform: none;
+  text-decoration: none;
+  color: var(--one-ink);
+}
+html:root #dev-workshop .dev-ws-hub-discussion-about { margin: 0; font-size: 12px; line-height: 16px; color: var(--one-ink-2); }
+/* The box: a white field on a hairline, the face at its start and the round send at its end. */
+html:root #dev-workshop .dh-composer {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  min-height: 44px;
+  padding-block: 6px;
+  padding-inline: 14px 6px;
+  border-radius: 22px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  color: var(--one-ink);
+  text-align: start;
+}
+html:root #dev-workshop .dh-composer-post,
+html:root #dev-workshop .dh-composer-door { margin: 12px 12px 6px; padding-inline-start: 6px; }
+html:root #dev-workshop .dh-composer > :is(img, span[aria-hidden="true"]:not(.dh-send)) { flex: none; width: 32px; height: 32px; }
+html:root #dev-workshop .dh-face-blank { display: block; width: 32px; height: 32px; border-radius: 9999px; background: var(--one-quiet); }
+html:root #dev-workshop .dh-box {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 240px;
+  padding: 6px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--one-ink);
+  font: inherit;
+  font-size: 15px;
+  line-height: 20px;
+}
+html:root #dev-workshop .dh-box::placeholder { color: var(--one-ink-3); }
+html:root #dev-workshop .dh-composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--one-link-line); }
+html:root #dev-workshop .dh-composer-hint { flex: 1 1 auto; align-self: center; font-size: 15px; color: var(--one-ink-3); }
+html:root #dev-workshop .dh-send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9999px;
+  background-color: var(--one-sky-ink);
+  color: #ffffff;
+}
+html:root #dev-workshop .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
+html:root #dev-workshop .dh-send svg { width: 16px; height: 16px; }
+html:root #dev-workshop .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
+html:root #dev-workshop .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
+html:root #dev-workshop .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
+html:root #dev-workshop .dh-composer-reply .dh-send { width: 30px; height: 30px; }
+/* Sort by: Newest · Most replies. */
+html:root #dev-workshop .dh-sort { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; font-size: 13px; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-sort > button { padding: 2px 0; border: 0; background: none; color: var(--one-ink-2); font: inherit; font-weight: 500; }
+html:root #dev-workshop .dh-sort > button[aria-pressed="true"] { font-weight: 700; color: var(--one-ink); }
+html:root #dev-workshop .dh-sort > button + button::before { content: "\00B7"; content: "\00B7" / ""; margin-inline-end: 12px; font-weight: 400; color: var(--one-ink-3); }
+/* The posts. */
+html:root #dev-workshop .dh-list { display: flex; flex-direction: column; gap: 16px; padding: 0 12px; min-width: 0; }
+html:root #dev-workshop .dh-thread { display: flex; flex-direction: column; min-width: 0; }
+html:root #dev-workshop .dh-post {
+  position: relative;
+  padding: 12px 14px 14px;
+  border-radius: 8px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--dh-outline);
+}
+html:root #dev-workshop .dh-thread > .dh-post:not(:last-child) { border-end-end-radius: 0; }
+html:root #dev-workshop .dh-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+html:root #dev-workshop .dh-head > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 40px; height: 40px; font-size: 15px; }
+html:root #dev-workshop .dh-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; color: var(--one-ink); }
+html:root #dev-workshop .dh-time { flex: none; font-size: 13px; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-new { flex: none; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--one-sky-ink); }
+html:root #dev-workshop .dh-tail { flex: none; margin-inline-start: auto; padding: 0; border: 0; background: none; font: inherit; }
+html:root #dev-workshop .dh-count { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); white-space: nowrap; }
+html:root #dev-workshop .dh-count > svg { width: 16px; height: 16px; stroke-width: 1.6; }
+html:root #dev-workshop .dh-count-none { color: var(--one-ink-3); }
+html:root #dev-workshop button.dh-tail:hover .dh-count-none { color: var(--one-ink-2); }
+html:root #dev-workshop .dh-words { display: block; margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root #dev-workshop .dh-words .messages-markdown > :first-child { margin-top: 0; }
+html:root #dev-workshop .dh-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root #dev-workshop :is(.dh-deleted, .dh-quiet) { font-style: italic; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+html:root #dev-workshop .dh-pills .dh-pill { height: 26px; padding: 0 10px; gap: 6px; font-size: 14px; }
+html:root #dev-workshop .dh-pills-small { margin-top: 4px; gap: 4px; }
+html:root #dev-workshop .dh-pills-small .dh-pill { height: 22px; padding: 0 8px; gap: 4px; font-size: 12px; }
+/* "Earlier in #general": the channel's mark where a face would be. */
+html:root #dev-workshop .dh-earlier-mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9999px; background-color: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }
+html:root #dev-workshop .dh-earlier-mark > svg { width: 20px; height: 20px; }
+/* The replies' box, joined under the post's and stepped in from its start. */
+html:root #dev-workshop .dh-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-block: -1px 0;
+  margin-inline: 14px 0;
+  padding: 12px 14px;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--dh-reply-ground);
+  box-shadow: inset 0 0 0 1px var(--dh-outline);
+}
+html:root #dev-workshop .dh-earlier { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 13px; font-weight: 600; color: var(--one-sky-ink); }
+html:root #dev-workshop .dh-earlier:disabled { opacity: 0.6; }
+html:root #dev-workshop .dh-reply { position: relative; display: flex; gap: 10px; min-width: 0; }
+html:root #dev-workshop .dh-reply > :is(img, span[aria-hidden="true"]:first-child) { flex: none; width: 28px; height: 28px; font-size: 11px; }
+html:root #dev-workshop .dh-reply-body { flex: 1 1 auto; min-width: 0; }
+html:root #dev-workshop .dh-reply-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html:root #dev-workshop .dh-reply-who > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; color: var(--one-ink); }
+html:root #dev-workshop .dh-reply-who > span { flex: none; font-size: 12px; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-reply-words { font-size: 15px; line-height: 1.4; color: var(--one-ink); overflow-wrap: anywhere; }
+html:root #dev-workshop .dh-reply-words .messages-markdown > :first-child { margin-top: 0; }
+html:root #dev-workshop .dh-reply-words .messages-markdown > :last-child { margin-bottom: 0; }
+html:root #dev-workshop .dh-old-thread { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; width: max-content; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: 600; color: var(--one-sky-ink); }
+html:root #dev-workshop .dh-old-thread > svg { width: 14px; height: 14px; stroke-width: 1.6; }
+/* The hover bar on a post or a reply: the platform's own pill, at the box's top edge, on a pointer only. */
+html:root #dev-workshop .dh-msg { position: relative; }
+html:root #dev-workshop .dh-actions { position: absolute; z-index: 6; top: calc(-1 * var(--msgx-bar-lift, 16px)); inset-inline-end: 10px; display: none; }
+html:root #dev-workshop .dh-actions::after { content: ""; position: absolute; inset-inline: 0; top: 100%; height: 6px; }
+html:root #dev-workshop .dh-actions.msgx-bar-below { top: calc(100% + 4px); }
+html:root #dev-workshop .dh-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+html:root #dev-workshop .dh-msg:hover > .dh-actions,
+html:root #dev-workshop .dh-msg:focus-within > .dh-actions,
+html:root #dev-workshop .dh-actions.msgx-bar-open { display: flex; }
+html:root #dev-workshop .dh-reply > .dh-actions { inset-inline-end: 0; top: -18px; }
+html:root #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.3); }
+html:root.dark #dev-workshop .dh-post.dh-msg:hover { box-shadow: inset 0 0 0 1px rgb(255 254 234 / 0.34); }
+html:root #dev-workshop [data-press-armed] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Show more, the empty card, a read that failed, and the rows while it reads. */
+html:root #dev-workshop .dh-more-posts { align-self: flex-start; margin: 12px 16px 0; padding: 0; border: 0; background: none; font-size: 14px; font-weight: 600; color: var(--one-ink); text-decoration: underline; text-decoration-color: var(--one-link-line); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+html:root #dev-workshop .dh-more-posts:disabled { opacity: 0.6; }
+html:root #dev-workshop :is(.dh-empty, .dh-failed) { margin: 8px 16px 4px; font-size: 14px; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-failed { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.35em; }
+html:root #dev-workshop .dh-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--one-sky-ink); }
+html:root #dev-workshop .dh-post-bone { display: flex; flex-direction: column; gap: 10px; }
+html:root #dev-workshop .dh-bone { display: block; border-radius: 6px; background-color: var(--one-quiet); }
+html:root #dev-workshop .dh-bone-head { width: 40%; height: 18px; }
+html:root #dev-workshop .dh-bone-line { width: 85%; height: 14px; }
+/* THE PHONE'S CARD: its head is a door to the page, then the newest posts a line each with their reply counts, and
+   the box to start a post, which opens the page ready to write. */
+html:root #dev-workshop .dh-preview-head { display: flex; align-items: center; gap: 8px; width: 100%; padding-block: 0; padding-inline: 0 12px; border: 0; background: none; text-align: start; color: inherit; }
+html:root #dev-workshop .dh-preview-head > .dev-ws-hub-discussion-head { flex: 1 1 auto; min-width: 0; }
+html:root #dev-workshop .dh-preview-go { flex: none; width: 17px; height: 17px; color: var(--one-ink-3); }
+html:root #dev-workshop .dh-preview-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0 12px; list-style: none; }
+html:root #dev-workshop .dh-preview-list > li + li { border-top: 1px solid var(--one-line); }
+html:root #dev-workshop .dh-preview-row { display: block; width: 100%; padding: 10px 2px; border: 0; background: none; text-align: start; color: inherit; }
+html:root #dev-workshop .dh-preview-row .dh-head > :is(img, span[aria-hidden="true"]:first-child) { width: 30px; height: 30px; font-size: 12px; }
+html:root #dev-workshop .dh-preview-row .dh-name { font-size: 15px; }
+html:root #dev-workshop .dh-preview-row .dh-words { margin-top: 4px; font-size: 15px; line-height: 1.4; }
+html:root #dev-workshop .dh-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+html:root #dev-workshop .dh-composer-door { margin-top: 8px; border: 0; }
+html:root #dev-workshop .dh-composer-door > .dh-send { background-color: var(--one-quiet); color: var(--one-ink-3); }
+/* THE PAGE: the way back to the Hub, then the card, the whole width. */
+html:root #dev-workshop .dev-ws-discussion-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@media (max-width: 767.98px) {
+  html:root #dev-workshop .dh-list { padding: 0 10px; gap: 14px; }
+  html:root #dev-workshop .dh-post { padding: 12px; }
+  html:root #dev-workshop .dh-replies { padding: 12px; margin-inline-start: 10px; }
+}
 /* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
 
 /* ── ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
@@ -36458,6 +36735,21 @@ html:root.dark #profile-screen #profile-identity-card #profile-edit-btn:hover,
 html:root.dark :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:hover { background: var(--one-sun); filter: brightness(1.05); }
 html:root #profile-screen #profile-identity-card #profile-edit-btn:active,
 html:root :is(#profile-root, #settings-root) :is(#profile-details, #settings-profile-details) .profile-details-actions button[type="submit"]:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+/* The head's three actions (26 Nov 2026): Edit profile, an admin's way in to
+   the console, and Sign out, in one group where Edit profile stood alone. The
+   group takes the place and the margins the one button had; the two beside it
+   are the secondary and the destructive level at the main one's height. */
+html:root #profile-screen #profile-identity-card #profile-id-actions { flex: none; justify-content: flex-start; }
+html:root #profile-screen #profile-identity-card #profile-id-actions #profile-edit-btn { margin: 0; }
+html:root #profile-screen #profile-identity-card #profile-id-actions .one-btn { height: 44px; padding-inline: 18px; font-size: 16px; }
+@media (max-width: 639.98px) { html:root #profile-screen #profile-identity-card #profile-id-actions { margin-inline-start: 0; } }
+/* Three buttons are wider than one: between a phone and a wide screen they
+   go under the picture and the text, where the one button had room beside. */
+@media (min-width: 640px) and (max-width: 1279.98px) {
+  html:root #profile-screen #profile-identity-card > div:first-child { flex-direction: column; align-items: stretch; }
+  html:root #profile-screen #profile-identity-card #profile-id-actions { margin-top: 0.25rem; }
+}
+@media (min-width: 1280px) { html:root #profile-screen #profile-identity-card #profile-id-actions { margin-top: 1rem; justify-content: flex-end; } }
 html:root #profile-screen #profile-activity #profile-activity-share {
   height: 30px;
   min-height: 0;
@@ -36525,6 +36817,16 @@ html:root #profile-live-projects .profile-project-card:nth-child(3n) { --pp-band
 html:root #profile-live-projects .profile-project-card:is(:nth-child(3n+1), :nth-child(3n+2), :nth-child(3n)) { background: linear-gradient(var(--one-surface), var(--one-surface)) center bottom / 100% calc(100% - 4.5rem) no-repeat, var(--pp-band); background-origin: border-box; }
 html:root #profile-live-projects .profile-project-card h3 { margin-top: 1.375rem; }
 html:root #profile-live-projects .profile-project-icon { background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-hair); }
+/* Smaller cards (26 Nov 2026): three to a row filled the first screen with
+   six projects. A shorter band, a smaller icon and name, and as many columns
+   as fit at 11rem each, so a wide screen shows four or five to a row. */
+html:root #profile-live-projects .profile-project-grid { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 1rem; }
+html:root #profile-live-projects .profile-project-card { min-height: 0; padding: 0.75rem 0.875rem 0.875rem; border-radius: 16px; }
+html:root #profile-live-projects .profile-project-grid > .profile-project-card:is(:nth-child(3n+1), :nth-child(3n+2), :nth-child(3n)) { background: linear-gradient(var(--one-surface), var(--one-surface)) center bottom / 100% calc(100% - 3.25rem) no-repeat, var(--pp-band); background-origin: border-box; }
+html:root #profile-live-projects .profile-project-icon { width: 2rem; height: 2rem; border-radius: 0.5rem; font-size: 1.125rem; }
+html:root #profile-live-projects .profile-project-card h3 { margin: 1rem 0 0.25rem; font-size: 1.125rem; letter-spacing: -0.02em; }
+html:root #profile-live-projects .profile-project-card p { font-size: 0.8125rem; line-height: 1.4; }
+@media (max-width: 639.98px) { html:root #profile-live-projects .profile-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; } }
 /* Recent activity: rows on the ramp, the row's title over its second line,
    its icon the discussion's green tile. */
 html:root #profile-recent-activity ul { padding: 0 14px; }

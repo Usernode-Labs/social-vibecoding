@@ -15,7 +15,8 @@
 //     (services/shots-public.js);
 //   * the last few changes voted in and live, each with its after picture
 //     where it may be shown to anybody (the same rules, services/
-//     shots-public.js);
+//     shots-public.js), and who said yes to it, in words that name nobody
+//     (approvedBy);
 //   * how many people took part this week and how many changes went live in
 //     the last thirty days, as numbers (communities.js activityCounts);
 //   * the titles of its open requests, read from its repository's public
@@ -99,6 +100,23 @@ async function openRequests(repoUrl, gh = github) {
   }
 }
 
+// WHO SAID YES to a change that went live, in words that name nobody: the
+// page writes "Approved by community" beside it, and that is true only when
+// more than one person's yes put it there. A project's rule can let its
+// creator approve alone (the You or the group preset, the default for a new
+// project) or any one member (Open floor), and a first version goes live
+// with no vote at all, so the line says what happened: 'community' for the
+// yeses of two or more people, 'creator' for the creator's alone, 'member'
+// for one other person's, and null when no counted yes is on it. The yeses
+// are the ones every tally counts (countedVotePredicateSql), on the revision
+// that merged.
+function approvedBy(yesPeople, creatorYes) {
+  const n = Number(yesPeople) || 0;
+  if (n >= 2) return 'community';
+  if (n === 1) return creatorYes ? 'creator' : 'member';
+  return null;
+}
+
 async function loadProjectOverview(pool, slug, { gh = github } = {}) {
   const [app] = await listPublicApps(pool, { includeWallets: false, slug: String(slug) });
   if (!app) return null;
@@ -121,7 +139,13 @@ async function loadProjectOverview(pool, slug, { gh = github } = {}) {
     ),
     pool.query(
       `SELECT cs.id, cs.pr_number, COALESCE(cs.pr_title, cs.session_title) AS title, cs.pr_summary_md,
-              COALESCE(cs.merged_at, cs.created_at) AS merged_at
+              COALESCE(cs.merged_at, cs.created_at) AS merged_at,
+              (SELECT COUNT(DISTINCT pv.user_id) FROM pr_votes pv
+                WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                  AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_people,
+              EXISTS (SELECT 1 FROM pr_votes pv JOIN apps a ON a.id = cs.app_id
+                WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND pv.user_id = a.created_by
+                  AND ${countedVotePredicateSql('pv', 'cs')}) AS creator_yes
          FROM chat_sessions cs
         WHERE cs.app_id = $1 AND cs.status = 'merged' AND cs.live_at IS NOT NULL
         ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
@@ -176,9 +200,10 @@ async function loadProjectOverview(pool, slug, { gh = github } = {}) {
       summary: plainSummary(r.pr_summary_md),
       merged_at: r.merged_at || null,
       picture: livePicture(r.id),
+      approved_by: approvedBy(r.yes_people, r.creator_yes),
     })),
     requests,
   };
 }
 
-module.exports = { loadProjectOverview, plainSummary, openRequests };
+module.exports = { loadProjectOverview, plainSummary, openRequests, approvedBy };

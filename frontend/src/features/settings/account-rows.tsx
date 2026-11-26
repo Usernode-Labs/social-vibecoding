@@ -5,8 +5,8 @@
  * Admin & moderation was a row here too, under an "Admin" heading. It left
  * Settings in #5281: Settings is about your own account, and on a phone the
  * row was one more line of a fifteen-row list. The console is a place, not a
- * preference, so its entrance is a row on Me (features/profile/
- * account-panel.tsx, `AdminPanel`), shown to admins only, on both layouts.
+ * preference, so its entrance is a button at the head of Me (features/profile/
+ * account-panel.tsx, `AdminConsoleLink`), shown to admins only, on both layouts.
  *
  * ── Why these live in Settings now ────────────────────────────────────
  *

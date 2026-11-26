@@ -6,8 +6,9 @@
 // Settings again and back onto Me, because the console is a place an admin
 // goes and not one of their settings).
 //
-// It is a row of its own on Me (features/profile/account-panel.tsx,
-// AdminPanel, #profile-row-admin), on both layouts, and is visible to
+// It was a row of its own at the foot of Me; since 26 Nov 2026 it is a button
+// at the head of Me, beside Edit profile (features/profile/account-panel.tsx,
+// AdminConsoleLink, #profile-admin-btn), on both layouts, and is visible to
 // platform admins AND view-only admins — never to regular users, and never
 // gated on the environment. Those three properties are the
 // whole contract, and all three are easy to break later by a well-meaning
@@ -48,16 +49,16 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const settingsRows = read('frontend/src/features/settings/account-rows.tsx');
 const mePanel = read('frontend/src/features/profile/account-panel.tsx');
 const meView = read('frontend/src/features/profile/profile-view.tsx');
-// The AdminPanel component alone, so the assertions below are about it.
-const panel = mePanel.slice(mePanel.indexOf('export function AdminPanel('));
+// The AdminConsoleLink component alone, so the assertions below are about it.
+const panel = mePanel.slice(mePanel.indexOf('export function AdminConsoleLink('));
 const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const appJs = read('public/js/app.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 test('the row is on Me, not rendered at all without the flag', () => {
-  assert.ok(mePanel.includes('export function AdminPanel('), 'AdminPanel is exported from Me\'s panels');
-  assert.match(panel, /id="profile-row-admin"/, 'the row is rendered');
-  assert.match(panel, /id="profile-row-admin"[\s\S]{0,200}?href="#admin"/,
+  assert.ok(mePanel.includes('export function AdminConsoleLink('), 'AdminConsoleLink is exported from Me\'s panels');
+  assert.match(panel, /id="profile-admin-btn"/, 'the button is rendered');
+  assert.match(panel, /id="profile-admin-btn"[\s\S]{0,200}?href="#admin"/,
     'navigation rides the anchor hash');
   // NOT RENDERED rather than rendered-and-hidden: ProfileRoot renders nothing
   // until its store has data, so a conditional render has no prerendered
@@ -65,8 +66,10 @@ test('the row is on Me, not rendered at all without the flag', () => {
   // find-in-page.
   assert.match(panel, /if \(!isAdmin\) return null;/,
     'the row is absent for an account without the capability');
-  assert.match(meView, /<SettingsPanel \/>\s*<AdminPanel \/>/,
-    'Me renders it, after the phone\'s Settings row, on both layouts');
+  assert.match(meView, /id="profile-id-actions"[\s\S]{0,700}?<AdminConsoleLink \/>\s*<SignOutButton \/>/,
+    'Me renders it at its head, after Edit profile and before Sign out, on both layouts');
+  assert.doesNotMatch(mePanel + meView, /id="profile-admin"|id="profile-row-admin"/,
+    'and the card at the foot is gone, not kept as a second entrance');
 });
 
 test('it left Settings (#5281)', () => {
@@ -129,12 +132,12 @@ test('the row is not gated on the environment', () => {
 
 test('dapp.json locks the rendered row in with a check', () => {
   const hit = dapp.tests.find((t) => String(t.expectSelector || '')
-    .includes('#profile-row-admin'));
+    .includes('#profile-admin-btn'));
   assert.ok(hit, 'a declared check must assert the row actually renders');
   // NO `:not(.hidden)` on the row, and its absence is the assertion: this
   // row is not RENDERED at all without the capability, so selecting it IS
   // proving it was revealed.
-  assert.doesNotMatch(String(hit.expectSelector), /#profile-row-admin:not\(\.hidden\)/,
+  assert.doesNotMatch(String(hit.expectSelector), /#profile-admin-btn:not\(\.hidden\)/,
     'a conditionally rendered row needs no hidden-class qualifier of its own');
   assert.match(String(hit.expectSelector), /#profile-screen:not\(\.hidden\)/,
     'on the surface that renders it');

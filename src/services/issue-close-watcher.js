@@ -7,13 +7,20 @@
 // keywords (`Closes #N`, `Fixes #N`, `Resolves #N`) in the PR body, but it
 // does so asynchronously, often a few seconds after the merge reports
 // success, and on 2026-09-30 it stopped applying them to merged PRs for
-// hours. So the machine looks twice: at the first look a linked request
-// still open is left to GitHub, and the machine asks for a second look a
-// little later (machine.ts ISSUES_SECOND_LOOK_MS); at the second, the
-// session's LINKED issues still open are closed here (closeLinkedIssues
-// below), and only those, and only after re-reading the PR as merged into
-// the repo's default branch. Numbers that come solely from a hand-edited
-// PR body are looked at but never closed here.
+// hours. So for a GitHub repository the machine looks twice: at the first
+// look a linked request still open is left to GitHub, and the machine asks
+// for a second look a little later (machine.ts ISSUES_SECOND_LOOK_MS); at
+// the second, the session's LINKED issues still open are closed here
+// (closeLinkedIssues below), and only those, and only after re-reading the
+// PR as merged into the repo's default branch. Numbers that come solely
+// from a hand-edited PR body are looked at but never closed here.
+//
+// Homeroom's own git host applies no closing keywords itself (nothing in
+// native-merge.js or native-pulls.js reads them), so a request is always
+// still open after a merge there. For a hosted repository (`hosted`) the
+// first look therefore closes the linked requests itself, by the same
+// closeLinkedIssues and the same checks, and nothing waits: the request
+// leaves Requests with its change reaching Done (#7214).
 //
 // Every number seen closed, or closed here, also closes the platform's own
 // `general` twin row for that request (closeTwinRows below), and withdraws
@@ -223,11 +230,14 @@ async function closeProposalTargets(pool, appId, numbers) {
 // One look at the requests a merged PR closes (the merge-followups
 // machine's issues.closeAfterMerge). `look` 1: what GitHub has closed;
 // a linked request still open is left to it, and `waiting` asks for the
-// second look. `look` 2: the linked ones still open are closed here. A
-// failure to record a close (twin rows, the bot's proposals) throws, for
-// the work to retry. Answers { closed, skipped, stillOpen, waiting,
-// targets }: `targets` are the close proposals to supersede.
-async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, pool, look = 1 }) {
+// second look. `look` 2: the linked ones still open are closed here.
+// `hosted`: the repository is on Homeroom's git host, which applies no
+// closing keywords, so a linked request still open is closed here at the
+// first look too, and nothing waits. A failure to record a close (twin
+// rows, the bot's proposals) throws, for the work to retry. Answers
+// { closed, skipped, stillOpen, waiting, targets }: `targets` are the
+// close proposals to supersede.
+async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, pool, look = 1, hosted = false }) {
   const empty = { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] };
   // #6019: the first of competing changes to go live closes the others in
   // its thread (threads.js closeRivals, which never throws). A vote to close
@@ -251,7 +261,7 @@ async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, poo
   const linked = new Set(sanitizeIssueNumbers(linkedIssues));
   let waiting = false;
   if (open.some((n) => linked.has(n))) {
-    if (look < 2) waiting = true;
+    if (look < 2 && !hosted) waiting = true;
     else {
       const { closed: selfClosed } = await closeLinkedIssues({ owner, repo, prNumber, pr, linkedIssues, stillOpen: open });
       closed.push(...selfClosed);
@@ -266,7 +276,7 @@ async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, poo
   // pull request can never be a close proposal's target.
   const targets = await closeProposalTargets(pool, appId, [...closed, ...skipped]);
   log.info('issue-close-watcher', 'Looked at the requests a merge closes', {
-    repo: `${owner}/${repo}`, pr: prNumber, look, closed, skipped, stillOpen: open, waiting,
+    repo: `${owner}/${repo}`, pr: prNumber, look, hosted, closed, skipped, stillOpen: open, waiting,
   });
   return { closed, skipped, stillOpen: open, waiting, targets };
 }

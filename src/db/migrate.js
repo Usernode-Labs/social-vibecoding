@@ -599,6 +599,10 @@ const STAGING_SEEDS = Object.freeze([
   // per project where the capture member has a live change. A fresh staging
   // copy has none, so the section would only have its empty state.
   stagingSeed('seedStagingProfileProjects', async (pool, config) => { await seedStagingProfileProjects(pool); }),
+  // #7189's shots: a project the member made, whose only other "contributor"
+  // was Homeroom bot's merged build for their own request, so App settings
+  // now offers to delete it.
+  stagingSeed('seedStagingBotBuiltDeleteApp', async (pool, config) => { await seedStagingBotBuiltDeleteApp(pool); }),
   stagingSeed('seedStagingPhoneFailures', async (pool, config) => { await seedStagingPhoneFailures(pool); }),
   stagingSeed('seedStagingPlatformMail', async (pool, config) => { await seedStagingPlatformMail(pool); }),
   // #7147's shots: the desktop sidebar keeps ten pinned communities now, not
@@ -610,6 +614,13 @@ const STAGING_SEEDS = Object.freeze([
   // #7170: one fake request in an emoji project, so a thread header's tile can
   // be shot with an emoji in it. Obviously fake, idempotent.
   stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
+  // The hub's Discussion (26 Nov 2026): two fake private projects with a
+  // #general to draw as posts, one of them folded into "Earlier in #general".
+  stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
+  // The signed-out project page's shots (26 Nov 2026): one obviously fake
+  // public project busy enough to show who is around, changes approved by
+  // several people and by its creator alone, and Top contributors.
+  stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -744,6 +755,88 @@ async function seedStagingProfileProjects(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging profile projects seed failed', { message: err.message });
+  }
+}
+
+// #7189's shots: a project the shots' member fixture made whose only other
+// "contributor" was Homeroom bot, because the bot built it from a request
+// the member filed. A contributor is a person, so the bot's merged build
+// counts for the member and the member may delete the project: App settings
+// shows the Danger zone instead of "This app has 1 other contributor". A
+// fresh staging copy has no such project (it truncates chat_sessions and
+// nothing there runs a build), so one is seeded. Obviously fake, idempotent
+// by id, slug and branch, and strictly a no-op outside staging. Nothing here
+// is a signal the code reads to decide anything.
+async function seedStagingBotBuiltDeleteApp(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const APP_ID = 900812;
+  const SLUG = 'staging-demo-bot-built';
+  try {
+    const member = (await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) return seedSkipped('no user usernode-capture');
+    // The bot's account, in the posture botAccount() reads, is the merged
+    // session's author. Other staging seeds write it too, but only once
+    // their own fixtures exist (a copy with no self-hosted project never
+    // reaches that line), so this seed writes it rather than depend on the
+    // order, or on another seed having run at all.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const bot = (await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1")).rows[0];
+    if (!bot) return seedSkipped('no user homeroom_bot');
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, icon_emoji)
+       VALUES ($1, 'Staging demo bot-built app', $2, 'running', 'private', 'private', $3, '🏁')
+       ON CONFLICT (id) DO NOTHING`,
+      [APP_ID, SLUG, member.id]);
+    // The request the bot built from, asked for by the member.
+    const number = 900099;
+    const title = 'Staging demo: a scoreboard for the race';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. Homeroom bot built this from the request.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [APP_ID, number, title, member.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       VALUES ($1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '3 days')
+       ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [APP_ID, number, member.id, title]);
+    // The bot's merged build: a session authored by the synthetic account,
+    // from that request, so it is the member's change.
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at,
+                                  created_from_issue_number, created_at, last_activity_at)
+       SELECT $1::int, $2::int, 'staging-fixture/bot-built-delete', $3::text, $3::text, 'merged',
+              NOW() - INTERVAL '2 days', $4::int, NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1::int AND branch_name = 'staging-fixture/bot-built-delete')`,
+      [APP_ID, bot.id, title, number]);
+    // Two more of the member's own, so the row reads "Creator · 3 live".
+    for (const [branch, name] of [
+      ['staging-fixture/bot-built-flag', 'Staging demo: a flag for the finish line'],
+      ['staging-fixture/bot-built-laps', 'Staging demo: lap times on the board'],
+    ]) {
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at,
+                                    created_at, last_activity_at)
+         SELECT $1::int, $2::int, $3::text, $4::text, $4::text, 'merged',
+                NOW() - INTERVAL '1 day', NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1::int AND branch_name = $3::text)`,
+        [APP_ID, member.id, branch, name]);
+    }
+    // On the member's Home, so the project is one tile away.
+    await pool.query(
+      `INSERT INTO app_favorites (app_id, user_id, sort_order)
+       VALUES ($1, $2, 3) ON CONFLICT (app_id, user_id) DO UPDATE
+         SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
+      [APP_ID, member.id]);
+  } catch (err) {
+    log.warn('db', 'Staging bot-built delete seeding failed', { message: err.message });
   }
 }
 
@@ -2414,6 +2507,113 @@ async function seedStagingPinnedCommunities(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging pinned communities seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// The hub's Discussion (26 Nov 2026): a project's #general drawn as posts
+// with replies. A fresh staging copy has no project with a channel worth
+// drawing for the shots' member fixture, so two obviously fake private
+// projects are seeded, the member in each: one with four posts, their
+// replies and reactions, and one whose #general was a busy chat before
+// Discussion, twelve old messages that fold into "Earlier in #general", with
+// two posts and a reply written since. Fake people only, idempotent by
+// project (a project that already has messages is left alone), and nothing
+// here is a signal any code reads to decide anything.
+async function seedStagingDiscussion(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
+    const people = {};
+    for (const name of ['priya', 'dev', 'ana', 'jo', 'marcus']) {
+      people[name] = (await tx.query(
+        `INSERT INTO users (username, password, has_platform_access)
+         VALUES ($1, 'staging-demo-not-a-login', TRUE)
+         ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+         RETURNING id`, [`staging-demo-${name}`])).rows[0].id;
+    }
+    const project = async (slug, name, emoji) => {
+      await tx.query(
+        `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, icon_emoji)
+         SELECT $1::text, $2::text, 'running', $3, 'private', 'private', $4::text
+          WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = $2::text)`,
+        [name, slug, people.priya, emoji]);
+      const app = (await tx.query('SELECT id, community_id FROM apps WHERE slug = $1', [slug])).rows[0];
+      if (!app || !app.community_id) return null;
+      for (const id of [member.id, ...Object.values(people)]) {
+        await tx.query(
+          `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+           ON CONFLICT DO NOTHING`, [app.community_id, id]);
+        await tx.query(
+          `INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')
+           ON CONFLICT DO NOTHING`, [app.id, id]);
+      }
+      const said = (await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0];
+      return said ? null : app.id;
+    };
+    // `ago` is minutes before now; null is now, after the Discussion marker.
+    const say = async (appId, who, content, ago, rootId = null) => (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $6::int) END)
+       RETURNING id`,
+      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+    const react = async (messageId, emoji, who) => {
+      for (const name of who) {
+        await tx.query(
+          `INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`, [messageId, people[name], emoji]);
+      }
+    };
+    const club = await project('staging-demo-discussion', 'Staging demo: Book Club', '📖');
+    if (club) {
+      const library = await say(club, 'dev', 'the library has four copies of Piranesi on hold for us. Pick up by Friday.', 26 * 60);
+      await react(library, '👍', ['jo', 'ana']);
+      const finished = await say(club, 'ana', 'finished The Remains of the Day last night. I need a week to recover.', 300);
+      await react(finished, '❤️', ['priya', 'jo', 'dev', 'marcus', 'ana']);
+      await say(club, 'jo', 'same, the last chapter got me.', 290, finished);
+      await say(club, 'marcus', 'Adding it to my list for the winter.', 280, finished);
+      await say(club, 'dev', 'Was it the letter, or the pier?', 275, finished);
+      await say(club, 'priya', 'The pier. Every time.', 270, finished);
+      const shelf = await say(club, 'jo', 'can we get a shelf for what everyone is reading right now? I keep asking in here.', 180);
+      await react(shelf, '👍', ['marcus', 'ana', 'dev']);
+      const yeses = await say(club, 'marcus', 'Put it up as a change. It needs two more yeses.', 170, shelf);
+      await react(yeses, '👍', ['jo']);
+      const host = await say(club, 'priya', 'I can host on the 14th if we start at 7. Who is in?', 60);
+      await react(host, '👍', ['dev', 'ana', 'jo', 'marcus']);
+      await react(host, '🎉', ['ana']);
+      const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
+      await react(chairs, '🙌', ['priya', 'ana']);
+      await say(club, 'ana', 'In, and I will bring dessert.', 40, host);
+    }
+    const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
+    if (busy) {
+      const old = [
+        ['marcus', 'who is running the ridge loop on Saturday?'], ['jo', 'Me, if it is not raining.'],
+        ['dev', 'Count me in.'], ['ana', 'Is the north gate open again?'], ['priya', 'Yes, since Tuesday.'],
+        ['marcus', 'Meet at the car park at 8.'], ['jo', 'Who has a spare head torch?'], ['dev', 'I have two.'],
+        ['ana', 'Pace for the long run?'], ['priya', 'Easy, about 6 minutes a kilometre.'],
+        ['marcus', 'New shoes day. Wish me luck.'], ['jo', 'Seconded on the trail shoes thread, they are worth it.'],
+      ];
+      let last = null;
+      for (let i = 0; i < old.length; i += 1) {
+        const ago = (old.length - i) * 24 * 60 + 300;
+        last = await say(busy, old[i][0], old[i][1], ago);
+        // One of them had a reply thread of its own, which stays in #general.
+        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last);
+      }
+      // Written into "Earlier in #general" since: a reply under its last message.
+      await say(busy, 'ana', 'Catching up on all of this. Count me in for the next long run.', null, last);
+      const route = await say(busy, 'marcus', 'Proposing a new Sunday route along the river. Thoughts?', null);
+      await react(route, '👍', ['jo', 'ana']);
+      await say(busy, 'jo', 'Yes please, the hills are wrecking my knees.', null, route);
+      await say(busy, 'priya', 'Race day photos are up on the shared album.', null);
+    }
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging discussion seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
@@ -9296,6 +9496,128 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// THE SIGNED-OUT PROJECT PAGE, BUSY (26 Nov 2026): what a visitor with no
+// account sees of a public project (frontend/src/features/guest/
+// guest-project.tsx) only says who is around from 25 members and 10 people
+// active this week, says who approved a change that went live from its
+// counted yeses (services/public-project.js approvedBy), and lists Top
+// contributors from two people (GET /api/public/apps/:slug/top-contributors).
+// A fresh staging copy has no public project with any of that, so this makes
+// one, obviously fake: "[Mock] Busy public project" (a game, public to see
+// and to join, its app answering a guest as #7128's fixture does), its
+// creator and thirty members, four changes that went live (one approved by
+// three people, one by its creator alone, one by two people, and an older
+// one with no vote, as a first version goes live) and two up for a vote
+// with recent yeses, which make the week's people.
+//
+// Ids sit in the 9013xx block. Idempotent: rows are inserted with ON
+// CONFLICT DO NOTHING, and on every boot the yeses are stamped within the
+// week again so "active this week" holds on a long-lived copy (a change's
+// merge time is the merge machine's to write, so it keeps its first stamp).
+// The accounts cannot sign in. Strictly a no-op outside staging.
+async function seedStagingGuestProjectPage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const OWNER_ID = 901300;
+  const APP_ID = 901300;
+  const SLUG = 'staging-guest-page-busy';
+  const MEMBER_IDS = Array.from({ length: 30 }, (_, i) => 901301 + i);
+  const SHA = 'f'.repeat(40);
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES ($1, 'staging-guest-page-owner', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`,
+      [OWNER_ID]
+    );
+    for (const [i, id] of MEMBER_IDS.entries()) {
+      await pool.query(
+        `INSERT INTO users (id, username, password)
+         VALUES ($1, $2, 'staging-demo-not-a-login')
+         ON CONFLICT DO NOTHING`,
+        [id, `staging-guest-member-${String(i + 1).padStart(2, '0')}`]
+      );
+    }
+    await pool.query(
+      `INSERT INTO apps
+         (id, name, slug, status, created_by, collab_visibility, view_visibility, icon_emoji,
+          manifest_snapshot, last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at, created_at)
+       VALUES ($1, '[Mock] Busy public project', $2, 'running', $3, 'public', 'public', '🧮',
+               jsonb_build_object('secrets', '[]'::jsonb, 'category', 'games',
+                 'description', 'Sample data: a busy public project for the signed-out page.'),
+               NOW() - INTERVAL '1 day', 'gated', 'public', NOW() + INTERVAL '1 year',
+               NOW() - INTERVAL '60 days')
+       ON CONFLICT DO NOTHING`,
+      [APP_ID, SLUG, OWNER_ID]
+    );
+    // The app is ours only if it carries our slug: a cloned row in the block
+    // would be somebody else's.
+    const { rows: [app] } = await pool.query('SELECT id FROM apps WHERE id = $1 AND slug = $2', [APP_ID, SLUG]);
+    if (!app) return;
+    // Members join by the collaborators' trigger (communities.js), never by
+    // writing community_members.
+    for (const id of [OWNER_ID, ...MEMBER_IDS]) {
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '30 days')
+         ON CONFLICT DO NOTHING`,
+        [APP_ID, id]
+      );
+    }
+    // [id, title, author, hours ago, yes from]: live changes, then two up for a vote.
+    const live = [
+      [901300, 'Sample: resume a half-played game instead of dealing a new board', MEMBER_IDS[0], 1, MEMBER_IDS.slice(1, 4)],
+      [901301, 'Sample: add an Undo button that takes back the last move', OWNER_ID, 3, [OWNER_ID]],
+      [901302, 'Sample: explain why a hint failed and let it work on an empty row', MEMBER_IDS[4], 5, MEMBER_IDS.slice(5, 7)],
+      [901303, 'Sample: the first version', OWNER_ID, 24 * 40, []],
+    ];
+    for (const [id, title, author, hours] of live) {
+      await pool.query(
+        `INSERT INTO chat_sessions (id, app_id, user_id, status, pr_title, reviewed_head_sha, created_at, merged_at)
+         VALUES ($1, $2, $3, 'merged', $4, $5, NOW() - make_interval(hours => $6::int + 2), NOW() - make_interval(hours => $6::int))
+         ON CONFLICT DO NOTHING`,
+        [id, APP_ID, author, title, SHA, hours]
+      );
+    }
+    const open = [
+      [901310, 'Sample: show moves, time and highest tile on the win card', MEMBER_IDS[7], MEMBER_IDS.slice(7, 15)],
+      [901311, 'Sample: keep the Play button pinned to the bottom of the screen', MEMBER_IDS[15], MEMBER_IDS.slice(15, 19)],
+    ];
+    for (const [id, title, author] of open) {
+      await pool.query(
+        `INSERT INTO chat_sessions (id, app_id, user_id, status, pr_title, reviewed_head_sha, created_at, promoted_at)
+         VALUES ($1, $2, $3, 'promoted', $4, $5, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+         ON CONFLICT DO NOTHING`,
+        [id, APP_ID, author, title, SHA]
+      );
+    }
+    for (const [id, , , , yes] of live) {
+      for (const voter of yes) {
+        await pool.query(
+          `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes') ON CONFLICT DO NOTHING`,
+          [id, voter]
+        );
+      }
+    }
+    for (const [id, , , yes] of open) {
+      for (const voter of yes) {
+        await pool.query(
+          `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes') ON CONFLICT DO NOTHING`,
+          [id, voter]
+        );
+      }
+    }
+    // Within the week on every boot, so the week's people hold.
+    await pool.query(
+      `UPDATE pr_votes SET created_at = NOW() - INTERVAL '6 hours'
+        WHERE session_id = ANY($1::int[])`,
+      [[...live.map((r) => r[0]), ...open.map((r) => r[0])]]
+    );
+    log.info('db', 'Staging guest project page fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging guest project page seeding failed', { message: err.message });
   }
 }
 
@@ -18392,6 +18714,7 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
   seedStagingProfileProjects,
+  seedStagingBotBuiltDeleteApp,
   // #7147: the eleven fake communities, ten pinned, the sidebar's shots need.
   seedStagingPinnedCommunities,
   // #7170: the request in an emoji project the thread header's tile shot needs.
