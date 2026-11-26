@@ -8,10 +8,6 @@
  * over at either size: this only sets where it starts, and where it goes
  * when the window crosses the line.
  *
- * Only where a folded menu is a strip: the standard look and the brand
- * kit's drawing of it, which set no data-skin on <html>. Under any other
- * look a folded menu is gone, and a tablet would open with no navigation.
- *
  * Called from the tab bar's own effect, so the first render is the
  * prerendered document's (open) and nothing mismatches at hydration.
  */
@@ -25,7 +21,6 @@ export function followDisplaySize(): () => void {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
   const medium = window.matchMedia(RAIL_MEDIUM);
   const apply = () => {
-    if (document.documentElement.hasAttribute('data-skin')) return;
     // A phone has no fold: its bar is the bottom bar, whatever this says.
     if (!window.matchMedia('(min-width: 768px)').matches) return;
     const open = !medium.matches;

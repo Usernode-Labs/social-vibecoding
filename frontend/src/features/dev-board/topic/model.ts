@@ -25,7 +25,7 @@
 
 import type { ActionSpec, StatusPillState } from '../card/model';
 import type { RequestSpecCard } from './request-model';
-import type { ReviewScreen } from '../../review-flow/model';
+import type { ShotsSource } from '../../review-flow/shots-viewer';
 import type { Standing } from '../../../lib/work-state';
 
 
@@ -796,20 +796,23 @@ export interface ChangeThreadView {
   merge?: ChangeMergeView | null;
   /** The Before and after card, or null when there is nothing to show. */
   shots: {
-    state: string; html: string; line: string | null; waiting?: boolean;
+    state: string; line: string | null; waiting?: boolean;
+    /**
+     * A change from before shots: its route captures' tiles
+     * (AppView.visualsTilesHtml), escaped where they are built.
+     */
+    html?: string;
+    /**
+     * A verified run: the shots view model and the change it is of, which
+     * the one before & after viewer reads (review-flow/shots-viewer.tsx).
+     */
+    source?: ShotsSource | null;
     /**
      * 1 Nov 2026 (one page per thread): a verified run's first screen,
      * before and after, for the small pair a change shows on its request's
-     * page, and the id of the viewer (`html`) its Expand opens.
+     * page, whose Expand opens the viewer in the detail column.
      */
-    thumbs?: { before: string | null; after: string | null; viewer: string } | null;
-    /**
-     * A verified run's screens, each a before and an after with the areas
-     * that differ (AppView._workshopVisuals), and what changed, numbered:
-     * the card's picture draws them with the Needs you page's slider.
-     */
-    screens?: ReviewScreen[];
-    changes?: { n: number; text: string }[];
+    thumbs?: { before: string | null; after: string | null } | null;
     /** The change the shots are of, for the detail column its Expand opens. */
     changeId?: number | null;
     /** The change this viewer may start its failed run again on, or null (AppView._canRetakeShots). */
@@ -958,7 +961,12 @@ export interface TopicBody {
   actions: {
     pills: ActionSpec[];
     reasons: { heading: string; items: { key: string; label: string; detail: string; soft: boolean }[] } | null;
-    visuals: { sessionId: number; open: boolean; tilesHtml: string } | null;
+    /**
+     * The About sheet's before/after row: a change's shots, which the one
+     * before & after viewer draws (`source`), or a change from before shots,
+     * its route captures' tiles (AppView.visualsTilesHtml).
+     */
+    visuals: { sessionId: number; open: boolean; source?: ShotsSource; tilesHtml?: string } | null;
   } | null;
   /** The About sheet's heading — "About this change", "About this issue". */
   aboutTitle?: string | null;

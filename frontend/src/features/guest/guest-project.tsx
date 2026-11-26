@@ -42,13 +42,9 @@ import { ChevronLeftIcon, ChevronRightIcon, ShareIcon, UserGroupIcon } from '@/c
 import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { useStoreState } from '../../lib/use-store-state';
-import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestIcon, TryLink } from './guest-discover';
-import { GuestProjectFrame } from './frame/project-frame';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { CARD_GLASS_BTN, CARD_OPEN_BTN, CARD_ROUND_BTN, PEOPLE_CARD, PeopleCard, ProjectCard } from './project-card';
 import {
   type GuestApp, type GuestMerged, type GuestOverview, type GuestVote, MIN_ACTIVE, MIN_MEMBERS, canTryHere,
@@ -62,8 +58,6 @@ export type GuestIntent =
   | { kind: 'ask'; app: GuestApp }
   | { kind: 'chat'; app: GuestApp }
   | { kind: 'use'; app: GuestApp };
-
-type Tab = 'hub' | 'workshop' | 'discussion';
 
 /** The changes each list shows before its "N more" row opens the rest. */
 export const VOTES_SHOWN = 2;
@@ -253,7 +247,7 @@ export function GuestChange({ vote, app, signedIn = false, onBack, onIntent }: {
   );
 }
 
-export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, onPlace, startOnWorkshop = false, signedIn = false, preview = false, initialOverview = null }: {
+export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, signedIn = false, preview = false, initialOverview = null }: {
   /** The project's card from the public directory. */
   app: GuestApp;
   /**
@@ -263,8 +257,6 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
    * page exactly (./visitor-view.tsx).
    */
   signedIn?: boolean;
-  /** The link asked for its changes up for a vote (a card's votes line): the frame's looks open on their Workshop. */
-  startOnWorkshop?: boolean;
   /** The landing's pill class. The card draws its own buttons now; kept so callers need not change. */
   primaryClass?: string;
   onIntent: (intent: GuestIntent) => void;
@@ -279,33 +271,21 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   preview?: boolean;
   /** The overview already read (the visitor view reads it to find the app). */
   initialOverview?: GuestOverview | null;
-  /** The tab that is up, for the frame's bar to name under a look (landing.tsx). */
-  onPlace?: (tab: 'hub' | 'workshop' | 'discussion') => void;
 }) {
   const t = useMessages('auth');
-  const device = useStoreState(devicePinsStore);
-  useEffect(() => { loadDevicePins(); }, []);
-  const pinnedHere = device.communities.includes(app.slug);
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
-  // Under one of the frame's looks the page is the kit's
-  // (./frame/project-frame.tsx), handed this component's data and state.
-  // Mounted after the first paint, so the device's own look is read at once.
-  const frame = isFrameSkin(useLiveSkin());
-  const [tab, setTab] = useState<Tab>(startOnWorkshop ? 'workshop' : 'hub');
   const [overview, setOverview] = useState<GuestOverview | null>(initialOverview);
   const [loaded, setLoaded] = useState(!!initialOverview);
   // The change opened from Up for a vote, and whether each list is open in full.
   const [opened, setOpened] = useState<number | null>(null);
   const [allVotes, setAllVotes] = useState(false);
   const [allLive, setAllLive] = useState(false);
-  useEffect(() => { onPlace?.(tab); }, [tab, onPlace]);
 
   useEffect(() => {
     let live = true;
     setOpened(null);
     setAllVotes(false);
     setAllLive(false);
-    setTab(startOnWorkshop ? 'workshop' : 'hub');
     if (initialOverview && initialOverview.app.slug === app.slug) {
       setOverview(initialOverview);
       setLoaded(true);
@@ -319,7 +299,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       setLoaded(true);
     });
     return () => { live = false; };
-  }, [app.slug, startOnWorkshop, initialOverview]);
+  }, [app.slug, initialOverview]);
 
   // A change opened, or closed again, starts at the top of the page.
   useEffect(() => {
@@ -329,26 +309,6 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   }, [opened]);
 
   const canTry = signedIn || canTryHere(app, inHomeroomApp());
-
-  if (frame) {
-    return (
-      <GuestProjectFrame
-        app={app}
-        overview={overview}
-        loaded={loaded}
-        tab={tab}
-        onTab={setTab}
-        signedIn={signedIn}
-        pinned={pinnedHere}
-        onPin={() => { toggleDevicePin('communities', app.slug); }}
-        canTry={canTryHere(app, inHomeroomApp())}
-        color={color}
-        onIntent={onIntent}
-        onOpenInside={onOpenInside}
-        onShare={onShare}
-      />
-    );
-  }
 
   const now = Date.now();
   const votes = overview?.votes || [];

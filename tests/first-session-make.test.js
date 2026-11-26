@@ -520,7 +520,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   assert.match(src, /import \{ revealScrollTop, useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
   // (Phone review #9: from Create the ✕ floats over the scroller's head, so
   // the reveal counts that head as covered.)
-  assert.match(src, /const head = underHeader && !\(isFrameSkin\(look\) && fromCreate\) \? MAKE_HEAD : 0;\s*useKeyboardSurface\(scrollerRef, \{ head \}\);/);
+  assert.match(src, /const head = underHeader \? MAKE_HEAD : 0;\s*useKeyboardSurface\(scrollerRef, \{ head \}\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
   // #4597: the caret goes in from code only where the sign-in sheet would
   // put one (a desktop, or keys already up), so on a phone the screen opens
@@ -1287,7 +1287,7 @@ test('#6784: a thread\'s plan comes along, and the thread is sent with the brief
   // along with an edited one too (the condition is the thread, not the text).
   assert.ok(html.indexOf('data-make-thread-idea') > html.indexOf('</textarea>'));
   assert.ok(html.indexOf('data-make-thread-idea') < html.indexOf('first-session-name'));
-  assert.match(read(`${DIR}/make.tsx`), /kept: threadRootId \? \{ attr: 'data-make-thread-idea'/);
+  assert.match(read(`${DIR}/make.tsx`), /\{threadRootId \? <p data-make-thread-idea="" className=\{HINT\}>\{t\(THREAD_IDEA_LINE\)\}<\/p> : null\}/);
   // Without a thread there is no line, as before.
   assert.doesNotMatch(renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base), /data-make-thread-idea/);
 
@@ -1310,9 +1310,8 @@ test('phone review: the page stops at the Duo\'s column, scrolls under the ✕ w
   const block = css.slice(css.indexOf('/* THE NEW PROJECT PAGE ON A PHONE'));
   // #9: the page pads itself by the system's column, a side of the hardware.
   assert.match(block, /\/\* direction: physical[^*]*\*\/\nhtml\[data-side-strip="right"\] \[data-first-session-make\] \{\n  padding-right: var\(--platform-strip-w, 0px\);\n\}\nhtml\[data-side-strip="left"\] \[data-first-session-make\] \{\n  padding-left: var\(--platform-strip-w, 0px\);\n\}\n\/\* direction: logical \*\//);
-  // #9: from Create the scroller's head is the ✕'s, 3rem, and fades there
-  // (not under a frame look, whose page draws its own head).
-  assert.match(block, /\[data-first-session-make\]\.platform-under-header:not\(\[data-make-kit\]\) > \[data-first-session-make-scroll\] \{\n  padding-top: 3rem;\n  -webkit-mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n  mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n\}/);
+  // #9: from Create the scroller's head is the ✕'s, 3rem, and fades there.
+  assert.match(block, /\[data-first-session-make\]\.platform-under-header > \[data-first-session-make-scroll\] \{\n  padding-top: 3rem;\n  -webkit-mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n  mask-image: linear-gradient\(to bottom, transparent 4px, #000 3rem\);\n\}/);
   const make = loadTsx(`${DIR}/make.tsx`, { stubs: { '../../lib/i18n/react': ENGLISH_HOOK } });
   assert.equal(make.MAKE_HEAD, 48, 'the same 3rem, in px, for the reveals');
   const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', underHeader: true, onMade() {}, onClose() {} });
@@ -1325,7 +1324,7 @@ test('phone review: the page stops at the Duo\'s column, scrolls under the ✕ w
   assert.match(src, /if \(window\.innerWidth === width\) return;/, 'a change of width, never the keys');
   assert.match(src, /revealField\(scroller, field, scroller\.querySelector\('\[data-make-submit\]'\), head\);\s*\}, TURN_SETTLE_MS\);/);
   // S7: Make it, Import it and the rule sheet's Done take the page's face.
-  assert.match(block, /html:not\(\[data-skin\]\) :is\(\[data-first-session-make\] button\[type="submit"\], \[data-make-rule-done\]\) \{\n  font-family: inherit;\n\}/);
+  assert.match(block, /html:root :is\(\[data-first-session-make\] button\[type="submit"\], \[data-make-rule-done\]\) \{\n  font-family: inherit;\n\}/);
 });
 
 test('phone review: "Who can change it?" has no "Now" badge, and its two rows start their words on one edge (#122)', () => {

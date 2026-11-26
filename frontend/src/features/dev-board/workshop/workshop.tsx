@@ -49,18 +49,12 @@ import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   ArrowRightIcon,
-  ArrowUpIcon,
-  BallotIcon,
   ChatBubbleTailIcon,
-  CheckIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   EllipsisHorizontalIcon,
   PlayIcon,
   SparklesIcon,
   SpeechCheckIcon,
-  Squares2X2Icon,
-  UserIcon,
   XIcon,
 } from '@/components/ui/icons';
 
@@ -68,8 +62,6 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
-import { connectionStatusStore } from '../../../lib/offline';
-import { freshnessStore, savedAtLabel, showsAge } from '../../../lib/freshness';
 import { useVisibility } from '../../../lib/visibility-store';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
@@ -85,17 +77,16 @@ import { devKanbanStore, devWorkshopStore, govVoteSavedStore, voteSavedStore } f
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
-import { callAppView, openHref } from '../card/fold';
+import { callAppView } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
-import { CardSkeleton, CountSkeleton } from '../card/skeleton';
+import { CardSkeleton } from '../card/skeleton';
 import { useWorkshopGroup } from './group-mode-store';
 import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, InviteHeroCard, ShareItCard, approvalStep, canLeave,
-  communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
+  CommunityCard, HubCardClose, canLeave, communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import {
   FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
@@ -105,44 +96,26 @@ import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
-  channelPlace, findChannel, isChannelPlace, isPlaceKey, liveTopics, placeHandle, placeHref, unreadTotal, type PlaceKey,
+  channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
 } from './places';
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
-import {
-  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type ProjectTab,
-} from './frame/project-frame';
-import { placeRows } from './project-places';
-import { kanbanFiltersStore, type KanbanFiltersState } from '../kanban-filters-store';
-import { ruleSentence } from './community-card';
-import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
 import { pushDismissible } from '../../../lib/back-stack';
-import { FirstChangeCard, useFirstChange } from './first-change';
-import { slotCounts, useBotSlots } from './bot-slots';
-import { weekName, weekRange } from './week-pages';
-import { liveSinceLine } from './hub-cards';
-import { offerJoin } from '../../../lib/join-required';
 import { watchBoardLinks } from './board-links';
-import { isFrameSkin, isKitHome, useLiveSkin } from '../../../lib/skin';
-import { deskLine, deskWords, useDesk } from '../../ai/desk';
-import { projectTabAddress } from '../../ai/filter-address';
-import { changeHref } from '../../../lib/change-href';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
-import { PrivateRequests } from './private-requests';
 import { PageBack } from './page-back';
-import { BotSlotsDoor, BotSlotsPage, warmBotSlots } from './bot-slots';
+import { BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
 import {
-  ActButton, WorkList, primaryAct, topicRef, type CardRow as WorkCardRow, type TopicRef,
+  WorkList, type CardRow as WorkCardRow, type TopicRef,
 } from './work-row';
 import { TopicSidePanel } from './side-panel';
-import { ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, weekDate } from './week-pages';
-import { YourWorkCard } from './your-work';
+import { WeekPage } from './week-pages';
 import { WorkshopFront } from './front-page';
 import { PrivateRequestsPage } from './private-requests';
 import { EarlierWeeks } from './week-pages';
@@ -862,220 +835,6 @@ const SORTS: { key: SortKey; label: string }[] = [
 
 type Dash = NonNullable<DevWorkshopView['dashboard']>;
 
-/** The rate, as a sentence: this week's merges against the same point last week. */
-function pace(d: Dash): string {
-  const n = d.shippedWeek;
-  const p = d.shippedPrevWeekToDate;
-  // ── Why a partial history states no rate ──────────────────────────
-  //
-  // Both weeks are counted from the SAME page of merged history, and when
-  // there is more behind it the earlier week is the one more likely to fall
-  // off the end. So a truncated page reads as a drought that never happened:
-  // an app merging twenty changes a week was told "20 landed this week, the
-  // first in a fortnight", which is not a hedge away from true, it is
-  // backwards. `At least` was already on the COUNT and it was never enough,
-  // because the fault is in the COMPARISON.
-  //
-  // With a partial page the honest sentence is the floor and nothing else.
-  if (d.partial) {
-    if (!n) return translate('project:workshop.pace.nonePartial');
-    return translate('project:workshop.pace.atLeast', { count: n });
-  }
-  if (!n && !p) return translate('project:workshop.pace.noneFortnight');
-  if (!p) return translate('project:workshop.pace.firstInFortnight', { count: n });
-  if (n > p) return translate('project:workshop.pace.up', { count: n, previous: p });
-  if (n < p) return translate('project:workshop.pace.down', { count: n, previous: p });
-  return translate('project:workshop.pace.same', { count: n });
-}
-
-/**
- * The four figures, at the head of the Workshop's Overview card.
- *
- * They were prose ("58 open items across 11 themes... 4 proposals are waiting
- * on votes and 19 open items have nobody on them"), which is the slowest
- * possible way to read four integers. A tile is scanned; a clause has to be
- * parsed. These four and not others: how much is open, the part of it nobody
- * has taken, the decisions waiting on votes, and what actually landed.
- *
- * ── ONE ROW, NOT FOUR CARDS ──
- * Hairlines between the figures, no fill of their own, on the card's own
- * ground, four across at every width (5 Oct 2026): a phone draws them closer
- * together and a size smaller instead (app.css `.dev-ws-dash`). A label wraps
- * onto a second line there; it is never cut short.
- *
- * ── THE ORDER IS AN ARGUMENT ──
- * The backlog, then the part of it nobody has taken, then the decisions
- * waiting, then what actually landed. It ends on the one number that says
- * the app is moving.
- *
- * ── THE MARK CARRIES THE TONE; THE COLOUR RIDES ALONG ──
- * A dot beside the label carries the tone, so the number is free to take
- * the colour as well: redundant rather than load-bearing. Only the two
- * figures that are a CALL wear either, and a zero wears neither.
- *
- * ── AND A LINE UNDER TWO OF THEM (After-Workshop-B) ──
- * Waiting on votes says how many of those wait on YOU ("4 on you", the
- * place bar's own count, `owed`), and live this week what last week had come
- * to by this same point ("from 382 by this time last week"), the rate `pace()`
- * words in full on hover. Each is left out
- * when it would say zero, and the rate is left out of a paged history,
- * where the earlier week is a floor and the comparison would lie. Open and
- * unclaimed have no line: nothing stores what they were last week.
- *
- * "Live this week" wears a `+` when the merged history is paged, because the
- * number is then a floor and not a total.
- *
- * ── AND A FIGURE WITH SOMETHING TO SHOW OPENS IT (#4745, #5369) ──
- * With a change or a group decision up for a vote, "waiting on a vote" is a
- * button: one waiting opens that item's page, several open All items, where
- * every one of them is listed. #5369: the other three figures open All
- * items narrowed to exactly what they count (open items, open requests
- * nobody has taken, changes live this week), through
- * AppView.openWorkshopStage — revised in the change's discussion: they stay
- * the spans they always were, as unstyled clickable wrappers (the pointer
- * cursor and a keyboard focus ring are the whole affordance), not buttons
- * and not link text. A zero stays a plain number — there is nothing to
- * open.
- */
-type DashStage = 'open' | 'unclaimed' | 'shipped';
-
-/**
- * Nothing open, nobody waiting on a vote, nothing live this week (phone
- * review #64): a project with nothing going on was a dashboard of zeros, "0
- * open items", "0 nobody on them", "0 waiting on votes", "0 live this week",
- * under the bot's "building 0 of 5". It says so in one line instead, and the
- * bot's line goes with the tiles. Not while "live this week" is still being
- * read, nor from a paged history, whose zero is a floor.
- */
-export function dashQuiet(d: Dash | null | undefined, pending = false): boolean {
-  return !!d && !pending && !d.partial && !d.open && !d.unclaimed && !d.votesWaiting && !d.shippedWeek;
-}
-
-function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: number; pending?: boolean; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
-  const t = useMessages('project');
-  // The native-offline proposal: drawn from what this phone saved while
-  // Homeroom cannot be reached, the vote figures say when they are from —
-  // the one number here that misleads when old (an item may have been
-  // decided since). The header's status says it for the screen as a whole.
-  const { status } = useStoreState(connectionStatusStore);
-  const { savedAt } = useStoreState(freshnessStore);
-  const asOf = status !== 'online' && status !== 'updating' && savedAt !== null && showsAge(savedAt)
-    ? t('project:workshop.dash.asOf', { time: savedAtLabel(savedAt) })
-    : null;
-  if (dashQuiet(d, pending)) return <p className="dev-ws-dash-none" data-ws-dash-none="">{t('project:workshop.dash.none')}</p>;
-  const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
-  const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
-    { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
-    { key: 'unclaimed', n: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
-    {
-      key: 'votes',
-      n: d.votesWaiting,
-      label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
-      tone: d.votesWaiting ? 'warn' : undefined,
-      sub: owed > 0 ? (
-        <span className="dev-ws-dash-sub" data-ws-dash-sub="owed">{t('project:workshop.dash.onYou', { count: owed })}</span>
-      ) : null,
-    },
-    {
-      key: 'shipped',
-      n: d.shippedWeek,
-      label: t('project:workshop.dash.shipped'),
-      tone: d.shippedWeek ? 'good' : undefined,
-      title: d.partial
-        ? t('project:workshop.dash.shippedPartial')
-        : t('project:workshop.dash.shippedWeek'),
-      sub: rate ? (
-        <span className="dev-ws-dash-sub" data-ws-dash-sub="rate" data-dir={rate} title={pace(d)}>
-          {rate === 'same' ? null : <ArrowUpIcon className="dev-ws-dash-trend" aria-hidden="true" />}
-          {t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate })}
-        </span>
-      ) : null,
-    },
-  ];
-  return (
-    <div className="dev-ws-dash" data-ws-dash="">
-      {cells.map((c) => {
-        // #4745, #5369: a figure with something to show and a handler to
-        // route the tap opens it. Votes routes to its own handler (one
-        // waiting item's page, or All items) and keeps the button #4745
-        // made it. #5369, revised in the change's discussion: the other
-        // three stay the spans they always were — unstyled clickable
-        // wrappers (`role="button"`, focusable, Enter and Space) whose only
-        // affordances are the pointer cursor and a keyboard focus ring, so
-        // nothing on the strip looks like a button or a link. The markup is
-        // otherwise like-for-like: the same class, the same attribute.
-        //
-        // #6826: "live this week" is counted from the Done list, so while
-        // that read is on its way its number is a pulsing bar — the same
-        // mark the board's column counts wear — and it opens nothing, since
-        // there is no number to open yet.
-        const waiting = !!pending && c.key === 'shipped';
-        const tappable = !waiting && c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
-        const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
-        const cls = !waiting && c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
-        const Mark = c.key === 'open' ? Squares2X2Icon : c.key === 'unclaimed' ? UserIcon : c.key === 'votes' ? BallotIcon : CheckIcon;
-        const content = (
-          <>
-            <b>{waiting ? <CountSkeleton /> : c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
-            <span className="dev-ws-dash-label">
-              {/* A GRID in app.css, not an inline run: the label wraps at phone
-                  widths, and a centred mark floated to the middle of a two-line
-                  label while its second line ran back underneath the dot. */}
-              {!waiting && c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
-              <span>{c.label}</span>
-            </span>
-            {waiting ? null : c.sub}
-            {c.key === 'votes' && asOf ? <span className="dev-ws-dash-sub" data-ws-dash-sub="asof">{asOf}</span> : null}
-            {/* The figure's mark, last so the number stays the cell's first word: drawn only where a look makes each figure a card of its own (app.css, the Workshop in the standard look), which places it. */}
-            <i className="dev-ws-dash-mark" aria-hidden="true"><Mark className="h-5 w-5" /></i>
-          </>
-        );
-        if (tappable && c.key === 'votes') {
-          return (
-            <button
-              key={c.key}
-              type="button"
-              className={cls}
-              data-ws-dash-cell={c.key}
-              data-zero={!waiting && !c.n ? '' : undefined}
-              data-ws-dash-open=""
-              onClick={onTap}
-              title={c.title}
-            >
-              {content}
-            </button>
-          );
-        }
-        return (
-          <span
-            key={c.key}
-            className={cls}
-            data-ws-dash-cell={c.key}
-            data-zero={!waiting && !c.n ? '' : undefined}
-            data-ws-dash-open={tappable ? '' : undefined}
-            role={tappable ? 'button' : undefined}
-            tabIndex={tappable ? 0 : undefined}
-            onClick={tappable ? onTap : undefined}
-            onKeyDown={
-              tappable
-                ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onTap();
-                    }
-                  }
-                : undefined
-            }
-            title={c.title}
-          >
-            {content}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 /**
  * The three cards: what landed last week, what has landed this week, what
  * the open work is about — one model-written line each, under a title.
@@ -1661,15 +1420,6 @@ export function DevWorkshop(): ReactNode {
   // about which app this is, and no second fetch: the controller publishes
   // both `app_icon_*` columns here already.
   const app = useStoreState(improveStore);
-  // Under one of the frame's looks the page is the kit's (./frame/project-
-  // frame.tsx): the places are its tabs and the Hub is groups of one row.
-  // Your work is read only then; Topics is a page the kit adds, held here.
-  const frame = isFrameSkin(useLiveSkin());
-  const desk = useDesk(frame ? v.slug : null);
-  // The kit's Workshop asks a newcomer who should build, as the Your work card does (./first-change.tsx).
-  const frameFirst = useFirstChange(frame ? v.slug || '' : '', desk);
-  const frameSlots = useBotSlots(frame ? v.slug : null);
-  const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
@@ -1688,11 +1438,9 @@ export function DevWorkshop(): ReactNode {
   const [openRows, setOpenRows] = useState<Record<string, string>>(
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
-  // #4457: What happened's weeks before this one — how many are out
-  // ("Earlier weeks" adds more), and the week whose page is open in the
-  // tab, by its Monday (sinceWeekStateKey), or null for the tab itself.
-  const [weeksShown, setWeeksShown] = useState(WEEKS_FIRST);
-  // 24 Nov 2026: under the standard look the Workshop's front page
+  // #4457: the week whose page is open in the tab, by its Monday
+  // (sinceWeekStateKey), or null for the tab itself.
+  // 24 Nov 2026: the Workshop's front page
   // (./front-page.tsx) opens two more pages in the tab the same way, by a key
   // no week has: Earlier weeks (EARLIER_WEEKS) and Private requests
   // (PRIVATE_PAGE). `weekFromEarlier` says a week's page was opened from
@@ -1702,10 +1450,6 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
-  // All items in the kit shows the board's own search and filters
-  // (frameAll, below). Here with the other hooks: the kit's branch sits
-  // after the page's early returns.
-  const frameFilters = useStoreState<KanbanFiltersState>(kanbanFiltersStore);
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -1730,10 +1474,6 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
-  // Standard (WIP) folds Invite into the hero's row (no Invite card) and draws the board as the kit does.
-  const wipLook = isKitHome(useLiveSkin());
-  // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
-  const kitHub = isKitHome(useLiveSkin());
   const [tab, setTab] = useState<TabKey>(() => freshTab(v.slug) || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -1868,9 +1608,9 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab(v.slug) || 'status');
   }, [v.slug]);
-  // Standard (WIP), on the board: resting on a card draws what it is tied to
+  // On the board, resting on a card draws what it is tied to
   // (./board-links.ts). Its layer is its own; nothing is written to the board.
-  useEffect(() => (wipLook && tab === 'all' ? watchBoardLinks() : undefined), [wipLook, tab]);
+  useEffect(() => (tab === 'all' ? watchBoardLinks() : undefined), [tab]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
@@ -2061,7 +1801,6 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     setSideItem(null);
     setOpenWeek(null);
-    setWeeksShown(WEEKS_FIRST);
   }, [v.slug]);
   // #6380: THE COLUMN'S "OPEN IN WORKSHOP". Beside the Homeroom bot's list a
   // request, change or decision has no Workshop row to press, so the row
@@ -2248,7 +1987,7 @@ export function DevWorkshop(): ReactNode {
   const channelHere = isChannelPlace(tab);
   // The Workshop's front page draws its own shape while the board is read
   // (./front-page.tsx): its words first, its numbers as they land.
-  const frontHere = tab === 'workshop' && wipLook && !openWeek;
+  const frontHere = tab === 'workshop' && !openWeek;
   if (pending && (!v.slug || (tab !== 'status' && !channelHere && !frontHere))) {
     return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
   }
@@ -2406,308 +2145,7 @@ export function DevWorkshop(): ReactNode {
   };
   const frontPage = openWeek === EARLIER_WEEKS || openWeek === PRIVATE_PAGE ? openWeek : null;
   // Mark all seen, where the log is read now (the week's page, Earlier weeks), on a returning visit.
-  const markSeen = wipLook && v.since ? { any: sinceRows.length > 0, onClear: clearSince } : null;
-  // What happened's new requests nobody has picked up (New for you's, until
-  // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
-  // request card's own act when that act is asking Homeroom bot to build
-  // it. 1 Nov 2026: or Work on it, where the card's act is
-  // Work on this with Homeroom bot. Never on your own, or on one already
-  // somebody's.
-  const freshAct = (r: CardRow): ReactNode => {
-    const b = r.brief;
-    if (!b || b.mine || b.requested || b.kind !== 'request') return null;
-    const a = primaryAct(r.card);
-    if (a && a.act && a.act.fn === 'askBotToBuild') {
-      return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
-    }
-    if (a && a.act && a.act.fn === 'workOnIssueWithBot') {
-      return <ActButton a={a} label={t('project:workshop.fresh.workOnIt')} />;
-    }
-    return null;
-  };
-
-  /* ── The page in the one frame (./frame/project-frame.tsx) ──
-     Under one of the frame's looks the places are the page's tabs and the
-     Hub is the kit's, from what this Hub reads: the same votes owed, the
-     same work with Homeroom bot, the channel's last line, the last changes
-     live, the topics, who is around and the approval rule. A place not yet
-     drawn in the kit keeps its own body under the kit's head. Topics is a
-     page the kit adds (the tour's s25); it lists the channels this page's
-     places already name, and opening one is that place. */
-  const frameTopicList = frame ? liveTopics(community?.places) : [];
-  const frameTabs: ProjectTab[] = frame ? [
-    { key: 'status', label: t('project:places.list.hub') },
-    { key: 'needs', label: t('project:places.list.needsYou'), count: owed },
-    { key: 'workshop', label: t('project:places.list.workshop') },
-    ...(community?.channel ? [{
-      key: 'discussion',
-      label: t('project:frame.hub.channel', { handle: community.channel.handle || 'general' }),
-      count: Number(community.channel.unread_count) || 0,
-    }] : []),
-    ...(frameTopicList.length ? [{ key: 'topics', label: t('project:places.list.topics') }] : []),
-  ] : [];
-  const frameTab = frameTopics || tab.startsWith('c:') ? 'topics'
-    : tab === 'all' || tab === 'bot' || tab === 'plan' ? 'workshop' : tab;
-  const pickFrameTab = (key: string) => {
-    if (key === 'topics') { setFrameTopics(true); scrollToHead(hostRef.current); return; }
-    setFrameTopics(false);
-    if (key === tabRef.current) scrollToHead(hostRef.current);
-    else openTab(key as TabKey);
-  };
-  const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
-  // Join, for someone signed in who is not in yet: the hero's own Join
-  // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
-  const joinHere = community && !community.is_member && (window as any).App?.user
-    ? () => { void offerJoin({ code: 'join_required', app: { slug, name: projectName } }).finally(() => { void reloadCommunity(slug); }); }
-    : null;
-  // A topic's channel lights Topics but is the product's own page under
-  // the head (its figures, its signals, its room), so the head says so and
-  // app.css leaves the body on show.
-  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onInvite: inviteHere, onJoin: joinHere };
-  // The approval rule, as the Overview's own line says it where the card is
-  // narrow (./community-card.tsx ApprovalLine, RuleWords): the sentence,
-  // the wait after it, and Rules for whoever may change it.
-  const frameRule = () => {
-    const approval = community?.approval || null;
-    if (!approval || !community) return null;
-    const approvers = Array.isArray(approval.approvers) ? approval.approvers : null;
-    const line = ruleSentence(approval, community, approvers);
-    return {
-      id: line.short,
-      values: line.values,
-      faces: line.names ? line.names.map((name) => ({ name, color: swatchFor(name) })) : null,
-      wait: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || null,
-      onRules: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
-    };
-  };
-  const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
-  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head and
-  // the board's own search. The list under it is this page's own (the board
-  // by stage), which app.css lays in the kit's content column.
-  const frameAllUp = frame && !frameTopics && tab === 'all';
-  const frameAll = (): ReactNode => (
-    <ProjectAllItemsFrame
-      {...frameHead}
-      project={projectName}
-      query={frameFilters.q}
-      querySeq={frameFilters.seq}
-      // The board reads its search box (AppView._onKanbanSearchInput), which
-      // stays mounted behind the kit's field: the text goes through it.
-      onQuery={(next) => {
-        const box = hostRef.current ? hostRef.current.querySelector<HTMLInputElement>('#dev-kanban-search') : null;
-        if (!box) return;
-        box.value = next;
-        callAppView('_onKanbanSearchInput');
-      }}
-    />
-  );
-  const frameWorkshop = (): ReactNode => {
-    const d = v.dashboard;
-    const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;
-    const counts = slots ? slotCounts(slots) : null;
-    // The Overview's figures, as DashTiles draws them: each opens what it
-    // counts when it counts something (the votes figure the one waiting
-    // item's page, or All items).
-    const stage = (key: 'open' | 'unclaimed' | 'shipped') => () => { callAppView('openWorkshopStage', key); openTab('all'); };
-    const votes = () => {
-      const refs = v.dashboard?.votesWaitingRefs || [];
-      if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
-      else openTab('all');
-    };
-    const paced = !!d && !d.partial && d.shippedPrevWeekToDate > 0;
-    const line = deskLine(desk);
-    const liveOf = (week: (typeof weeks)[number]) => (week.counts && week.counts.closed ? { count: week.counts.closed, partial: !!week.counts.partial } : null);
-    const weekOf = (week: (typeof weeks)[number], open: boolean) => ({
-      key: sinceWeekStateKey(week),
-      name: weekName(week),
-      range: week.title || week.key === 'lastWeek' || week.live ? weekRange(week.startMs, week.endMs, week.live) : null,
-      fresh: week.fresh.filter((r) => !!r.brief).length,
-      live: liveOf(week),
-      onOpen: open ? () => openWeekPage(sinceWeekStateKey(week)) : null,
-    });
-    const GLYPH: Record<string, string> = { request: 'chat', change: 'edit', live: 'rocket', vote: 'vote' };
-    const itemOf = (row: WorkCardRow, fresh: boolean) => {
-      const b = row.brief!;
-      const ref = topicRef(row.card);
-      const state = row.card.pill?.state || null;
-      const going = b.kind === 'live' && !!state && (state.key === 'deploying' || state.key === 'delivery_pending' || state.key === 'merging');
-      const at = Number(row.at) || 0;
-      // Build it, on a new request nobody has picked up (freshAct, above).
-      const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
-      const fn = a && a.act ? a.act.fn : '';
-      const actLabel = fn === 'askBotToBuild' ? t('project:workshop.fresh.buildIt')
-        : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
-      return {
-        key: row.key,
-        title: row.card.title.text || row.card.title.title || '',
-        href: openHref(slug, row.card),
-        glyph: going ? 'refresh' : GLYPH[b.kind] || 'edit',
-        fresh,
-        you: !!b.mine,
-        going,
-        stuck: b.kind === 'live' && state && !going && state.tone === 'blocked' ? state.label : null,
-        ago: at > 0 ? agoStamp(at).text : null,
-        on: !!ref && sideKey === `${ref.kind}:${ref.id}`,
-        onOpen: ref ? (event: ReactMouseEvent<HTMLAnchorElement>) => openItem(event, ref) : undefined,
-        act: a && a.act && actLabel ? {
-          label: actLabel,
-          title: a.title || a.label,
-          onPress: (button: HTMLElement) => { callAppView(a.act!.fn, ...(a.act!.args || []), ...(a.passNode ? [button] : [])); },
-        } : null,
-      };
-    };
-    const cards = (rows: ListRow[]) => rows.filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
-    return (
-      <ProjectWorkshopFrame
-        {...frameHead}
-        purpose={t('project:frame.place.workshop', { project: projectName })}
-        overview={d ? {
-          onAll: () => openTab('all'),
-          filtered: !!v.meta.filtered,
-          facts: [
-            { value: d.open, label: t('project:workshop.dash.open', { count: d.open }), onClick: d.open > 0 ? stage('open') : null },
-            { value: d.unclaimed, label: t('project:workshop.dash.unclaimed'), onClick: d.unclaimed > 0 ? stage('unclaimed') : null },
-            {
-              value: d.votesWaiting,
-              label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
-              tone: d.votesWaiting ? 'wait' as const : undefined,
-              sub: owed > 0 ? t('project:workshop.dash.onYou', { count: owed }) : null,
-              subAsks: owed > 0,
-              onClick: d.votesWaiting > 0 ? votes : null,
-            },
-            // #6826: counted from the Done list, so while that read is on
-            // its way this figure is a pulsing bar and opens nothing (see
-            // DashTiles, which draws the same state on this strip's twin).
-            {
-              value: v.mergedPending ? <CountSkeleton /> : d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
-              label: t('project:workshop.dash.shipped'),
-              tone: !v.mergedPending && d.shippedWeek ? 'ok' as const : undefined,
-              sub: !v.mergedPending && paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
-              onClick: !v.mergedPending && d.shippedWeek > 0 ? stage('shipped') : null,
-            },
-          ],
-        } : null}
-        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} solo={community?.audience === 'solo'} live={!!(v.dashboard && v.dashboard.everShipped) || (v.recentLive || []).length > 0} /> : null}
-        work={v.mine?.viewer ? {
-          line: line ? t(line.id, line.values) : null,
-          words: deskWords(desk),
-          href: projectTabAddress(slug),
-          hint: t('project:workshop.desk.open', { project: projectName }),
-        } : null}
-        happened={weeks.length || v.since ? {
-          onClear: v.since ? clearSince : null,
-          clearOff: !sinceRows.length,
-          none: !!v.since && !sinceRows.length,
-          thisWeek: thisWeek ? {
-            ...weekOf(thisWeek, false),
-            items: [
-              ...cards(thisWeek.fresh).slice(0, THIS_WEEK_NEW_MAX).map((row) => itemOf(row, true)),
-              ...cards(thisWeek.seen).slice(0, THIS_WEEK_SEEN).map((row) => itemOf(row, false)),
-            ],
-            onAll: thisWeek.fresh.length || thisWeek.seen.length || thisWeek.line ? () => openWeekPage(sinceWeekStateKey(thisWeek)) : null,
-          } : null,
-          weeks: pastWeeks.slice(0, weeksShown).map((week) => weekOf(week, true)),
-          onEarlier: weeksShown < pastWeeks.length ? () => setWeeksShown(weeksShown + WEEKS_STEP) : null,
-          started: !(weeksShown < pastWeeks.length) && firstWeek && pastWeeks.length ? t('project:since.projectStarted', { date: weekDate(firstWeek) }) : null,
-        } : null}
-        slots={slots && counts ? {
-          title: t('project:frame.workshop.building', { used: counts.building, cap: slots.buildCap ?? counts.building }),
-          line: factsLine([
-            counts.voting ? t('project:botSlots.doorVotes', { count: counts.voting }) : null,
-            slots.waiting.length ? t('project:botSlots.doorWaiting', { count: slots.waiting.length }) : null,
-          ]) || null,
-          onOpen: () => openTab('bot'),
-        } : null}
-        rule={frameRule()}
-        below={slug ? <PrivateRequests slug={slug} /> : null}
-      />
-    );
-  };
-  const frameHub = (): ReactNode => {
-    const channel = community?.channel || null;
-    const recent = channel ? (channel.recent || []).map((m) => ({ content: m.content as string | null, by: m.by, at: m.created_at as string | null })) : [];
-    if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
-    const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
-    const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
-    const lastAgo = last && last.at ? agoStamp(last.at).text : '';
-    const first = owedRows.find((row) => row.t === 'card') || null;
-    const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
-    const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
-    const activeCount = Number(community?.activity?.active_week) || 0;
-    const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
-    const names = listText(active.map((person) => person.username));
-    const rest = Math.max(0, activeCount - active.length);
-    const liveRows = (v.recentLive || []).slice(0, 3);
-    return (
-      <ProjectHubFrame
-        {...frameHead}
-        name={projectName}
-        purpose={community?.description || null}
-        tile={{ src: own ? app.iconUrl || null : null, emoji: own ? app.iconEmoji || null : null }}
-        onOpenApp={!actions.selfHosted ? () => { (window as any).App?.openAppTab?.(slug, 'app'); } : null}
-        // As the Hub's own card (./hub-cards.tsx ForYouCard): the row while
-        // any vote is owed, seen or not, else the quiet line, which says
-        // nothing on a project nobody else is in unless requests wait.
-        needs={owedRows.length ? {
-          count: owed,
-          line: owed > 0
-            ? (owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle)
-            : t('project:hub.needs.skipped', { count: owedRows.length }),
-          join: owed > 0 && !canPost,
-        } : null}
-        quiet={owedRows.length || (alone && !claims) ? null : { claims, alone }}
-        onNeeds={() => openTab('needs')}
-        onWorkshop={v.mine?.viewer ? () => openTab('workshop') : null}
-        general={channel ? {
-          handle: channel.handle || 'general',
-          last: !!last,
-          said: last ? said(last) : '',
-          by: last ? last.by || null : null,
-          ago: lastAgo,
-          unread: Number(channel.unread_count) || 0,
-        } : null}
-        onGeneral={() => openTab('discussion')}
-        topics={frameTopicList.map((topic) => ({
-          key: channelPlace(topic.handle), name: topic.name || topic.handle, handle: topic.handle, icon: topic.icon || '', about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
-        }))}
-        onTopic={(key) => openTab(key as TabKey)}
-        live={liveRows.map((row) => {
-          const ago = row.at ? agoStamp(row.at).text : '';
-          return {
-            key: row.key,
-            title: row.title,
-            line: row.going
-              ? (row.who ? t('project:hub.recent.byGoing', { who: row.who }) : t('project:hub.recent.going'))
-              : row.who && ago ? t('project:hub.recent.byAgo', { who: row.who, ago }) : row.who || ago || null,
-            src: row.picture || null,
-            href: changeHref(slug, row.sessionId, row.prNumber),
-          };
-        })}
-        ownLive={!liveRows.length && ownLive && liveSinceLine(ownLive.since) ? {
-          name: ownLive.name,
-          line: liveSinceLine(ownLive.since),
-          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
-        } : null}
-        onAllLive={() => openTab('workshop')}
-        people={activeCount ? {
-          title: t('project:hub.people.active', { count: activeCount }),
-          line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
-          faces: active.map((person) => ({ name: person.username, color: swatchFor(person.username) })),
-          more: rest,
-        } : null}
-        audience={{
-          kind: community?.audience || 'invited',
-          title: community?.audience_label || '',
-          line: community && community.audience !== 'solo' ? t('project:communityCard.people.members', { count: Number(community.member_count) || 0 }) : null,
-        }}
-      />
-    );
-  };
-  const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
-    ? t('project:frame.place.workshop', { project: projectName })
-    : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
-      : tab === 'discussion' ? t('project:frame.place.general', { project: projectName })
-        : t('project:frame.place.channel', { project: projectName });
+  const markSeen = v.since ? { any: sinceRows.length > 0, onClear: clearSince } : null;
 
   return (
     <div
@@ -2723,22 +2161,6 @@ export function DevWorkshop(): ReactNode {
       // host's classes are written by useWorkshopHostState.
       data-ws-side-open={sideOpen ? '' : undefined}
     >
-      {/* Under one of the frame's looks the kit's page comes first, and
-          app.css puts the bar away and, where the kit draws the whole place
-          (the Hub, Topics), the body below as well: they stay mounted, as
-          written, behind the kit's page. */}
-      {frame && frameTopics ? (
-        <ProjectTopicsFrame
-          {...frameHead}
-          general={community?.channel ? placeRows(community?.places, owed).general : null}
-          topics={placeRows(community?.places, owed).topics}
-          onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
-        />
-      ) : null}
-      {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
-      {frameWorkshopUp ? frameWorkshop() : null}
-      {frameAllUp ? frameAll() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={tab === 'workshop' && weekUp ? weekName(weekUp) : pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the
@@ -2772,9 +2194,6 @@ export function DevWorkshop(): ReactNode {
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
           platform={!!actions.selfHosted}
-          // Invite is the card after this hero (InviteHeroCard), except
-          // under Standard (WIP), where it stays the row's own button.
-          inviteCard={!kitHub}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -2840,9 +2259,6 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
-      {/* INVITE, AS A CARD (request 6654): under the hero. See
-          ./community-card.tsx InviteHeroCard. */}
-      {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
@@ -2860,16 +2276,13 @@ export function DevWorkshop(): ReactNode {
           updates. An update already up for a vote is Needs you's, in For
           you. See ./hub-cards.tsx UpdateCard. */}
       {slug ? <UpdateCard slug={slug} data={community} /> : null}
-      {/* ── Getting it going: Share it, then what to change (15 Oct 2026) ──
-          A project that is just yours has its Share it card first, how it
-          grows, then #2573's "What do you want to change?" for an app
-          nobody has started on. Each has a ✕ that closes it on this project
-          for good (./hub-dismissed.ts): Invite stays in the hero's row, and
-          Suggest an improvement in its ⋯. The board's empty note is left
-          out while the start-here state holds, closed or not: it said what
-          the banner says, and offered to import a PR. See StartHereBanner
-          for its conditions, and ./community-card.tsx ShareItCard. */}
-      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
+      {/* ── Getting it going: what to change (15 Oct 2026) ──
+          #2573's "What do you want to change?" for an app nobody has
+          started on. It has a ✕ that closes it on this project for good
+          (./hub-dismissed.ts): Suggest an improvement stays in the hero's
+          ⋯. The board's empty note is left out while the start-here state
+          holds, closed or not: it said what the banner says, and offered to
+          import a PR. See StartHereBanner for its conditions. */}
       {startHere ? <StartHereBanner slug={slug} name={projectName} bot={!!(v.mine && v.mine.bot)} /> : null}
       {v.emptyNote && !building && !startHere ? (
         <EmptyNote
@@ -3005,12 +2418,11 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
       {tab === 'workshop' && frontPage === PRIVATE_PAGE && slug ? <PrivateRequestsPage slug={slug} onBack={closeFrontPage} /> : null}
-      {/* ── THE WORKSHOP'S FRONT PAGE, under the standard look (24 Nov 2026) ──
+      {/* ── THE WORKSHOP'S FRONT PAGE (24 Nov 2026) ──
           The hero (the question, its box and starts, Your work), the path
           a change travels, Lately and Live by week, and Private requests'
-          row for admins. ./front-page.tsx. The brand look keeps the tab
-          below, as it was. */}
-      {tab === 'workshop' && !weekUp && !frontPage && wipLook ? (
+          row for admins. ./front-page.tsx. */}
+      {tab === 'workshop' && !weekUp && !frontPage ? (
         <WorkshopFront
           slug={slug}
           name={projectName}
@@ -3035,170 +2447,6 @@ export function DevWorkshop(): ReactNode {
           onEarlier={() => openFrontPage(EARLIER_WEEKS)}
           onPrivate={() => openFrontPage(PRIVATE_PAGE)}
         />
-      ) : null}
-      {tab === 'workshop' && !weekUp && !frontPage && !wipLook ? (
-      <>
-      {/* ── OVERVIEW ── a label over the card, small caps (SectionHeader),
-          the only uppercase on the page; the card's own heading is a
-          sentence. The numbers are what somebody arriving asks first, so
-          they are the first thing on the page, four across at any width. */}
-      <SectionHeader className="px-1.5 pb-0 pt-2" data-ws-part="overview">{t('project:workshop.part.overview')}</SectionHeader>
-      {v.dashboard ? (
-        <section
-          className="dev-ws-strip"
-          data-ws-dashboard=""
-        >
-          <div className="dev-ws-head">
-            <span className="dev-ws-head-title">{t('project:workshop.allItems.title')}</span>
-            <button
-              type="button"
-              className="dev-ws-hub-open dev-ws-head-end un-touch-target"
-              data-ws-all-open=""
-              onClick={() => openTab('all')}
-            >
-              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. It
-                  narrows that page alone, so from here it is out of sight,
-                  and this dot is what says it is still on. The dot is
-                  decoration; the words join the button's name, in the one
-                  message that holds both. */}
-              {v.meta.filtered ? (
-                <RichMessage
-                  id="project:workshop.allItems.seeAllFiltered"
-                  components={[
-                    <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />,
-                    <span className="sr-only" />,
-                  ]}
-                />
-              ) : t('project:workshop.allItems.seeAll')}
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          </div>
-          {/* #4745: the votes figure routes its tap — the one waiting item's
-              page when exactly one waits, All items otherwise, where every
-              waiting change is listed. #5369: the other three figures set
-              All items' stage filter to what they count, as unstyled
-              clickable wrappers. With nothing to show a figure is not
-              clickable and the handlers are never called. */}
-          <DashTiles
-            d={v.dashboard}
-            owed={owed}
-            pending={!!v.mergedPending}
-            onVotes={() => {
-              const refs = v.dashboard?.votesWaitingRefs || [];
-              if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
-              else openTab('all');
-            }}
-            onStage={(s) => { callAppView('openWorkshopStage', s); openTab('all'); }}
-          />
-          {/* 16 Oct 2026 (V2): Homeroom bot's slots on this project, and the
-              requests waiting for one, a page under the Workshop
-              (./bot-slots.tsx). Inside the card, above its rule, so the
-              overview, the card and What's happening stay where the checks
-              find them and the rule still ends the card. */}
-          {slug && !dashQuiet(v.dashboard, !!v.mergedPending) ? <BotSlotsDoor slug={slug} onOpen={() => openTab('bot')} /> : null}
-          {/* How a change gets in, in one line: the three-step Approval
-              rules card it was (#4457), folded into the sentence its steps
-              spelled out, with Rules for whoever may change it (#4527). See
-              ./community-card.tsx ApprovalLine. */}
-          {slug ? <ApprovalLine slug={slug} /> : null}
-        </section>
-      ) : null}
-
-      {/* ── YOUR WORK ── (5 Nov 2026) one row, a card of its own under
-          Overview: how much of yours there is here, in the Homeroom bot
-          tab's own words, opening the tab narrowed to this project
-          (./your-work.tsx). It replaced What's happening's Waiting on you,
-          Your work and Up next, which listed the same work a second time
-          from the board's buckets; New for you is What happened's now (its
-          new requests nobody has picked up end with Build it). Not for a
-          visitor, who has no work here. */}
-      {slug && v.mine && v.mine.viewer ? (
-        <YourWorkCard
-          slug={slug}
-          name={projectName}
-          solo={community?.audience === 'solo'}
-          live={!!(v.dashboard && v.dashboard.everShipped) || (v.recentLive || []).length > 0}
-        />
-      ) : null}
-      {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). AFTER the card in the document, which the declared checks read as Overview's next sibling; the look that shows it orders it over the card. */}
-      {slug && v.mine && v.mine.viewer ? (
-        <SectionHeader className="dev-ws-part-work px-1.5 pb-0 pt-3.5" data-ws-part="work">{t('project:hub.forYou.title')}</SectionHeader>
-      ) : null}
-
-      {/* ── WHAT HAPPENED ──
-          One card for what was Since your last visit and Week by week:
-          this week, its new rows and a few seen ones, then "All of this
-          week" (its page); then each week before it as one row that opens
-          its page, back to the project's first (#3293). Mark all seen moves
-          the line to now, and what was new is then the week's like the rest
-          (#2183). Nothing new is one line. */}
-      {/* #6826: what happened is counted from the Done list, so while that
-          read is on its way the section holds its own place under its head —
-          two of the board's grey cards — and fills in when it lands. */}
-      {weeks.length || v.since || v.mergedPending ? (
-        <>
-          <div className="dev-ws-parthead" data-ws-happened-head="">
-            <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="happened">{t('project:workshop.part.happened')}</SectionHeader>
-            {v.since ? (
-              <button
-                type="button"
-                className="dev-ws-since-clear un-touch-target"
-                data-ws-since-clear=""
-                disabled={!sinceRows.length}
-                onClick={clearSince}
-              >
-                {t('project:since.markAllSeen')}
-              </button>
-            ) : null}
-          </div>
-          <section className="dev-ws-strip" data-ws-happened="">
-            {v.mergedPending ? (
-              <CardSkeleton n={2} label={t('project:page.loading')} />
-            ) : null}
-            {!v.mergedPending && v.since && !sinceRows.length ? (
-              <p className="dev-ws-none" data-ws-since-none="">{t('project:since.none')}</p>
-            ) : null}
-            {!v.mergedPending && thisWeek ? (
-              <ThisWeek
-                week={thisWeek}
-                slug={slug}
-                openKey={sideKey}
-                onOpen={openItem}
-                onAll={() => openWeekPage(sinceWeekStateKey(thisWeek))}
-                act={freshAct}
-              />
-            ) : null}
-            {!v.mergedPending && pastWeeks.length ? (
-              <div className="dev-ws-wlist">
-                {pastWeeks.slice(0, weeksShown).map((w) => (
-                  <WeekRow key={sinceWeekStateKey(w)} week={w} onOpen={() => openWeekPage(sinceWeekStateKey(w))} />
-                ))}
-              </div>
-            ) : null}
-            {!v.mergedPending && weeksShown < pastWeeks.length ? (
-              <button
-                type="button"
-                className="dev-ws-reveal touch-target-32"
-                data-ws-weeks-more=""
-                onClick={() => setWeeksShown(weeksShown + WEEKS_STEP)}
-              >
-                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {t('project:happened.earlierWeeks')}
-              </button>
-            ) : !v.mergedPending && firstWeek && pastWeeks.length ? (
-              <p className="dev-ws-week-note" data-ws-week-start="">
-                {t('project:since.projectStarted', { date: weekDate(firstWeek) })}
-              </p>
-            ) : null}
-          </section>
-        </>
-      ) : null}
-      {/* ── PRIVATE REQUESTS ── (#5048) last on the tab, for admins only and
-          only when there are some: the requests kept off GitHub. Last so
-          the parts above keep their order for everyone. See
-          ./private-requests.tsx. */}
-      {slug ? <PrivateRequests slug={slug} /> : null}
-      </>
       ) : null}
 
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}

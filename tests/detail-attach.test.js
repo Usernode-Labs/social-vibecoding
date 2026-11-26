@@ -105,8 +105,8 @@ test('beside a thread on the bot tab the column is cards: a head card with the p
   // The column's Escape gives way to the open menu's.
   assert.match(read('frontend/src/features/ai/detail.ts'), /if \(document\.querySelector\('\[data-detail-menu\]'\)\) return;/);
   const css = read('public/css/app.css');
-  assert.match(css, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-preview-pane:has\(> \.detail-card\) \{\n  background: none;\n  border: 0;/);
-  assert.match(css, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-preview-pane :is\(\.detail-card-head, \.detail-card-body\) \{\n  border-radius: 20px;/);
+  assert.match(css, /html:root #ai-screen \.ai-preview-pane:has\(> \.detail-card\) \{\n  background: none;\n  border: 0;/);
+  assert.match(css, /html:root #ai-screen \.ai-preview-pane :is\(\.detail-card-head, \.detail-card-body\) \{\n  border-radius: 20px;/);
 });
 
 test('a running preview beside a thread is two cards, as the thread is: a head card and the app\'s frame', () => {
@@ -117,7 +117,7 @@ test('a running preview beside a thread is two cards, as the thread is: a head c
   assert.match(overlay, /<div className="staging-top">\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{headRef\} className="staging-chrome-bar staging-head shrink-0">/);
   assert.match(overlay, /<\/div>\n      <\/div>\n      <div className="staging-body relative flex-1">/, 'the steps are the last thing in it, the frame is not');
   assert.match(css, /\n\.staging-top \{ display: contents; \}\n/);
-  const col = 'html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]';
+  const col = 'html:root body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]';
   const rule = (sel) => {
     const at = css.indexOf(`${sel} {\n`);
     assert.ok(at >= 0, `no rule for ${sel}`);
@@ -125,7 +125,7 @@ test('a running preview beside a thread is two cards, as the thread is: a head c
   };
   // The pane paints nothing; the cards are 12px apart on the page's ground.
   assert.match(rule(col), /gap: 12px;[\s\S]*background: none;\n  box-shadow: none;\n  overflow: visible;/);
-  assert.match(rule('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane .detail-card-body[data-detail-body="preview"]'), /background: none;\n  box-shadow: none;/);
+  assert.match(rule('html:root #ai-screen .ai-preview-pane .detail-card-body[data-detail-body="preview"]'), /background: none;\n  box-shadow: none;/);
   // The thread's own tokens, named on the overlay, which is not in the thread.
   assert.match(rule(col), /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
   assert.match(rule(col), /--thread-card-r: 20px;/);

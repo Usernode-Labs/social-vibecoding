@@ -9,9 +9,14 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { changeHref } from '../../lib/change-href';
 import { linkKind } from '../../lib/repo-link.js';
+import { ShotsPanel } from '../review-flow/shots-panel';
 
 // Screenshot gallery section of the admin console (#860) — the retired
 // standalone /gallery page, ported into #admin/gallery.
+//
+// A proposal's before & after shots are drawn by the one viewer every
+// surface draws (../review-flow/shots-panel.tsx), so the gallery shows
+// exactly what a reviewer sees. A capture from before shots keeps its tiles.
 //
 // Tiles are rendered by AppView.visualsTilesHtml in GALLERY MODE —
 // { preload: 'none', overlay: false } — so recordings are click-to-play
@@ -187,12 +192,13 @@ function ProposalCard({ p }: { p: Proposal }) {
   const appView = typeof window !== 'undefined' ? (window as any).AppView : null;
   // A v2 record owns this proposal's visual story even while pending or
   // failed. Never fall back to a route-only capture that may show a different
-  // screen. Both paths use AppView's shared reviewer renderer.
-  const tiles: string = appView && p.shots
-    ? appView.shotsHtml(p.shots, { sessionId: p.id })
-    : ((appView && p.visuals)
-      ? appView.visualsTilesHtml(p.visuals, { preload: 'none', overlay: false })
-      : '');
+  // screen. Shots are drawn by the one before & after viewer a reviewer sees
+  // (review-flow/shots-panel.tsx); a capture from before shots by AppView's
+  // tiles.
+  const shots = p.shots && typeof p.shots === 'object' ? p.shots : null;
+  const tiles: string = !shots && appView && p.visuals
+    ? appView.visualsTilesHtml(p.visuals, { preload: 'none', overlay: false })
+    : '';
   const appLabel = p.appName || p.appSlug || `app ${p.appId}`;
   const merged = fmtDate(p.mergedAt);
 
@@ -240,7 +246,8 @@ function ProposalCard({ p }: { p: Proposal }) {
       {/* No tiles is a real state, not an error: console_only / failed
           proposals legitimately stored nothing. Say which, using the
           persisted reason. */}
-      {tiles
+      {shots ? <ShotsPanel source={{ shots, sessionId: Number(p.id) }} />
+        : tiles
         ? <div dangerouslySetInnerHTML={{ __html: tiles }} />
         : (
           <div className="text-xs text-zinc-500 dark:text-zinc-400 py-2">

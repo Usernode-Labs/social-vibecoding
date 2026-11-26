@@ -19,8 +19,9 @@
 //     stands, in the build line the made screen and the App tab draw
 //     ("Building it", #4053: never "Step 4 of 7: Build it", which read as an
 //     instruction), and opens the bot's chat when the bot waits on its maker;
-//   - "Nothing more to vote on." is a zero nobody else could change, so a
-//     project nobody else is in leaves it out;
+//   - "Nothing more to vote on." is Needs you's card in For you's row, which
+//     keeps its cards on a project nobody else is in too (the standard
+//     look's hub, the kit's since 20 Nov 2026);
 //   - an empty Your work says how to change something there, or leaves the
 //     hub while the first version or the start-here banner already says
 //     what is next;
@@ -35,15 +36,11 @@ const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
-// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
-const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
-const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const LANDER = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 
-const hub = loadTsx(HUB, LEGACY_HUB);
+const hub = loadTsx(HUB);
 
 const community = (over = {}) => ({
   slug: 'geneva-hikes',
@@ -201,15 +198,17 @@ test('nothing being built, or no record yet: no card', () => {
   assert.equal(hub.FIRST_VERSION_POLL_MS, 15000);
 });
 
-test('"Nothing more to vote on." is a zero on a project nobody else is in', () => {
+test('"Nothing more to vote on." keeps its card in For you\'s row, on a project nobody else is in too', () => {
   const { NothingToVote, hubAlone } = hub;
-  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {}, alone: true })), '');
+  // The card is always there, so the row keeps its cards: with nothing
+  // waiting it says so (the standard look's hub, the kit's since 20 Nov 2026).
+  const none = renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {}, alone: true }));
+  assert.match(none, /^<div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*<span class="wip-hub-door-title">Needs you<\/span><span class="wip-hub-door-sub">Nothing more to vote on\.<\/span><\/span><\/div>$/);
   const one = renderToHtml(createElement(NothingToVote, { unclaimed: 1, onOpen: () => {}, alone: true }));
-  assert.match(one, /^<p class="dev-ws-week-note" data-ws-hub-needs-none=""><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/p>$/,
+  assert.match(one, /<span class="wip-hub-door-sub"><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/span>/,
     'a request still waiting is still the way to it');
-  // A project with people in it: as it was (#3408).
-  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })),
-    '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
+  // A project with people in it: the same card (#3408).
+  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })), none);
   assert.equal(hubAlone(community()), true, 'Just you');
   assert.equal(hubAlone(community({ audience: 'open', audience_label: 'Public community', member_count: 1 })), true,
     'a public community nobody has joined yet');
@@ -218,13 +217,13 @@ test('"Nothing more to vote on." is a zero on a project nobody else is in', () =
   assert.equal(hubAlone(null), false, 'nothing is taken off the hub before the read answers');
 });
 
-test('For you on a project nobody else is in: the Workshop and the Discussion from its first day, Needs you only when a vote waits', () => {
+test('For you on a project nobody else is in: Needs you, the Workshop and the Discussion from its first day', () => {
   // 15 Oct 2026: a ready-made app's hub had no For you at all in its first
   // week (an empty Your work and the Discussion were both left out), and
   // looked nothing like an older project's. Now the card is the same from
   // the first day: the Workshop (6 Nov 2026: its row took Your work's place
   // there, at every width, and opens the project's Workshop), the Discussion
-  // "No messages yet.", and Needs you shows only when a vote waits on you.
+  // "No messages yet.", and Needs you, which says when nothing waits on you.
   const { ForYouCard } = hub;
   const empty = { viewer: true, bot: true };
   const channel = { recent: [], unread_count: 0, last_message: null, last_at: null, last_by: null, href: '#messages/app/geneva-hikes', handle: null };
@@ -234,11 +233,11 @@ test('For you on a project nobody else is in: the Workshop and the Discussion fr
   }));
   const html = card();
   // (React hoists the bot's mark ahead of the card as a preload hint.)
-  assert.match(html, /^(?:<link rel="preload"[^>]*\/>)?<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button [^>]*data-ws-workshop-row="">/,
-    'no Needs you line: nothing needs you, and nobody else could put a vote up; the Workshop leads');
+  assert.match(html, /^(?:<link rel="preload"[^>]*\/>)?<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*?<\/div><button [^>]*data-ws-workshop-row="">/,
+    'Needs you says nothing waits, then the Workshop');
   assert.match(html, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/,
     'and the Discussion, a door to the room, saying so');
-  assert.doesNotMatch(html, /data-ws-hub-needs|Nothing more to vote on|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
+  assert.doesNotMatch(html, /data-ws-hub-needs=""|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
   // A vote waiting on you: Needs you leads.
   const vote = { t: 'card', key: 'v1', kind: 'vote', card: { title: { text: 'Dark mode' } } };
   assert.match(card({ queue: [vote] }), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="1">/);
@@ -258,13 +257,6 @@ test('For you on a project nobody else is in: the Workshop and the Discussion fr
   assert.equal(hub.hubWorkEmpty, undefined, 'no other words for an empty Your work');
   assert.match(src, /const work = !!mine\?\.viewer;\s*const talk = !!\(data && data\.channel\);/);
   assert.doesNotMatch(src, /hub\.work\.emptyBot|hub\.work\.emptyMenu|hub\.channel\.sayHi/);
-});
-
-test('the Share it card says what an invite is for while it is being built', () => {
-  const { shareItLine } = loadTsx(CARD, LEGACY_HUB);
-  assert.equal(shareItLine(true), 'Invite people to follow along while it’s being built, or make it public so anyone can join.');
-  assert.equal(shareItLine(false), 'Invite people to make it a private community, or make it public so anyone can join.');
-  assert.match(read(CARD), /<p className="dev-ws-strip-text">\{shareItLine\(!!data\.first_version && !data\.first_version\.ready\)\}<\/p>/);
 });
 
 test('the hub puts the first version under the hero, and stands the start-here prompt down while the bot builds', () => {
@@ -396,7 +388,6 @@ test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/af
   assert.deepEqual([link.audience, link.member_count, link.members.length, link.invite_link, link.is_creator], ['solo', 1, 1, true, true]);
   assert.deepEqual([link.invite_summary.links, link.invite_summary.joined, link.invite_summary.expires_at],
     [1, 0, new Date(7 * 24 * 60 * 60000 - 60000).toISOString()]);
-  assert.equal(loadTsx(CARD, LEGACY_HUB).inviteSentLine(link.invite_summary, 0), 'Invite link sent · nobody has joined yet · 7 days left');
   assert.equal(creator.invite_link, false);
   assert.equal(creator.invite_summary, null);
   assert.equal(creator.channel.post_url, null, 'nothing behind it to post to');

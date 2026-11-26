@@ -186,7 +186,7 @@ test('#6990: a decision\'s Votes card shows the vote it just saved, then re-read
 // under a post that filled the width. It now takes the post's own edges.
 test('a decision’s Discussion card lines up with the post above it', () => {
   const CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
-  const SELECTOR = 'html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {';
+  const SELECTOR = 'html:root:not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {';
   const start = CSS.indexOf(`\n  ${SELECTOR}`);
   assert.ok(start >= 0, 'a rule of its own places the decision page’s Discussion card');
   const body = CSS.slice(start, CSS.indexOf('\n  }', start));

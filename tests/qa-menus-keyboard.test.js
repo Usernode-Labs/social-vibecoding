@@ -113,10 +113,9 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(plus, /const menuKeys = useMenuKeyboard\(open, popRef, btnRef, shut\);/);
   assert.match(plus, /id="messages-new-menu"[\s\S]*?onKeyDown=\{menuKeys\.onKeyDown\}/);
   const head = src.slice(src.indexOf('function ThreadHeader()'), src.indexOf('/** The day a message was sent'));
-  // The menu counts as inside too: in a phone's bar it is portalled to the page (#131).
   assert.match(head, /useDismiss\(menu, \[menuWrapRef, menuRef\], closeMenu\);/, 'an outside press and Escape close it');
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
-  assert.match(head, /className=\{discsInBar \? 'messages-thread-menu messages-thread-menu-bar' : 'messages-thread-menu'\}[\s\S]{0,200}role="menu"/);
+  assert.match(head, /className="messages-thread-menu"\s+role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
   // The Homeroom bot DM's "Activity & history" (#3692) left the menu: the
   // bot's name block in the header opens the panel now. Polish N15: the bot
@@ -140,11 +139,18 @@ test('Q18: Your communities and the Homeroom menu take focus, rove, and give it 
   // focus on the community you are on, the arrows (and Home and End) move
   // between its rows, and Escape closes it and hands focus back.
   const sw = read('frontend/src/features/workshop/community-switcher.tsx');
-  assert.match(sw, /querySelector<HTMLButtonElement>\('\[aria-current="true"\]'\)\?\.focus\(\);/);
+  assert.match(sw, /return panel\.querySelector<HTMLButtonElement>\('\[aria-current="true"\]'\);/);
   assert.match(sw, /<div className="community-switcher-list" onKeyDown=\{roveRows\}>/);
   assert.match(sw, /const keys = \['ArrowDown', 'ArrowUp', 'Home', 'End'\];/);
-  assert.match(sw, /if \(e\.key !== 'Escape'\) return;\s*closeSwitcher\(\);\s*previousFocus\?\.focus\?\.\(\);/, 'the menu gives focus back');
-  assert.match(sw, /if \(adoption\) adoption\.release\(\);\s*previousFocus\?\.focus\?\.\(\);/, 'and so does the sheet');
+  // Escape closes either presentation and focus goes back to what opened
+  // it: the menu's (lib/menu.ts) and the sheet's (lib/sheet.ts) own rule.
+  assert.match(sw, /useMenu\(true, \{\s*panel,\s*onClose: closeSwitcher,/, 'the menu');
+  assert.match(sw, /useSheet\(\{\s*kind: 'sheet',\s*onClose: closeSwitcher,/, 'and the sheet');
+  const menu = read('frontend/src/lib/menu.ts');
+  assert.match(menu, /if \(event\.key !== 'Escape' \|\| event\.defaultPrevented\) return;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*close\(\);/);
+  assert.match(menu, /back\.focus\(\{ preventScroll: true \}\);/, 'the menu gives focus back');
+  const sheet = read('frontend/src/lib/sheet.ts');
+  assert.match(sheet, /previousFocus\.focus\?\.\(\{ preventScroll: true \}\);/, 'and so does the sheet');
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /roveMenuFocus\(event, el, SHEET_ROWS\)/);
   assert.match(ctx, /if \(inside\) visibleMark\(\)\?\.focus\(/, 'to the mark that has a box: the standard header\'s, or the frame bar\'s under a look');

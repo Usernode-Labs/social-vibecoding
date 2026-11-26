@@ -236,15 +236,13 @@ test('the card\'s measures: a 16:9 picture, a 56px icon 14px over its edge, 15px
   assert.doesNotMatch(block, /blur\(|backdrop-filter|gray-|indigo-/);
 });
 
-test('every place draws the same card from its own tokens: the standard look, the brand look and the visitor page', () => {
+test('every place draws the same card from its own tokens: the signed-in pages and the visitor page', () => {
   const tokenRule = (selector) => {
     const at = css.indexOf(`${selector} {\n  --cm-bg:`);
     assert.ok(at >= 0, `${selector} sets the card's tokens`);
     return css.slice(at, css.indexOf('}', at));
   };
-  assert.match(tokenRule('html:not([data-skin])'), /--cm-bg: var\(--wip-card-bg\);[\s\S]*--cm-edge-lift: inset 0 0 0 1px var\(--wip-card-line\), /);
-  const brand = tokenRule('html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))');
-  assert.match(brand, /--cm-radius: 18px;[\s\S]*--cm-small: 13px;\s*--cm-small-line: 18px;/);
+  assert.match(tokenRule('html:root'), /--cm-bg: var\(--wip-card-bg\);[\s\S]*--cm-edge-lift: inset 0 0 0 1px var\(--wip-card-line\), /);
   assert.match(tokenRule('#auth-landing-screen [data-guest-discover]'), /--cm-bg: var\(--site-panel\);\s*--cm-radius: 14px;/);
   // No look restyles the card's parts by hand: only tokens, and the edge, the
   // votes and the visitor page's outline and serif name.
@@ -254,4 +252,17 @@ test('every place draws the same card from its own tokens: the standard look, th
   }
   // Every big card says this week in words, wherever it is.
   assert.doesNotMatch(css, /cm-week-glyph/);
+});
+
+// Request #7165, point 5: a card loaded its community's whole picture, up to
+// 1 MB, for a slot about 110px wide on a phone. A stored picture is asked for
+// at the card's size; any other address is drawn as it came.
+test('a stored picture is asked for at the card\'s size', () => {
+  const light = `/app-illustrations/${'a'.repeat(32)}`;
+  const dark = `/app-illustrations/${'b'.repeat(32)}`;
+  const html = draw('CommunityCardContent', { community: { ...TIDE, pictureUrl: light, pictureDarkUrl: dark } });
+  assert.ok(html.includes(`<img src="${light}?w=512"`), 'the picture');
+  assert.ok(html.includes(`<img src="${dark}?w=512"`), 'and its dark twin');
+  const src = read(CARD);
+  assert.match(src, /window\.innerWidth >= 768 \? 1024 : 512/, 'a wide screen takes the next size up');
 });

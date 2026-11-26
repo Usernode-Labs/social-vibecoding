@@ -38,37 +38,9 @@
 const { loadTsx, renderToHtml, createElement } = require('./render-tsx');
 
 let api = null;
-let legacy = false;
-/**
- * Draw as every look but the kit's does (call before the first render). Since
- * 20 Nov 2026 the standard look's board is the kit's (lib/skin.ts isKitHome):
- * a suite that holds the older drawing, which the brand look still has, asks
- * for it here.
- */
-function legacyLook() {
-  if (api) throw new Error('legacyLook() must be called before the first render');
-  legacy = true;
-}
 function mod() {
-  if (!api) {
-    api = loadTsx('tests/fixtures/dev-card-api.ts', legacy
-      ? { cache: false, stubs: { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } }
-      : {});
-  }
+  if (!api) api = loadTsx('tests/fixtures/dev-card-api.ts', {});
   return api;
-}
-
-// The brand look's drawing of the same modules (isKitHome false), loaded
-// apart, for a suite that holds what the brand look still draws beside the
-// standard look's (brandWorkshopHtml). Its own copy, so the standard look's
-// renders in the same suite are untouched.
-let brandApi = null;
-function brandMod() {
-  if (!brandApi) {
-    brandApi = loadTsx('tests/fixtures/dev-card-api.ts',
-      { cache: false, stubs: { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
-  }
-  return brandApi;
 }
 
 /** Render a DevCardModel. */
@@ -114,16 +86,6 @@ function workshopHtml(AppView, tab, m = mod()) {
   if (group === 'stage') m.devKanbanStore.set(AppView._kanbanView());
   m.devWorkshopStore.set(AppView._workshopView());
   return renderToHtml(createElement(m.DevWorkshop));
-}
-
-/**
- * The same, drawn as the brand look draws it. 24 Nov 2026: the standard
- * look's Workshop tab is its front page (front-page.tsx); the brand look
- * keeps the tab it had (the Overview's figures, Your work, What happened),
- * which the suites that pinned it now render here.
- */
-function brandWorkshopHtml(AppView, tab) {
-  return workshopHtml(AppView, tab, brandMod());
 }
 
 /**
@@ -291,8 +253,6 @@ function hasAction(model, fn, ...args) {
 const budgets = () => ({ BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
-  legacyLook,
-  brandWorkshopHtml,
   // The minimal card a topic head needs, for tests that care about the
   // sheet BELOW the card rather than the card itself.
   BLANK_CARD,

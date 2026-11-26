@@ -612,9 +612,10 @@ test('#4400: the sheet shows a title, one card of steps and a full-width Got it'
 test('#4400: the sheet is presented through the kit sheet seam, and back closes it', () => {
   const src = fs.readFileSync(
     path.join(ROOT, 'frontend/src/features/mobile-install/install-steps-sheet.tsx'), 'utf8');
-  assert.match(src, /adoptKitSurface\(\{\s*kind: 'sheet'/);
+  // The Sheet (lib/sheet.ts) is the kit hand-off, Back, Escape and the scrim.
+  assert.match(src, /useSheet\(\{\s*kind: 'sheet'/);
   assert.match(src, /createPortal\(/);
-  assert.match(src, /pushDismissible\(/);
+  assert.match(src, /\{\.\.\.scrimProps\}/);
   assert.match(src, /role="dialog"/);
   assert.match(src, /aria-modal="true"/);
   // Without the kit: a sheet from the floor, over a scrim, above the strip (z-59).

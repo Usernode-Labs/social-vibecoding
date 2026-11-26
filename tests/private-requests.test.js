@@ -324,5 +324,7 @@ test('the Workshop section reads admin status in an effect and renders nothing f
   assert.match(src, /useEffect\(\(\) => \{ setAdmin\(viewerIsAdmin\(\)\); \}, \[\]\);/);
   assert.match(src, /const \[admin, setAdmin\] = useState\(false\);/);
   assert.match(src, /if \(!admin \|\| !requests\.length\) return null;/);
-  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<PrivateRequests slug=\{slug\} \/>/);
+  // The Workshop's front page opens them as a page of their own.
+  assert.match(src, /<PrivateRequests slug=\{slug\} page \/>/);
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<PrivateRequestsPage slug=\{slug\} onBack=\{closeFrontPage\} \/>/);
 });

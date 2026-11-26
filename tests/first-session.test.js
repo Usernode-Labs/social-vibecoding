@@ -60,9 +60,9 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.equal(steps[2].target, COMMUNITIES_TAB);
   assert.doesNotMatch(read(`${DIR}/tour-steps.ts`), /communityTileOf|#home-communities-section|#home-new-community/,
     'no step points at a section Home no longer draws');
-  // The tile the page draws for it still carries its slug.
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /data-home-community=\{pin\.slug\}/);
-  assert.match(read('frontend/src/features/communities/index.tsx'), /<PinTile\s+key=\{pin\.slug\}\s+pin=\{pin\}/);
+  // The card the page draws for it still carries its slug.
+  assert.match(read('frontend/src/features/communities/card.tsx'), /data-home-community=\{slug\}/);
+  assert.match(read('frontend/src/features/communities/index.tsx'), /<CommunityPageCard\s+key=\{pin\.slug\}\s+community=\{pinCard\(pin\)\}/);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.
   assert.deepEqual(steps.map((s) => [!!s.tap, !!s.ringed, !!s.last]), [[false, true, false], [false, true, false], [false, true, true]]);

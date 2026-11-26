@@ -131,11 +131,6 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   assert.match(read(DISCOVER), /<TryLink app=\{app\} className="flex min-w-0 flex-col items-center gap-1\.5 no-underline" onOpenInside=\{open\} inside=\{signedIn\}>/);
   assert.match(read(PROJECT), /const canTry = signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\);/);
   assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview \|\| app\.guest_ready === true\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
-  // #7128: a guest-ready app opens in the landing's viewer for a visitor too,
-  // so the bar (and its way back) stays around it. The frame's Try it asks
-  // the same question in its own onClick.
-  assert.match(read('frontend/src/features/guest/frame/project-frame.tsx'),
-    /if \(signedIn \|\| app\.requires_login === false \|\| app\.guest_ready === true\) \{ event\.preventDefault\(\); onOpenInside\(app\); \}/);
   // Rendered as a visitor with no account: an app with a guest's view keeps
   // Open; one without keeps Sign up to open.
   const guestReady = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[0]));
@@ -150,7 +145,7 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
 
 test('Featured is what an admin featured that a visitor can try, and nothing else; a project page lives at its hub', () => {
   const data = loadTsx(DATA);
-  const { featuredApps, projectHash, projectVotesHash, linksToWorkshop, canTryHere } = data;
+  const { featuredApps, projectHash, projectVotesHash, canTryHere } = data;
   const here = (a) => canTryHere(a, false);
   // Todo List is featured first, but a visitor cannot open it: left out.
   // Fresh can be tried but nobody featured it: never filled in (on
@@ -165,8 +160,6 @@ test('Featured is what an admin featured that a visitor can try, and nothing els
   // A card's votes line opens the page at its Workshop, a signed-in
   // person's own address for it too.
   assert.equal(projectVotesHash('game-corner'), '#app/game-corner/workshop?ws=workshop');
-  assert.equal(linksToWorkshop('#app/game-corner/workshop?ws=workshop'), true);
-  assert.equal(linksToWorkshop('/app/game-corner/workshop'), false);
 });
 
 // ─── guest-discover.tsx ───────────────────────────────────────────
@@ -231,8 +224,8 @@ function cardOf(html, slug) {
 }
 
 test('a card is the community card: its picture, its icon, its name over the members, its sentence and this week; no pill on the picture', () => {
-  const { MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE } = loadTsx(DATA);
-  assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE], [25, 10, 5, 5]);
+  const { MIN_MEMBERS, MIN_ACTIVE } = loadTsx(DATA);
+  assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE], [25, 10]);
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: FACT_APPS }));
   const busy = cardOf(html, 'busy');
   // The picture first, a direct child, which the card-to-page morph grows from.
@@ -413,13 +406,14 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
 }));
 
 test('Featured is the first strip of Communities to join, signed in or out: the chosen kind of it, none while searching, and the rest under a More communities heading', () => {
-  // As every drawing but the kit's signed-in Home has it (the visitor's landing,
-  // the Communities page, "Paper, simplified"): the standard look's own Home
-  // names Featured its own way since 20 Nov 2026 (lib/skin.ts isKitHome).
-  const { CommunitiesToJoin } = loadTsx(JOIN, { stubs: { '../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
+  // As the visitor's landing draws it: the signed-in pages (Home, the
+  // Communities page) name Featured their own way since 20 Nov 2026, and
+  // since the other looks went (26 Nov 2026) the landing is the one place
+  // this drawing is left.
+  const { CommunitiesToJoin } = loadTsx(JOIN);
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
-    apps: APPS, exclude: new Set(), signedIn: true, query: '', ...over,
+    apps: APPS, exclude: new Set(), signedIn: false, query: '', ...over,
   }));
   const featuredOf = (html) => [...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]);
   const cardsOf = (html) => [...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]);
@@ -433,7 +427,7 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // grid of the rest's kind (one on a phone, and in a prerender, which knows
   // no width; ../communities/card.tsx), then the rest of Featured in the
   // grid under it, then the rest under their own heading.
-  for (const [who, page, label] of [['signed in', html, 'home-join-featured-label'], ['a visitor', draw({ signedIn: false }), 'guest-join-featured-label']]) {
+  for (const [who, page, label] of [['a visitor', html, 'guest-join-featured-label']]) {
     const at = page.indexOf('<div data-home-join-featured=""');
     const featuredBlock = page.slice(at, page.indexOf('data-home-join-rest=', at));
     assert.match(featuredBlock, new RegExp(`^<div data-home-join-featured="" class="pb-4"><h3 id="${label}" class="text-xs font-bold uppercase tracking-\\[0\\.06em\\][^"]*">Featured</h3><div class="cm-grid px-1" data-cm-grid="join" data-cm-probe="" aria-hidden="true"></div><div role="list" aria-labelledby="${label}" data-home-join-lead="1" data-cm-grid="lead" class="cm-grid px-1" style="--cm-lead-cols:1"><div role="listitem" class="flex min-w-0 \\[&amp;&gt;article\\]:flex-1"><article data-guest-featured="todo-list" data-guest-lead="" data-cm-size="lead"`), who);
@@ -700,7 +694,8 @@ test('a project page: All communities, the project card in its colour with Open 
   // Who is around: numbers only, from the minimums. Its members now; the
   // week's count comes with the overview.
   const words = text(html);
-  assert.ok(words.includes(message('auth:guest.project.audience')));
+  assert.equal(message('auth:guest.project.audienceMembers', { count: 87 }), '<0>Public community</0> · 87 members');
+  assert.ok(words.includes('Public community'));
   assert.ok(words.includes('· 87 members'));
   assert.doesNotMatch(html, /data-guest-people-active/);
   // Made together: a game is played, and the sentence without a count
@@ -913,19 +908,15 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   assert.equal(newAccountsWait({}), true, 'an older server');
   assert.equal(newAccountsWait({ waitlist_enabled: true }), true);
   assert.equal(newAccountsWait({ waitlist_enabled: false }), false, 'only an explicit off');
-  // The frame, the page about private communities and the email step read
-  // the same switch (two `waitlist` readers here: the landing's frame and
-  // that page; the gated frame is gone with looks v2).
-  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 2);
+  // The page about private communities and the email step read the same
+  // switch (one `waitlist` reader here: that page; the looks' frame went
+  // with the looks, 26 Nov 2026).
+  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 1);
   assert.match(read(LANDING), /<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(mounted\)\);/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
   assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
-  // The looks' frame keeps the page it held when it was drawn (its own
-  // headline, line and button; tests/landing-frame.test.js).
-  assert.equal(message('auth:guest.hero.line'), "Look around and try what we're making.");
-  assert.equal(message('auth:guest.hero.signUp'), 'Create account');
   // No examples: the real apps follow it.
   assert.doesNotMatch(html, /For example/);
   // Nothing to fit, so no steps: the layout effect leaves it alone.
@@ -1214,12 +1205,9 @@ test('See what visitors see: the visitor\'s own page under a bar with the way ba
 test('the list wears the website\'s look signed out only: repainted by its own hooks under the landing, its classes left alone', () => {
   const css = read('public/css/app.css');
   const a = css.indexOf("/* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES");
-  // With the landing's own rules, between its two marks: well before the
-  // looks' hand-written blocks and generated section, which have to stay
-  // together and directly before the new look's block, itself appended last
-  // (tests/frame-app.test.js, tests/looks-css.test.js).
+  // With the landing's own rules, between its two marks.
   const b = css.indexOf("/* the website's look on the signed-out pages: end */");
-  assert.ok(a > 0 && b > a && b < css.indexOf("THE BELL'S SHEET") && b < css.indexOf('/* looks:begin'), 'the block sits before the looks and the new look');
+  assert.ok(a > 0 && b > a, 'the block sits between its two marks');
   const block = css.slice(a, b);
   // A band's colour runs edge to edge as a border image let out to the
   // sides, never as a viewport-sized shadow; its reach is the usable box's
