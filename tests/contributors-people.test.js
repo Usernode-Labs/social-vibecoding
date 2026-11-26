@@ -146,3 +146,71 @@ test('contributors are people: bot builds credit their requester', { timeout: 12
     require('../src/services/change-person').CHANGE_PERSON_SQL),
     'the merged branch is the platform\'s one change-person expression');
 });
+
+// #7189's before & after shots open App settings and the Contributors list on
+// a project the member made whose only other "contributor" was Homeroom bot's
+// build for their own request (src/db/migrate.js seedStagingBotBuiltDeleteApp).
+// A fresh staging copy has no such project, so the seed writes it. Pinned
+// here because a fixture that silently seeds nothing (the bot account it
+// needed was not there yet, as the first shots run found) leaves the two
+// screens unstageable. Against the full schema, twice, and outside staging.
+test('the delete shots\' fixture seeds a bot-built project, itself', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const name = `contributors_people_seed_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  const env = process.env.USERNODE_ENV;
+  t.after(async () => {
+    if (env === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = env;
+    await pool.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  const { seedStagingBotBuiltDeleteApp } = require('../src/db/migrate');
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const member = await one("INSERT INTO users (username, password) VALUES ('usernode-capture', 'x') RETURNING id, username");
+  // Only the shots' member exists, as on a copy whose self-hosted-project
+  // seeds never ran: the seed must still produce the project.
+  process.env.USERNODE_ENV = 'production';
+  await seedStagingBotBuiltDeleteApp(pool);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM apps WHERE slug = 'staging-demo-bot-built'")).rows[0].n, 0,
+    'nothing outside staging');
+
+  process.env.USERNODE_ENV = 'staging';
+  await seedStagingBotBuiltDeleteApp(pool);
+  await seedStagingBotBuiltDeleteApp(pool);
+
+  const app = await one("SELECT id, created_by FROM apps WHERE slug = 'staging-demo-bot-built'");
+  assert.ok(app, 'the bot-built project the shots open');
+  assert.equal(Number(app.created_by), member.id, 'the member made it');
+  const bot = await one("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE");
+  assert.ok(bot, 'the bot account the merged build is authored by');
+  const sessions = await pool.query('SELECT user_id, COUNT(*)::int AS n FROM chat_sessions WHERE app_id = $1 GROUP BY user_id', [app.id]);
+  const total = sessions.rows.reduce((n, r) => n + r.n, 0);
+  assert.equal(total, 3, 'three merged changes, seeded once');
+  assert.equal(sessions.rows.find((r) => Number(r.user_id) === bot.id)?.n, 1, 'one of them by the bot');
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+    [app.id, member.id])).rows[0].n, 1, 'on the member\'s Home');
+
+  // The two screens the shots open read these: the Contributors list never
+  // names the bot (its build is the member's), and App settings offers the
+  // Danger zone to the one person who made it.
+  const contributors = require('../src/services/contributors');
+  const ranked = await contributors.loadRankedContributors(pool, app.id);
+  assert.deepEqual(ranked.items.map((r) => [r.username, r.merged_count]), [['usernode-capture', 3]]);
+  const counts = await contributors.loadContributorCounts(pool, [app.id]);
+  const { deleteBlockReason } = require('../src/routes/apps');
+  assert.equal(deleteBlockReason(app, member, counts.get(app.id)), null, 'the creator may delete it');
+});

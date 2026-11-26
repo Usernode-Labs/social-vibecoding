@@ -767,9 +767,20 @@ async function seedStagingBotBuiltDeleteApp(pool) {
   try {
     const member = (await pool.query(
       "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) return seedSkipped('no user usernode-capture');
+    // The bot's account, in the posture botAccount() reads, is the merged
+    // session's author. Other staging seeds write it too, but only once
+    // their own fixtures exist (a copy with no self-hosted project never
+    // reaches that line), so this seed writes it rather than depend on the
+    // order, or on another seed having run at all.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
     const bot = (await pool.query(
       "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1")).rows[0];
-    if (!member || !bot) return seedSkipped('no user usernode-capture or homeroom_bot');
+    if (!bot) return seedSkipped('no user homeroom_bot');
     await pool.query(
       `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, icon_emoji)
        VALUES ($1, 'Staging demo bot-built app', $2, 'running', 'private', 'private', $3, '🏁')
