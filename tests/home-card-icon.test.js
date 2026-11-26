@@ -672,7 +672,7 @@ test('the other lists of icons and pictures are lazy and decode off the main thr
   assert.match(format, /<img src=\{user\.avatarUrl\} alt="" loading="lazy" decoding="async" className=/, 'a person\'s picture on a Messages row');
   assert.match(format, /className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" \/>/, 'a shared project\'s icon in a message');
   const tile = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) } });
-  assert.match(tile, /<img src="\/app-icons\/a{32}" alt="" loading="lazy" decoding="async" draggable="false"/);
+  assert.match(tile, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="lazy" decoding="async" draggable="false"/);
   const first = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) }, eager: true });
-  assert.match(first, /<img src="\/app-icons\/a{32}" alt="" loading="eager" draggable="false"/);
+  assert.match(first, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="eager" draggable="false"/);
 });
