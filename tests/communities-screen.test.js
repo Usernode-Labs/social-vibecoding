@@ -301,7 +301,7 @@ test('from 768px a pin is the big card and a joined community the compact card, 
   assert.match(pinned, /<div class="cm-grid" data-cm-grid="pinned">/);
   assert.doesNotMatch(pinned, /communities-grid/, 'no tiles beside the cards');
   // One link to the hub, with the tile's hooks, the picture first.
-  assert.match(pinned, /<a href="\/app\/tide\/workshop" class="cm-card" data-home-community="tide" data-home-community-pinned=""><span class="cm-card-pic"><img src="\/app-illustrations\/aaaa" alt="" loading="lazy" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/bbbb"/);
+  assert.match(pinned, /<a href="\/app\/tide\/workshop" class="cm-card" data-home-community="tide" data-home-community-pinned=""><span class="cm-card-pic"><img src="\/app-illustrations\/aaaa" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/bbbb"/);
   // The name, with the votes waiting as a tag beside it (One look, 25 Nov 2026), over the members, what it is, and this week on one line.
   assert.match(pinned, new RegExp(`<span class="cm-card-name-row"><span class="cm-card-name">Tide Table</span><span class="one-tag cm-card-votes" data-home-community-votes="2">${message('communities:row.toVote', { count: 2 })}</span></span><span class="cm-card-members" data-cm-members="">93 members</span>`));
   assert.match(pinned, /<span class="cm-card-desc" data-cm-desc="">Tides for the bay\.<\/span>/);

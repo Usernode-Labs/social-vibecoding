@@ -91,8 +91,11 @@ export function VoteTypeChips({ tallies, pressed, onPress }: {
   const t = useMessages('communities');
   if (!(tallies.deciding > 0 && tallies.advisory > 0)) return null;
   return (
+    // Request 7029: a chip is drawn 36px tall and pressed at 44 (the kit's
+    // `un-touch-target`). The rail clips what is past it, so it keeps 4px
+    // above its chips for that, pulled back up so nothing moves.
     <ChipRail
-      className="needs-vote-chips gap-2 pt-0 pb-3"
+      className="needs-vote-chips -mt-1 gap-2 pt-1 pb-3"
       role="group"
       aria-label={t('communities:needsYou.filter.label')}
       data-needs-vote-chips=""
@@ -103,7 +106,7 @@ export function VoteTypeChips({ tallies, pressed, onPress }: {
           <Chip
             key={key}
             size="bar"
-            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-3'}
+            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-3 un-touch-target'}
             selected={pressed === key}
             aria-label={t(CHIP_COUNTS[key], { count })}
             onClick={() => onPress(key)}

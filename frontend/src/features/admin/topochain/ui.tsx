@@ -286,7 +286,7 @@ export function List<T>({
 
   return (
     <>
-      <div className="hidden md:block overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <div className="adm-card adm-table hidden md:block overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
         <table className="w-full text-sm">
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
@@ -555,15 +555,15 @@ export function CheckField({
 // the same four, and an unknown tone falls back to zinc rather than
 // disappearing.
 const BADGE_TONES: Record<string, string> = {
-  green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
-  amber: 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
-  violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
+  green: 'is-live bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
+  amber: 'is-build bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
+  violet: 'is-vote bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
   zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
 };
 
 export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
+    <span className={`adm-badge inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
       {label}
     </span>
   );

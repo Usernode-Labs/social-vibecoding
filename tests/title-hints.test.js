@@ -52,7 +52,7 @@ test('the hand-drawn truncated titles carry their text as the hint', () => {
     /className="min-w-0 truncate" title=\{fromPlan\}>/);
 
   const messages = read('frontend/src/features/messages/index.tsx');
-  assert.match(messages, /className="messages-row-name" title=\{rowName \|\| undefined\}/);
+  assert.match(messages, /tooltip=\{rowName \|\| undefined\}/);
   assert.match(messages, /className="messages-thread-name" title=\{threadName \|\| undefined\}/);
   // Main Chat's column hints the whole head block, so the name's own markup
   // stays as it was.

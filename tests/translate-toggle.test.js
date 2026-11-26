@@ -99,8 +99,10 @@ test('a message gets Translate in its ⋯ menu, only when someone else wrote it'
   // language.
   assert.match(src, /const canTranslate = !mine && !message\.sender\.bot && !message\.system\s*&& !!message\.content && !message\.deleted && !message\.moderated;/);
   assert.match(src, /const translation = useTranslate\(message\.content \? \[message\.content\] : \[\], \{\s*enabled: canTranslate,/);
-  assert.match(src, /if \(canTranslate\) \{/);
-  assert.match(src, /key: 'translate', label, icon: GlobeIcon, disabled: translation\.state === 'pending'/);
+  // The item itself is the shared menu's (message-actions/message-menu.ts).
+  assert.match(src, /translation: canTranslate \? translation : null,/);
+  assert.match(read('frontend/src/features/message-actions/message-menu.ts'),
+    /key: 'translate', label: translateLabel\(translation\.state\), icon: GlobeIcon, disabled: translation\.state === 'pending'/);
   assert.match(src, /const translatedBody = translation\.state === 'shown' && !editing\s*\? <>\{quote\}<MessageMarkdown content=\{translation\.texts\[0\]\}/);
   assert.match(src, /<TranslateNote view=\{translation\} className="mt-1" \/>/);
 });
