@@ -30,6 +30,7 @@ const DISCOVER = 'frontend/src/features/guest/guest-discover.tsx';
 const PROJECT = 'frontend/src/features/guest/guest-project.tsx';
 const STORY = 'frontend/src/features/auth/story.tsx';
 const LANDING = 'frontend/src/features/auth/landing.tsx';
+const GUEST_CONTRIB = 'frontend/src/features/guest/guest-contributors.tsx';
 const JOIN = 'frontend/src/features/home/communities-to-join.tsx';
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const text = (html) => html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
@@ -691,21 +692,26 @@ test('a project page: All communities, the project card in its colour with Open 
   // #6433 asked for Pin to go from the signed-out page; the tabs went with
   // the rebuild (the hand-off of 11 Nov 2026).
   assert.doesNotMatch(html, /data-guest-pin-project|role="tablist"|data-guest-tab=|data-guest-members-only/);
-  // Who is around: numbers only, from the minimums. Its members now; the
-  // week's count comes with the overview.
+  // Who is around: numbers only, from the minimums, as one line in the
+  // card under its buttons (the signed-out page's redesign, 26 Nov 2026).
+  // Its members now; the week's count comes with the overview.
   const words = text(html);
   assert.equal(message('auth:guest.project.audienceMembers', { count: 87 }), '<0>Public community</0> · 87 members');
   assert.ok(words.includes('Public community'));
   assert.ok(words.includes('· 87 members'));
   assert.doesNotMatch(html, /data-guest-people-active/);
-  // Made together: a game is played, and the sentence without a count
-  // before the month's is known.
+  const card = html.slice(html.indexOf('data-guest-project-band'), html.indexOf('</section>'));
+  assert.ok(card.indexOf('data-project-card-actions') < card.indexOf('data-guest-people=""'), 'under the buttons, in the card');
+  // The join card: a game is played, and the line without a count before the
+  // month's is known. No "Made together" label over it.
   assert.ok(words.includes(message('auth:guest.project.madeByPlayers')));
-  assert.ok(words.includes(message('auth:guest.project.madeHow')));
-  assert.match(html, /data-guest-made-join=""[^>]*>Join to vote and suggest</);
+  assert.ok(words.includes(message('auth:guest.project.membersVote')));
+  assert.equal(message('auth:guest.project.membersVote'), 'Members vote on every change.');
+  assert.match(html, /data-guest-made-join=""[^>]*>Sign up to vote and suggest</);
+  assert.doesNotMatch(html, /Made together/);
 });
 
-test('a project page reads its overview: counts from the minimums, What it\'s like from three pictures, two changes then the rest, what went live this month', () => {
+test('a project page reads its overview: counts from the minimums in the card, no What it\'s like, two changes then the rest, what went live this month and who approved it', () => {
   const pic = (id) => `/api/public/apps/game-corner/changes/${id}/stills/a${id}`;
   const lately = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const overview = (over = {}) => ({
@@ -715,7 +721,10 @@ test('a project page reads its overview: counts from the minimums, What it\'s li
       id, pr_number: id, title: `Change ${id}`, summary: `What change ${id} does.`, yes: 10 + id, no: 0,
       pictures: id === 1 ? { before: pic(100), after: pic(101) } : null,
     })),
-    merged: [11, 12, 13, 14].map((id) => ({ id, title: `Live ${id}`, summary: null, merged_at: lately, picture: pic(id) })),
+    merged: [11, 12, 13, 14].map((id) => ({
+      id, title: `Live ${id}`, summary: null, merged_at: lately, picture: pic(id),
+      approved_by: { 11: 'community', 12: 'creator', 13: null, 14: 'member' }[id],
+    })),
     requests: null,
     ...over,
   });
@@ -723,10 +732,12 @@ test('a project page reads its overview: counts from the minimums, What it\'s li
   const html = page(overview());
   const words = text(html);
   assert.ok(words.includes(message('auth:guest.project.activeWeek_other', { count: 34 })));
-  // What it's like: the after pictures of what went live, with their titles.
-  assert.equal([...html.matchAll(/data-guest-like-item="/g)].length, 4);
-  assert.ok(words.includes(message('auth:guest.project.whatItsLike')));
-  assert.ok(words.includes(message('auth:guest.project.madeHowMonth_other', { count: 39 })));
+  // Members and the week's people, on one line in the card, a dot between.
+  assert.match(html, /<p data-guest-people=""[^>]*><svg[\s\S]*?data-guest-people-members=""[\s\S]*?<span aria-hidden="true">·<\/span><b data-guest-people-active=""/);
+  // What it's like is gone: Recently live shows the same changes.
+  assert.doesNotMatch(html, /data-guest-like/);
+  assert.equal(message('auth:guest.project.membersVoteMonth_other', { count: 39 }), 'Members vote on every change. 39 went live this month.');
+  assert.ok(words.includes(message('auth:guest.project.membersVoteMonth_other', { count: 39 })));
   // Up for a vote · 13: two rows, then the rest, which See all opens in place.
   assert.ok(words.includes(message('auth:guest.project.upForVoteCount_other', { count: 13 })));
   assert.equal([...html.matchAll(/<div data-guest-vote="/g)].length, 2);
@@ -738,8 +749,14 @@ test('a project page reads its overview: counts from the minimums, What it\'s li
   assert.match(html, new RegExp(`src="${pic(101)}"[\\s\\S]*?${message('auth:guest.project.beforeAfter')}`));
   assert.ok(words.includes(message('auth:guest.project.yes_other', { count: 11 })));
   assert.match(html, /data-guest-vote-btn=""[^>]*>Vote</);
-  // Recently live: three rows and how many more went live this month.
+  // Recently live: three rows and how many more went live this month, each
+  // saying who said yes, in words that name nobody: the community for two
+  // or more people, its creator alone, nothing when no yes was counted.
   assert.equal([...html.matchAll(/data-guest-merged="/g)].length, 3);
+  assert.match(html, /data-guest-merged="11"[\s\S]*?data-guest-merged-approved="community"[^>]*><svg[^>]*text-\[color:var\(--state-ok\)\][\s\S]*?Approved by community/);
+  assert.match(html, /data-guest-merged="12"[\s\S]*?data-guest-merged-approved="creator"[\s\S]*?Approved by its creator/);
+  const row13 = html.slice(html.indexOf('data-guest-merged="13"'), html.indexOf('data-guest-live-more'));
+  assert.doesNotMatch(row13, /data-guest-merged-approved/);
   assert.match(html, /data-guest-live-more=""[\s\S]*?36 more live this month/);
   assert.doesNotMatch(html, /username|Homeroom bot/, 'no names');
   // Under the minimums a count says nothing; under three pictures, no strip;
@@ -750,7 +767,7 @@ test('a project page reads its overview: counts from the minimums, What it\'s li
     app: { ...APPS[0], member_count: 12, builders: 1, open_votes: 3 },
   }));
   assert.doesNotMatch(quiet, /data-guest-people|data-guest-like=|data-guest-live-more/);
-  assert.ok(text(quiet).includes(message('auth:guest.project.madeHow')));
+  assert.ok(text(quiet).includes(message('auth:guest.project.membersVote')));
 });
 
 test('an app with no view for visitors yet: Sign up to open, with a line saying it needs a free account', () => {
@@ -778,12 +795,37 @@ test('a change opened from Up for a vote: its title, its before and after with a
   assert.doesNotMatch(bare, /data-guest-change-compare|data-guest-change-slider/);
 });
 
-test('the overview it reads carries no names, and the page draws none', () => {
+test('the overview it reads carries no names; Top contributors is the one place the page names anybody', () => {
   const src = read(PROJECT);
   assert.match(src, /fetchOverview\(app\.slug\)/);
   assert.doesNotMatch(src, /username|contributors\.map|\.names\b/);
   // The server side of the same promise is pinned in tests/public-api.test.js.
   assert.doesNotMatch(read('src/services/public-project.js'), /username/);
+  // Top contributors (the member hub's card, for visitors too) reads its own
+  // route, which carries a username and a count and nothing else.
+  assert.match(src, /<GuestContributors slug=\{app\.slug\} initial=\{initialContributors\} className=\{SECTION\} \/>/);
+  assert.match(read(GUEST_CONTRIB), /fetchTopContributors\(slug\)/);
+  assert.match(read(DATA), /\/api\/public\/apps\/\$\{encodeURIComponent\(slug\)\}\/top-contributors/);
+});
+
+test('Top contributors on the signed-out page: the hub\'s list and rules, This month or All time, nothing under two people', () => {
+  const people = (n) => Array.from({ length: n }, (_, i) => ({ username: `p${i + 1}`, n: 10 - i }));
+  const card = (data) => renderComponent(GUEST_CONTRIB, 'GuestContributorsCard', { data });
+  const html = card({ month: people(3), all_time: people(5) });
+  assert.match(html, /<section data-guest-contributors="month"/, 'opens on This month');
+  assert.ok(text(html).includes(message('project:hub.contributors.title')));
+  assert.equal([...html.matchAll(/data-guest-contributor="/g)].length, 3);
+  assert.ok(text(html).includes(message('project:hub.contributors.count_other', { count: 10 })));
+  assert.match(html, /class="one-seg" role="group"/);
+  assert.match(html, /data-guest-contrib-span="month" aria-pressed="true"/);
+  // Nobody this month: it opens on All time.
+  assert.match(card({ month: [], all_time: people(4) }), /data-guest-contributors="all"/);
+  // A list of one is no list, as on the hub.
+  assert.equal(card({ month: people(1), all_time: people(1) }), '');
+  assert.equal(card(null), '');
+  const { CONTRIBUTORS_MIN } = loadTsx(DATA);
+  assert.equal(CONTRIBUTORS_MIN, 2);
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'), /export const HUB_CONTRIBUTORS_MIN = 2;/);
 });
 
 // ─── the story's short version ────────────────────────────────────
