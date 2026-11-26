@@ -36423,6 +36423,70 @@ html:root #dev-workshop .dh-send {
 html:root #dev-workshop .dh-send:disabled { background-color: var(--one-quiet); color: var(--one-ink-3); }
 html:root #dev-workshop .dh-send svg { width: 16px; height: 16px; }
 html:root #dev-workshop .dh-send-failed { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--one-red); }
+/* A post's box wears the chat's formatting row along its top, so it is a
+   rounded card rather than a pill; files are attached with the paperclip
+   beside the send, and wait in the chat's strip under the words. */
+html:root #dev-workshop form.dh-composer-post { border-radius: 16px; padding-block-start: 0; }
+html:root #dev-workshop .dh-format-bar.messages-format-bar {
+  display: flex;
+  flex-basis: 100%;
+  gap: 2px;
+  margin-inline: -6px 0;
+  padding: 4px 0;
+  border-block-end: 1px solid var(--one-hair);
+}
+html:root #dev-workshop .dh-attach {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9999px;
+  background: none;
+  color: var(--one-ink-2);
+}
+html:root #dev-workshop .dh-attach:hover:not(:disabled) { background-color: var(--one-quiet); }
+html:root #dev-workshop .dh-attach:disabled { opacity: 0.45; }
+html:root #dev-workshop .dh-attach svg { width: 18px; height: 18px; }
+html:root #dev-workshop .dh-staged { flex-basis: 100%; padding-block-end: 4px; }
+/* Editing your own post or reply in place: the same field, Save and Cancel under it. */
+html:root #dev-workshop .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+html:root #dev-workshop .dh-edit > .dh-box {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background-color: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+html:root #dev-workshop .dh-edit-acts { display: flex; gap: 8px; }
+html:root #dev-workshop .dh-edit-acts > button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: var(--one-quiet);
+  color: var(--one-ink);
+}
+html:root #dev-workshop .dh-edit-acts > .dh-edit-save { background-color: var(--accent); color: #fff; }
+html:root #dev-workshop .dh-edit-acts > .dh-edit-save:disabled { opacity: 0.5; }
+/* What rides on a message: its files, the cards it shares, a plan it shares. */
+html:root #dev-workshop .dh-files,
+html:root #dev-workshop .dh-cards { margin-top: 8px; }
+html:root #dev-workshop .dh-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--dh-outline);
+  color: var(--one-ink);
+  text-decoration: none;
+}
+html:root #dev-workshop .dh-spec-label { font-size: 12px; font-weight: 600; color: var(--one-ink-2); }
+html:root #dev-workshop .dh-spec-title { font-size: 15px; font-weight: 600; }
 html:root #dev-workshop .dh-composer-reply { min-height: 40px; padding-block: 4px; padding-inline: 12px 4px; border-radius: 20px; }
 html:root #dev-workshop .dh-composer-reply .dh-box { font-size: 14px; min-height: 30px; padding: 5px 0; }
 html:root #dev-workshop .dh-composer-reply .dh-send { width: 30px; height: 30px; }

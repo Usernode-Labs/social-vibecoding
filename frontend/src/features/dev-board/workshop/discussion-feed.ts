@@ -450,8 +450,10 @@ export interface DiscussionSource {
   page(before: number | null): Promise<{ messages: Said[]; more: boolean; readId: number | null }>;
   /** A thread: its first message and its newest replies, oldest first (`all`: as many as the room gives). */
   thread(rootId: number, all?: boolean): Promise<{ root: Said | null; replies: Said[] }>;
-  /** Write a post (`rootId` null) or a reply. */
-  post(content: string, rootId: number | null): Promise<Said | null>;
+  /** Write a post (`rootId` null) or a reply, with the files `upload` took in. */
+  post(content: string, rootId: number | null, attachmentIds?: string[]): Promise<Said | null>;
+  /** Take a file in through the room's own upload route (its limits); the id a post carries it by. */
+  upload(file: File): Promise<string>;
   react(messageId: number, emoji: string, on: boolean): Promise<DiscussionReaction[] | null>;
   /** Where the viewer's reading stands, when the page did not say. */
   readPosition(): Promise<number | null>;
@@ -683,9 +685,18 @@ export function appSource(slug: string, viewer: { current: string | null }): Dis
         .filter((m): m is Said => !!m);
       return { root: data.root ? fromAppRow(data.root, viewer.current, files) : null, replies };
     },
-    async post(content, rootId) {
+    async upload(file) {
+      const response = await fetch(`${files}?filename=${encodeURIComponent(file.name || 'file')}`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' }, body: file,
+      });
+      const data = await readJson(response);
+      if (!response.ok || !str(data.id)) throw new DiscussionWriteError(response.status, str(data.error));
+      return str(data.id);
+    },
+    async post(content, rootId, attachmentIds = []) {
       const body: Json = { content, client_key: clientKey() };
       if (rootId) { body.thread_type = 'message'; body.thread_ref = rootId; }
+      if (attachmentIds.length) body.attachment_ids = attachmentIds;
       const response = await fetch(base, { method: 'POST', credentials: 'same-origin', headers: json, body: JSON.stringify(body) });
       const data = await readJson(response);
       if (!response.ok) throw new DiscussionWriteError(response.status, str(data.error));
@@ -754,11 +765,21 @@ export function conversationSource(conversationId: number, slug: string): Discus
       const root = page.root ? fromConversationMessage(page.root) : null;
       return { root, replies: shape(page.messages).map((m) => ({ ...m, rootId })) };
     },
-    async post(content, rootId) {
+    async upload(file) {
+      try {
+        const attachment = await messagesApi.uploadAttachment(conversationId, file);
+        return String(attachment.id);
+      } catch (error) {
+        const status = error instanceof messagesApi.MessagesApiError ? error.status : 0;
+        throw new DiscussionWriteError(status, error instanceof Error ? error.message : '');
+      }
+    },
+    async post(content, rootId, attachmentIds = []) {
       try {
         const sent = await messagesApi.sendMessage(conversationId, {
           content,
           ...(rootId ? { threadRootId: rootId } : {}),
+          ...(attachmentIds.length ? { attachmentIds } : {}),
           idempotencyKey: clientKey(),
         });
         const said = fromConversationMessage(sent);

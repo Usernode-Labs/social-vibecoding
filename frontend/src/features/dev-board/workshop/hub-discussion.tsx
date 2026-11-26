@@ -77,13 +77,18 @@ import {
 } from 'react';
 
 import { ReactionPill } from '@/components/ui/feed';
-import { ArrowUpIcon, ChevronRightIcon, HashIcon, ReplyArrowIcon, ThreadIcon } from '@/components/ui/icons';
+import {
+  ArrowUpIcon, BoldIcon, ChevronRightIcon, HashIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, QuoteIcon,
+  ReplyArrowIcon, StrikethroughIcon, ThreadIcon, UnderlineIcon,
+} from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { messageStamp, shortDate } from '../../../lib/timestamp';
 import { enterSends, isTouchInput } from '../../../lib/enter-sends';
 import { watch as watchLiveReads } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
+import { MAX_ATTACHMENTS, stageFiles } from '../../attachments/limits';
+import { PendingStripRows, type PendingAttachmentView } from '../../attachments/pending-strip';
 import { openReport } from '../../dialogs/report';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../../message-actions/action-sheet';
@@ -97,6 +102,7 @@ import { Attachments } from '../../group-chat/transcript';
 import type { Attachment } from '../../group-chat/transcript-store';
 import { attachmentBadge } from '../../messages/attachment-views';
 import { MessageMarkdown, ObjectCard, UserAvatar, fileSize } from '../../messages/format';
+import { applyFormat, type FormatKind } from '../../messages/composer-format';
 import { setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
@@ -453,9 +459,9 @@ export class DiscussionFeed {
     this.set({ busy: false });
   }
 
-  /** Write a post or a reply; it is on the card when the answer lands. */
-  async write(content: string, rootId: number | null): Promise<void> {
-    const said = await this.source.post(content, rootId);
+  /** Write a post or a reply, with the files already taken in; it is on the card when the answer lands. */
+  async write(content: string, rootId: number | null, attachmentIds: string[] = []): Promise<void> {
+    const said = await this.source.post(content, rootId, attachmentIds);
     if (!said) { await this.refresh(); return; }
     const updates: Said[] = [said];
     if (rootId) {
@@ -826,7 +832,8 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
         placeholder={t('project:hub.discussion.start.placeholder')}
         label={t('project:hub.discussion.start.label', { project: name })}
         sendLabel={t('project:hub.discussion.start.send')}
-        onSend={(words) => feed.write(words, null)}
+        onSend={(words, ids) => feed.write(words, null, ids)}
+        upload={(file) => feed.source.upload(file)}
       />
       <div className="dh-sort" role="group" aria-label={t('project:hub.discussion.sort.label')} data-ws-discussion-sort={sort}>
         <span className="dh-sort-label" aria-hidden="true">{t('project:hub.discussion.sort.label')}</span>
@@ -992,7 +999,8 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               ? t('project:hub.discussion.reply.label', { username: nameOf(item.root.who) })
               : t('project:hub.discussion.reply.labelEarlier')}
             sendLabel={t('project:hub.discussion.reply.send')}
-            onSend={(words) => feed.write(words, rootId)}
+            onSend={(words, ids) => feed.write(words, rootId, ids)}
+            upload={(file) => feed.source.upload(file)}
           />
         </div>
       ) : null}
@@ -1355,35 +1363,97 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
  * through (../../../lib/join-required.ts), and any other refusal is said under
  * the box with what was typed kept.
  */
-function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend }: {
+/** The formatting row a post's box wears, as a channel's composer did (#6035): the chat's own buttons and rules. */
+const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof BoldIcon }> = [
+  { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
+  { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
+  { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'strike', label: 'messages:composer.format.strike', Icon: StrikethroughIcon },
+  { kind: 'heading', label: 'messages:composer.format.heading', Icon: HeadingIcon },
+  { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
+  { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
+  { kind: 'link', label: 'messages:composer.format.link', Icon: LinkIcon },
+];
+
+/** A file picked for the next post or reply, before it is sent. */
+interface Staged { key: string; file: File; thumb: string | null }
+
+let stagedSeq = 0;
+
+/**
+ * The box a post or a reply is written in. Files ride along as they do in
+ * the chat: the paperclip (or a drop) stages up to four, under the room's
+ * own limits (../../attachments/limits.ts), shown as the chat's strip; they
+ * are taken in through the room's own upload route when the post is sent.
+ * A post's box wears the formatting row; Ctrl/Cmd + B and I work in both.
+ */
+function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend, upload }: {
   kind: 'post' | 'reply';
   boxRef: RefObject<HTMLTextAreaElement | null>;
   viewer: Viewer | null;
   placeholder: string;
   label: string;
   sendLabel: string;
-  onSend: (words: string) => Promise<void>;
+  onSend: (words: string, attachmentIds: string[]) => Promise<void>;
+  upload: (file: File) => Promise<string>;
 }): ReactNode {
   const t = useMessages('project');
+  const tm = useMessages('messages');
   const [words, setWords] = useState('');
+  const [staged, setStaged] = useState<Staged[]>([]);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
-  const empty = !words.trim();
+  const picker = useRef<HTMLInputElement | null>(null);
+  const caret = useRef<{ start: number; end: number } | null>(null);
+  const empty = !words.trim() && !staged.length;
   const grow = () => {
     const box = boxRef.current;
     if (!box) return;
     box.style.height = 'auto';
     box.style.height = `${Math.min(box.scrollHeight, 240)}px`;
+    if (caret.current) {
+      box.setSelectionRange(caret.current.start, caret.current.end);
+      caret.current = null;
+    }
   };
   useEffect(grow, [words]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A picture's preview is the browser's own copy until it is sent.
+  useEffect(() => () => { for (const item of staged) if (item.thumb) URL.revokeObjectURL(item.thumb); }, [staged]);
+  const stage = (files: File[]) => {
+    const { upload: take, refused } = stageFiles(files, staged.length, tm);
+    setFailed(refused || null);
+    if (!take.length) return;
+    setStaged((held) => [...held, ...take.map((file) => ({
+      key: `f${stagedSeq += 1}`,
+      file,
+      thumb: file.type.startsWith('image/') && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null,
+    }))]);
+  };
+  const format = (how: FormatKind) => {
+    const box = boxRef.current;
+    if (!box) return;
+    const result = applyFormat(box.value.slice(0, 8000), box.selectionStart ?? box.value.length, box.selectionEnd ?? box.value.length, how);
+    caret.current = { start: result.start, end: result.end };
+    box.focus({ preventScroll: true });
+    setWords(result.value);
+  };
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     if (empty || sending) return;
     setSending(true);
     setFailed(null);
+    let ids: string[];
     try {
-      await onSend(words.trim());
+      ids = await Promise.all(staged.map((item) => upload(item.file)));
+    } catch (error) {
+      setFailed(error instanceof Error && error.message ? error.message : tm('messages:composer.uploadFailed'));
+      setSending(false);
+      return;
+    }
+    try {
+      await onSend(words.trim(), ids);
       setWords('');
+      setStaged([]);
     } catch (error) {
       const said = error instanceof Error && error.message ? error.message : '';
       setFailed(said || t('project:hub.discussion.sendFailed'));
@@ -1392,13 +1462,58 @@ function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend 
     }
   };
   const onKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && !event.altKey && (event.key === 'b' || event.key === 'i')) {
+      event.preventDefault();
+      format(event.key === 'b' ? 'bold' : 'italic');
+      return;
+    }
     if (enterSends(event.nativeEvent)) {
       event.preventDefault();
       void send();
     }
   };
+  const pending: PendingAttachmentView[] = staged.map((item) => ({
+    key: item.key,
+    name: item.file.name,
+    kind: item.thumb ? 'image' : 'binary',
+    badge: attachmentBadge(item.file.name, item.file.type),
+    size: fileSize(item.file.size),
+    thumbUrl: item.thumb,
+    uploading: sending,
+  }));
   return (
-    <form className={kind === 'post' ? 'dh-composer dh-composer-post' : 'dh-composer dh-composer-reply'} data-ws-discussion-compose={kind} onSubmit={send}>
+    <form
+      className={kind === 'post' ? 'dh-composer dh-composer-post' : 'dh-composer dh-composer-reply'}
+      data-ws-discussion-compose={kind}
+      onSubmit={send}
+      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer?.files || []);
+        if (!files.length) return;
+        event.preventDefault();
+        stage(files);
+      }}
+    >
+      {kind === 'post' ? (
+        <div className="dh-format-bar messages-format-bar" role="toolbar" aria-label={tm('messages:composer.format.bar')} data-ws-discussion-format="">
+          {FORMAT_BUTTONS.map(({ kind: how, label: name, Icon }) => (
+            <button
+              key={how}
+              type="button"
+              className="messages-format-btn"
+              data-format={how}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => format(how)}
+              disabled={sending}
+              aria-label={tm(name)}
+              title={tm(name)}
+            >
+              <Icon aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       {kind === 'post' ? <ViewerFace viewer={viewer} /> : null}
       <textarea
         ref={boxRef}
@@ -1412,10 +1527,40 @@ function Composer({ kind, boxRef, viewer, placeholder, label, sendLabel, onSend 
         disabled={sending}
         onChange={(event) => setWords(event.currentTarget.value)}
         onKeyDown={onKey}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData?.files || []);
+          if (!files.length) return;
+          event.preventDefault();
+          stage(files);
+        }}
+      />
+      <button
+        type="button"
+        className="dh-attach"
+        data-ws-discussion-attach=""
+        disabled={sending || staged.length >= MAX_ATTACHMENTS}
+        aria-label={tm('messages:composer.attachFiles')}
+        title={tm('messages:composer.attachFiles')}
+        onClick={() => picker.current?.click()}
+      >
+        <PaperClipIcon aria-hidden="true" />
+      </button>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        tabIndex={-1}
+        onChange={(event) => { stage(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ''; }}
       />
       <button type="submit" className="dh-send" disabled={empty || sending} aria-label={sendLabel} title={sendLabel}>
         <ArrowUpIcon aria-hidden="true" />
       </button>
+      {pending.length ? (
+        <div className="dh-staged" data-ws-discussion-staged={String(pending.length)}>
+          <PendingStripRows items={pending} onRemove={(at) => setStaged((held) => held.filter((_, i) => i !== at))} />
+        </div>
+      ) : null}
       {failed ? <p className="dh-send-failed" role="alert" data-ws-discussion-send-failed="">{failed}</p> : null}
     </form>
   );
