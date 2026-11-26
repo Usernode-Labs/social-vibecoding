@@ -20,7 +20,7 @@ import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from '../nav/nav-store.js';
 import { livePlace, placeStore } from '../dev-board/workshop/place-store';
-import { placeHandle, placeName } from '../dev-board/workshop/places';
+import { placeName, placeTitleHandle } from '../dev-board/workshop/places';
 import { topicHeadStore } from '../dev-board/topic/topic-store';
 import { pageTitle, type TitleWords } from './document-title-model';
 
@@ -40,7 +40,7 @@ function placeWords(slug: string | null): string {
   if (!slug || mounted !== slug) return '';
   // Never a channel left over from another community (#5683).
   const shown = livePlace(slug, place);
-  const handle = placeHandle(shown);
+  const handle = placeTitleHandle(shown);
   return handle ? `#${handle}` : placeName(shown);
 }
 

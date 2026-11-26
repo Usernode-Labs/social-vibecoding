@@ -1852,6 +1852,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Earlier post's own reactions and a visitor's read-only Discussion on a
   // public project's signed-out page. 704 leaves 176 slots.
   checkCap.assertPinned(DAPP.tests.length, 704);
+  // Every selector fits the runner's cap (app-manifest.js
+  // MAX_TEST_SELECTOR_LEN): a longer one is cut mid-token and fails on every
+  // build with "was not found".
+  const { MAX_TEST_SELECTOR_LEN } = require('../src/services/app-manifest');
+  assert.deepEqual(DAPP.tests.filter((t) => (t.expectSelector || '').length > (MAX_TEST_SELECTOR_LEN || 512)).map((t) => t.name), []);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

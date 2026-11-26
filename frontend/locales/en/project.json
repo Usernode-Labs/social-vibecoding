@@ -5495,6 +5495,14 @@
     "text": "Back to Needs you",
     "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Needs you place, the list of decisions waiting on this person."
   },
+  "topic.back.discussion": {
+    "text": "Discussion",
+    "description": "The back chip at the top of a request's or a change's page when the page was opened from the project's Discussion (its posts and replies): pressing it goes back there. Shown after a ‹ arrow."
+  },
+  "topic.back.toDiscussion": {
+    "text": "Back to Discussion",
+    "description": "Accessible name of the back chip at the top of a request's or a change's page that goes back to the project's Discussion (its posts and replies)."
+  },
   "topic.back.channel": {
     "text": "#{{handle}}",
     "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on one of its chat channels, which the chip returns to. {{handle}} is the channel's name without its #, such as general. Shown after a left-pointing chevron."

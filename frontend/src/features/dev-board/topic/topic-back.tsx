@@ -84,7 +84,7 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** Where a chip goes: the screen it names. */
-type ChipKey = 'messages' | 'bot' | 'workshop' | 'allItems' | 'hub' | 'needs' | 'channel';
+type ChipKey = 'messages' | 'bot' | 'workshop' | 'allItems' | 'hub' | 'needs' | 'discussion' | 'channel';
 
 /**
  * The chip's words by destination, as message ids. The key names the
@@ -97,6 +97,7 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
   allItems: { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
   hub: { label: 'project:topic.back.hub', name: 'project:topic.back.toHub' },
   needs: { label: 'project:topic.back.needs', name: 'project:topic.back.toNeeds' },
+  discussion: { label: 'project:topic.back.discussion', name: 'project:topic.back.toDiscussion' },
   channel: { label: 'project:topic.back.channel', name: 'project:topic.back.toChannel' },
 };
 
@@ -116,6 +117,8 @@ export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: s
   if (workshopTab === 'all') return { to: 'allItems' };
   if (workshopTab === 'status' || workshopTab === 'plan') return { to: 'hub' };
   if (workshopTab === 'needs') return { to: 'needs' };
+  // #general is the Discussion, named in words (26 Nov 2026).
+  if (workshopTab === 'discussion' || workshopTab === 'posts') return { to: 'discussion' };
   const handle = placeHandle(workshopTab);
   if (handle) return { to: 'channel', handle };
   return { to: 'workshop' };

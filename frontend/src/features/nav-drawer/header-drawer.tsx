@@ -40,7 +40,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { topicBack } from '../dev-board/topic/topic-page';
 import { useTopicBackName } from '../dev-board/topic/topic-back';
 import { openPlace } from '../dev-board/workshop/place-store';
-import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
+import { litPlace, placeName, placeTitleHandle, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
@@ -99,7 +99,7 @@ function translate(x: number, y = 0): string {
 
 /** A place's words in the header: a channel by its #handle. */
 export function pageLabel(place: string): string {
-  const handle = placeHandle(place);
+  const handle = placeTitleHandle(place);
   return handle ? `#${handle}` : placeName(place as PlaceKey);
 }
 

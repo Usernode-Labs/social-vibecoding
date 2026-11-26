@@ -250,6 +250,10 @@ test('places: keys, handles, aliases and addresses', () => {
   assert.equal(p.channelPlace('general'), 'discussion');
   assert.equal(p.channelPlace('#Onboarding'), 'c:onboarding');
   assert.equal(p.placeHandle('discussion'), 'general');
+  // Its name is words: the header, the title and the place bar say Discussion (26 Nov 2026).
+  assert.equal(p.placeTitleHandle('discussion'), null);
+  assert.equal(p.placeTitleHandle('posts'), null);
+  assert.equal(p.placeTitleHandle('c:infra'), 'infra');
   assert.equal(p.placeHandle('c:infra'), 'infra');
   assert.equal(p.placeHandle('workshop'), null);
   assert.equal(p.isPlaceKey('c:9bad'), false, 'a handle starts with a letter');

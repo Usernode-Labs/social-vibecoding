@@ -54,6 +54,15 @@ export function channelPlace(handle: string | null | undefined): PlaceKey {
   return HANDLE_RE.test(h) ? `c:${h}` : 'discussion';
 }
 
+/**
+ * The handle a place's NAME shows after a `#` (the header, the page title,
+ * the place bar): a topic's. The Discussion is #general underneath, and is
+ * named in words, "Discussion" (26 Nov 2026), as placeName says.
+ */
+export function placeTitleHandle(key: string | null | undefined): string | null {
+  return key === 'discussion' || key === 'posts' ? null : placeHandle(key);
+}
+
 /** The channel handle a place key names, or null for a page. */
 export function placeHandle(key: string | null | undefined): string | null {
   if (key === 'discussion') return 'general';

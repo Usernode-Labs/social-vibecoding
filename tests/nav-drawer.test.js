@@ -173,7 +173,7 @@ test('the header takes the grid or the arrow, and the titles, only while it appl
   assert.equal(renderToHtml(createElement(ui.DrawerBack)), '');
   assert.equal(renderToHtml(createElement(ui.DrawerUntint)), '');
   assert.equal(ui.pageLabel('c:onboarding'), '#onboarding');
-  assert.equal(ui.pageLabel('discussion'), '#general');
+  assert.equal(ui.pageLabel('discussion'), 'Discussion', '#general is the Discussion, named in words');
   assert.equal(ui.pageLabel('workshop'), 'Workshop');
   assert.equal(ui.pageLabel('status'), 'Hub');
 });

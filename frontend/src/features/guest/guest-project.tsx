@@ -130,31 +130,31 @@ function VoteRow({ vote, app, color, last, signedIn, onOpen, onIntent }: {
   return (
     <div data-guest-vote={vote.id} className={cn('flex items-center gap-2 pe-3.5', last ? '' : ROW_LINE)}>
       <button type="button" data-guest-vote-open="" className="flex min-h-[72px] min-w-0 flex-1 items-center gap-3.5 py-2.5 ps-3.5 text-start" onClick={onOpen}>
-        <span className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-zinc-100 md:h-[70px] md:w-[112px] dark:bg-zinc-800">
+        <span className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-zinc-100 md:h-[70px] md:w-[112px] lg:h-[72px] lg:w-[72px] dark:bg-zinc-800">
           {pic ? (
             <img src={pic} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover object-top" />
           ) : (
             <TilePicture app={app} color={color} className="h-full w-full" />
           )}
           {vote.pictures?.before ? (
-            <span className="absolute bottom-1 start-1 hidden rounded-full bg-zinc-950/70 px-1.5 py-px text-[10px] font-bold text-white md:inline">
+            <span className="absolute bottom-1 start-1 hidden rounded-full bg-zinc-950/70 px-1.5 py-px text-[10px] font-bold text-white md:inline lg:hidden">
               {t('auth:guest.project.beforeAfter')}
             </span>
           ) : null}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{title}</span>
-          {vote.summary ? <span className="hidden truncate text-[13px] leading-[18px] text-zinc-500 md:block dark:text-zinc-400">{vote.summary}</span> : null}
-          <span className="block text-[13px] leading-[18px] text-zinc-500 md:hidden dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
+          {vote.summary ? <span className="hidden truncate text-[13px] leading-[18px] text-zinc-500 md:block lg:hidden dark:text-zinc-400">{vote.summary}</span> : null}
+          <span className="block text-[13px] leading-[18px] text-zinc-500 md:hidden lg:block dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
         </span>
-        <span className="hidden shrink-0 text-[13px] text-zinc-500 md:inline dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
-        <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-zinc-500 md:hidden dark:text-zinc-400" aria-hidden="true" />
+        <span className="hidden shrink-0 text-[13px] text-zinc-500 md:inline lg:hidden dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
+        <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-zinc-500 md:hidden lg:block dark:text-zinc-400" aria-hidden="true" />
       </button>
       {signedIn ? null : (
         <button
           type="button"
           data-guest-vote-btn=""
-          className="hidden h-9 shrink-0 rounded-full bg-violet-100 px-[18px] text-sm font-bold text-violet-700 hover:bg-violet-200 md:inline-flex md:items-center dark:bg-violet-950 dark:text-violet-300 dark:hover:bg-violet-900"
+          className="hidden h-9 shrink-0 rounded-full bg-violet-100 px-[18px] text-sm font-bold text-violet-700 hover:bg-violet-200 md:inline-flex md:items-center lg:hidden dark:bg-violet-950 dark:text-violet-300 dark:hover:bg-violet-900"
           onClick={() => onIntent({ kind: 'vote', app, change: title })}
         >
           {t('auth:guest.project.vote')}
@@ -472,7 +472,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       <div data-guest-cols="" className="flex flex-col lg:mt-8 lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start lg:gap-6">
       <div data-guest-side="" className="contents lg:flex lg:flex-col lg:[&>*:first-child]:mt-0">
       <section data-guest-made="" className={cn(SECTION, 'order-1 lg:order-none')}>
-        <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5')}>
+        <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5 lg:flex-col lg:items-stretch lg:gap-4')}>
           <div className="min-w-0 flex-1">
             <h2 className="text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100">
               {playsIt(app) ? t('auth:guest.project.madeByPlayers') : t('auth:guest.project.madeByUsers')}
@@ -490,7 +490,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
               size="none"
               ink="solid"
               data-guest-made-join=""
-              className="h-12 w-full shrink-0 px-6 text-[16px] font-bold md:w-auto md:min-w-[280px]"
+              className="h-12 w-full shrink-0 px-6 text-[16px] font-bold md:w-auto md:min-w-[280px] lg:w-full lg:min-w-0"
               onClick={() => onIntent({ kind: 'join', app })}
             >
               {t('auth:guest.project.signUpToVoteSuggest')}

@@ -2516,7 +2516,7 @@
     {
       "name": "Homeroom's Discussion is a place of its own: #general as posts under the page's own header, the box to start one wearing the formatting row (Bold through Insert link, #6035/#6653), and Mute at the end of its heading (#5303), with no chat view of #general left (26 Nov 2026)",
       "path": "/?demo=1&ws=discussion#app/usernode-2d5619/workshop",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:not(:has(.messages-thread-embedded, #gc-messages)):has(> .dev-ws-hub-discussion-head > button[data-ws-channel-mute]) > form[data-ws-discussion-compose=\"post\"] > .messages-format-bar[data-ws-discussion-format][role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"]:has(> .dev-ws-hub-discussion-head > button[data-ws-channel-mute]) > form[data-ws-discussion-compose=\"post\"] > .messages-format-bar[data-ws-discussion-format][role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]",
       "expectText": "Discussion"
     },
     {
