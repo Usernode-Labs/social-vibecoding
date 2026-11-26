@@ -345,6 +345,68 @@ test('shared slots keep the previous verified candidate when the newest build fa
   }
 });
 
+test('the six-merge #7014 burst gives the tip a slot and retains verified fallback candidates', async () => {
+  const { selectLane } = require('../scripts/select-kubernetes-build-lane');
+  // UTC seconds from 16:26:00 on 23 Nov 2026. Git commit times, Actions
+  // plan completions, and observed job durations from runs 45216560275
+  // through 45216725955. Platform failed for #7004.
+  const trace = [
+    { pr: 7002, merged: 33, plan: 60, platform: 109, postgres: 134, worker: 33, capture: 27 },
+    { pr: 7003, merged: 42, plan: 72, platform: 124, postgres: 119, worker: 38, capture: 38 },
+    { pr: 7004, merged: 49, plan: 76, platform: 20, postgres: 110, worker: 39, capture: 36 },
+    { pr: 7005, merged: 61, plan: 89, platform: 142, postgres: 82, worker: 34, capture: 42 },
+    { pr: 7009, merged: 76, plan: 107, platform: 132, postgres: 105, worker: 31, capture: 36 },
+    { pr: 7014, merged: 85, plan: 112, platform: 113, postgres: 118, worker: 32, capture: 33 },
+  ];
+  const runs = [];
+  for (const row of trace) {
+    const tip = trace.filter(push => push.merged <= row.plan).at(-1);
+    const ref = 'refs/heads/main';
+    const buildLane = await selectLane({ GITHUB_EVENT_NAME: 'push', GITHUB_SHA: String(row.pr), GITHUB_REF: ref },
+      async () => String(tip.pr), async () => ({ total_count: 1,
+        concurrency_groups: [{ group_name: `kubernetes-build-${ref}-platform-0` }] }));
+    const jobs = Object.fromEntries(['platform', 'postgres', 'worker', 'capture']
+      .map(component => [component, { seconds: row[component] }]));
+    jobs.platform.failed = row.pr === 7004;
+    runs.push({ number: row.pr, plannedAt: row.plan, buildLane, jobs });
+  }
+  assert.deepEqual(runs.map(run => run.buildLane), [0, 0, 0, 0, 0, 1]);
+  for (const failed of [false, true]) {
+    runs.at(-1).jobs.platform.failed = failed;
+    const checks = replayChecks(runs);
+    assert.deepEqual(checks.map(run => run.verifiedAt), [196, 317, null, 513, 620, failed ? null : 232]);
+    // #7002 holds the publication lock. Its decision begins 18 seconds
+    // after verification, as in the observed run. The next fallback #7003
+    // is still building throughout the 90-second decision window.
+    const start = checks[0].verifiedAt + 18;
+    let now = start * 1000;
+    const sha = number => number.toString(16).padStart(40, '0');
+    const candidate = runs[0].number;
+    const decision = await chooseRelease({ number: candidate, sha: sha(candidate), version: '0.1.7002001' }, {
+      previous: async () => ({ revision: sha(7001), version: '0.1.7001001', digest: DIGEST }),
+      tip: async () => sha(7014),
+      compare: async () => ({ status: 'ahead', commits: [{ commit: { committer: { date: new Date(33000).toISOString() } } }] }),
+      peers: async () => runs.slice(1).map(run => ({ event: 'push', head_sha: sha(run.number),
+        run_number: run.number, status: 'in_progress' })),
+      jobs: async peer => {
+        const run = checks.find(run => run.number === peer.run_number);
+        const byName = ['plan', 'platform', 'worker', 'capture', 'postgres'];
+        return checkedJobs.map((job, index) => {
+          const check = run.jobs[byName[index]];
+          if (!check) return job; // Every plan has finished before #7002 verifies.
+          if (check.finish * 1000 > now) return { name: job.name, status: 'in_progress' };
+          return { ...job, conclusion: check.failed ? 'failure' : 'success' };
+        });
+      },
+      healthy: async digest => argoHasRolledOut(argoStatus(), REPO, digest),
+      now: () => now, wait: async milliseconds => { now += milliseconds; }, log: () => {},
+    });
+    assert.equal(decision.publish, failed);
+    assert.equal(now / 1000, failed ? start + 90 : start + 20);
+    if (!failed) assert.match(decision.reason, /Verified run 7014/);
+  }
+});
+
 test('rollout polling pins timings to the chart digest and public source revision', async () => {
   const oldDigest = 'sha256:' + 'd'.repeat(64);
   const times = at => new Date(at).toISOString();

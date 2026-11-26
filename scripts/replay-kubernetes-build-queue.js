@@ -19,7 +19,7 @@ function replayChecks(runs, { slots = 2, shared = false, bypassLiveImages = fals
       if (!job) continue;
 
       const pool = available.get(component);
-      const slot = shared ? pool.indexOf(Math.min(...pool)) : run.number % slots;
+      const slot = shared ? pool.indexOf(Math.min(...pool)) : (run.buildLane ?? run.number % slots);
       // Only a digest confirmed live can take this route. Reuse of a build
       // input key alone still requires an available slot and verification.
       const bypass = bypassLiveImages && job.live === true && !job.failed
