@@ -6,8 +6,9 @@ import { eventOptions, fetchAllEvents, fetchJson, send } from './api.ts';
 import { fmtActivityAt } from '../activity-at.ts';
 import { BTN } from './tokens.ts';
 import {
-  EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List, Options, Pager,
-  Panel, ScreenHeader, Select, Skeleton, Textarea, fmt, isoToLocalInput, localInputToIso,
+  EmptyState, ErrorState, Field, Figures, FormActions, FormError, FormGrid, Input, List, LoadMore,
+  Options, Panel, ScreenHeader, Select, Skeleton, TabPanel, Tabs, Textarea, Toolbar, fmt,
+  isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
@@ -321,17 +322,6 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
   );
 }
 
-function Stat({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2">
-      <dt className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-        {label}
-      </dt>
-      <dd className="mt-0.5 text-sm font-medium font-mono">{String(value)}</dd>
-    </div>
-  );
-}
-
 type Totals = {
   grand_total: { total_points: number; total_activities: number; unique_users: number };
   user_totals: {
@@ -344,7 +334,28 @@ type Totals = {
   }[];
 };
 
-function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () => void }) {
+type UserTotal = Totals['user_totals'][number];
+type TypeTotal = Totals['type_totals'][number];
+
+const NUM = { tdClass: 'font-mono text-end', thClass: 'text-end' };
+
+const USER_TOTAL_COLUMNS: Column<UserTotal>[] = [
+  { label: 'User', primary: true, cell: (t) => t.user.display_name || t.user.email || t.user.id },
+  { label: 'Points', cell: (t) => t.total_points, ...NUM },
+  { label: 'Count', cell: (t) => t.total_activities, ...NUM },
+];
+
+const TYPE_TOTAL_COLUMNS: Column<TypeTotal>[] = [
+  { label: 'Type', primary: true, cell: (t) => t.activity_type },
+  { label: 'Count', cell: (t) => t.count, ...NUM },
+  { label: 'Points', cell: (t) => t.total_points, ...NUM },
+  { label: 'Users', cell: (t) => t.unique_users, ...NUM },
+];
+
+// The totals are the screen's second tab (26 Nov 2026). They were a panel a
+// header button opened over the list; `onClose` is kept for a caller that
+// still shows them that way, and the tab passes none.
+function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose?: () => void }) {
   const write = canWrite();
   const [eventId, setEventId] = useState('');
   const [totals, setTotals] = useState<Totals | null>(null);
@@ -382,17 +393,16 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
       onClose={onClose}
       closeLabel="Close the totals panel"
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-        <div className="sm:w-64">
-          <Field label="Event" htmlFor="admin-topo-act-tot-event">
-            <Select
-              id="admin-topo-act-tot-event"
-              value={eventId}
-              onChange={(e) => setEventId(e.target.value)}
-            >
-              <Options options={eventOptions(events)} blank="All events" />
-            </Select>
-          </Field>
+      <Toolbar>
+        <div className="min-w-[14rem] sm:w-64">
+          <Select
+            id="admin-topo-act-tot-event"
+            aria-label="Event"
+            value={eventId}
+            onChange={(e) => setEventId(e.target.value)}
+          >
+            <Options options={eventOptions(events)} blank="All events" />
+          </Select>
         </div>
         {write ? (
           <button
@@ -404,8 +414,8 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
             Refresh totals (ended events)
           </button>
         ) : null}
-      </div>
-      <div id="admin-topo-act-tot-body" className="mt-4">
+      </Toolbar>
+      <div id="admin-topo-act-tot-body">
         {error ? (
           <ErrorState
             title="Couldn't load totals"
@@ -417,61 +427,33 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
         {!error && !totals ? <Skeleton rows={4} /> : null}
         {totals ? (
           <>
-            <dl className="grid grid-cols-3 gap-2">
-              <Stat label="Points" value={totals.grand_total.total_points} />
-              <Stat label="Activities" value={totals.grand_total.total_activities} />
-              <Stat label="Users" value={totals.grand_total.unique_users} />
-            </dl>
+            <Figures
+              items={[
+                { key: 'points', label: 'Points', value: String(totals.grand_total.total_points), tone: 'sky' },
+                { key: 'activities', label: 'Activities', value: String(totals.grand_total.total_activities), tone: 'green' },
+                { key: 'users', label: 'Users', value: String(totals.grand_total.unique_users), tone: 'yellow' },
+              ]}
+            />
             <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
-              <div className="min-w-0 overflow-x-auto">
+              <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500 mb-1">
                   By user (top 50)
                 </div>
-                <table className="w-full">
-                  <thead className="text-xs text-zinc-500 dark:text-zinc-400">
-                    <tr>
-                      <th className="text-start px-2">User</th>
-                      <th className="text-end px-2">Points</th>
-                      <th className="text-end px-2">Count</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {totals.user_totals.slice(0, 50).map((t) => (
-                      <tr key={t.user.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                        <td className="px-2 py-1 text-xs">
-                          {t.user.display_name || t.user.email || t.user.id}
-                        </td>
-                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_points}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_activities}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <List
+                  items={totals.user_totals.slice(0, 50)}
+                  rowKey={(t) => t.user.id}
+                  columns={USER_TOTAL_COLUMNS}
+                />
               </div>
-              <div className="min-w-0 overflow-x-auto">
+              <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500 mb-1">
                   By type
                 </div>
-                <table className="w-full">
-                  <thead className="text-xs text-zinc-500 dark:text-zinc-400">
-                    <tr>
-                      <th className="text-start px-2">Type</th>
-                      <th className="text-end px-2">Count</th>
-                      <th className="text-end px-2">Points</th>
-                      <th className="text-end px-2">Users</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {totals.type_totals.map((t) => (
-                      <tr key={t.activity_type} className="border-t border-zinc-200 dark:border-zinc-800">
-                        <td className="px-2 py-1 text-xs">{t.activity_type}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-end">{t.count}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_points}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-end">{t.unique_users}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <List
+                  items={totals.type_totals}
+                  rowKey={(t) => t.activity_type}
+                  columns={TYPE_TOTAL_COLUMNS}
+                />
               </div>
             </div>
           </>
@@ -481,18 +463,21 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
   );
 }
 
-// Which of the three panels the one `#admin-topo-act-form` host is showing.
+// Which of the two panels the one `#admin-topo-act-form` host is showing.
 // The innerHTML version had the same rule implicitly — each opener overwrote
 // the host — and needed `_acts.editingId` on the side to remember which.
+// The totals were a third; they are the Totals tab now.
 type OpenPanel =
   | { kind: 'none' }
   | { kind: 'form'; id: number | null }
-  | { kind: 'import' }
-  | { kind: 'totals' };
+  | { kind: 'import' };
+
+type ActivitiesTab = 'list' | 'totals';
+const ACT_TABS_ID = 'admin-topo-act-tabs';
 
 function UserActivitiesScreen() {
   const write = canWrite();
-  const [page, setPage] = useState(1);
+  const [tab, setTab] = useState<ActivitiesTab>('list');
   const [items, setItems] = useState<Activity[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
@@ -509,28 +494,69 @@ function UserActivitiesScreen() {
     })();
   }, []);
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), per_page: '20' });
+  const fetchPage = useCallback((p: number) => {
+    const params = new URLSearchParams({ page: String(p), per_page: '20' });
     if (search) params.set('search', search);
-    const res = await fetchJson(`/api/v4/admin/user-activities?${params}`);
-    if (!alive.current) return;
-    if (res.ok && res.data?.success) {
-      setItems(res.data.data);
-      setMeta(res.data.meta || null);
-      setError(null);
-      return;
+    return fetchJson(`/api/v4/admin/user-activities?${params}`);
+  }, [search]);
+
+  // The list goes on as its foot comes into view (ui.tsx `LoadMore`, as the
+  // waitlist's queue does, 26 Nov 2026). How far it has read is kept here, so
+  // a save or a delete reads every page reached again and the reader stays
+  // where they were. A changed search starts over; this effect is declared
+  // before the one that loads, so it runs first.
+  const reach = useRef(1);
+  const reading = useRef(false);
+  useEffect(() => { reach.current = 1; }, [search]);
+
+  const load = useCallback(async () => {
+    let rows: Activity[] = [];
+    let last: PageMeta | null = null;
+    for (let p = 1; p <= reach.current; p += 1) {
+      const res = await fetchPage(p);
+      if (!alive.current) return;
+      if (!(res.ok && res.data?.success)) {
+        setItems([]);
+        setMeta(null);
+        setError({ status: res.status, message: (res.data && res.data.error) || null });
+        return;
+      }
+      rows = rows.concat(res.data.data);
+      last = res.data.meta || null;
+      // The list got shorter than what was reached: stop at its end.
+      if (last && p >= last.total_pages) {
+        reach.current = Math.max(1, Math.min(reach.current, last.total_pages));
+        break;
+      }
     }
-    setItems([]);
-    setMeta(null);
-    setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [page, search]);
+    setItems(rows);
+    setMeta(last);
+    setError(null);
+  }, [fetchPage]);
+
+  const hasMore = !!meta && meta.page < meta.total_pages;
+  const more = useCallback(async () => {
+    if (!hasMore || reading.current) return;
+    reading.current = true;
+    const next = reach.current + 1;
+    const res = await fetchPage(next);
+    reading.current = false;
+    if (!alive.current || !(res.ok && res.data?.success)) return;
+    // The search changed while it was on its way: these rows are not the list's.
+    if (reach.current + 1 !== next) return;
+    reach.current = next;
+    setItems((prev) => {
+      const have = new Set((prev || []).map((a) => a.id));
+      return (prev || []).concat((res.data.data as Activity[]).filter((a) => !have.has(a.id)));
+    });
+    setMeta(res.data.meta || null);
+  }, [fetchPage, hasMore]);
 
   useEffect(() => { load(); }, [load]);
 
   const commitSearch = useCallback((raw: string) => {
     const next = raw.trim();
     setSearch((current) => (current === next ? current : next));
-    setPage(1);
   }, []);
 
   const remove = useCallback(async (id: number) => {
@@ -548,6 +574,12 @@ function UserActivitiesScreen() {
   }, [load]);
 
   const close = useCallback(() => setOpen({ kind: 'none' }), []);
+  // The form and the import panel open over the list, so their buttons in the
+  // header bring the list's tab up with them.
+  const openOverList = useCallback((next: OpenPanel) => {
+    setTab('list');
+    setOpen(next);
+  }, []);
 
   const filtered = !!search;
 
@@ -556,127 +588,136 @@ function UserActivitiesScreen() {
       <ScreenHeader
         title="User activities"
         subtitle="Everything users have recorded against a challenge, and the points it scored."
-        actions={(
+        actions={write ? (
           <>
-            {write ? (
-              <button
-                id="admin-topo-act-new"
-                type="button"
-                className={BTN.primarySm}
-                onClick={() => setOpen({ kind: 'form', id: null })}
-              >
-                New activity
-              </button>
-            ) : null}
-            {write ? (
-              <button
-                id="admin-topo-act-import"
-                type="button"
-                className={BTN.secondarySm}
-                onClick={() => setOpen({ kind: 'import' })}
-              >
-                Import JSON…
-              </button>
-            ) : null}
-            {/* Commits on blur or Enter, not per keystroke — a paged server
-                query, same rule as the other search boxes in this console. */}
+            <button
+              id="admin-topo-act-new"
+              type="button"
+              className={BTN.primarySm}
+              onClick={() => openOverList({ kind: 'form', id: null })}
+            >
+              New activity
+            </button>
+            <button
+              id="admin-topo-act-import"
+              type="button"
+              className={BTN.secondarySm}
+              onClick={() => openOverList({ kind: 'import' })}
+            >
+              Import JSON…
+            </button>
+          </>
+        ) : null}
+      />
+      <Tabs<ActivitiesTab>
+        id={ACT_TABS_ID}
+        label="User activities"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'list', label: 'Activities' },
+          { key: 'totals', label: 'Totals', id: 'admin-topo-act-totals' },
+        ]}
+      />
+      <TabPanel tabsId={ACT_TABS_ID} tab="list" active={tab === 'list'}>
+        <div id="admin-topo-act-form">
+          {open.kind === 'form' && write ? (
+            <ActivityForm
+              key={String(open.id)}
+              id={open.id}
+              events={events}
+              onClose={close}
+              onSaved={() => { close(); load(); }}
+            />
+          ) : null}
+          {open.kind === 'import' && write ? (
+            <ImportPanel onClose={close} onImported={load} />
+          ) : null}
+        </div>
+        <Toolbar>
+          {/* Commits on blur or Enter, not per keystroke: a paged server
+              query, same rule as the other search boxes in this console. */}
+          <div className="min-w-[14rem] flex-1">
             <Input
               id="admin-topo-act-search"
               type="text"
               placeholder="Search user…"
               aria-label="Search activities by user"
-              className="sm:w-56"
               defaultValue={search}
               onBlur={(e) => commitSearch(e.currentTarget.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
               }}
             />
-            <button
-              id="admin-topo-act-totals"
-              type="button"
-              className={BTN.secondarySm}
-              onClick={() => setOpen({ kind: 'totals' })}
-            >
-              Totals…
-            </button>
-          </>
-        )}
-      />
-      <div id="admin-topo-act-form">
-        {open.kind === 'form' && write ? (
-          <ActivityForm
-            key={String(open.id)}
-            id={open.id}
-            events={events}
-            onClose={close}
-            onSaved={() => { close(); load(); }}
-          />
-        ) : null}
-        {open.kind === 'import' && write ? (
-          <ImportPanel onClose={close} onImported={load} />
-        ) : null}
-        {open.kind === 'totals' ? <TotalsPanel events={events} onClose={close} /> : null}
-      </div>
-      <div id="admin-topo-act-table">
-        {items === null ? <Skeleton rows={4} /> : null}
-        {error ? (
-          <ErrorState
-            title="Couldn't load user activities"
-            status={error.status}
-            message={error.message}
-            onRetry={load}
-          />
-        ) : null}
-        {items !== null && !error && !items.length ? (
-          <EmptyState
-            title={filtered ? 'No activities match these filters' : 'No activities yet'}
-            body={filtered
-              ? 'Clear the search box to see every activity.'
-              : 'Activities are recorded when users complete challenges. You can also add one by hand.'}
-            action={!filtered && write ? (
-              <button
-                id="admin-topo-act-empty-new"
-                type="button"
-                className={BTN.primarySm}
-                onClick={() => setOpen({ kind: 'form', id: null })}
-              >
-                New activity
-              </button>
-            ) : null}
-          />
-        ) : null}
-        {items !== null && !error && items.length ? (
-          <>
-            <List
-              items={items}
-              rowKey={(a) => a.id}
-              columns={COLUMNS}
-              actions={write ? (a) => (
-                <>
-                  <button
-                    data-edit-act={a.id}
-                    type="button"
-                    className={BTN.row}
-                    onClick={() => setOpen({ kind: 'form', id: a.id })}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    data-delete-act={a.id}
-                    type="button"
-                    className={BTN.rowDanger}
-                    onClick={() => remove(a.id)}
-                  >
-                    Delete
-                  </button>
-                </>
-              ) : undefined}
+          </div>
+        </Toolbar>
+        <div id="admin-topo-act-table">
+          {items === null ? <Skeleton rows={4} /> : null}
+          {error ? (
+            <ErrorState
+              title="Couldn't load user activities"
+              status={error.status}
+              message={error.message}
+              onRetry={load}
             />
-            <Pager meta={meta} onPage={setPage} />
-          </>
-        ) : null}
-      </div>
+          ) : null}
+          {items !== null && !error && !items.length ? (
+            <EmptyState
+              title={filtered ? 'No activities match these filters' : 'No activities yet'}
+              body={filtered
+                ? 'Clear the search box to see every activity.'
+                : 'Activities are recorded when users complete challenges. You can also add one by hand.'}
+              action={!filtered && write ? (
+                <button
+                  id="admin-topo-act-empty-new"
+                  type="button"
+                  className={BTN.primarySm}
+                  onClick={() => setOpen({ kind: 'form', id: null })}
+                >
+                  New activity
+                </button>
+              ) : null}
+            />
+          ) : null}
+          {items !== null && !error && items.length ? (
+            <>
+              <List
+                items={items}
+                rowKey={(a) => a.id}
+                columns={COLUMNS}
+                actions={write ? (a) => (
+                  <>
+                    <button
+                      data-edit-act={a.id}
+                      type="button"
+                      className={BTN.row}
+                      onClick={() => setOpen({ kind: 'form', id: a.id })}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      data-delete-act={a.id}
+                      type="button"
+                      className={BTN.rowDanger}
+                      onClick={() => remove(a.id)}
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : undefined}
+              />
+              {meta ? (
+                <LoadMore shown={items.length} total={meta.total} hasMore={hasMore} onMore={more} noun="activities" />
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </TabPanel>
+      {/* Read when the tab is first opened, as it was when Totals was a
+          button that opened a panel. */}
+      <TabPanel tabsId={ACT_TABS_ID} tab="totals" active={tab === 'totals'} lazy>
+        <TotalsPanel events={events} />
+      </TabPanel>
     </>
   );
 }

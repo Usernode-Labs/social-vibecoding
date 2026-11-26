@@ -122,7 +122,10 @@ test('one row per active version, the current one first; its numbers in words', 
   assert.deepEqual(rows, [[1, 'current'], [2, 'side'], [3, 'side']], 'retired versions are folded away');
   assert.match(html, /Opus spec, GLM build, Opus review/);
   assert.match(html, /opus-spec-review<\/span> v1/);
-  assert.match(html, /badge-secondary">Current/);
+  // A role is the kit's Badge now, in its soft tones: the current one the
+  // soft green, a side one the soft sky (request 7224).
+  assert.match(html, /data-bot-config="1" data-role="current"[\s\S]*?<span class="adm-badge [^"]*\bis-done\b[^"]*">Current<\/span>/);
+  assert.match(html, /data-bot-config="2" data-role="side"[\s\S]*?<span class="adm-badge [^"]*\bis-wait\b[^"]*">Side<\/span>/);
   assert.match(html, /all-glm recipe line/);
   assert.match(html, /\$2\.05/);
   assert.match(html, /37 min/);
@@ -135,7 +138,7 @@ test('one row per active version, the current one first; its numbers in words', 
   assert.match(html, /Show 1 retired version/);
   assert.match(html, /never shown to the person/);
   assert.match(html, /Pairs are picked through the connector\./);
-  assert.match(html, /<th class="th">Benchmark<\/th>/);
+  assert.match(html, /<th class="[^"]*">Benchmark<\/th>/);
   assert.match(html, /data-bot-config-bench="2"><span class="muted">Not run<\/span>/);
 
   const all = render({ payload: PAYLOAD, showRetired: true });
@@ -172,9 +175,13 @@ test('each role change says what it does before it does it', () => {
 test('the scope switch: First versions or Later changes, each with its own words, budget and proposals', () => {
   const first = render({ payload: PAYLOAD });
   assert.match(first, /id="admin-bot-configs-scope"/);
-  assert.match(first, /aria-pressed="true"[^>]*data-bot-config-scope="first_version"|data-bot-config-scope="first_version"[^>]*aria-pressed="true"/);
-  assert.match(first, /btn-primarySm"[^>]*>First versions<|First versions</);
-  assert.match(first, /aria-pressed="false"[^>]*data-bot-config-scope="later"/);
+  // The switch is the kit's Segmented now: a radio group that carries the
+  // scope in data-value, its options radios, where it was two pressed
+  // buttons (request 7224).
+  assert.match(first, /<div id="admin-bot-configs-scope" role="radiogroup" aria-label="Which builds the configurations are for" data-value="first_version"/);
+  assert.match(first, /<button type="button" role="radio" aria-checked="true"[^>]*data-value="first_version"[^>]*>First versions</);
+  assert.match(first, /<button type="button" role="radio" aria-checked="false"[^>]*data-value="later"[^>]*>Later changes</);
+  assert.equal((first.match(/role="radio" aria-checked="true"/g) || []).length, 1, 'one scope is the checked one');
   assert.match(first, /Builds every first version/);
 
   const later = {
@@ -192,7 +199,9 @@ test('the scope switch: First versions or Later changes, each with its own words
     ],
   };
   const html = render({ payload: later, scope: 'later' });
-  assert.match(html, /aria-pressed="true"[^>]*data-bot-config-scope="later"|data-bot-config-scope="later"[^>]*aria-pressed="true"/);
+  assert.match(html, /<div id="admin-bot-configs-scope" role="radiogroup"[^>]*data-value="later"/);
+  assert.match(html, /<button type="button" role="radio" aria-checked="true"[^>]*data-value="later"[^>]*>Later changes</);
+  assert.match(html, /<button type="button" role="radio" aria-checked="false"[^>]*data-value="first_version"/);
   assert.match(html, /How the Homeroom bot handles every request that is not a first version: the current configuration decides\s+its triage, its plan, its build and its follow-ups/);
   assert.match(html, /pairs compare the two sides(&#x27;|')\s+plans and diffs/);
   assert.match(html, /Builds every later change/);

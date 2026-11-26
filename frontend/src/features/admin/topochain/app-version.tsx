@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchJson, send } from './api.ts';
 import { BTN } from './tokens.ts';
 import {
-  CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
+  Badge, CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
   Panel, ScreenHeader, Select, Skeleton, Textarea,
 } from './ui.tsx';
 import type { Column } from './ui.tsx';
@@ -94,6 +94,14 @@ function Gate({ items }: { items: Config[] }) {
   );
 }
 
+type ActivityRow = NonNullable<Activity['by_os']>[number];
+
+const ACTIVITY_COLUMNS: Column<ActivityRow>[] = [
+  { label: 'OS', primary: true, cell: (r) => r.os || '—' },
+  { label: 'Told', cell: (r) => UPGRADE_LABEL[r.upgrade] || r.upgrade },
+  { label: 'Checks', cell: (r) => r.count, tdClass: 'font-mono text-end', thClass: 'text-end' },
+];
+
 // Last 7 days of version checks. Answers "is the gate doing anything?" — an
 // all-zero table with traffic means the rule is permissive; no traffic at all
 // means no shell is calling.
@@ -115,26 +123,14 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
           {`(${activity.total} total)`}
         </span>
       </h3>
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full">
-          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            <tr>
-              <th className="px-3 py-2 text-start">OS</th>
-              <th className="px-3 py-2 text-start">Told</th>
-              <th className="px-3 py-2 text-end">Checks</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(activity.by_os || []).map((r, i) => (
-              <tr key={i} className="border-t border-zinc-200 dark:border-zinc-800">
-                <td className="px-3 py-1.5 text-sm">{r.os || '—'}</td>
-                <td className="px-3 py-1.5 text-sm">{UPGRADE_LABEL[r.upgrade] || r.upgrade}</td>
-                <td className="px-3 py-1.5 text-sm font-mono text-end">{r.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* The shared list (26 Nov 2026): the same grey header band and row
+          hover as the configs above, and cards on a phone. The rows have no
+          id of their own, so their place in the answer is the key. */}
+      <List
+        items={activity.by_os || []}
+        rowKey={(_r, i) => i}
+        columns={ACTIVITY_COLUMNS}
+      />
     </>
   );
 }
@@ -355,7 +351,7 @@ function AppVersionScreen() {
     {
       label: 'Active',
       cell: (c) => (c.is_active
-        ? <span className="text-green-800 dark:text-green-400">active</span>
+        ? <Badge label="active" tone="mint" />
         : '—'),
     },
   ];

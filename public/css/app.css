@@ -3890,34 +3890,51 @@ html[data-browser-scroller^="auth-"] :is(
   .admin-tab-strip > [data-admin-tab][aria-current="page"] { flex-shrink: 0; }
 }
 
-/* The Admin console follows the Homeroom reference artwork: its sky carries
-   through the shared header and the title area, then dissolves into the same
-   warm paper ground as the dashboard cards. Keep this scoped to the Admin
-   route so the shell's shared navigation looks unchanged everywhere else. */
-html:not(.dark):not([data-app-tone="dark"]) body:has(#admin-screen:not(.hidden)) #platform-header#platform-header {
-  background-color: #79bce7 !important;
-  background-image: url('/brand/sky.webp') !important;
-  background-position: center 42% !important;
-  background-size: cover !important;
+/* THE CONSOLE'S GROUND (26 Nov 2026). The console's sky was the brand's
+   picture stretched across the window, which showed its grain on a wide
+   screen and stopped at a line under the four figures, where it met a ground
+   of another colour. It is drawn now, not loaded: one soft sky, light at one
+   side, with a little of the sun in it, carried through the shared header and
+   let down into the page's own ground, in light and in dark. The tokens are
+   on the body because the header is outside the console's screen. Scoped to
+   the Admin route, so the shell's navigation looks unchanged everywhere else. */
+body:has(#admin-screen:not(.hidden)) {
+  --adm-air-1: #8fcdf4;
+  --adm-air-2: #b4dff8;
+  --adm-air-3: #d3ecfb;
+  --adm-air-glow: rgb(255 238 111 / 0.42);
+}
+html.dark body:has(#admin-screen:not(.hidden)),
+html[data-app-tone="dark"] body:has(#admin-screen:not(.hidden)) {
+  --adm-air-1: #1c3d6b;
+  --adm-air-2: #24497a;
+  --adm-air-3: #2a4770;
+  --adm-air-glow: rgb(255 238 111 / 0.09);
+}
+html body:has(#admin-screen:not(.hidden)) #platform-header#platform-header {
+  background-color: var(--adm-air-2) !important;
+  background-image: linear-gradient(90deg, var(--adm-air-1), var(--adm-air-2) 48%, var(--adm-air-3)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  /* One sky from the bar into the page: no rounded corner on the bar, which
+     showed the body's colour behind it, and no rule under it. */
+  border-radius: 0 !important;
 }
-html:not(.dark):not([data-app-tone="dark"]) #admin-screen {
-  isolation: isolate;
-  background: #faf8f0;
-}
-html:not(.dark):not([data-app-tone="dark"]) #admin-screen::before {
+html body:has(#admin-screen:not(.hidden)) #platform-header#platform-header::after { display: none !important; }
+html #admin-screen { isolation: isolate; }
+html #admin-screen::before {
   content: "";
   position: absolute;
   z-index: 0;
   inset: 0 0 auto;
-  height: clamp(190px, 22vw, 270px);
+  height: clamp(280px, 32vw, 420px);
   pointer-events: none;
   background:
-    linear-gradient(to bottom, rgba(250,248,240,0) 38%, rgba(250,248,240,.44) 72%, #faf8f0 100%),
-    url('/brand/sky.webp') center 34% / cover no-repeat;
+    linear-gradient(to bottom, transparent 0%, color-mix(in srgb, var(--stk-surface) 60%, transparent) 58%, var(--stk-surface) 100%),
+    radial-gradient(38% 62% at 70% 40%, var(--adm-air-glow), transparent 62%),
+    linear-gradient(90deg, var(--adm-air-1), var(--adm-air-2) 48%, var(--adm-air-3));
 }
-html:not(.dark):not([data-app-tone="dark"]) #admin-root {
+html #admin-root {
   position: relative;
   z-index: 1;
   background: transparent;
@@ -3964,9 +3981,9 @@ html[data-app-tone="dark"] #admin-screen {
   --adm-rule: rgb(255 254 234 / 0.1);
   --adm-well: rgb(255 254 234 / 0.06);
   --adm-link: #8db4f2;
-  --adm-sky: #1c3340;
-  --adm-leaf: #25341f;
-  --adm-butter: #3a341c;
+  --adm-sky: #25485b;
+  --adm-leaf: #30472a;
+  --adm-butter: #4b4324;
   --adm-ok-bg: rgb(127 214 93 / 0.18);
   --adm-ok-ink: #c4ecae;
   --adm-bad-bg: rgb(240 110 96 / 0.2);
@@ -4264,9 +4281,9 @@ html.dark body, html[data-app-tone="dark"] body {
 }
 html.dark #admin-screen,
 html[data-app-tone="dark"] #admin-screen {
-  --stk-surface: #0b0b0c;
-  --stk-card: #171715;
-  --stk-card-2: #2a2812;
+  --stk-surface: #171b22;
+  --stk-card: #222730;
+  --stk-card-2: #34351f;
   --stk-ink: #fffeea;
   --stk-soft: rgb(255 254 234 / 0.78);
   --stk-mute: rgb(255 254 234 / 0.6);
@@ -4274,7 +4291,7 @@ html[data-app-tone="dark"] #admin-screen {
   --stk-hair: rgb(255 254 234 / 0.2);
   --stk-edge: 2px 2px 0 0 rgb(255 254 234 / 0.45);
   --stk-edge-sm: 1.5px 1.5px 0 0 rgb(255 254 234 / 0.45);
-  --stk-b2: #171715;
+  --stk-b2: #222730;
   --stk-danger: #ff9c8a;
   --stk-danger-edge: 2px 2px 0 0 #ff9c8a;
   --stk-badge-line: transparent;
@@ -4283,7 +4300,7 @@ html[data-app-tone="dark"] #admin-screen {
   --stk-field-line: rgb(255 254 234 / 0.32);
   --stk-chip-line: rgb(255 254 234 / 0.28);
   /* The dashboard and the menu follow the same sheet. */
-  --adm-paper: #171715;
+  --adm-paper: #222730;
   --adm-line: rgb(255 254 234 / 0.16);
 }
 #admin-screen {
@@ -4380,6 +4397,8 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
    green is done, red is failing, white is everything else. */
 #admin-screen .adm-badge { border: 1px solid var(--stk-badge-line); border-radius: 999px; background: var(--stk-card); box-shadow: none; --tw-ring-shadow: 0 0 transparent; color: var(--stk-ink); font-weight: 500; }
 #admin-screen .adm-badge.is-vote { background: var(--stk-vote); color: var(--stk-on-vote); }
+#admin-screen .adm-badge.is-wait { border-color: var(--stk-card-line); background: color-mix(in srgb, var(--adm-sky) 55%, var(--stk-card)); color: var(--stk-soft); }
+#admin-screen .adm-badge.is-done { border-color: var(--stk-card-line); background: color-mix(in srgb, var(--stk-live) 30%, var(--stk-card)); color: var(--stk-soft); }
 #admin-screen .adm-badge.is-build { background: var(--stk-sun); color: var(--stk-on-status); }
 #admin-screen .adm-badge.is-live { background: var(--stk-live); color: var(--stk-on-status); }
 #admin-screen .adm-badge.is-fail { background: var(--stk-fail); color: var(--stk-on-status); }
@@ -4407,8 +4426,6 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 #admin-open-tabs .admin-tab-strip > [data-admin-tab] { background: var(--stk-card); box-shadow: inset 0 0 0 1px var(--stk-chip-line); color: var(--stk-ink); }
 #admin-open-tabs .admin-tab-strip > [data-admin-tab]:hover { background: var(--stk-card-2); box-shadow: inset 0 0 0 1px var(--stk-chip-line); }
 #admin-open-tabs .admin-tab-strip > [data-admin-tab][aria-current="page"] { background: var(--stk-sun); box-shadow: inset 0 0 0 1px var(--stk-line); color: var(--stk-on-sun); }
-#admin-screen .admin-dashboard-refresh { min-height: 36px; border: 1px solid var(--stk-line); border-radius: 999px; background: var(--stk-b2); box-shadow: var(--stk-edge); font-family: var(--adm-serif); font-size: 0.9375rem; font-weight: 400; }
-#admin-screen .admin-dashboard-refresh:hover:not(:disabled) { background: var(--stk-card-2); color: var(--stk-ink); }
 #admin-screen .admin-dashboard-refresh:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 #admin-screen .admin-dashboard-section-head button { color: var(--stk-ink); text-decoration: underline; text-decoration-color: var(--stk-focus); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 #admin-screen .admin-queue-action { border: 1px solid var(--stk-line); border-radius: 999px; box-shadow: var(--stk-edge-sm); font-family: var(--adm-serif); font-weight: 400; }
@@ -4421,7 +4438,108 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
   #admin-screen .adm-btn.adm-sm { min-height: 36px; }
   #admin-section-content :is(.admin-dashboard-section-head, .admin-quick-actions) h2 { font-size: 1.375rem; }
 }
+/* A screen's tabs (topochain/ui.tsx `Tabs`): folder tabs standing on one
+   rule. The open one is a piece of the card, outlined, with the sun across
+   its top, and it breaks the rule under it; the others are quieter tabs of
+   the well behind it. Not buttons: a tab changes what is shown, it does
+   nothing. They scroll sideways on a narrow screen. */
+#admin-screen .adm-tabs { display: flex; align-items: flex-end; gap: 6px; margin: 4px 0 16px; padding: 0 6px; border-bottom: 1px solid var(--stk-chip-line); overflow-x: auto; scrollbar-width: none; }
+#admin-screen .adm-tabs::-webkit-scrollbar { display: none; }
+#admin-screen .adm-tab { position: relative; flex: none; min-height: 42px; margin-bottom: -1px; padding: 0 18px; border: 1px solid var(--stk-card-line); border-bottom-color: var(--stk-chip-line); border-radius: 12px 12px 0 0; background: var(--stk-well); box-shadow: none; color: var(--stk-soft); font-size: 0.9375rem; font-weight: 600; white-space: nowrap; }
+#admin-screen .adm-tab:hover { background: var(--stk-card); color: var(--stk-ink); }
+#admin-screen .adm-tab[aria-selected="true"] { min-height: 46px; border-color: var(--stk-chip-line); border-bottom-color: var(--stk-card); background: var(--stk-card); box-shadow: inset 0 3px 0 0 var(--stk-sun); color: var(--stk-ink); }
+#admin-screen .adm-tab:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: -2px; }
+@media (max-width: 767.98px) { #admin-screen .adm-tab { min-height: 44px; padding: 0 14px; } #admin-screen .adm-tab[aria-selected="true"] { min-height: 48px; } }
+/* A choice among a few, all in view (topochain/ui.tsx `Segmented`): one
+   outlined pill holding its options, the chosen one a soft grey: the sun is
+   kept for what is pressed to do something. */
+#admin-screen .adm-seg { display: inline-flex; flex: none; max-width: 100%; padding: 3px; gap: 2px; border: 1px solid var(--stk-field-line); border-radius: 999px; background: var(--stk-card); overflow-x: auto; scrollbar-width: none; }
+#admin-screen .adm-seg-opt { flex: none; min-height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: none; box-shadow: none; color: var(--stk-soft); font-size: 0.8125rem; font-weight: 500; white-space: nowrap; }
+#admin-screen .adm-seg-opt:hover { background: var(--stk-well); color: var(--stk-ink); }
+#admin-screen .adm-seg-opt[aria-checked="true"] { background: color-mix(in srgb, var(--stk-ink) 10%, var(--stk-card)); box-shadow: inset 0 0 0 1px var(--stk-card-line); color: var(--stk-ink); font-weight: 600; }
+#admin-screen .adm-seg-opt:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 1px; }
+@media (max-width: 767.98px) { #admin-screen .adm-seg-opt { min-height: 38px; } }
+/* A list's rows (topochain/ui.tsx `List`): the head is a light grey band, a
+   row answers the pointer, the
+   arrow at its start opens what more there is about it, and that opens as a
+   quieter band under the row. A small meter says how much of something is
+   done ("3 of 7 answered"). */
+#admin-screen #admin-section-content .adm-table thead { background: color-mix(in srgb, var(--stk-ink) 6%, var(--stk-card)); }
+#admin-screen #admin-section-content .adm-table thead th { border-bottom: 1px solid var(--stk-card-line); }
+#admin-screen .adm-table tbody tr.adm-row { transition: background-color 0.12s ease; }
+#admin-screen .adm-table tbody tr.adm-row:hover,
+#admin-screen .adm-table tbody tr.adm-row.is-open { background: var(--stk-well); }
+#admin-screen .adm-table tbody tr.adm-row > td { vertical-align: middle; padding-block: 10px; }
+#admin-screen .adm-row-toggle { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--stk-mute); }
+#admin-screen .adm-row-toggle:hover { background: var(--stk-card); color: var(--stk-ink); }
+#admin-screen .adm-row-toggle svg { width: 16px; height: 16px; transition: transform 0.15s ease; }
+#admin-screen .adm-row-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+#admin-screen .adm-row-toggle:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 1px; }
+#admin-screen .adm-table tbody tr.adm-row-detail > td { border-top: 1px dashed var(--stk-hair); background: var(--stk-well); padding-inline-start: 52px; }
+#admin-screen .adm-meter { display: inline-block; flex: none; width: 56px; height: 6px; border-radius: 999px; background: var(--stk-hair); overflow: hidden; }
+#admin-screen .adm-meter > i { display: block; height: 100%; border-radius: inherit; background: var(--stk-live); }
+@media (prefers-reduced-motion: reduce) { #admin-screen .adm-row-toggle svg, #admin-screen .adm-table tbody tr.adm-row { transition: none; } }
+:where(html[data-motion="reduce"]) #admin-screen .adm-row-toggle svg, :where(html[data-motion="reduce"]) #admin-screen .adm-table tbody tr.adm-row { transition: none; }
+/* A screen's settings (topochain/ui.tsx `SettingsGroup`, `SettingRow`): one
+   card, a row for each: its switch with Yes or No beside it, then its name
+   and what it does, a rule between two. The switch is the green when on. */
+#admin-screen .adm-settings { padding: 0; overflow: hidden; }
+#admin-screen .adm-settings-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--stk-card-line); }
+#admin-screen .adm-setting { padding: 16px 20px; }
+#admin-screen .adm-setting + .adm-setting { border-top: 1px solid var(--stk-hair); }
+#admin-screen .adm-setting-main { display: flex; align-items: flex-start; gap: 18px; }
+#admin-screen .adm-setting-state { display: flex; flex: none; align-items: center; gap: 8px; width: 88px; min-height: 28px; }
+#admin-screen .adm-setting-word { color: var(--stk-ink); font-size: 0.8125rem; font-weight: 600; }
+#admin-screen .adm-setting-title { color: var(--stk-ink); font-size: 0.9375rem; font-weight: 600; }
+#admin-screen .adm-setting-help { max-width: 64ch; margin: 3px 0 0; color: var(--stk-soft); font-size: 0.8125rem; line-height: 1.45; }
+#admin-screen .adm-setting-meta { margin: 6px 0 0; color: var(--stk-mute); font-size: 0.75rem; }
+#admin-screen .adm-setting-wait { flex: none; width: 44px; height: 26px; border-radius: 999px; background: var(--stk-well); }
+#admin-screen .adm-switch { position: relative; flex: none; width: 44px; height: 26px; margin-top: 1px; padding: 0; border: 1px solid var(--stk-field-line); border-radius: 999px; background: var(--stk-well); box-shadow: none; transition: background-color 0.15s ease, border-color 0.15s ease; }
+#admin-screen .adm-switch > span { position: absolute; top: 2px; inset-inline-start: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--stk-card); box-shadow: 0 0 0 1px var(--stk-field-line), 0 1px 2px var(--adm-shade-far); transition: transform 0.15s ease; }
+#admin-screen .adm-switch[aria-checked="true"] { border-color: var(--stk-line); background: var(--stk-live); }
+#admin-screen .adm-switch[aria-checked="true"] > span { transform: translateX(18px); }
+[dir="rtl"] #admin-screen .adm-switch[aria-checked="true"] > span { transform: translateX(-18px); }
+#admin-screen .adm-switch:focus-visible { outline: 2px solid var(--stk-focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { #admin-screen .adm-switch, #admin-screen .adm-switch > span { transition: none; } }
+:where(html[data-motion="reduce"]) #admin-screen .adm-switch, :where(html[data-motion="reduce"]) #admin-screen .adm-switch > span { transition: none; }
+@media (max-width: 767.98px) { #admin-screen .adm-setting { padding: 14px 16px; } #admin-screen .adm-setting-main { gap: 12px; } #admin-screen .adm-setting-state { width: 82px; } }
 /* END OF THE CONSOLE IN OPTION A. */
+/* THE DASHBOARD'S GRADIENTS (26 Nov 2026). A few, where a flat wash looked
+   dated: each of the four figures and the four quick actions runs from the
+   paper into its own tint, with its icon on a small tile of the paper; a
+   card lifts a little off the ground on a soft shade in place of a second
+   line, on every page, since it is the shared card that carries it; the chart's area fades out under its line (its gradient is in
+   admin-overview.tsx). Every colour is a token already declared above. */
+#admin-screen {
+  --adm-shade-near: rgb(18 26 14 / 0.05);
+  --adm-shade-far: rgb(18 26 14 / 0.16);
+}
+:is(html.dark, html[data-app-tone="dark"]) #admin-screen {
+  --adm-shade-near: rgb(0 0 0 / 0.2);
+  --adm-shade-far: rgb(0 0 0 / 0.4);
+}
+#admin-screen .admin-metric-card,
+#admin-screen .admin-quick-actions button { --adm-tint: var(--adm-well); background: linear-gradient(135deg, color-mix(in srgb, var(--adm-tint) 38%, var(--adm-paper)) 0%, var(--adm-tint) 100%); }
+#admin-screen .admin-metric-card.sky, #admin-screen .admin-quick-actions button:nth-child(4) { --adm-tint: var(--adm-sky); }
+#admin-screen .admin-metric-card.green, #admin-screen .admin-quick-actions button:nth-child(2) { --adm-tint: var(--adm-leaf); }
+#admin-screen .admin-metric-card.yellow, #admin-screen .admin-quick-actions button:nth-child(1) { --adm-tint: var(--adm-butter); }
+#admin-screen .admin-metric-card { box-shadow: 0 1px 2px var(--adm-shade-near), 0 14px 28px -22px var(--adm-shade-far); }
+#admin-screen .admin-metric-icon { width: 48px; height: 48px; border-radius: 14px; background: color-mix(in srgb, var(--adm-paper) 72%, transparent); box-shadow: inset 0 0 0 1px var(--adm-rule); }
+#admin-screen .admin-metric-icon svg { width: 24px; height: 24px; }
+#admin-screen .admin-metric-card .admin-metric-detail { margin-top: 3px; color: var(--adm-muted); font-size: 0.75rem; }
+#admin-screen .adm-card:not(.adm-dialog),
+#admin-screen .admin-dashboard-panel,
+#admin-screen .admin-sidebar { box-shadow: 0 1px 2px var(--adm-shade-near), 0 18px 36px -28px var(--adm-shade-far); }
+#admin-screen .adm-card .adm-card { box-shadow: none; }
+#admin-screen .admin-dashboard-empty { background: linear-gradient(180deg, var(--adm-well), transparent); }
+#admin-screen .admin-analytics-chart polygon { fill: url(#admin-chart-fade); }
+#admin-screen .admin-analytics-chart .admin-chart-fade-top { stop-color: var(--adm-chart-line); stop-opacity: 0.34; }
+#admin-screen .admin-analytics-chart .admin-chart-fade-end { stop-color: var(--adm-chart-line); stop-opacity: 0.02; }
+@media (max-width: 767.98px) {
+  #admin-screen .admin-metric-icon { width: 38px; height: 38px; border-radius: 11px; }
+  #admin-screen .admin-metric-icon svg { width: 20px; height: 20px; }
+}
+/* END OF THE DASHBOARD'S GRADIENTS. */
 /* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
    is a fixed overlay with its own bar) but was still read out: an empty
    level-1 heading beside the page's own on a desktop (polish N10). In a

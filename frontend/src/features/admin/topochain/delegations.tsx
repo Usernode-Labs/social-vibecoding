@@ -5,9 +5,10 @@ import type { ReactNode } from 'react';
 
 import { eventOptions, fetchAllEvents, fetchAllSeasons, fetchJson, seasonOptions } from './api.ts';
 import { openAccountDetail } from './onchain-accounts.tsx';
-import { BTN, PANEL_CLS } from './tokens.ts';
+import { BTN } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, Input, List, Options, Pager, ScreenHeader, Select, Skeleton, fmt,
+  Badge, EmptyState, ErrorState, Figures, Input, List, LoadMore, Options, ScreenHeader, Segmented,
+  Select, Skeleton, Toolbar, fmt,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
@@ -171,15 +172,6 @@ function Delegatee() {
   );
 }
 
-function Tile({ label, value, valueCls }: { label: string; value: unknown; valueCls?: string }) {
-  return (
-    <div className={`${PANEL_CLS} px-4 py-3`}>
-      <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold tabular-nums ${valueCls || ''}`}>{String(value)}</p>
-    </div>
-  );
-}
-
 // One account's period timeline. Fetched when its row expands, and unmounted
 // with the row — so a stale response can never land in a different account's
 // block, which the innerHTML version needed an `_dlg.expanded === account`
@@ -226,7 +218,7 @@ function History({ account }: { account: string }) {
         {periods.map((p, i) => (
           <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
             {p.delegated
-              ? <Badge label="Delegated" tone="green" />
+              ? <Badge label="Delegated" tone="mint" />
               : <Badge label="Ended" tone="zinc" />}
             <span className="text-xs text-zinc-600 dark:text-zinc-300">{fmt(p.started_at)}</span>
             <span className="text-xs text-zinc-500 dark:text-zinc-400">→</span>
@@ -247,7 +239,6 @@ function DelegationsScreen() {
   const [search, setSearch] = useState('');
   const [seasonFilter, setSeasonFilter] = useState('');
   const [eventFilter, setEventFilter] = useState('');
-  const [page, setPage] = useState(1);
   const [items, setItems] = useState<Delegation[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
@@ -277,26 +268,69 @@ function DelegationsScreen() {
     })();
   }, []);
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+  const fetchPage = useCallback((p: number) => {
+    const params = new URLSearchParams({ page: String(p), per_page: '50' });
     if (status) params.set('status', status);
     if (search) params.set('search', search);
     if (seasonFilter) params.set('season_id', seasonFilter);
     if (eventFilter) params.set('season_event_id', eventFilter);
-    const res = await fetchJson(`/api/v4/admin/delegations?${params}`);
-    if (!alive.current) return;
-    // A fresh page invalidates whichever timeline was open.
-    setExpanded(null);
-    if (res.ok && res.data?.success) {
-      setItems(res.data.data);
-      setMeta(res.data.meta || null);
-      setError(null);
-      return;
+    return fetchJson(`/api/v4/admin/delegations?${params}`);
+  }, [status, search, seasonFilter, eventFilter]);
+
+  // The list goes on as you read down it (26 Nov 2026), so how far it has
+  // read is kept here and not in a page number. A changed filter starts
+  // over: this effect is declared before the one that loads, so it runs
+  // first. `asked` is the query on screen now, so rows that come back for an
+  // older one are dropped.
+  const reach = useRef(1);
+  const reading = useRef(false);
+  const asked = useRef(fetchPage);
+  asked.current = fetchPage;
+  useEffect(() => { reach.current = 1; }, [fetchPage]);
+
+  // Everything reached so far, read again from the first page.
+  const load = useCallback(async () => {
+    let rows: Delegation[] = [];
+    let last: PageMeta | null = null;
+    for (let p = 1; p <= reach.current; p += 1) {
+      const res = await fetchPage(p);
+      if (!alive.current || asked.current !== fetchPage) return;
+      if (!(res.ok && res.data?.success)) {
+        setExpanded(null);
+        setItems([]);
+        setMeta(null);
+        setError({ status: res.status, message: (res.data && res.data.error) || null });
+        return;
+      }
+      rows = rows.concat(res.data.data);
+      last = res.data.meta || null;
+      // The list got shorter than what was reached: stop at its end.
+      if (last && p >= last.total_pages) { reach.current = Math.max(1, Math.min(reach.current, last.total_pages)); break; }
     }
-    setItems([]);
-    setMeta(null);
-    setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [page, status, search, seasonFilter, eventFilter]);
+    // A fresh list invalidates whichever timeline was open.
+    setExpanded(null);
+    setItems(rows);
+    setMeta(last);
+    setError(null);
+  }, [fetchPage]);
+
+  const hasMore = !!meta && meta.page < meta.total_pages;
+  const more = useCallback(async () => {
+    if (!hasMore || reading.current) return;
+    reading.current = true;
+    const next = reach.current + 1;
+    const res = await fetchPage(next);
+    reading.current = false;
+    if (!alive.current || asked.current !== fetchPage) return;
+    if (!(res.ok && res.data?.success) || reach.current + 1 !== next) return;
+    reach.current = next;
+    // An open timeline stays open: its row is still on screen.
+    setItems((prev) => {
+      const have = new Set((prev || []).map((d) => d.account));
+      return (prev || []).concat((res.data.data as Delegation[]).filter((d) => !have.has(d.account)));
+    });
+    setMeta(res.data.meta || null);
+  }, [fetchPage, hasMore]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -316,13 +350,11 @@ function DelegationsScreen() {
       const ev = events.find((x) => String(x.id) === String(current));
       return !ev || String(ev.season_id) !== String(next) ? '' : current;
     });
-    setPage(1);
   }, [events]);
 
   const commitSearch = useCallback((raw: string) => {
     const next = raw.trim();
     setSearch((current) => (current === next ? current : next));
-    setPage(1);
   }, []);
 
   // Jumps to the Onchain accounts screen and opens the dialog there. That
@@ -345,7 +377,7 @@ function DelegationsScreen() {
     {
       label: 'Status',
       cell: (d) => (d.delegated
-        ? <Badge label="Delegated" tone="green" />
+        ? <Badge label="Delegated" tone="mint" />
         : <Badge label="Ended" tone="zinc" />),
     },
     { label: 'Since', cell: (d) => fmt(d.started_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
@@ -365,75 +397,79 @@ function DelegationsScreen() {
       <ScreenHeader
         title="Delegations"
         subtitle="Who delegated stake to the platform node, one row per testnet account. Every period is kept. Expand a row for that account’s history."
-        actions={(
-          <>
-            <label className="sr-only" htmlFor="admin-topo-dlg-season-filter">Filter by season</label>
-            <Select
-              id="admin-topo-dlg-season-filter"
-              value={seasonFilter}
-              onChange={(e) => onSeason(e.target.value)}
-            >
-              <Options options={seasonOptions(seasons)} blank="All seasons" />
-            </Select>
-            <label className="sr-only" htmlFor="admin-topo-dlg-event-filter">Filter by event</label>
-            <Select
-              id="admin-topo-dlg-event-filter"
-              value={eventFilter}
-              onChange={(e) => { setEventFilter(e.target.value); setPage(1); }}
-            >
-              <Options options={eventOptions(eventChoices)} blank="All events" />
-            </Select>
-            <label className="sr-only" htmlFor="admin-topo-dlg-status">
-              Filter by delegation status
-            </label>
-            <Select
-              id="admin-topo-dlg-status"
-              value={status}
-              onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-            >
-              <Options
-                options={[
-                  { value: 'delegated', label: 'Delegated' },
-                  { value: 'ended', label: 'Ended' },
-                ]}
-                blank="All statuses"
-              />
-            </Select>
-            {/* Commits on blur or Enter, not per keystroke — a paged server
-                query, same rule as the Onchain accounts search. */}
-            <Input
-              id="admin-topo-dlg-search"
-              type="text"
-              placeholder="Search account address…"
-              aria-label="Search delegations by account address"
-              className="sm:w-64"
-              defaultValue={search}
-              onBlur={(e) => commitSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
-              }}
-            />
-          </>
-        )}
       />
-      <div id="admin-topo-dlg-stats" className="mb-4">
+      {/* The dashboard's own tiles, so a figure looks the same on every
+          screen. Nothing is drawn until the figures arrive, and nothing at
+          all if they could not be read. */}
+      <div id="admin-topo-dlg-stats">
         {stats ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Tile
-              label="Delegated now"
-              value={stats.delegated_accounts}
-              valueCls="text-green-800 dark:text-green-400"
-            />
-            <Tile label="Ended" value={stats.ended_accounts} />
-            <Tile
-              label="Account not on file"
-              value={stats.orphaned_accounts}
-              valueCls={stats.orphaned_accounts ? 'text-amber-800 dark:text-amber-400' : ''}
-            />
-            <Tile label="Periods recorded" value={stats.total_periods} />
-          </div>
+          <Figures
+            items={[
+              { key: 'delegated', label: 'Delegated now', value: stats.delegated_accounts, tone: 'green' },
+              { key: 'ended', label: 'Ended', value: stats.ended_accounts },
+              {
+                key: 'orphaned',
+                label: 'Account not on file',
+                value: stats.orphaned_accounts,
+                tone: stats.orphaned_accounts ? 'yellow' : 'sky',
+              },
+              { key: 'periods', label: 'Periods recorded', value: stats.total_periods },
+            ]}
+          />
         ) : null}
       </div>
+      {/* The search and the filters are the list's, so they sit in the bar
+          over it and not in the header (26 Nov 2026). */}
+      <Toolbar>
+        <div className="min-w-[14rem] flex-1">
+          {/* Commits on blur or Enter, not per keystroke: a paged server
+              query, same rule as the Onchain accounts search. */}
+          <Input
+            id="admin-topo-dlg-search"
+            type="text"
+            placeholder="Search account address…"
+            aria-label="Search delegations by account address"
+            defaultValue={search}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+            }}
+          />
+        </div>
+        <div className="w-full sm:w-48">
+          <label className="sr-only" htmlFor="admin-topo-dlg-season-filter">Filter by season</label>
+          <Select
+            id="admin-topo-dlg-season-filter"
+            value={seasonFilter}
+            onChange={(e) => onSeason(e.target.value)}
+          >
+            <Options options={seasonOptions(seasons)} blank="All seasons" />
+          </Select>
+        </div>
+        <div className="w-full sm:w-48">
+          <label className="sr-only" htmlFor="admin-topo-dlg-event-filter">Filter by event</label>
+          <Select
+            id="admin-topo-dlg-event-filter"
+            value={eventFilter}
+            onChange={(e) => setEventFilter(e.target.value)}
+          >
+            <Options options={eventOptions(eventChoices)} blank="All events" />
+          </Select>
+        </div>
+        {/* Three short choices, all in view, where a select hid them. The
+            values are the select's own: '' (all), 'delegated', 'ended'. */}
+        <Segmented
+          id="admin-topo-dlg-status"
+          label="Filter by delegation status"
+          value={status}
+          options={[
+            { value: '', label: 'All', title: 'All statuses' },
+            { value: 'delegated', label: 'Delegated' },
+            { value: 'ended', label: 'Ended' },
+          ]}
+          onChange={setStatus}
+        />
+      </Toolbar>
       <div id="admin-topo-dlg-table">
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (
@@ -487,7 +523,9 @@ function DelegationsScreen() {
               )}
               extra={(d) => (expanded === d.account ? <History account={d.account} /> : null)}
             />
-            <Pager meta={meta} onPage={setPage} />
+            {meta ? (
+              <LoadMore shown={items.length} total={meta.total} hasMore={hasMore} onMore={more} noun="accounts" />
+            ) : null}
           </>
         ) : null}
       </div>
