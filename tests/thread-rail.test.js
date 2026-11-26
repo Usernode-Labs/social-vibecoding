@@ -380,6 +380,40 @@ test('the narrow rail is not height-capped', () => {
   assert.match(wide, /\.dev-request-rail \{[^}]*max-height: calc\(100% - var\(--pill-top\)\) !important;/, 'and with a card, the pill-aware one');
 });
 
+// Request 7183: the card's format in the standard look.
+test('the now step\'s "since" is a line under its name, and the standard card gives the step room', () => {
+  const rail = read('frontend/src/features/dev-board/topic/thread-rail.tsx');
+  const line = /<span className="dev-rail-line">([\s\S]*?)<\/span>\n\s*\{\/\*/.exec(rail);
+  assert.ok(line, 'the name and time line is found');
+  assert.match(line[1], /\{when && !s\.since \? <time className="dev-rail-time" /, 'an earlier step keeps its time beside its name');
+  assert.doesNotMatch(line[1], /dev-rail-since/, 'the since line is outside the name\'s line');
+  const since = rail.indexOf('{when && s.since ? <time className="dev-rail-time dev-rail-since" dateTime={s.at || undefined} title={stamp?.title}>{when}</time> : null}');
+  assert.ok(since > rail.indexOf(line[0]) && since < rail.indexOf('className="dev-rail-desc"'), 'it comes after the line and before the description');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\n\.dev-rail-since \{ display: block; margin-inline-start: 0; \}/, 'every look draws it as its own line');
+  const from = css.indexOf('/* HOW IT GOT HERE: its own card');
+  const block = css.slice(from, css.indexOf("/* THE REPLIES' CARD", from));
+  assert.ok(from > 0 && block.length > 0, 'the standard card block exists');
+  const scope = 'html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) ';
+  // The last rule the block has for a selector: the format rules follow the card's first ones.
+  const rule = (selector) => {
+    const at = block.lastIndexOf(`${scope}${selector} {`);
+    assert.ok(at >= 0, `the block sets ${selector}`);
+    return block.slice(at + scope.length + selector.length, block.indexOf('}', at) + 1).trim();
+  };
+  assert.equal(rule('.dev-rail-line'), '{ flex-wrap: nowrap; }', 'a long name wraps beside its time');
+  assert.equal(rule('.dev-rail-name'), '{ flex: 1 1 auto; min-width: 0; }');
+  assert.equal(rule('.dev-rail-time'), '{ flex: none; }');
+  assert.equal(rule('.dev-rail-since'), '{ margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.125rem; color: var(--one-ink-2); white-space: normal; }');
+  assert.equal(rule('.dev-rail-step'), '{ padding: 0 0 14px; }', 'even space between steps');
+  assert.equal(rule('.dev-rail-step::before'), '{ inset-inline-start: 14px; top: 34px; bottom: 4px; }', 'the connector stops short of the next mark');
+  assert.equal(rule('.dev-rail-step[data-rail-now] .dev-rail-press'), '{ width: calc(100% + 16px); margin-inline: -8px; padding: 8px; border-radius: 14px; }', 'room around the mark and its ring');
+  assert.equal(rule('.dev-rail-note'), '{ margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 0.8125rem; line-height: 1.125rem; }');
+  assert.equal(rule('.dev-rail-note[data-rail-note="act"]'), '{ background: color-mix(in srgb, var(--bl-wash) 30%, transparent); }', 'a quieter tint');
+  assert.doesNotMatch(block, /\.dev-rail-note\[data-rail-note="(plain|bad)"\]/, 'the other two tones keep their backgrounds');
+});
+
 // #7171: one scale across the three cards on a phone's thread page.
 test("a phone's thread page uses one scale", () => {
   const css = read('public/css/app.css');

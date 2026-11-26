@@ -110,8 +110,10 @@ export function ThreadRail({ steps, onOpen, current = null }: {
               <span className="dev-rail-body">
                 <span className="dev-rail-line">
                   <span className="dev-rail-name">{say(s.title)}</span>
-                  {when ? <time className="dev-rail-time" dateTime={s.at || undefined} title={stamp?.title}>{when}</time> : null}
+                  {when && !s.since ? <time className="dev-rail-time" dateTime={s.at || undefined} title={stamp?.title}>{when}</time> : null}
                 </span>
+                {/* "since 26 Nov" is a line of its own under the name: beside a long name it wrapped to the far right. */}
+                {when && s.since ? <time className="dev-rail-time dev-rail-since" dateTime={s.at || undefined} title={stamp?.title}>{when}</time> : null}
                 {s.desc || s.link ? (
                   <span className="dev-rail-desc">
                     {s.desc ? <span>{say(s.desc)}</span> : null}

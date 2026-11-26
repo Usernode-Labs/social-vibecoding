@@ -37055,6 +37055,8 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-rail-press { display: flex; gap: 12px; width: 100%; padding: 6px 6px 12px; border-radius: 12px; text-align: start; }
 .dev-rail-step:last-child .dev-rail-press { padding-bottom: 6px; }
 .dev-rail-desc, .dev-rail-note { display: block; }
+/* The now step's "since 26 Nov": a line of its own under the name, in every look. */
+.dev-rail-since { display: block; margin-inline-start: 0; }
 @media (hover: hover) { button.dev-rail-press:hover { background: color-mix(in srgb, var(--rail-line) 55%, transparent); } }
 /* The step the thread stands on is boxed, so the eye lands on it. */
 .dev-rail-step[data-rail-now] .dev-rail-press { background: var(--rail-now-box, transparent); box-shadow: inset 0 0 0 1px var(--rail-now-box-line, transparent); }
@@ -41028,9 +41030,9 @@ html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-t
   text-transform: none;
   color: var(--one-ink);
 }
-html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 12px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 14px; }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step:last-child { padding-bottom: 0; }
-html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 14px; top: 34px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 14px; top: 34px; bottom: 4px; }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 0; }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark { width: 30px; height: 30px; border-radius: 8px; }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark .dev-rail-glyph { width: 18px; height: 18px; }
@@ -41038,6 +41040,16 @@ html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-t
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-name { font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-time { font-size: 13px; line-height: 1.2; color: var(--one-ink-2); }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-desc { font-size: 14px; line-height: 19px; color: var(--one-ink-2); }
+/* Its format (request 7183). A step's name wraps beside its time; the now step's "since" is a quiet line under its
+   name; the now step's box has room around its mark and ring, the mark and words still in the other steps' column;
+   its note is a quieter block at the name's edge. */
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-line { flex-wrap: nowrap; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-name { flex: 1 1 auto; min-width: 0; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-time { flex: none; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-since { margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.125rem; color: var(--one-ink-2); white-space: normal; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-now] .dev-rail-press { width: calc(100% + 16px); margin-inline: -8px; padding: 8px; border-radius: 14px; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note { margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 0.8125rem; line-height: 1.125rem; }
+html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note[data-rail-note="act"] { background: color-mix(in srgb, var(--bl-wash) 30%, transparent); }
 html:not([data-skin]) #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-link {
   font-weight: 400;
   color: var(--one-ink);

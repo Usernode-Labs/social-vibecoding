@@ -7005,7 +7005,7 @@
   },
   "topic.rail.since": {
     "text": "since {{when}}",
-    "description": "Stamp beside the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), the one that says where the thread stands now: how long it has stood there. {{when}} is a short date such as Nov 13 or Today."
+    "description": "Stamp under the name of the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), the one that says where the thread stands now: how long it has stood there. {{when}} is a short date such as Nov 13 or Today."
   },
   "topic.rail.readRequest": {
     "text": "Read the request",
