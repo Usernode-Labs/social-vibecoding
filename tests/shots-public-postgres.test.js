@@ -156,6 +156,33 @@ test('public before & after stills against the full PostgreSQL schema', { timeou
     assert.equal(typeof overview.activity.active_week, 'number');
   });
 
+  await t.test('a change voted in says who said yes, in words that name nobody (the signed-out page\'s Recently live)', async () => {
+    const { rows: [other] } = await pool.query(`INSERT INTO users (username, password) VALUES ('other-voter', 'x') RETURNING id`);
+    const { rows: [third] } = await pool.query(`INSERT INTO users (username, password) VALUES ('third-voter', 'x') RETURNING id`);
+    const byTwo = await change(pub, { status: 'merged', stills: [] });
+    const byCreator = await change(pub, { status: 'merged', stills: [] });
+    const byOne = await change(pub, { status: 'merged', stills: [] });
+    const vote = (c, userId, v = 'yes') => pool.query(
+      'INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, $3)', [c.id, userId, v]);
+    await vote(byTwo, owner.id);
+    await vote(byTwo, other.id);
+    // The creator's yes alone, a No beside it: the rule let the creator approve.
+    await vote(byCreator, owner.id);
+    await vote(byCreator, third.id, 'no');
+    await vote(byOne, other.id);
+    const overview = await loadProjectOverview(pool, pub.slug, { gh: { isEnabled: () => false } });
+    const by = new Map(overview.merged.map((m) => [m.id, m.approved_by]));
+    assert.equal(by.get(byTwo.id), 'community');
+    assert.equal(by.get(byCreator.id), 'creator');
+    assert.equal(by.get(byOne.id), 'member');
+    // No counted yes at all (a first version goes live with none): nothing said.
+    assert.equal(by.get(merged.id), null);
+    // A yes cast before its approvals were cleared is not counted.
+    await pool.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [byTwo.id]);
+    const after = await loadProjectOverview(pool, pub.slug, { gh: { isEnabled: () => false } });
+    assert.equal(after.merged.find((m) => m.id === byTwo.id).approved_by, null);
+  });
+
   await t.test('the project page\'s overview carries the addresses, and nothing for a change without', async () => {
     const overview = await loadProjectOverview(pool, pub.slug, { gh: { isEnabled: () => false } });
     const byId = new Map(overview.votes.map((v) => [v.id, v]));
