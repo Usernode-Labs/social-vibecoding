@@ -797,6 +797,18 @@ Tests pin the literals where they live (`tests/section-heading-primitives`,
 the row's own classes), so a change to one of these is a change to the rule.
 Make it here as well.
 
+**The Admin dashboard and the console's menu are one block of
+`public/css/app.css`** ("THE ADMIN DASHBOARD AND ITS MENU", #7181). Its
+colours are `--adm-*` tokens declared on `#admin-screen`, for light and
+again for dark; no rule after them names a colour or a typeface, and its
+base rules sit outside any width query, so a phone and dark mode draw the
+same page (the first version did neither). The dashboard
+(`admin-overview.tsx`) reads six admin endpoints in one `load()`, which
+Refresh runs again: a figure that has not arrived is a dash, a part that
+did not load is named in `#admin-dashboard-error`, and no control is drawn
+that changes nothing. Its icons are the menu's own (`AdminConsole.NAV_ICONS`),
+never a text glyph. `tests/admin-console-polish.test.js` holds it.
+
 ### The console is React — add a section the same way
 
 **Every admin section renders from React.** `admin-console.js` is a chassis

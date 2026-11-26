@@ -1168,8 +1168,10 @@ const AdminConsole = {
   },
 
   // The strip above the content: Home, then a tab per opened section, oldest
-  // first. Tabs WRAP onto another line rather than scroll sideways: nothing
-  // in the console scrolls horizontally (#860), and a long label truncates.
+  // first. Nothing in the console scrolls horizontally (#860): with room
+  // the tabs stay on one line and a long label truncates, and a narrower
+  // window WRAPS them onto another line. app.css (.admin-tab-strip) holds
+  // both, so the wrap is not a utility here that the sheet could not undo.
   _tabStripHtml() {
     const active = AdminConsole._section;
     const byKey = new Map(AdminConsole._visibleSections().map((s) => [s.key, s]));
@@ -1191,7 +1193,7 @@ const AdminConsole = {
     for (const key of AdminConsole._openTabs()) {
       if (byKey.has(key)) parts.push(tab(byKey.get(key), true));
     }
-    return `<div data-admin-tabs="" role="navigation" aria-label="Open sections" class="mt-3 flex flex-wrap items-center gap-1.5">${parts.join('')}</div>`;
+    return `<div data-admin-tabs="" role="navigation" aria-label="Open sections" class="admin-tab-strip flex items-center gap-1.5">${parts.join('')}</div>`;
   },
 
   // ── The bar's menus: Enter/Space or ArrowDown opens, arrows move, Esc
@@ -1467,7 +1469,24 @@ const AdminConsole = {
     if (sideHost) {
       // A repaint replaces the bar, so a menu left open goes with it.
       AdminConsole._closeTopMenu(false);
+      // A repaint rebuilds the menu, which would send its own scroll back to
+      // the top: a row opened far down the list would light out of sight.
+      // Keep the menu where it was, then bring the lit row into view.
+      const was = sideHost.querySelector('.admin-sidebar');
+      const wasTop = was ? was.scrollTop : 0;
       sideHost.innerHTML = AdminConsole._topBarHtml();
+      const menu = sideHost.querySelector('.admin-sidebar');
+      if (menu) {
+        menu.scrollTop = wasTop;
+        const lit = menu.querySelector('[data-admin-section][aria-current="page"]');
+        if (lit) {
+          const box = menu.getBoundingClientRect();
+          const row = lit.getBoundingClientRect();
+          if (box.height && (row.top < box.top || row.bottom > box.bottom)) {
+            menu.scrollTop += row.top - box.top - (box.height - row.height) / 2;
+          }
+        }
+      }
       // Scoped to the bar, where the old whole-root wire was scoped to a
       // subtree this function had just emptied. It has to be: #admin-root is
       // no longer wiped here, so wiring the whole root would ALSO re-bind the
@@ -1551,6 +1570,10 @@ const AdminConsole = {
     if (!visible.some((s) => s.key === key)) {
       key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
     }
+    // A section opened from the menu, a tab or the home page starts at its
+    // top, as one opened from an address does (route() restores the scroll
+    // itself): the page used to keep the last section's scroll position.
+    const moved = AdminConsole._section !== key;
     AdminConsole._section = key;
     // Arrival at a section reveals its group, before the repaint that would
     // otherwise draw the active row inside a collapsed one (#1152).
@@ -1564,6 +1587,7 @@ const AdminConsole = {
     AdminConsole._renderShell();
     if (!opts || opts.writeHash !== false) AdminConsole._writeHash(key);
     AdminConsole._renderSection();
+    if (moved && !AdminConsole._isMobile()) AdminConsole._restoreScroll();
     // Recorded after the render, so it holds whatever the section module
     // healed the address to. See _reapplySectionHash.
     AdminConsole._markRouted();
