@@ -72,7 +72,7 @@ function control(raw = chores()) {
 
 function shootBothSides(run, change) {
   for (const side of ['before', 'after']) {
-    run.saveShot({ change, screen: 'desktop', side }, fixtures.png({ shade: side === 'after' ? 200 : 10 }));
+    run.saveShot({ change, screen: 'desktop', side }, fixtures.screenPng({ shade: side === 'after' ? 200 : 10 }));
   }
 }
 

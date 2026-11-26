@@ -74,7 +74,7 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   } finally { await owner.query('ROLLBACK'); owner.release(); await sweep; }
   // A retake replaces the old keys/density and reads the actual new object.
   await pool.query("UPDATE chat_sessions SET shots_state = 'exploring' WHERE id = $1", [session.id]);
-  const fresh = fixtures.png({ shade: 200 });
+  const fresh = fixtures.screenPng({ shade: 200 });
   await control.withControl(pool, { runId, sessionId: session.id },
     (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fresh));
   const [file] = await control.filesFor(pool, runId);

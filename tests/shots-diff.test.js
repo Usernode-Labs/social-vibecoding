@@ -104,6 +104,20 @@ test('solid-color focus crops keep the changed region associated with its declar
   }
 });
 
+test('each side\'s own CSS width rides with the screen, so a still at another size keeps its shape', async () => {
+  const story = { id: 'well', viewports: [{ name: 'desktop', width: 200 }] };
+  const files = [
+    file('well', 'desktop', 'base', 'context', screen(200, 160, glyphs(10, 10, 8))),
+    // 400 wide for a 200 screen: 2x here, so 200 CSS px again.
+    file('well', 'desktop', 'head', 'context', screen(400, 320, glyphs(10, 10, 8))),
+  ];
+  const [shown] = await diff.screensFor([story], files);
+  assert.deepEqual([shown.width, shown.widthBefore, shown.widthAfter], [200, 200, 200]);
+  // The fallback records them too.
+  const [fallback] = diff.fallbackScreens([story], files);
+  assert.deepEqual([fallback.widthBefore, fallback.widthAfter], [200, 200]);
+});
+
 test('blank and repetitive crops are ambiguous instead of scoring every placement', () => {
   const blank = screen(1280, 800);
   assert.deepEqual(diff.locateAll(blank, crop(blank, 0, 0, 188, 90)), []);
