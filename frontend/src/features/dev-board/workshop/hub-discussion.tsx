@@ -107,7 +107,7 @@ import { setUserBlocked } from '../../messages/store';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
 import {
-  POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
+  POSTS_SHOWN, PREVIEW_POSTS, REPLIES_SHOWN, appSource, publicSource, assemble, conversationSource, earlierFold, inEarlier, isNewTo, shownReplies,
   sortItems, toggledReactions,
   type DiscussionItem, type DiscussionPerson, type DiscussionSort, type DiscussionSource, type DiscussionSummary,
   type DiscussionReaction, type EarlierFold, type LiveEvent, type Said, type SharedSpec,
@@ -361,6 +361,7 @@ export class DiscussionFeed {
     this.set({ status: 'loading' });
     try {
       const page = await this.source.page(null);
+      if (page.summary) this.summary = page.summary;
       const readId = page.readId ?? await this.source.readPosition();
       this.state = { ...EMPTY, opened: this.state.opened, status: 'ready', readId };
       this.staleRoots.clear();
@@ -574,13 +575,29 @@ const feeds = new Map<string, DiscussionFeed>();
 
 /** The source a channel is read from: Homeroom's #general conversation, or the app's own chat. */
 export function sourceFor(slug: string, channel: Channel, viewer: { current: string | null }): DiscussionSource {
+  if (isVisitorChannel(channel)) return publicSource(slug);
   const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
   return conversationId ? conversationSource(conversationId, slug) : appSource(slug, viewer);
 }
 
 function sourceKey(slug: string, channel: Channel): string {
+  if (isVisitorChannel(channel)) return `public:${slug}`;
   const conversationId = Number((channel as { conversation_id?: unknown }).conversation_id) || null;
   return conversationId ? `conversation:${conversationId}` : `app:${slug}`;
+}
+
+/** The channel a visitor's page hands the card (visitorData): read through the public routes. */
+function isVisitorChannel(channel: Channel): boolean {
+  return !!(channel as { visitor?: unknown }).visitor;
+}
+
+/**
+ * What the signed-out project page hands the card in place of a member's
+ * community record: a channel to read through the public routes, whose
+ * summary rides with the first page.
+ */
+export function visitorData(slug: string): CommunityPayload {
+  return { slug, channel: { visitor: true, discussion: null } } as unknown as CommunityPayload;
 }
 
 /** The one feed of a channel, shared by its hub card and its page. */
@@ -592,7 +609,8 @@ export function feedFor(slug: string, channel: Channel, me: string | null): Disc
     feed = new DiscussionFeed(sourceFor(slug, channel, viewer), summary, viewer);
     feeds.set(feed.source.key, feed);
   } else {
-    feed.summary = summary;
+    // A visitor's summary rides with the first page, not the record.
+    if (!isVisitorChannel(channel)) feed.summary = summary;
     feed.viewer.current = me;
   }
   return feed;
@@ -611,12 +629,14 @@ let focusOnOpen = false;
 interface Viewer { username: string; avatarUrl: string | null }
 
 /** Who is reading, once the page has said (read in an effect: the first render has nobody). */
-function useViewer(): { viewer: Viewer | null; known: boolean } {
+function useViewer(visitor = false): { viewer: Viewer | null; known: boolean } {
   const [seen, setSeen] = useState<{ viewer: Viewer | null; known: boolean }>({ viewer: null, known: false });
   useEffect(() => {
+    // A visitor's page reads as nobody, whoever the shell may hold.
+    if (visitor) { setSeen({ viewer: null, known: true }); return; }
     const user = (window as unknown as { App?: { user?: { username?: string; avatarUrl?: string | null } | null } }).App?.user;
     setSeen({ viewer: user && user.username ? { username: user.username, avatarUrl: user.avatarUrl || null } : null, known: true });
-  }, []);
+  }, [visitor]);
   return seen;
 }
 
@@ -638,20 +658,29 @@ export interface DiscussionCardProps {
   mode: 'full' | 'preview' | 'page';
   /** The phone's card: open the page. */
   onOpenPage?: () => void;
+  /**
+   * The signed-out project page (../../guest/guest-discussion.tsx): read
+   * only, through the public routes (`data` is visitorData), and "Start a
+   * post…" asks the visitor to sign in.
+   */
+  visitor?: { onSignIn: () => void } | null;
 }
 
-export function DiscussionCard({ slug, name, data, mode, onOpenPage }: DiscussionCardProps): ReactNode {
+export function DiscussionCard({ slug, name, data, mode, onOpenPage, visitor = null }: DiscussionCardProps): ReactNode {
   const t = useMessages('project');
   useMessages('messages');
   const headId = useId();
-  const { viewer, known } = useViewer();
+  const { viewer, known } = useViewer(!!visitor);
   const channel = data?.channel || null;
   const me = viewer ? viewer.username : null;
   const feed = useMemo(() => (channel ? feedFor(slug, channel, me) : null), [slug, channel, me]);
   const host = useRef<HTMLElement | null>(null);
   const [focus, setFocus] = useState<Placed | null>(null);
   const focused = useCallback(() => setFocus(null), []);
-  const room = useMemo<Room>(() => ({ slug, visitor: false }), [slug]);
+  const signIn = useRef(visitor?.onSignIn);
+  signIn.current = visitor?.onSignIn;
+  const isVisitor = !!visitor;
+  const room = useMemo<Room>(() => ({ slug, visitor: isVisitor, signIn: () => signIn.current?.() }), [slug, isVisitor]);
 
   // Read once the viewer is known, so their own reactions read as theirs.
   useEffect(() => (feed && known ? feed.hold() : undefined), [feed, known]);
@@ -744,6 +773,7 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   onOpenPage?: () => void;
 }): ReactNode {
   const t = useMessages('project');
+  const room = useContext(RoomContext);
   const state = useStoreState(feed);
   const [sort, setSort] = useState<DiscussionSort>('newest');
   const [limit, setLimit] = useState(POSTS_SHOWN);
@@ -825,11 +855,13 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
             </ul>
           ) : <p className="dh-empty" data-ws-discussion-empty="">{t('project:hub.discussion.empty')}</p>
         ) : <FeedLoading status={state.status} onRetry={() => void feed.load()} rows={2} />}
-        <button type="button" className="dh-composer dh-composer-door" data-ws-discussion-start-door="" onClick={() => open(true)}>
-          <ViewerFace viewer={viewer} />
-          <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
-          <span className="dh-send" aria-hidden="true"><ArrowUpIcon /></span>
-        </button>
+        {room.visitor ? <SignInDoor preview /> : (
+          <button type="button" className="dh-composer dh-composer-door" data-ws-discussion-start-door="" onClick={() => open(true)}>
+            <ViewerFace viewer={viewer} />
+            <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
+            <span className="dh-send" aria-hidden="true"><ArrowUpIcon /></span>
+          </button>
+        )}
       </>
     );
   }
@@ -839,16 +871,18 @@ function FeedView({ feed, slug, name, channel, mode, headId, host, viewer, focus
   return (
     <>
       {head}
-      <Composer
-        kind="post"
-        boxRef={startRef}
-        viewer={viewer}
-        placeholder={t('project:hub.discussion.start.placeholder')}
-        label={t('project:hub.discussion.start.label', { project: name })}
-        sendLabel={t('project:hub.discussion.start.send')}
-        onSend={(words, ids) => feed.write(words, null, ids)}
-        upload={(file) => feed.source.upload(file)}
-      />
+      {room.visitor ? <SignInDoor /> : (
+        <Composer
+          kind="post"
+          boxRef={startRef}
+          viewer={viewer}
+          placeholder={t('project:hub.discussion.start.placeholder')}
+          label={t('project:hub.discussion.start.label', { project: name })}
+          sendLabel={t('project:hub.discussion.start.send')}
+          onSend={(words, ids) => feed.write(words, null, ids)}
+          upload={(file) => feed.source.upload(file)}
+        />
+      )}
       <div className="dh-sort" role="group" aria-label={t('project:hub.discussion.sort.label')} data-ws-discussion-sort={sort}>
         <span className="dh-sort-label" aria-hidden="true">{t('project:hub.discussion.sort.label')}</span>
         <button type="button" aria-pressed={sort === 'newest'} data-ws-discussion-sort-by="newest" onClick={() => setSort('newest')}>
@@ -1184,8 +1218,29 @@ function PostWords({ item, clamp = false }: { item: DiscussionItem; clamp?: bool
 }
 
 /** Which project the room is, and whether its reader may only read (a visitor): for what the rows draw. */
-interface Room { slug: string; visitor: boolean }
+interface Room { slug: string; visitor: boolean; signIn?: () => void }
 const RoomContext = createContext<Room>({ slug: '', visitor: false });
+
+/**
+ * A visitor's "Start a post…": the box as a member sees it, its far end
+ * "Sign in to post", the whole of it asking them to sign in.
+ */
+function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
+  const t = useMessages('project');
+  const room = useContext(RoomContext);
+  return (
+    <button
+      type="button"
+      className={`dh-composer dh-composer-door dh-sign-in-door${preview ? '' : ' dh-composer-post'}`}
+      data-ws-discussion-sign-in=""
+      onClick={() => room.signIn?.()}
+    >
+      <span className="dh-face-blank" aria-hidden="true" />
+      <span className="dh-composer-hint">{t('project:hub.discussion.start.placeholder')}</span>
+      <span className="dh-sign-in">{t('project:hub.discussion.signInToPost')}</span>
+    </button>
+  );
+}
 
 /**
  * A message's words, as the chat draws them (the same markdown, with `#N`

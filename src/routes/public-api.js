@@ -66,6 +66,9 @@ const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, HIDDEN_APP_ST
 const { loadProjectOverview } = require('../services/public-project');
 const { contributorsSummary } = require('../services/communities');
 const { publicStillBytes } = require('../services/shots-public');
+const publicDiscussion = require('../services/public-discussion');
+const discussion = require('../services/discussion');
+const { attachmentDisposition } = require('../services/attachments');
 const mediaStore = require('../services/media-store');
 
 // The guest project page's overview, kept for a short while per project: it
@@ -342,6 +345,96 @@ function publicApiRoutes(config) {
     } catch (err) {
       log.error('public-api', 'top contributors failed', { slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── A PUBLIC PROJECT'S DISCUSSION, READ-ONLY (26 Nov 2026) ──────────
+  //
+  // The signed-out project page draws the project's Discussion
+  // (features/guest/guest-discussion.tsx): its #general messages as posts,
+  // with their newest replies, files and reaction counts, and nothing about
+  // the reader (services/public-discussion.js). The project as the directory
+  // lists it (isPublicDirectoryApp), else 404, as its overview answers.
+  //   GET /api/public/apps/:slug/discussion[?before=<id>]
+  //     → { messages, has_more_before, discussion: { since, fold_at, earlier } }
+  //   GET /api/public/apps/:slug/discussion/thread/:id → { root, messages }
+  //   GET /api/public/apps/:slug/discussion/attachments/:attId → the file
+  // The newest page is kept a short while, as the overview is; an older
+  // page, a thread and a file are read as asked.
+  const discussionCache = new Map();
+  const publicDiscussionApp = async (slug) => {
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) return null;
+    const { rows } = await pool.query(
+      `SELECT id, slug, self_hosted, view_visibility, status, moderation_suspended_at
+         FROM apps WHERE slug = $1`,
+      [slug]
+    );
+    return isPublicDirectoryApp(rows[0]) ? rows[0] : null;
+  };
+  router.get('/api/public/apps/:slug/discussion', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    const before = Number(req.query.before);
+    const cursor = Number.isSafeInteger(before) && before > 0 && before <= 2147483647 ? before : null;
+    try {
+      const hit = cursor ? null : discussionCache.get(slug);
+      if (hit && hit.expiresAt > Date.now()) return res.json(hit.body);
+      const app = await publicDiscussionApp(slug);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const page = await publicDiscussion.publicPosts(pool, app.id, { before: cursor });
+      const body = cursor ? page : {
+        ...page,
+        discussion: await discussion.discussionSummary(pool, { appId: app.id, visitor: true }),
+      };
+      if (!cursor) {
+        if (discussionCache.size >= OVERVIEW_CACHE_MAX) discussionCache.clear();
+        discussionCache.set(slug, { body, expiresAt: Date.now() + OVERVIEW_TTL_MS });
+      }
+      res.json(body);
+    } catch (err) {
+      log.error('public-api', 'public discussion failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/public/apps/:slug/discussion/thread/:id', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0 || id > 2147483647) return res.status(404).json({ error: 'Not found' });
+    try {
+      const app = await publicDiscussionApp(slug);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const thread = await publicDiscussion.publicThread(pool, app.id, id);
+      if (!thread) return res.status(404).json({ error: 'Not found' });
+      res.json(thread);
+    } catch (err) {
+      log.error('public-api', 'public discussion thread failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // A file on one of the Discussion's live posts or replies. Served as the
+  // members' route serves it (an image inline with its stored type; any
+  // other file as a download, never as a page), behind the same public
+  // gate as the posts: a visitor sees the files a member would on a public
+  // project, and nothing from a private one.
+  router.get('/api/public/apps/:slug/discussion/attachments/:attId', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    try {
+      const app = await publicDiscussionApp(slug);
+      if (!app) return res.status(404).end();
+      const att = await publicDiscussion.publicAttachment(pool, app.id, req.params.attId);
+      if (!att) return res.status(404).end();
+      const inline = att.kind === 'image';
+      res.set('Content-Type', inline
+        ? (att.content_type || 'application/octet-stream')
+        : (att.kind === 'binary' ? 'application/octet-stream' : 'text/plain; charset=utf-8'));
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', attachmentDisposition(inline ? 'inline' : 'attachment', att.filename));
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('public-api', 'public discussion file failed', { slug, message: err.message });
+      return res.status(500).end();
     }
   });
 

@@ -2063,6 +2063,10 @@
     "text": "Post",
     "description": "Accessible name and tooltip of the round send button beside the Discussion card's Start a post box: publishes what was typed as a new post. A verb."
   },
+  "hub.discussion.signInToPost": {
+    "text": "Sign in to post",
+    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, as a signed-out visitor sees it: the box asks them to sign in before they can post."
+  },
   "hub.discussion.reply.placeholder": {
     "text": "Reply in thread…",
     "description": "Placeholder in the box under a post's replies on a project's Discussion card, where a member writes a reply to that post. Ends with an ellipsis."

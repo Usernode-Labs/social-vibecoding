@@ -55,6 +55,7 @@ import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestIcon, TryLink } from './guest-discover';
 import { GuestContributors } from './guest-contributors';
+import { GuestDiscussion } from './guest-discussion';
 import { CARD_GLASS_BTN, CARD_OPEN_BTN, CARD_ROUND_BTN, PEOPLE_CARD, ProjectCard } from './project-card';
 import {
   type GuestApp, type GuestMerged, type GuestOverview, type GuestTopContributors, type GuestVote, MIN_ACTIVE,
@@ -462,7 +463,15 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         data-guest-project-band=""
       />
 
-      <section data-guest-made="" className={SECTION}>
+      {/* TWO COLUMNS ON A WIDE WINDOW (f-so2, 26 Nov 2026): from 1024px, as
+          the member's hub, a 340px column of the join card, Up for a vote,
+          Recently live and Top contributors, and the project's Discussion
+          beside it. Narrower, one column: on a phone (f-so3) the
+          Discussion's card comes after Up for a vote, the side column's
+          parts placed around it by `order` (the column is `contents`). */}
+      <div data-guest-cols="" className="flex flex-col lg:mt-8 lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start lg:gap-6">
+      <div data-guest-side="" className="contents lg:flex lg:flex-col lg:[&>*:first-child]:mt-0">
+      <section data-guest-made="" className={cn(SECTION, 'order-1 lg:order-none')}>
         <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5')}>
           <div className="min-w-0 flex-1">
             <h2 className="text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100">
@@ -491,7 +500,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       </section>
 
       {votes.length ? (
-        <section data-guest-votes="" className={SECTION}>
+        <section data-guest-votes="" className={cn(SECTION, 'order-2 lg:order-none')}>
           <div className="flex items-center justify-between gap-2 px-1 pb-2">
             <SectionHeader className="p-0">{t('auth:guest.project.upForVoteCount', { count: voteCount })}</SectionHeader>
             {!allVotes && votes.length > VOTES_SHOWN ? (
@@ -532,7 +541,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       ) : null}
 
       {merged.length ? (
-        <section data-guest-live="" className={SECTION}>
+        <section data-guest-live="" className={cn(SECTION, 'order-4 lg:order-none')}>
           <div className="flex items-center justify-between gap-2 px-1 pb-2">
             <SectionHeader className="p-0">{t('auth:guest.project.recentlyLive')}</SectionHeader>
             {!allLive && merged.length > LIVE_SHOWN ? (
@@ -575,7 +584,18 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         </section>
       ) : null}
 
-      <GuestContributors slug={app.slug} initial={initialContributors} className={SECTION} />
+      <div data-guest-side-contributors="" className="order-5 lg:order-none">
+        <GuestContributors slug={app.slug} initial={initialContributors} className={SECTION} />
+      </div>
+      </div>
+
+      {/* The project's Discussion, read only: its posts and their replies,
+          and "Start a post…" asking the visitor to sign in
+          (./guest-discussion.tsx). A preview on a phone, whole from 768px. */}
+      <div data-guest-talk="" className={cn(SECTION, 'order-3 min-w-0 lg:order-none lg:mt-0')}>
+        <GuestDiscussion app={app} onSignIn={() => onIntent({ kind: 'chat', app })} />
+      </div>
+      </div>
 
       {!loaded ? <p className="mt-8 px-1 text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.project.loading')}</p> : null}
     </div>

@@ -36450,6 +36450,19 @@ html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:hover:not(:disab
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach:disabled { opacity: 0.45; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-attach svg { width: 18px; height: 18px; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-staged { flex-basis: 100%; padding-block-end: 4px; }
+/* A visitor's "Start a post…": the box as a member sees it, "Sign in to
+   post" at its far end; the whole of it asks them to sign in. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in-door { width: auto; align-items: center; cursor: pointer; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background-color: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 /* Editing your own post or reply in place: the same field, Save and Cancel under it. */
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit > .dh-box {

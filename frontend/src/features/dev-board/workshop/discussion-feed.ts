@@ -461,8 +461,12 @@ export interface DiscussionSource {
   remove(messageId: number): Promise<void>;
   /** Whether the main stream carries each reply as a line (the app chat's does). */
   streamHoldsReplies: boolean;
-  /** A page of the main stream, oldest first, before `before` (the newest page without it). */
-  page(before: number | null): Promise<{ messages: Said[]; more: boolean; readId: number | null }>;
+  /**
+   * A page of the main stream, oldest first, before `before` (the newest page
+   * without it). A room whose summary rides with its first page (a visitor's)
+   * hands it back too.
+   */
+  page(before: number | null): Promise<{ messages: Said[]; more: boolean; readId: number | null; summary?: DiscussionSummary | null }>;
   /** A thread: its first message and its newest replies, oldest first (`all`: as many as the room gives). */
   thread(rootId: number, all?: boolean): Promise<{ root: Said | null; replies: Said[] }>;
   /** Write a post (`rootId` null) or a reply, with the files `upload` took in. */
@@ -755,6 +759,61 @@ export function appSource(slug: string, viewer: { current: string | null }): Dis
     live(heard) {
       return appSocket(slug, viewer, heard);
     },
+  };
+}
+
+/**
+ * A public project's Discussion, for a visitor (routes/public-api.js): read
+ * only, nothing about the reader, its files through the public route. Every
+ * write is refused here before it is sent; the page offers sign-in instead.
+ */
+export function publicSource(slug: string): DiscussionSource {
+  const base = `/api/public/apps/${encodeURIComponent(slug)}/discussion`;
+  const files = `${base}/attachments`;
+  const read = async (url: string): Promise<Json> => {
+    const response = await fetch(url, { credentials: 'omit', headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`public discussion ${response.status}`);
+    return readJson(response);
+  };
+  const refuse = () => Promise.reject(new DiscussionWriteError(401, ''));
+  return {
+    key: `public:${slug}`,
+    kind: 'app',
+    streamHoldsReplies: true,
+    address() {
+      return `#app/${encodeURIComponent(slug)}/dev/discussion`;
+    },
+    async page(before) {
+      const data = await read(before ? `${base}?before=${before}` : base);
+      const rows = Array.isArray(data.messages) ? data.messages : [];
+      return {
+        messages: rows.map((row) => fromAppRow(row, null, files)).filter((m): m is Said => !!m),
+        more: !!data.has_more_before,
+        readId: null,
+        summary: (data.discussion as DiscussionSummary | undefined) || null,
+      };
+    },
+    async thread(rootId) {
+      try {
+        const data = await read(`${base}/thread/${rootId}`);
+        const replies = (Array.isArray(data.messages) ? data.messages : [])
+          .map((row) => fromAppRow({ ...(row as Json), thread_type: 'message', thread_ref: rootId }, null, files))
+          .filter((m): m is Said => !!m);
+        return { root: data.root ? fromAppRow(data.root, null, files) : null, replies };
+      } catch {
+        return { root: null, replies: [] };
+      }
+    },
+    post: refuse,
+    upload: refuse,
+    edit: refuse,
+    remove: refuse,
+    async react() { return null; },
+    async reactEarlier() { return null; },
+    async readPosition() { return null; },
+    async markRead() { /* a visitor has no reading to move */ },
+    ranked: () => Promise.reject(new Error('no ranking for a visitor')),
+    live() { return () => {}; },
   };
 }
 
