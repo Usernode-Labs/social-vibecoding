@@ -2,6 +2,9 @@
 
 // A shared project link's preview (services/project-preview.js):
 //
+//   GET /                             the shell for somebody signed out,
+//                                     with the front page's own title, link
+//                                     preview and canonical in its head.
 //   GET /app/:slug                    the shell, as `app.get('*')` serves it,
 //                                     with the project's link preview in its
 //                                     head: for a public project only.
@@ -34,6 +37,8 @@ const embed = require('../services/project-embed');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
 const { publicProjectReadLimiter } = require('../middleware/rate-limits');
 const { requestOrigin } = require('./community-invites');
+const searchRobots = require('../services/search-robots');
+const { platformOrigin } = require('../services/app-identity-env');
 
 const INDEX_PATH = path.join(__dirname, '..', '..', 'public', 'index.html');
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -112,12 +117,43 @@ function projectPreviewRoutes(config) {
         ? (await pool.query('SELECT content_type, data FROM app_icons WHERE id = $1', [iconId])).rows[0] || null
         : null;
       const iconBytes = icon ? { contentType: icon.content_type, data: icon.data } : null;
-      entry = { app, icon: iconBytes, cover: preview.canDrawCover(app, iconBytes) };
+      const cover = preview.canDrawCover(app, iconBytes);
+      // An icon the cover cannot be drawn from is the link's picture itself:
+      // its size is read off its bytes, so the link can say it.
+      const iconSize = !cover && iconBytes ? preview.pictureSize(iconBytes.data) : null;
+      entry = { app, icon: iconBytes, cover, iconSize };
     }
     if (entries.size >= ENTRY_MAX) entries.clear();
     entries.set(slug, { entry, expiresAt: Date.now() + ENTRY_TTL_MS });
     return entry;
   }
+
+  // The front page, signed out: the shell with what Homeroom is in its head
+  // (request 7166: a pasted link to it showed the bare word "Homeroom" and no
+  // picture). A signed-in load, and anything that fails here, goes on to the
+  // static shell as before. The page's address is the platform's configured
+  // one, on production only, exactly as the Link header's is
+  // (search-robots.js shellCanonicalLink): never the Host a request came with.
+  // The header is set here too, because the middleware that sets it for the
+  // static shell comes after this router.
+  router.get('/', (req, res, next) => (req.user ? next('route') : next()), async (req, res, next) => {
+    if (!req.accepts('html')) return next();
+    try {
+      const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
+      const configured = platformOrigin();
+      const link = searchRobots.shellCanonicalLink({
+        method: req.method, path: '/', origin: configured, staging: isStagingCopy(),
+      });
+      const tags = preview.landingTags({ origin: requestOrigin(req), canonical: link ? configured : null });
+      if (link) res.setHeader('Link', link);
+      res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+      applyShellDocumentHeaders(res, INDEX_PATH);
+      return res.type('html').send(preview.withHead(html, tags, preview.LANDING_TITLE));
+    } catch (err) {
+      log.error('project-preview', 'Serving the front page failed', { err: err.message });
+      return next();
+    }
+  });
 
   // A signed-in person's own load of the address goes straight to the
   // catch-all: the preview is for whoever unfurls a link, and they carry no
@@ -132,6 +168,7 @@ function projectPreviewRoutes(config) {
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       const tags = preview.previewTags(entry.app, requestOrigin(req) || '', {
         cover: entry.cover,
+        imageSize: entry.iconSize,
         player: !!embed.embedFor(entry.app, { sign: false }),
       });
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
