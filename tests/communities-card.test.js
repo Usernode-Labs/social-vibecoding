@@ -255,3 +255,16 @@ test('every place draws the same card from its own tokens: the standard look, th
   // Every big card says this week in words, wherever it is.
   assert.doesNotMatch(css, /cm-week-glyph/);
 });
+
+// Request #7165, point 5: a card loaded its community's whole picture, up to
+// 1 MB, for a slot about 110px wide on a phone. A stored picture is asked for
+// at the card's size; any other address is drawn as it came.
+test('a stored picture is asked for at the card\'s size', () => {
+  const light = `/app-illustrations/${'a'.repeat(32)}`;
+  const dark = `/app-illustrations/${'b'.repeat(32)}`;
+  const html = draw('CommunityCardContent', { community: { ...TIDE, pictureUrl: light, pictureDarkUrl: dark } });
+  assert.ok(html.includes(`<img src="${light}?w=512"`), 'the picture');
+  assert.ok(html.includes(`<img src="${dark}?w=512"`), 'and its dark twin');
+  const src = read(CARD);
+  assert.match(src, /window\.innerWidth >= 768 \? 1024 : 512/, 'a wide screen takes the next size up');
+});
