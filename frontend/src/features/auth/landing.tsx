@@ -911,14 +911,14 @@ export function LandingScreen() {
   // kept, and taken down by any other way here (a Back to #landing). With
   // the story switched off it is still the sheet: there is no other sign-in.
   const [routeSheet, setRouteSheet] = useState<{ opening: SheetOpening; releaseToken: string | null } | null>(null);
-  // Closed: the landing itself, under its own address, without a history
-  // entry, so Back does not open the sheet again. Shown through the router,
-  // so it knows the address is the landing's.
   // Down with the screen: signed in (or anywhere else the router goes), the
   // sheet is not left mounted under the shell, where its Escape would still
   // close it and send the address back to #landing.
   const landingVisible = useVisibility(AUTH_SCREEN_IDS.landing, false);
   useEffect(() => { if (!landingVisible) setRouteSheet(null); }, [landingVisible]);
+  // Closed: the landing itself, under its own address, without a history
+  // entry, so Back does not open the sheet again. Shown through the router,
+  // so it knows the address is the landing's.
   const closeRouteSheet = useCallback(() => {
     setRouteSheet(null);
     try {
