@@ -52,6 +52,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMinWidth } from '../../lib/use-min-width';
 import { capCount } from '../../lib/count-cap';
+import { sizedPicture } from '../apps/app-card.js';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
   CORNER, CORNER_PIN, CORNER_UNPIN, MinusGlyph, VOTES, WIGGLE, openHub,
@@ -78,6 +79,16 @@ export interface CardCommunity {
 
 const count = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
 
+/**
+ * The width a card's picture is asked for (request #7165, point 5): a phone's
+ * card is at most about 170px wide, so 512 is sharp at 3x; a wide screen's
+ * first row can be several hundred, so it takes the next size up. Read when
+ * the card draws: cards come from data loaded after the first render.
+ */
+function cardPictureWidth(): number {
+  return typeof window !== 'undefined' && window.innerWidth >= 768 ? 1024 : 512;
+}
+
 /** What goes over a picture: drawn as it is, or asked whether the picture itself is shown (a preview loop plays only over one). */
 export type PictureOverlay = ReactNode | ((picture: boolean) => ReactNode);
 
@@ -99,7 +110,10 @@ export function CommunityPicture({ community, eager = false, attrs, children, fa
   faceClass?: string;
   onPicture?: (picture: boolean) => void;
 }) {
-  const { pictureUrl: url, pictureDarkUrl: dark } = community;
+  // Asked for at the card's size, not the whole stored file (up to 1 MB).
+  const width = cardPictureWidth();
+  const url = sizedPicture(community.pictureUrl, width) as string | null | undefined;
+  const dark = sizedPicture(community.pictureDarkUrl, width) as string | null | undefined;
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [url, dark]);
   const picture = !!url && !failed;

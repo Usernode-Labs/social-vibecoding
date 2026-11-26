@@ -141,8 +141,30 @@ test('image icon renders an <img> and wins over emoji', () => {
     baseApp({ icon_emoji: '🎮', icon_url: '/app-icons/' + 'a'.repeat(32) })
   );
   assert.match(html, /data-icon="image"/);
-  assert.match(html, /<img src="\/app-icons\/a{32}"/);
+  // Asked for at the tile's size, not the whole stored file (#7165).
+  assert.match(html, /<img src="\/app-icons\/a{32}\?w=192"/);
   assert.match(html, /object-cover/);
+});
+
+// Request #7165, point 5: an icon of 100 KB and more was loaded for a 56px
+// tile. The tile asks the server for a 192px copy; only the two stored kinds
+// of picture are sized, and only at their plain address.
+test('a stored picture is asked for at its drawn size, and nothing else is touched', () => {
+  const sandbox = { document: { createElement: fakeElement } };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const AppCard = installAppCard(sandbox);
+  const id = 'a'.repeat(32);
+  assert.equal(AppCard.sizedPicture(`/app-icons/${id}`, 192), `/app-icons/${id}?w=192`);
+  assert.equal(AppCard.sizedPicture(`/app-illustrations/${id}`, 512), `/app-illustrations/${id}?w=512`);
+  for (const other of [`/app-icons/${id}?v=2`, `https://example.com/app-icons/${id}`, 'data:image/png;base64,AAAA',
+    '/app-icons/emoji/1f4ca.png', `/avatars/${id}`, '/app-icons/short', '', null, undefined]) {
+    assert.equal(AppCard.sizedPicture(other, 192), other);
+  }
+  assert.deepEqual({ ...AppCard.iconViewFor({ icon_url: `/app-icons/${id}`, icon_emoji: '🎮' }) },
+    { kind: 'image', src: `/app-icons/${id}?w=192` });
+  const demo = 'data:image/png;base64,AAAA';
+  assert.equal(AppCard.iconViewFor({ icon_url: demo }).src, demo, 'a staging demo icon is drawn as it came');
 });
 
 // The tile treatment itself (app.css `.app-icon-tile`): a white face
