@@ -190,7 +190,8 @@ test('the hub draws no charts: who is around is faces, a count and names, and no
   const declared = JSON.parse(read('dapp.json')).tests
     .find((t) => (t.expectSelector || '').includes(':has(.dev-ws-hero [data-ws-active-people])'));
   assert.ok(declared, 'the check is declared');
-  assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
+  // 26 Nov 2026: For you is the first part of the hub's thin column (.dev-ws-hub-side, beside the Discussion).
+  assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \.dev-ws-hub-cols > \.dev-ws-hub-side > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
   assert.equal(declared.expectText, 'to vote');
 });
 
@@ -338,7 +339,8 @@ test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, openin
   // first day (15 Oct 2026, tests/hub-just-you.test.js).
   assert.doesNotMatch(card({ viewer: false }), /data-ws-workshop-row/);
   assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /data-ws-workshop-row/);
-  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>/);
+  // 26 Nov 2026: where the hub draws the Discussion card, For you has no #general row (`discussionHere`).
+  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+discussionHere=\{talkHere\}\s+\/>/);
   assert.doesNotMatch(LANDER, /places=\{drawerOn\}/, 'For you needs no phone-only flag');
 });
 

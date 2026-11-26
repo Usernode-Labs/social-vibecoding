@@ -262,11 +262,16 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.body.approval.creator_gone, false, 'no creator by design is not a gone account');
       await pool.query('UPDATE apps SET self_hosted = false, created_by = $2 WHERE id = $1', [a.id, owner.id]);
       assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
-      assert.deepEqual(got.body.channel, {
+      const { discussion: said, ...channel } = got.body.channel;
+      assert.deepEqual(channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,
         recent: [], href: `#messages/app/${a.slug}`, handle: null,
         post_url: `/api/apps/${a.slug}/messages`,
       }, 'a collab-public app: its channel is offered, with its last few messages, its address and where the hub posts');
+      // The hub's Discussion (26 Nov 2026, services/discussion.js): when it
+      // arrived, and nothing said before it in a channel with no messages.
+      const { rows: marker } = await pool.query("SELECT value FROM platform_settings WHERE key = 'discussion_posts_since'");
+      assert.deepEqual(said, { since: new Date(marker[0].value).toISOString(), fold_at: 8, earlier: null });
       const { daily, active_people: activePeople, ...counts } = got.body.activity;
       assert.deepEqual(counts, { active_week: 0, shipped_month: 0 },
         'and the hub\'s two numbers');
@@ -473,6 +478,36 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     }
     const chan = await communities.channelSummary(pool, other.id, owner.id);
     assert.deepEqual(chan.recent.map((m) => [m.content, m.by]), [['hello', member.username], ['there', member.username]]);
+
+    // THE HUB'S DISCUSSION (26 Nov 2026, services/discussion.js): what people
+    // wrote in the main stream before Discussion arrived, which folds into one
+    // post above eight. A reply, a later message and a deleted one are not in it;
+    // an author the viewer blocked is left out of the viewer's count.
+    const discussion = require('../src/services/discussion');
+    discussion.resetDiscussionSinceForTest();
+    const since = await discussion.discussionSince(pool);
+    assert.ok(since, 'the marker is stamped by the reference data');
+    const before = new Date(Date.parse(since) - 3600000).toISOString();
+    const { rows: [past] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, created_at) VALUES ($1, $2, 'old', $3) RETURNING id`,
+      [other.id, owner.id, before]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, created_at, deleted_at) VALUES ($1, $2, 'gone', $3, NOW())`,
+      [other.id, owner.id, before]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at) VALUES ($1, $2, 'a reply', 'message', $3, $4)`,
+      [other.id, member.id, past.id, before]);
+    const earlier = await discussion.earlierForApp(pool, other.id, since, owner.id);
+    // 'hello' and 'there' were written after the marker: not earlier.
+    assert.deepEqual(earlier, { count: 1, from: before, to: before, last_id: past.id });
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [member.id, owner.id]);
+    assert.equal(await discussion.earlierForApp(pool, other.id, since, member.id), null, 'the blocked author\'s message is not counted for the blocker');
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [member.id, owner.id]);
+    const told = await discussion.discussionSummary(pool, { appId: other.id, viewerId: owner.id });
+    assert.deepEqual(told, { since, fold_at: 8, earlier });
+    const inGeneral = await discussion.discussionSummary(pool, { conversationId: general, viewerId: member.id });
+    assert.equal(inGeneral.earlier, null, '#general\'s messages here were all written after the marker');
+    discussion.resetDiscussionSinceForTest();
 
     // Members & activity: who did something this week, what shipped this month.
     const { rows: s } = await pool.query(

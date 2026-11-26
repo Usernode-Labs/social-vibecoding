@@ -382,6 +382,18 @@ function pageLimit(value) {
 
 const PIVOT_OPS = new Set(['<', '<=', '>', '>=']);
 
+// A message's reactions as the viewer sees them: each with `reacted`, whether
+// one of its people is the viewer (the aggregate names people by username).
+function viewerReactions(list, username) {
+  const me = String(username || '');
+  return (Array.isArray(list) ? list : []).map((r) => ({
+    emoji: r.emoji,
+    count: Number(r.count) || 0,
+    users: Array.isArray(r.users) ? r.users : [],
+    reacted: !!me && Array.isArray(r.users) && r.users.includes(me),
+  }));
+}
+
 function parseThreadRef(value) {
   const ref = typeof value === 'number'
     ? value
@@ -1089,6 +1101,64 @@ function chatRoutes(config) {
       log.error('chat', 'Failed to delete message', {
         slug: req.params.slug, message: err.message,
       });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── A reaction, over REST (the hub's Discussion, 26 Nov 2026) ─────
+  //
+  //   POST /api/apps/:slug/messages/:id/reactions  { emoji, on? }
+  //   → 200 { reactions: [{ emoji, count, users, reacted }] }
+  //     404 { error: 'Message not found' }
+  //
+  // The REST twin of the socket's `{ type: 'react' }`, for the hub's
+  // Discussion card, which draws #general without holding the app's chat
+  // socket (frontend/src/features/dev-board/workshop/hub-discussion.tsx).
+  // Both run the one canonical handler (ws.handleMessage), which toggles the
+  // emoji, broadcasts the new aggregate to the room and tells the author, so
+  // a reaction here reaches an open chat exactly as one made there does.
+  // Collab-gated by that handler, as the socket's is; like the socket it
+  // asks nobody to join. `on` (optional) is the state the reaction should
+  // end in: a tap repeated after a slow answer changes nothing twice.
+  router.post('/api/apps/:slug/messages/:id/reactions', groupChatWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const messageId = parseThreadRef(req.params.id);
+    if (messageId == null) return res.status(404).json({ error: 'Message not found' });
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji.trim() : '';
+      if (!emoji || emoji.length > 16 || /\s/.test(emoji)) {
+        return res.status(400).json({ error: 'One emoji is required' });
+      }
+      const ws = require('../services/ws');
+      const want = typeof req.body?.on === 'boolean' ? req.body.on : null;
+      if (want !== null) {
+        const { rows } = await pool.query(
+          `SELECT 1 FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
+          [messageId, req.user.id, emoji]
+        );
+        if (rows.length > 0 === want) {
+          const byId = await ws.getReactionsForMessages(pool, [messageId], req.user.id);
+          return res.json({ reactions: viewerReactions(byId[messageId], req.user.username) });
+        }
+      }
+      const result = await ws.handleMessage(
+        pool,
+        { user: req.user, appId: app.id, appSlug: app.slug },
+        { type: 'react', messageId, emoji }
+      );
+      if (result && result.ok === false) {
+        if (result.code === 'not_collaborator') return res.status(404).json({ error: 'App not found' });
+        if (result.code === 'write_access_failed') return res.status(503).json({ error: 'temporarily_unavailable' });
+        return res.status(404).json({ error: 'Message not found' });
+      }
+      const byId = await ws.getReactionsForMessages(pool, [messageId], req.user.id);
+      return res.json({ reactions: viewerReactions(byId[messageId], req.user.username) });
+    } catch (err) {
+      log.error('chat', 'Failed to react', { slug: req.params.slug, message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
