@@ -925,15 +925,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   );
   // The picker's header, which names both of its homes.
   const heading = approve ? t('project:card.vote.dialog.approval') : t('project:card.vote.dialog.vote');
-  // The picker is portaled out of the page, so the page's scoped look cannot
-  // reach it: mark it, and the page's own rules paint it. A button on the
-  // thread page marks it "thread" (app.css, THE THREAD PAGE);
-  // a button on the All items board marks it "board" (app.css).
-  // It renders only after the button that opens it has mounted, so the ref is
-  // there to ask.
-  const threadLook = !!btnRef.current?.closest('#dev-topic-thread');
-  const boardLook = !threadLook && !!btnRef.current?.closest('.dev-ws[data-ws-tab="all"] #dev-kanban');
-  const voteLook = threadLook ? 'thread' : (boardLook ? 'board' : undefined);
+  // The picker is portaled out of the page, so no page's scoped look can
+  // reach it. It is marked with the change page bar's look wherever its
+  // button stands (app.css, THE THREAD PAGE), so "Your vote" looks the same
+  // in a channel's vote card, on a board card and on the three pages, as the
+  // button that opens it does.
+  const voteLook = 'thread';
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}

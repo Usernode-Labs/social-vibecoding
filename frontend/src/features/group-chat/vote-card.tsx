@@ -24,7 +24,10 @@
  *     vote" picker there as everywhere and sends `AppView.castVote`. Where
  *     the viewer has no vote to cast here (signed out, view only, the change
  *     settled or not in the snapshot yet), See the vote opens the change at
- *     its vote instead. Admin merge stays in the change's ⋯ menu
+ *     its vote instead. While the vote is open it is the card's main action
+ *     and wears the Vote button's own paint (.dev-vote-btn, the bar's
+ *     yellow); once the change is settled it is a plain pill, since a done
+ *     thing gets no fill. Admin merge stays in the change's ⋯ menu
  *     (AppView._proposalMenuItems), admins only, never inline in a chat line.
  *
  * The facts come off the row's model (`msg.vote`, transcript-store.ts
@@ -194,7 +197,7 @@ export function VoteCard({ msg }: { msg: TranscriptMessage }): ReactNode {
           </button>
         ) : null}
         {specs ? <VoteButton yes={specs.yes} no={specs.no} /> : (
-          <button type="button" className="gc-vote-btn" data-vote-open="" onClick={() => openVotes(sessionId, number)}>
+          <button type="button" className={settled ? 'gc-vote-btn' : 'dev-vote-btn'} data-vote-open="" onClick={() => openVotes(sessionId, number)}>
             {t('chat:group.voteCard.seeVote')}
           </button>
         )}

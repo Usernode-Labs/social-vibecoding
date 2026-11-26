@@ -10082,84 +10082,6 @@ html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok { background-color: transparent; color: var(--wip-tag-ok-ink); }
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok::before { background-color: var(--wip-tag-ok-ink); box-shadow: 0 0 0 3px var(--wip-tag-ok-bg); }
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-vote-btn { height: 2rem; padding-inline: 0.875rem 0.625rem; font-size: 0.8125rem; font-weight: 700; }
-/* THE BOARD'S VOTE PICKER (request #7065). The picker that opens on a card's
-   Still yes?, Vote or Approve on All items is portaled out of the page — to
-   <body> (.dev-vote-pop) or into the phone's kit sheet (.dev-vote-sheet) — so
-   the board's scoped rules cannot reach it, and it fell back to the shell's
-   blue. When its button stands on the board the picker's frame carries
-   data-vote-look="board" (dev-card.tsx), and its parts are painted here from
-   the board's own --wip-* tokens: the switch track is a column's tray, the
-   picked Yes and Vote yes are the page's sun pill with its ink outline and
-   hard foot, the line box is a white field with a soft edge, and the labels
-   are the look's muted ink. A No keeps the app's own red (the look has none),
-   and the tallies keep their own inks. Every rule is the standard look's
-   alone, so the brand look's own picker rules still paint there; the tokens
-   are declared on html, so the dark look follows without a rule of its own.
-   Colours, backgrounds, borders, shadows, the focus ring and the press only:
-   no size, padding, radius or type changes. */
-html:root .dev-vote-pop[data-vote-look="board"] {
-  background: var(--wip-card-bg);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
-  font-family: var(--wip-font);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch {
-  background: var(--wip-tray);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-opt:not([aria-pressed="true"]):hover {
-  background: var(--wip-card-bg);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n {
-  color: var(--wip-top-cta-ink);
-}
-html:root:not(.dark):not([data-app-tone="dark"]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
-  box-shadow: inset 0 0 0 1px var(--wip-top-cta-ink);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label) {
-  color: var(--wip-ink-muted);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt {
-  background: var(--wip-card-bg);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt[aria-checked="true"] {
-  background: var(--state-blocked-bg);
-  color: var(--state-blocked);
-  border-color: transparent;
-  box-shadow: none;
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt:focus-visible {
-  outline-color: var(--wip-ink-action);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box {
-  background: var(--wip-card-bg);
-  color: var(--wip-ink);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-field-drop);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box:focus {
-  outline-color: var(--wip-ink-action);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-cancel:hover {
-  background: var(--wip-ghost);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-  box-shadow: var(--wip-top-cta-edge);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):hover {
-  filter: brightness(1.04);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):active {
-  box-shadow: var(--wip-top-cta-edge-down);
-  transform: var(--wip-top-cta-press);
-}
 /* THE BOARD'S TIES (board-links.ts): while a card is rested on, a ring
    round it and round each card it is tied to, and an arrow from a request
    to each change made for it, drawn in a layer over the page that takes no
@@ -19682,13 +19604,30 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-status-pill-vote .gc-vote-count-dot-core { background: var(--accent); }
 
 /* ── The vote button ──
-   One 30px r14 button beside the bar, and the accent FILLED until the viewer
-   has voted: it is the one thing on a promoted card a member is meant to do,
-   and as a neutral well it read as one more chip. The same fill the + and
-   Improve buttons wear, on the board, the Workshop and the proposal page
-   alike. A cast Yes recedes to the accent tint (done, not to-do), No wears
-   the blocked tint, and a caret rides every state because the vote can
-   always be changed. */
+   One 30px r14 button beside the bar, FILLED until the viewer has voted: it
+   is the one thing on a promoted card a member is meant to do. One paint
+   wherever it is drawn (a channel's vote card, a board card, a change's,
+   a request's and a decision's page): the change page bar's yellow, with
+   its hover and its edge, in light and dark. These tokens are that bar's
+   values (--bl-sun, --bl-sun-lit, --bl-on-sun, --bl-pill-edge), declared
+   once for the whole app, so no page paints its own Vote. A cast Yes
+   recedes to the bar's quiet raised paint, Preview's (done, not to-do), No
+   wears the blocked tint, a Yes on an earlier version the attention tint,
+   and a caret rides every state because the vote can always be changed. */
+html:root {
+  --vote-btn-bg: var(--wip-btn-1-bg);
+  --vote-btn-ink: var(--wip-btn-1-ink);
+  --vote-btn-hover: #fff6ac;
+  --vote-btn-edge: inset 0 0 0 1px var(--wip-btn-1-line), 0 2px 0 var(--wip-btn-1-line);
+  --vote-btn-done-bg: #ffffff;
+  --vote-btn-done-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
+}
+html:root.dark:not([data-app-tone="light"]) {
+  --vote-btn-hover: var(--wip-btn-1-hover);
+  --vote-btn-edge: 0 0 0 transparent;
+  --vote-btn-done-bg: #243047;
+  --vote-btn-done-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
 .dev-vote-btn {
   flex: none;
   display: inline-flex;
@@ -19703,8 +19642,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding-block: 0 0; padding-inline: 11px 8px;
   border: 0;
   border-radius: 14px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--vote-btn-bg);
+  color: var(--vote-btn-ink);
+  box-shadow: var(--vote-btn-edge);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -19716,12 +19656,13 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn svg { width: 14px; height: 14px; }
 /* B7: on a project that is just yours, "Approved" is the one face with no
    caret (nothing is left to pick), so its sides are even. "Approve" opens the
-   picker like any vote and keeps the caret's padding (#3977). */
-.dev-vote-btn-approve[data-vote-btn="approved"] { padding: 0 11px; }
+   picker like any vote and keeps the caret's padding (#3977). A channel vote
+   card's See the vote (vote-card.tsx) has no caret either. */
+.dev-vote-btn-approve[data-vote-btn="approved"], .dev-vote-btn[data-vote-open] { padding: 0 11px; }
 .dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
-.dev-vote-btn:hover { background: var(--accent-light); }
-.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
-.dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-btn:hover { background: var(--vote-btn-hover); }
+.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--vote-btn-done-bg); color: var(--text-primary); box-shadow: var(--vote-btn-done-edge); }
+.dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); box-shadow: none; }
 /* #3984: a vote on its way reads "Sending…" and takes no press until the
    server answers. */
 .dev-vote-btn[aria-busy="true"] { cursor: progress; opacity: 0.75; }
@@ -19908,7 +19849,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
-.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); box-shadow: none; }
 /* The roster's lines (#1688): each voter's sentence under the names, and the
    earlier-version note under those. */
 .dev-ledger-reason { display: block; padding-inline-start: 12px; font-size: 12.5px; color: var(--text-muted); }
@@ -19979,9 +19920,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
-  /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
-     tint. The band's pills were the neutral grey fill, which read as a
-     third colour beside the blue Vote and the blue Preview.
+  /* The accent on its tint. The band's pills were the neutral grey fill,
+     which read as a third colour beside the blue Preview.
      The INK is --accent-tint-ink, the accent one step darker in light, since
      the accent itself is 4.34:1 on its own tint (QA 2026-09-24 Q20). */
   background: var(--accent-tint);
@@ -33242,8 +33182,6 @@ html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-chip[aria-pressed="true"] { background-color: var(--bl-sun); color: var(--bl-on-sun); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #dev-topic-thread,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-vote-look="thread"] { --state-progress: var(--bl-sky); --state-progress-bg: var(--bl-tint-sky); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior) { background: var(--bl-count); color: var(--bl-on-count); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior):hover { background: color-mix(in srgb, var(--bl-count) 86%, var(--thread-000000)); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="run"] { color: var(--bl-sky); background: var(--bl-tint-sky); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="bot"] { color: var(--bot-ink); background: var(--bot-tint); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-wrow[data-on] { background: var(--bl-row-on); box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge); }
@@ -33347,17 +33285,13 @@ html:root:not(.dark):not([data-app-tone="dark"]) :where(#dev-topic-thread) .dev-
 html:root.dark:not([data-app-tone="light"]) :where(#dev-topic-thread) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-rail-title { font-size: 13px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--bl-label); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary),
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-ask .dev-vote-btn[aria-checked="true"] { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts .dev-request-primary { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts .dev-request-primary:hover { background: var(--bl-sun-lit); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts .dev-request-primary { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts .dev-request-primary:hover { background: var(--bl-sun-lit); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-pair .dev-change-gate { background: var(--bl-card); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act:hover { background: var(--bl-sun-lit); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-quiet { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); --rail-note-plain: transparent; }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-card { --thread-fact: var(--bl-card); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,

@@ -1377,7 +1377,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
                       className="dev-vote-btn"
                       data-ballot-option={c.key}
                       aria-disabled={busy || undefined}
-                      style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                      style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)', boxShadow: 'none' }}
                       onClick={(e) => { if (on) setAsking(false); else void choose(c.pick, e.currentTarget); }}
                     >
                       {on ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{c.label}
@@ -1431,7 +1431,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
                   className="dev-vote-btn"
                   data-ballot-option={c.key}
                   aria-disabled={busy || undefined}
-                  style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                  style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)', boxShadow: 'none' }}
                   onClick={(e) => { if (!on) void choose(c.pick, e.currentTarget); }}
                 >
                   {on ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{c.label}
