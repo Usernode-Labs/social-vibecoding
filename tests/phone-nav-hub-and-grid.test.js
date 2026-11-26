@@ -39,7 +39,7 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.match(topics, /titleClassName=\{TITLE_WITH_PILL\}/, "its new count on the title line (phone review #91)");
   // One look (25 Nov 2026): what is new is the shared grey tag.
   assert.match(topics, /\), unread \? \(\n\s*<span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-hub-topic-unread/);
-  assert.match(topics, /t\('project:hub\.channel\.unread', \{ count: unread, shown: unread > 99 \? '99\+' : String\(unread\) \}\)/);
+  assert.match(topics, /t\('project:hub\.channel\.unread', \{ count: unread, shown: capCount\(unread\) \}\)/);
   // The first few, then the rest behind "Show N more", as the sidebar folds them.
   assert.match(cards, /export const HUB_TOPICS_SHOWN = 6;/);
   assert.match(topics, /t\('project:places\.list\.showMore', \{ count: more \}\)/);
@@ -53,22 +53,11 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   // A wide window's hub is one centred column of at most 1132px, a request page's width (asked 24 Nov 2026):
   // the one rule that says so, from 1281px. The older two-column block (1080px, request 6654) lost to the look's
   // own rules and was removed with it.
-  assert.match(css, /@media \(min-width: 1281px\) \{\s*html:not\(\[data-skin\]\) body #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1132px; \}/, 'the hub stops at 1132px on a wide window');
+  assert.match(css, /@media \(min-width: 1281px\) \{\s*html:root body #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1132px; \}/, 'the hub stops at 1132px on a wide window');
   assert.doesNotMatch(css, /max-width: 1080px/, 'no second width for the hub');
   assert.doesNotMatch(css, /\[data-ws-hub-for-you\] \+ \[data-ws-hub-topics\] \{ grid-column: 2; \}/, 'the dead two-column block is gone');
-  // The Invite card: a member's, where other people are in, opening the invite pane.
-  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);
-  assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
-  // Not under Standard (WIP), where Invite stays the hero row's own button.
-  assert.match(ws, /\{slug && !kitHub \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
-  assert.equal(message('project:hub.invite.button'), 'Invite people');
-  // Request 6687: the card's ✕ closes it (hub-dismissed.ts), and the hero
-  // row's small Invite is then the way in.
-  assert.match(card, /export function InviteHeroCard\(\{ slug, data \}: \{ slug: string; data: CommunityPayload \| null \| undefined \}\): ReactNode \{\s*const t = useMessages\('project'\);\s*const \[closed, close\] = useHubDismissed\(slug, 'invite'\);\s*if \(!showsInviteHero\(data\) \|\| !data \|\| closed\) return null;/,
-    'the card reads the closed flag and draws nothing once closed');
-  assert.match(card, /<section className="dev-ws-invite-hero" data-ws-invite-hero="" aria-label=\{t\('project:hub\.invite\.title'\)\}>\s*<HubCardClose card="invite" onClose=\{close\} \/>/,
-    'its ✕ is the same close button the other hub cards carry');
+  // The Invite card (InviteHeroCard) was the brand look's hub alone, removed
+  // 26 Nov 2026: Invite is the hero row's own button.
 });
 
 test('For you\'s Workshop row is there at every width, opening the Workshop, and named for the place', () => {

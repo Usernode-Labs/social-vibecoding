@@ -1,7 +1,7 @@
 import { openReport } from '../dialogs/report';
 import {
   Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
-  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -27,9 +27,9 @@ import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
+import { matchesSearch } from '../../lib/search-rank.js';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { getTimeZone, inZone, zonedDay } from '../../lib/time-zone';
-import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
@@ -54,10 +54,9 @@ import { ListDivider } from './list-divider';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
-import { chatBarStore, messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
+import { fullTime, UserAvatar, senderName } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
@@ -107,14 +106,9 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
-import { isFrameSkin, useLiveSkin, useSkin } from '../../lib/skin';
-import { useFramePage } from '../frame/frame-page-store';
-import { Av as KitAv } from '@/components/ui/kit';
-import { NewMessageSheet } from './frame-new';
-import { MessagesFrameList, type FrameInboxRow } from './frame-list';
 import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
-import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
+import type { ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
 
 /*
  * ── The screen, in the widget language ─────────────────────────────────
@@ -196,10 +190,6 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   const others = conversation.members
     .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
     .slice(0, 2);
-  // Under one of the frame's looks a group wears one face, a member's who is
-  // not you, at the row's size (the tour's group, s18).
-  const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <UserAvatar user={others[0] || null} title={conversation.title} size="lg" shape="square" />;
   if (others.length === 2) {
     return (
       <span className="messages-group-faces" aria-hidden="true">
@@ -244,17 +234,16 @@ function rowPreview(
 }
 
 /**
- * ONE LOOK (25 Nov 2026): in the standard look a row's time is the compact
- * age the agreed mockups draw after the name ("2h", "1d", then "Nov 18"):
- * agoStamp's own ladder (#1808), its relative steps said without "ago". Its
- * title keeps the whole instant, as agoStamp's does. Any other look keeps
- * agoStamp's words.
+ * ONE LOOK (25 Nov 2026): a row's time is the compact age the agreed mockups
+ * draw after the name ("2h", "1d", then "Nov 18"): agoStamp's own ladder
+ * (#1808), its relative steps said without "ago". Its title keeps the whole
+ * instant, as agoStamp's does.
  */
 const ROW_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-function rowStamp(value: string | null | undefined, compact: boolean): { text: string; title: string } {
+function rowStamp(value: string | null | undefined): { text: string; title: string } {
   const stamp = agoStamp(value);
   const elapsed = Date.now() - (value ? Date.parse(value) : Number.NaN);
-  if (!compact || !stamp.text || !Number.isFinite(elapsed) || elapsed < 60_000 || elapsed >= ROW_WEEK_MS) return stamp;
+  if (!stamp.text || !Number.isFinite(elapsed) || elapsed < 60_000 || elapsed >= ROW_WEEK_MS) return stamp;
   const minutes = Math.floor(elapsed / 60_000);
   if (minutes < 60) return { text: translate('messages:inbox.ago.minutes', { count: minutes }), title: stamp.title };
   const hours = Math.floor(minutes / 60);
@@ -280,7 +269,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // #1808: the shared ago ladder, which stops being relative at a week — a
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
-  const activity = rowStamp(conversation.lastActivityAt, useLiveSkin() === 'standard');
+  const activity = rowStamp(conversation.lastActivityAt);
   // THE SHARED ROW (@/components/ui/grouped-list.tsx). The inbox drew its own
   // two lines here, with the time at the end of the name's line and the count
   // at the end of the preview's; ListRowMeta is that pair as the row's
@@ -524,8 +513,7 @@ function PeopleHead({ aside }: { aside: string | null }) {
  * kinds, this says which of them, and an empty query is every row.
  */
 function inboxMatches(text: string | null | undefined, query: string): boolean {
-  if (!query) return true;
-  return String(text || '').toLowerCase().includes(query);
+  return matchesSearch(query, text);
 }
 
 /**
@@ -587,11 +575,6 @@ function ConversationList({ drawer = false }: {
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
-  // A look of the one frame draws the list with the kit (./frame-list.tsx),
-  // from the same conversations and presses. Read after mount (lib/skin.ts
-  // says why).
-  const frame = isFrameSkin(useSkin());
-  const [frameNew, setFrameNew] = useState(false);
   // The search: REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A
   // person narrows the list, leaves, and comes back: the query survives
   // that, kept in localStorage (`usernode:messages-query`, ./inbox.ts), so
@@ -655,7 +638,7 @@ function ConversationList({ drawer = false }: {
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
 
-  const q = deferredQuery.trim().toLowerCase();
+  const q = deferredQuery.trim();
   const matches = (entry: { kind: string; key: string }) => {
     if (!q) return true;
     if (entry.kind === 'person') {
@@ -669,12 +652,7 @@ function ConversationList({ drawer = false }: {
     }
     return false;
   };
-  const searching = !!q;
   const found = inbox.filter(matches);
-  // The conversation that is open.
-  const isOpen = (entry: { kind: string; key: string }) => (
-    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
-  );
 
   // What the heading says: the messages from people you have not read. A
   // zero says nothing. Unread is new to read, grey like every unread count
@@ -699,7 +677,6 @@ function ConversationList({ drawer = false }: {
     if (el.scrollTop <= 0) { anchor.current = null; return; }
     const box = el.getBoundingClientRect();
     const rows: MeasuredRow[] = [];
-    // Under a look the rows are the kit's, carrying the same key (./frame-list.tsx).
     const nodes = el.querySelectorAll<HTMLElement>('[data-inbox-row]');
     for (const node of Array.from(nodes)) {
       const key = node.dataset.inboxRow;
@@ -739,98 +716,6 @@ function ConversationList({ drawer = false }: {
     const delta = scrollCorrection(saved, nowTop, 0);
     if (delta) el.scrollTop += delta;
   }, [orderKey]);
-
-  if (frame) {
-    const me = Number(window.App?.user?.id);
-    const frameRow = (entry: { kind: string; key: string }): FrameInboxRow | null => {
-      const active = isOpen(entry);
-      if (entry.kind === 'person') {
-        const c = byConversation.get(entry.key.slice('person:'.length));
-        if (!c) return null;
-        const peer = directPerson(c);
-        const invited = c.membershipStatus === 'invited';
-        const name = c.kind === 'direct' && peer ? senderName(peer, { bare: true }) : c.title;
-        const face = c.kind === 'group' && !invited
-          ? c.members.find((member) => member.status === 'member' && Number(member.id) !== me) || null
-          : peer;
-        const sender = c.kind === 'group' && !invited ? c.latestMessage?.sender || null : null;
-        const said = sender?.id && c.latestSummary
-          ? (Number(sender.id) === me
-            ? t('messages:inbox.previewYou', { message: ownDirection(c.latestSummary) })
-            : t('messages:inbox.previewBy', { username: sender.username, message: ownDirection(c.latestSummary) }))
-          : ownDirection(c.latestSummary || '');
-        const href = `#messages/${c.id}`;
-        const count = c.kind === 'group' && !invited ? Math.floor(Number(c.memberCount)) : 0;
-        const stamp = agoStamp(c.lastActivityAt);
-        return {
-          key: entry.key,
-          // A group wears the face of someone in it who is not you (the
-          // tour's rows), a direct message the person's own.
-          lead: <KitAv size={40} name={face?.username || name || '?'} initials={initials(face?.username || name || '?')} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
-          title: name || '',
-          // A group's size, as GroupMemberCount says it; a zero says nothing.
-          tag: c.kind === 'direct' && peer?.bot ? t('messages:inbox.aiBadge') : null,
-          members: Number.isFinite(count) && count > 0 ? { count, words: t('messages:inbox.memberCount', { count }) } : null,
-          // What an invitation's row says in place of a last line (ConversationRow).
-          line: invited
-            ? (c.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview'))
-            : said || t('messages:inbox.noMessages'),
-          time: stamp.text,
-          timeTitle: stamp.title,
-          fresh: c.unreadCount > 0 ? t('messages:inbox.newCount', { count: c.unreadCount }) : null,
-          active,
-          href,
-          onClick: (event) => {
-            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-            if (window.location.hash === href) { event.preventDefault(); selectConversation(c.id); }
-          },
-        };
-      }
-      return null;
-    };
-    const rowsOf = (entries: Array<{ kind: string; key: string }>) => entries.map(frameRow).filter((row): row is FrameInboxRow => !!row);
-    return (
-      <section
-        className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`}
-        aria-label={t('core:tabs.messages')}
-        data-frame-list=""
-        // Under a look the pane itself scrolls: it keeps its place across a
-        // live re-sort and offers "Oldest chats", as the standard scroller does.
-        ref={scrollRef as RefObject<HTMLElement | null>}
-        onScroll={readAnchor}
-      >
-        <MessagesFrameList
-          people={rowsOf(found)}
-          unread={unreadFromPeople}
-          query={query}
-          onQuery={changeQuery}
-          onNew={() => setFrameNew(true)}
-          state={{
-            loading: !!snap.loadingList && !snap.listLoaded,
-            // A read with no conversation in hand yet (Try again after a failed one): not an empty tab.
-            reading: !!snap.loadingList && !snap.conversations.length,
-            error: snap.error || null,
-            onRetry: () => void loadConversations(true),
-            offline: !snap.online,
-            empty: !snap.loadingList && !snap.error && !!snap.listLoaded && !inbox.length,
-            onStart: () => openDialog('messagesCreate'),
-            searched: searching ? deferredQuery.trim() : null,
-          }}
-        />
-        {/* New message is the product's choices in the kit's sheet
-            (./frame-new.tsx). The sheet goes first, so the focus it hands
-            back lands before the product's dialog takes it. */}
-        {frameNew ? (
-          <NewMessageSheet
-            choices={NEW_CHOICES}
-            onPick={(choice) => { setFrameNew(false); window.setTimeout(() => startNew(choice), 0); }}
-            onClose={() => setFrameNew(false)}
-          />
-        ) : null}
-        <InboxToEnd scroller={scrollRef} />
-      </section>
-    );
-  }
 
   return (
     <section className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
@@ -1037,47 +922,8 @@ function FullWidthToggle() {
  * list, and like the hub's own pages it says so in the page (#3407).
  */
 /**
- * What a conversation is called and who it is with, as the sheet's title row
- * (ThreadHeader) says them, for the phone's header to say instead
- * (./phone-drawer.tsx), where the sheet leaves its own name out. The same
- * words, built the same way; tests/nav-drawer.test.js holds the two to each
- * other. Read in the language on show by whoever renders it.
- */
-export function threadWords(active: ConversationDetail): { title: string; sub: string } {
-  const channel = active.kind === 'channel';
-  const invited = active.membershipStatus === 'invited';
-  // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
-  // "Direct message", and its Activity disc, before the full-width toggle,
-  // opens the activity panel (./bot-work.tsx), working or not. #3770: the
-  // disc, not the name block, which nobody read as a control.
-  const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
-  // QA 2026-09-24 Q33a: an unanswered request names its requester.
-  const person = directPerson(active);
-  // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
-  // the roster until they accept, so the count the server gives them is 0 —
-  // they read the invitation's state instead of "0 members".
-  const said = channel
-    ? translate('messages:header.subtitle.channel', { count: active.memberCount })
-    : invited
-      ? translate('messages:header.subtitle.invited')
-      : active.kind === 'group'
-        ? (active.myRole === 'owner'
-          ? translate('messages:header.subtitle.groupOwner', { count: active.memberCount })
-          : translate('messages:header.subtitle.group', { count: active.memberCount }))
-        : active.awaitingAcceptance ? translate('messages:header.subtitle.requestPending') : translate('messages:header.subtitle.direct');
-  // N14 (19 Oct polish board): the people asked who have not joined yet are
-  // said beside the members, since a group's name can already list them.
-  const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
-  const subtitle = asked ? dotText([said, translate('messages:header.subtitle.invitedCount', { count: asked })]) : said;
-  return {
-    title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
-    sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
-  };
-}
-
-/**
- * ONE LOOK (25 Nov 2026): what the phone's bar says over a conversation in
- * the standard look. "Messages", the screen it is in, beside the arrow back
+ * ONE LOOK (25 Nov 2026): what the phone's bar says over a conversation.
+ * "Messages", the screen it is in, beside the arrow back
  * to the list; the conversation names itself in its own title card
  * (ThreadHeader), the way a request's page does.
  */
@@ -1089,25 +935,10 @@ function ThreadHeader() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
-  const { on: drawerOn } = useStoreState(messagesDrawerStore);
-  // Under one of the frame's looks a phone's bar says only where you are
-  // (Messages, and the way back to the list), so the conversation names
-  // itself here, as the tour's open-item pane does at any width (s17).
-  const skin = useLiveSkin();
-  const frame = isFrameSkin(skin);
-  // ONE LOOK (25 Nov 2026): in the standard look a conversation is drawn as
-  // a request's thread is, on a phone as on a desktop: the bar says
-  // Messages (barWords, above) and the page opens on a title card of its
-  // own, with the face, "Direct message" over the name, and the discs. The
-  // brand look keeps the name and the discs in the bar (#131).
-  const inDrawer = drawerOn && !frame && skin === 'brand';
-  // PHONE REVIEW #131 (23 Nov 2026): on the drawer the bar names the
-  // conversation, and its discs go up beside the bell (the host the bar
-  // draws, ../nav-drawer/header-drawer.tsx ChatBarSlot). Left in the page
-  // they floated under the bar over the first message's time, and the bar's
-  // name and its line were cut by four controls that were not the chat's.
-  const { host: barHost } = useStoreState(chatBarStore);
-  const discsInBar = inDrawer && !!barHost;
+  // ONE LOOK (25 Nov 2026): a conversation is drawn as a request's thread
+  // is, on a phone as on a desktop: the bar says Messages (barWords, above)
+  // and the page opens on a title card of its own, with the face, "Direct
+  // message" over the name, and the discs.
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -1123,17 +954,8 @@ function ThreadHeader() {
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
-  // The menu itself counts as inside: in the bar it is portalled to the page.
   useDismiss(menu, [menuWrapRef, menuRef], closeMenu);
-  // #131: where the menu drops from the ⋯ in the bar. The bar clips what it
-  // holds to its rounded foot, so there the menu is laid over the page,
-  // fixed under the disc, rather than inside it.
-  const [menuAt, setMenuAt] = useState<{ top: number; end: number } | null>(null);
   const toggleMenu = () => {
-    if (!menu && discsInBar && menuBtnRef.current) {
-      const box = menuBtnRef.current.getBoundingClientRect();
-      setMenuAt({ top: box.bottom + 6, end: dirSign() === -1 ? box.left : window.innerWidth - box.right });
-    }
     setMenu((open) => !open);
   };
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1201,7 +1023,6 @@ function ThreadHeader() {
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
-  // (threadWords above says the same to the phone's header.)
   const said = channel
     ? t('messages:header.subtitle.channel', { count: active.memberCount })
     : invited
@@ -1211,7 +1032,8 @@ function ThreadHeader() {
           ? t('messages:header.subtitle.groupOwner', { count: active.memberCount })
           : t('messages:header.subtitle.group', { count: active.memberCount }))
         : active.awaitingAcceptance ? t('messages:header.subtitle.requestPending') : t('messages:header.subtitle.direct');
-  // N14: the people asked who have not joined yet, as threadWords says them.
+  // N14 (19 Oct polish board): the people asked who have not joined yet are
+  // said beside the members, since a group's name can already list them.
   const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
   const subtitle = asked ? dotText([said, t('messages:header.subtitle.invitedCount', { count: asked })]) : said;
   // N14: a group leads with its members' faces, not the initials of its
@@ -1219,18 +1041,16 @@ function ThreadHeader() {
   // the list draws (GroupFaces), not one of them, so the group is one
   // picture in both places.
   const groupFaces = active.kind === 'group' && !invited;
-  const inBarMenu = (node: ReactNode) => (discsInBar && typeof document !== 'undefined' ? createPortal(node, document.body) : node);
   const discs = (
     <>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={toggleMenu} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
-        {menu ? inBarMenu(
+        {menu ? (
           <div
             ref={menuRef}
-            className={discsInBar ? 'messages-thread-menu messages-thread-menu-bar' : 'messages-thread-menu'}
-            style={discsInBar && menuAt ? { top: `${menuAt.top}px`, insetInlineEnd: `${menuAt.end}px` } : undefined}
+            className="messages-thread-menu"
             role="menu"
             aria-label={t('messages:header.actions')}
             onKeyDown={menuKeys.onKeyDown}
@@ -1249,24 +1069,18 @@ function ThreadHeader() {
                   : null}
             {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
-          </div>,
+          </div>
         ) : null}
       </div>
     </>
   );
-  // The page then draws no title row at all: the bar has the name and the discs.
-  if (discsInBar && barHost) return createPortal(discs, barHost);
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
-      {/* THE PHONE'S DRAWER NAMES THE CONVERSATION IN THE HEADER (Evan's
-          design, ./phone-drawer.tsx): its name over who it is with, so the
-          page leaves its own name out and keeps only its discs. */}
-      {inDrawer ? null : channel
+      {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : groupFaces ? <GroupFaces conversation={active} />
           : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
-      {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
         className="min-w-0 text-start flex-1"
@@ -1278,7 +1092,6 @@ function ThreadHeader() {
             it is for. */}
         <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
       </button>
-      )}
       {discs}
     </header>
   );
@@ -2019,9 +1832,6 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     appSlug: trackMeta.appSlug, appName: trackMeta.appName, issueNumber: trackMeta.issueNumber, firstVersion: trackMeta.firstVersion === true,
   } : null);
   const scroller = useRef<HTMLDivElement>(null);
-  // 20 Nov 2026: under a frame look the pane keeps its own thread; under the
-  // standard and brand looks a private thread is a public thread's page.
-  const frameLook = isFrameSkin(useLiveSkin());
   // #3571: the same keyboard avoidance as the conversation beside it. On a
   // phone this pane covers the conversation, so its composer is the one the
   // keyboard comes up under when a thread is replied to.
@@ -2407,8 +2217,8 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     </>
   );
   // A PRIVATE THREAD IS DRAWN ON A PUBLIC THREAD'S PAGE (20 Nov 2026). Alone
-  // in the bot tab's column, under the standard and brand looks, the thread
-  // is the page a request's thread is drawn on (../group-chat/thread-page.tsx),
+  // in the bot tab's column, the thread is the page a request's thread is
+  // drawn on (../group-chat/thread-page.tsx),
   // as a request's page is drawn in the same column: the head card every
   // thread leads with (../dev-board/topic/thread-head.tsx), floating over the
   // page and tightening as it scrolls; the opening message as the first card,
@@ -2417,8 +2227,8 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   // foot, as wide as the cards. #6863 drew it as a sheet of its own, a 446px
   // strip whose replies scrolled inside the middle card, and its copy of the
   // public head drifted within a day (Preview forced into the round button).
-  // A frame look, and every other thread, keeps the pane below.
-  const page = sheet && !frameLook;
+  // Every other thread keeps the pane below.
+  const page = sheet;
   const footShown = privateMine && !!privateWhere && (privateWhere.state !== 'open' || !!privateWhere.made);
   return (
     <aside
@@ -2854,15 +2664,8 @@ export function MessagesScreen() {
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
   // THE PHONE'S DRAWER (./phone-drawer.tsx): the list, the whole screen, and
   // a conversation with people sliding in over it.
-  // ONE LOOK: only the brand look names the conversation in the bar.
-  const liveSkin = useLiveSkin();
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, liveSkin === 'brand' ? threadWords : barWords);
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, barWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
-  // Under one of the frame's looks the phone's bar is the kit's: in a
-  // conversation it says Messages, and its arrow goes back to the list.
-  const frame = isFrameSkin(useSkin());
-  const tc = useMessages('core');
-  useFramePage(frame && snap.route.open && drawer.on && drawer.level === 1 ? [tc('core:tabs.messages')] : null, messagesBack);
   // ON A DESKTOP, with nothing open, the whole list is the page (All
   // messages), with its search and previews; an open conversation has the
   // list beside it. (v3, 18 Oct 2026, put the list in the sidebar under

@@ -108,7 +108,9 @@ test('pinch geometry uses the first two pointers and their midpoint', () => {
 
 test('the editor renders a gesture surface and no sliders', () => {
   const previous = global.window;
-  global.window = { Home: null, HomePanels: null };
+  // addEventListener: the editor's Sheet (lib/sheet.ts) imports the back
+  // stack, which listens for popstate as it loads.
+  global.window = { Home: null, HomePanels: null, addEventListener() {} };
   let html;
   try {
     const { FeaturedIllustrationEditor } = loadTsx('frontend/src/features/apps/featured-illustration-editor.tsx');

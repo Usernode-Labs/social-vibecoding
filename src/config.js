@@ -705,6 +705,11 @@ function load() {
       // checkPlacement).
       checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
       checkNodePoolRequired: process.env.CHECK_NODE_POOL_REQUIRED === 'true',
+      // The node pool both build lanes require, as the pool nodes' label
+      // `key=value` (for example `usernodelabs.org/node-pool=build`). Empty:
+      // builds follow the checks pool (services/kubernetes.js,
+      // batchWorkPlacement).
+      buildNodePool: (process.env.BUILD_NODE_POOL || '').trim(),
       checkPoolMetricsUrl: process.env.CHECK_POOL_METRICS_URL || '',
       // Explicit app-ID assignments only; an empty map preserves the standard
       // production requests. Validated before any runtime resource is written.

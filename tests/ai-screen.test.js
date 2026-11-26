@@ -45,6 +45,8 @@ const { message } = require('./lib/platform-i18n');
 const { withWords } = require('./lib/work-words');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
+// The fold sizes the lists pass to groupRows, as plain inputs here: it takes any.
+const GROUP_FIRST = { needs: 5, busy: 3, live: 3 };
 const LINES = 'frontend/src/features/ai/lines.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 // A phrase's nested phrases (a stage's words inside a row's line) are said first.
@@ -210,7 +212,7 @@ test('each band is one list, newest first, with no project or day headings, and 
 // in; shutting, the folded rows were gone in a frame or two and left a blank
 // band that then closed.
 test('a band\'s Show more opens under the rows in sight and shuts without a blank band', () => {
-  const { groupRows, openRows, GROUP_FIRST } = loadTsx(MODEL);
+  const { groupRows, openRows } = loadTsx(MODEL);
   // Eight rows, the fourth and fifth are new: folded, they join the first three.
   const rows = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 3 || i === 4 }));
   const folded = groupRows(rows, GROUP_FIRST.busy, false);
@@ -270,7 +272,7 @@ test('a band\'s Show more opens under the rows in sight and shuts without a blan
 // it up to sixth place while its page opened, because the group lifted the
 // row you are on even when Show more had opened every row.
 test('#6245: a row pressed in an opened group keeps its place, and a live refresh cannot slide it', () => {
-  const { groupRows, holdOrder, GROUP_FIRST } = loadTsx(MODEL);
+  const { groupRows, holdOrder } = loadTsx(MODEL);
   // Eight rows, the seventh is where you are.
   const rows = Array.from({ length: 8 }, (_, i) => ({ key: `need:proposal:${i + 1}`, lit: i === 6 }));
   // Folded: the row you are on still joins the first five (where you are is
@@ -333,11 +335,7 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
 // and a bold title, and Needs you says how many are new: on its own heading,
 // on each project's name, in the header and on the filter chips.
 test('#6262: threads with something new get a dot and a bold title, and are never folded away', () => {
-  const { freshCount, freshByProject, freshFirst, groupRows, needsYou, heroWords } = loadTsx(MODEL);
-  // Stable: the new ones first, each keeping its own order.
-  assert.deepEqual(
-    freshFirst([{ key: 'a' }, { key: 'b', fresh: true }, { key: 'c' }, { key: 'd', fresh: true }]).map((r) => r.key),
-    ['b', 'd', 'a', 'c']);
+  const { freshCount, freshByProject, groupRows, needsYou, heroWords } = loadTsx(MODEL);
   assert.equal(freshCount([{ unread: 0 }, { unread: 2 }, { }, { unread: 1 }]), 2);
   assert.deepEqual(freshByProject([
     { app, unread: 1 }, { app, unread: 0 }, { app: { ...app, slug: 'games' }, unread: 3 },
@@ -396,55 +394,6 @@ test('#6262: threads with something new get a dot and a bold title, and are neve
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no row is marked new');
 });
 
-// #6672 (14 Nov 2026, Evan): "Private chats are always at the bottom of Needs
-// you, even if they're the most recent active thread." Rows arrive votes and
-// plans first and private chats last, so a project whose only row was a fresh
-// private thread always sat at the bottom. Needs you now lifts each project by
-// its newest activity: the ones with something new first, then newest first.
-test('#6672: Needs you orders its projects by their newest activity', () => {
-  const { recentGroupsFirst } = loadTsx(MODEL);
-  const recipe = { slug: 'recipebot', name: 'RecipeBot', icon_url: null, icon_emoji: null };
-  const now = '2026-11-14T12:00:00Z';
-  const yesterday = '2026-11-13T12:00:00Z';
-  const threeDays = '2026-11-11T12:00:00Z';
-  // A private row in no project is one group ('') among the others, not last.
-  const rows = [
-    { key: 'need:garden', app, at: threeDays },
-    { key: 'private:recipe', app: recipe, at: now },
-    { key: 'private:solo', app: null, at: yesterday },
-  ];
-  assert.deepEqual(recentGroupsFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'],
-    'RecipeBot, Only you, then Garden: newest activity first');
-  // A group with something new still comes before one without, even older.
-  assert.deepEqual(recentGroupsFirst([
-    { key: 'old-fresh', app, at: threeDays, fresh: true },
-    { key: 'new-quiet', app: recipe, at: now },
-  ]).map((r) => r.key), ['old-fresh', 'new-quiet'], 'what is new still leads');
-  // A group with no readable time goes after the dated ones, in today's order.
-  assert.deepEqual(recentGroupsFirst([
-    { key: 'undated-b', app: recipe, at: null },
-    { key: 'dated', app, at: yesterday },
-    { key: 'undated-a', app: null, at: null },
-  ]).map((r) => r.key), ['dated', 'undated-b', 'undated-a'], 'no time keeps its place, after the dated groups');
-  // Inside a group nothing moves, and equal times keep the order they came in.
-  assert.deepEqual(recentGroupsFirst([
-    { key: 'garden-newer', app, at: now },
-    { key: 'garden-older', app, at: threeDays },
-    { key: 'recipe', app: recipe, at: now },
-  ]).map((r) => r.key), ['garden-newer', 'garden-older', 'recipe'], 'a group\'s rows keep their order; a tie keeps its place');
-
-  // The look's list groups by project and lifts them so. 24 Nov 2026: the
-  // standard list's bands have no project groups; Needs you is newest first
-  // by each row's own time, so a fresh private chat leads it the same way.
-  const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/, 'newest first, after what is new since your last visit');
-  const { newestFirst } = loadTsx(LINES);
-  assert.deepEqual(newestFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'], 'the private chat talked in today first');
-  assert.match(read('frontend/src/features/ai/frame-list.tsx'),
-    /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
-    'the kit face draws the same order');
-});
-
 // #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
 // before Show more, because every "it's live" row was new and #6262 never
 // folds a fresh row. New in Live only means a change went live since the
@@ -458,7 +407,7 @@ test('#6672: Needs you orders its projects by their newest activity', () => {
 // checks failed and it went to Needs you. A row that moves while the page is
 // up is not folded away; the page's first read moves nothing.
 test('a row that moves while the page is up is not folded away (PR 6792)', () => {
-  const { groupRows, movedSince, standingsOf, GROUP_FIRST } = loadTsx(MODEL);
+  const { groupRows, movedSince, standingsOf } = loadTsx(MODEL);
   const next = (id, stage) => thread(id, id, stage, { group: 'next' });
   const wait = (id, stage, extra = {}) => thread(id, id, stage, { group: 'waiting', ...extra });
   // 12:02, the first read: two going live, PR 6792 being made, two waiting.
@@ -486,12 +435,12 @@ test('a row that moves while the page is up is not folded away (PR 6792)', () =>
   // The page takes what it first had on each showing and hands both faces the marked rows.
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index, /setSeen\(\(had\) => \(had && had\.showing === showings \? had : \{ showing: showings, at: standingsOf\(\[\.\.\.progress, \.\.\.waiting\]\) \}\)\);/);
-  assert.equal((index.match(/progress=\{progressDrawn\}\s+waiting=\{waitingDrawn\}/g) || []).length, 2, 'the standard list and the looks');
+  assert.equal((index.match(/progress=\{progressDrawn\}\s+waiting=\{waitingDrawn\}/g) || []).length, 1, 'the list');
   assert.match(read('frontend/src/features/ai/lines.ts'), /fresh: \(th\.unread \|\| 0\) > 0,\s+moved: th\.moved === true,/);
 });
 
 test('#6408: Live this week folds after its first few rows whatever is new', () => {
-  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  const { groupRows } = loadTsx(MODEL);
   // Eight rows, six of them new. Folded to Live's first three, five fold.
   const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i < 6 }));
   const folded = groupRows(many, GROUP_FIRST.live, false, false);
@@ -538,7 +487,7 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
 // the dot's room on the start side: the negative margin moves its clip edge
 // out, and the same padding leaves every row exactly where it was.
 test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded or open', () => {
-  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  const { groupRows } = loadTsx(MODEL);
   const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 6 }));
   // Opened, the fresh row that was lifted goes back into the order, past the
   // first few: the part that folds.
@@ -710,7 +659,7 @@ test('the filter: projects ranked by what needs you most, one control that opens
   assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,
     'a sheet on a phone, a menu under the chip on a wide window; nothing in the prerender');
   assert.match(picker, /type="checkbox"[\s\S]*?checked=\{picked\.includes\(p\.app\.slug\)\}[\s\S]*?onChange=\{\(\) => onToggle\(p\.app\.slug\)\}/, 'a pick applies at once');
-  assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
+  assert.match(picker, /inside: \(target\) => !!target\.closest\('\[data-ai-project-more\]'\)/, 'a press on the filter toggles it rather than closing and reopening');
   // #7126: Show all projects clears the ticks and then closes, so the lists
   // behind show every project again rather than the panel staying as it was.
   assert.match(picker, /onClick=\{\(\) => \{ onClear\(\); onClose\(\); \}\}\s+disabled=\{!picked\.length\}\s+data-ai-pick-all=""/,
@@ -815,7 +764,6 @@ test('each In progress and Waiting row says its stage and its second line, in th
   ], 'what waits on somebody else is said as they read it, not as the requester does');
   // A decision up for a vote has no number.
   assert.equal(words(nextWords(thread(1, null, 'vote', { kind: 'decision' }))), 'Garden club · Up for a vote');
-  assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
   // Phone review #22: the count is threads, across every project, and says so.
   assert.equal(words(heroWords(2, 3)), '2 threads need you · In progress: 3');
   assert.equal(words(heroWords(1, 3)), '1 thread needs you · In progress: 3');
@@ -841,14 +789,6 @@ test('the hero counts what the project filter shows (request 6744)', () => {
   const lines = read('frontend/src/features/ai/lines.ts');
   assert.match(lines, /const shows = showsPicked\(picked\);/, 'the lists narrow by the shared rule');
   assert.match(lines, /progressShown: progressShown\.length,/, 'the hook reports the in-progress count it shows');
-  const page = read('frontend/src/features/ai/index.tsx');
-  assert.match(page, /const heroShows = showsPicked\(picked\);/, 'the hero narrows by the same rule');
-  assert.match(
-    page,
-    /heroWords\(owedCount\(heroRows\), progress\.filter\(\(th\) => heroShows\(th\.app\)\)\.length, freshCount\(heroRows\)\)/,
-    'the hero counts the picked projects\' needs, in progress and new',
-  );
-  assert.doesNotMatch(page, /heroWords\(owed, progress\.length, fresh\)/, 'not every project, as it did before');
 });
 
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
@@ -1004,9 +944,7 @@ test('a change waiting only on its before & after screenshots reads "Taking scre
   assert.equal(waitGlyph(thread(2, 8, 'checking')), 'clock');
   assert.equal(waitGlyph(thread(3, 9, 'checking', { work: { line: { code: 'checks_running', minutes: 4 } } })), 'clock');
   assert.equal(waitGlyph(thread(4, 10, 'queued')), 'clock');
-  // The look's list draws the name as its picture (24 Nov 2026: the
-  // standard list's row leads with its project's tile, and ends in the word).
-  assert.match(read('frontend/src/features/ai/frame-list.tsx'), /clock: 'clock', camera: 'image',/);
+  // 24 Nov 2026: the list's row leads with its project's tile, and ends in the word.
   assert.match(read('frontend/src/features/ai/lines.ts'), /const waitingLine = threadLine\(waitGlyph\);/);
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
@@ -1343,14 +1281,13 @@ test('the phone\'s Ask bar lifts off the white list on a soft shadow', () => {
   const css = read('public/css/app.css');
   // Asked 21 Nov 2026: a white pill on a mostly white list was easy to miss.
   // The bar keeps its hairline as the first layer, then takes the raised
-  // surfaces' soft shadow in the app's own colours. It is the standard page's
-  // and the brand look's; the frame looks draw this bar their own way.
-  const rule = css.match(/html:where\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-askbar-card \{([^}]*)\}/);
+  // surfaces' soft shadow in the app's own colours.
+  const rule = css.match(/\nhtml #ai-screen \.ai-askbar-card \{([^}]*)\}/);
   assert.ok(rule, 'the Ask bar\'s shadow rule exists');
   assert.match(rule[1], /box-shadow: var\(--messages-disc-shadow\),/);
   assert.match(rule[1], /0 2px 6px var\(--app-sheet-shadow-near\)/);
   assert.match(rule[1], /0 8px 24px -4px var\(--app-sheet-shadow-far\)/);
-  const focus = css.match(/html:where\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-askbar-card:focus-within \{([^}]*)\}/);
+  const focus = css.match(/\nhtml #ai-screen \.ai-askbar-card:focus-within \{([^}]*)\}/);
   assert.ok(focus, 'and a focused bar, with the same shadow');
   assert.match(focus[1], /box-shadow: var\(--messages-disc-shadow\), 0 0 0 2px var\(--accent\),/);
 });
@@ -2064,7 +2001,7 @@ test('the column is held inside the window, and the panel takes its place at its
   // column is never narrower than the room less the list's 42rem, so the
   // list never floats between two empty bands; a preview's columns, the
   // frame's looks and a phone keep the column's own 320px.
-  assert.match(css, /@media \(min-width: 768px\) \{\s+body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-preview\]\):not\(\[data-frame-list\]\)\) \{\s+--ai-list-max: 42rem;\s+--ai-main-floor: max\(320px, calc\(var\(--ai-room\) - var\(--ai-list-max\)\)\);\s+\}\s+\}/,
+  assert.match(css, /@media \(min-width: 768px\) \{\s+body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-preview\]\)\) \{\s+--ai-list-max: 42rem;\s+--ai-main-floor: max\(320px, calc\(var\(--ai-room\) - var\(--ai-list-max\)\)\);\s+\}\s+\}/,
     'the column is floored at the room less the list\'s own measure, beside the lists only');
   // 9 Nov 2026 (#6495): the bot tab's list is the Messages inbox's list while
   // something is open beside it, so the two pages share one measure and the
@@ -2587,11 +2524,10 @@ test('#6398: the search narrows every list by title, number or project, and says
 
   // The box (index.tsx; 24 Nov 2026, the three bands): always on the head
   // card's tools line, with the app's magnifying glass; what it says is what
-  // the bands narrow to. The look's list keeps its own button, so there the
-  // box counts only while open.
+  // the bands narrow to.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(src, /data-ai-search-toggle/, 'no button opens it: it is there');
-  assert.match(src, /const asked = frame \? \(searchOpen \? query : ''\) : query;/);
+  assert.match(src, /const asked = query;/);
   assert.match(src, /search=\{searchField\}\s+query=\{asked\}/, 'the box\'s text is passed to the bands');
   const box = src.slice(src.indexOf('const searchField = ('), src.indexOf('</label>', src.indexOf('const searchField = (')));
   assert.match(box, /<SearchIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>/);
@@ -2610,7 +2546,6 @@ test('#6398: the search narrows every list by title, number or project, and says
   assert.equal(key.botSearchAnswer({ key: 'k' }, { showing: true, dialog: false, commentMode: false }), null, 'a plain k is typing');
   assert.equal(key.botSearchAnswer({ key: 'k', ctrlKey: true, defaultPrevented: true }, { showing: true, dialog: false, commentMode: false }), null);
   assert.match(src, /installBotSearchShortcut\(\(\) => \(visible \? searchRef\.current : null\)\)/);
-  assert.equal(message('messages:ai.search.open'), 'Search threads and messages');
   assert.equal(message('messages:ai.search.label'), 'Search threads and messages');
   assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'Nothing in your threads or messages matches “releases”');
   assert.equal(message('messages:ai.search.noneThreads', { query: 'releases' }), 'No threads match “releases”');
@@ -2722,8 +2657,8 @@ test('the search lists the messages that match under the threads, each a link to
   // The page (index.tsx) asks only for what the open box says, and hands both faces the answer.
   const page = read('frontend/src/features/ai/index.tsx');
   assert.match(page, /const search = useBotSearch\(asked, \{/);
-  assert.equal((page.match(/found=\{search\.found\}/g) || []).length, 2, 'the standard list and the look\'s');
-  assert.equal((page.match(/onFoundRetry=\{search\.retry\}/g) || []).length, 2);
+  assert.equal((page.match(/found=\{search\.found\}/g) || []).length, 1, 'the list');
+  assert.equal((page.match(/onFoundRetry=\{search\.retry\}/g) || []).length, 1);
 });
 
 // #6738: a person searched "improve", opened a message from the results, and
@@ -2763,8 +2698,8 @@ test('#6738: the words a result was opened by stay marked in the message it open
   followFound(press({ metaKey: true }), '#elsewhere', { messageId: 88, q: 'improve' });
   assert.deepEqual(seen, [], 'a new tab is the browser\'s, and marks nothing');
 
-  // Both faces hand the row's message and query to that press.
-  for (const face of ['frontend/src/features/ai/lists.tsx', 'frontend/src/features/ai/frame-list.tsx']) {
+  // The list hands the row's message and query to that press.
+  for (const face of ['frontend/src/features/ai/lists.tsx']) {
     assert.match(read(face), /onClick=\{\(e\) => followFound\(e, line\.href, \{ messageId: line\.messageId, q: line\.q \}\)\}/, face);
   }
   assert.match(read('frontend/src/features/ai/lines.ts'), /messageId: row\.messageId,\s*q: found\.q,/,
@@ -3009,9 +2944,6 @@ test('the list put away beside a preview (24 Nov 2026): halves where three colum
   // A narrower window's halves still draws neither.
   assert.match(css, /#ai-screen:not\(\[data-ai-preview="three"\]\)\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
   assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
-  // The frame looks, which draw no thread edge at all, keep theirs: the rule
-  // that shows it does not outrank theirs.
-  assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/);
 });
 
 test('the list put away: one pane, or beside a preview the thread and the preview in halves, where three columns fit', () => {
@@ -3066,8 +2998,6 @@ test('the one-pane rule: the list is not drawn and the pane takes the whole room
     'the pane and its edge stop 16px after the rail, as `--ai-main-w` is what both read');
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \.ai-screen-body \{ display: none; \}/,
     'and the list is out of the page');
-  assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]\[data-ai-list-closed\] \{ --ai-main-w: calc\(var\(--platform-usable-w\) - var\(--ai-edge, 0px\)\); \}/,
-    'the frame looks honour it too');
   assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\) - 16px\);\n\}/,
     'a page in Main\'s place, which reads the width from body, takes the room too and leaves the same gap');
   // Beside a preview (halves) the thread gives up the same 16px, and the

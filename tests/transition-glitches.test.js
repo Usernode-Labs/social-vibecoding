@@ -267,14 +267,20 @@ test('release() after the node is already home leaves nothing behind', () => {
 });
 
 test('the three unmounting surfaces close with release(); the dialogs keep dismiss-only', () => {
+  // Every surface that exists only while open is presented by the Sheet
+  // (lib/sheet.ts), whose unmount releases: the card home now, a copy of it
+  // in the kit's shell for the exit.
+  const sheet = read('frontend/src/lib/sheet.ts');
+  assert.match(sheet, /if \(handle\) handle\.release\(\);/, 'the Sheet releases');
+  assert.doesNotMatch(sheet, /\.restore\(\);\s*(adoption|handle)\.dismiss\(\);/, 'and never empties the shell before its exit');
   for (const file of [
     'frontend/src/features/profile/profile-edit-sheet.tsx',
     'frontend/src/features/profile/staking-sheet.tsx',
     'frontend/src/features/apps/featured-illustration-editor.tsx',
   ]) {
     const src = read(file);
-    assert.match(src, /\.release\(\);/, `${file} releases`);
-    assert.doesNotMatch(src, /\.restore\(\);\s*(adoption|handle)\.dismiss\(\);/, `${file} no longer empties the shell before its exit`);
+    assert.match(src, /useSheet\(\{/, `${file} is presented by the Sheet`);
+    assert.doesNotMatch(src, /adoptKitSurface/, `${file} adopts nothing by hand`);
   }
   // useStaticModal's ordinary close stays dismiss-only: its card is put home
   // by onDismiss at the END of the exit (static-modal.ts, "THE CARD RIDES

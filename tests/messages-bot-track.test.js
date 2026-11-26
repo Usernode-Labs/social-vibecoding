@@ -260,10 +260,10 @@ test('a thread\'s card is the track once the viewer\'s tracks have one for the r
   assert.match(screen, /bot\.track\.tryDivider/);
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
   assert.match(head, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>\s*<TrackCard track=\{track\} title=\{r\.title\} links=\{trackLinks\(track, \{ request: false \}\)\} pictures \/>/, 'the request\'s page draws the same card');
-  // Polish board #12: one row of steps on the page, the track card's, and
-  // the card unseen while the page is drawn from the board's older row.
-  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} frame=\{frame\} \/>/);
-  assert.match(head, /\{s\.closed \|\| tracked \? null : \(\s*<ol className="dev-request-steps">/);
+  // Polish board #12: one row of steps on the page, the track card's (the
+  // card's foot says where it stands, so no status box of steps is drawn),
+  // and the card unseen while the page is drawn from the board's older row.
+  assert.doesNotMatch(head, /<RequestStatus\b|dev-request-steps/);
   assert.match(read('public/css/app.css'), /\.dev-request-track\[data-request-track="pending"\] \{ visibility: hidden; \}/);
 });
 
@@ -591,7 +591,7 @@ test('#6156: the Workshop\'s door says the builds and the changes waiting for vo
   assert.doesNotMatch(src, /\b(?:cap|buildCap|waitCap):\s*(?:5|15)\b|\?\? (?:5|15)\b|\|\| (?:5|15)\b/, 'no cap written into the page');
 });
 
-test('the slots page is a page under the Workshop: its address, its way back, its door', () => {
+test('the slots page is a page under the Workshop: its address and its way back', () => {
   const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
   assert.equal(places.litPlace('bot'), 'workshop', 'the Workshop stays lit while it is up');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
@@ -601,9 +601,8 @@ test('the slots page is a page under the Workshop: its address, its way back, it
   assert.match(ws, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
   assert.match(ws, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
   assert.match(ws, /data-ws-side-open=\{sideOpen \? '' : undefined\}/);
-  assert.match(ws, /\{slug && !dashQuiet\(v\.dashboard, !!v\.mergedPending\) \? <BotSlotsDoor slug=\{slug\} onOpen=\{\(\) => openTab\('bot'\)\} \/> : null\}/, 'its door in the overview card, but for a project with nothing going on (phone review #64)');
+  // Its door was in the brand look's Workshop tab, which went with that look (26 Nov 2026).
   const src = read(SLOTS);
-  assert.match(src, /if \(!view \|\| \(!view\.acts && !view\.slots\.length\)\) return null;/, 'no door where the bot neither builds nor holds anything');
   assert.match(src, /useEffect\(\(\) => \{\s*if \(!slug\) return undefined;/, 'it reads in an effect, never on the first render');
   assert.equal(message('project:page.title.bot'), 'Homeroom bot\'s slots');
 });

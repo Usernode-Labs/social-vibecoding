@@ -10,17 +10,13 @@
 // uses; its reward tan is the amber of the shell's medium-priority chip. No
 // hue is added and nothing in tailwind.config.js moved.
 //
-// ── One card, two surfaces ─────────────────────────────────────────────
+// ── One card ───────────────────────────────────────────────────────────
 //
-// `ChallengeCard` below is the whole card, and both places that list
-// challenges draw it: the Leaderboard screen's Challenges tab
-// (./challenges-pane.tsx) and Home's Challenges block
-// (../home/panels/challenges.tsx). They used to be two designs of one thing —
-// a white card with a rail here, a tinted card with a count capsule and a
-// deadline on Home — and a viewer moving between them read two different
-// states for the same challenge. Each surface keeps its own root class
-// (`tc-se-card`, `home-challenge-card`) because declared checks and legacy
-// hooks select on them; everything inside is this file.
+// `ChallengeCard` below is the whole card the Leaderboard screen's Challenges
+// tab (./challenges-pane.tsx) draws. Home's Challenges block draws its own
+// posters instead (../home/panels/challenges.tsx). The root class
+// (`tc-se-card`) stays because declared checks and legacy hooks select on it;
+// everything inside is this file.
 //
 // It is not in @/components/ui: it is a domain card, not a primitive.
 //

@@ -39,7 +39,7 @@ test('the cover\'s icon image loads with the frame, not lazily', () => {
   const descriptor = src.slice(src.indexOf('  _coverDescriptor(record) {'), src.indexOf('  _launchCoverHtml(record'));
   assert.match(descriptor, /iconHtml: tile\.kind === 'image'\s*\? tile\.html\.replace\(' loading="lazy"', ' decoding="sync"'\)\s*: tile\.html,/);
   // The tile helper it rewrites still says lazy, for the grids that want it.
-  assert.match(read('frontend/src/features/apps/app-card.js'), /<img src="\$\{escapeHtml\(app\.icon_url\)\}" alt="" loading="lazy" draggable="false"/);
+  assert.match(read('frontend/src/features/apps/app-card.js'), /<img src="\$\{escapeHtml\(sizedPicture\(app\.icon_url, ICON_PICTURE_WIDTH\)\)\}" alt="" loading="lazy" draggable="false"/);
 });
 
 test('the header names the app being opened from the launcher\'s record', () => {

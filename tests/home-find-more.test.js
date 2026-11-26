@@ -414,21 +414,20 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
   assert.doesNotMatch(tag, /sm:grid-cols-\d/,
     'and no second breakpoint — one column count is the point');
-  // The two-row default is a cap on what is SHOWN, with a way out. The
-  // wording moved with the button: #1191 made `#home-apps-more` React's, so
-  // home.js pushes the COUNT (Home._renderAppsMore) and apps-more.tsx spells
-  // the label. Both halves are pinned so neither can drift alone.
+  // The two-row default is a cap on what is SHOWN, with a way out. home.js
+  // pushes the COUNT (Home._renderAppsMore) and the heading's Show all link
+  // spells the label. Both halves are pinned so neither can drift alone.
   assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
   assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
   assert.match(
-    read('frontend/src/features/home/apps-more.tsx'),
-    /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
+    read('frontend/src/features/home/index.tsx'),
+    /<WipHeadMore id="home-apps-see-all" direction="down" expanded=\{false\} label=\{t\('home:grid\.showAllProjects', \{ count: moreCount \}\)\} pill=\{t\('home:grid\.showAllCount', \{ count: moreCount \}\)\}/
   );
-  assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
-  // The kit's Home (the prerendered one since 20 Nov 2026) folds the grid from
-  // its heading's link instead, so the document carries no expander host.
+  assert.equal(message('home:grid.showAllProjects', { count: 9 }), 'Show all 9 pinned projects');
+  // Home folds the grid from its heading's link, so the document carries no
+  // expander host (the separate expander was a removed look's).
   assert.equal(INDEX.indexOf('id="home-apps-more"'), -1,
-    'the expander is the heading\'s own link under the kit\'s Home');
+    'the expander is the heading\'s own link');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a

@@ -78,7 +78,7 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPagePin, SettingsPageTitle } from './settings-nav';
+import { SettingsMobileMenu, SettingsNavDesktop, SettingsPagePin, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
 
 /** Whether this screen is its own scroller: not paged through the document by a phone browser (lib/browser-scroll.ts). */
@@ -159,13 +159,10 @@ export function SettingsScreen() {
       */}
       <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
         {/*
-            THE PAGE'S HEAD UNDER A LOOK (looks v2, s56): "Settings" and one
-            sentence, above the two columns. Always in the document and never
-            drawn by the standard look (app.css `.settings-frame-head`), so
-            this prerendered chassis is the same markup whatever the look;
-            the look dresses it through the wear map (frontend/looks/
-            looks.json: head, title, purpose). A <header>, not a <div>: the
-            standard sheet's rules lay out `#settings-root > div`.
+            THE PAGE'S HEAD (looks v2, s56; the editorial pages, #7072):
+            "Settings" and one sentence, above the two columns (app.css
+            `.settings-frame-head`). A <header>, not a <div>: the sheet's
+            rules lay out `#settings-root > div`.
 
             THE TITLE IS A LEVEL-1 HEADING BY ROLE, NOT AN <h1> (request
             #7166, point 4): this screen is in the served document while
@@ -178,7 +175,6 @@ export function SettingsScreen() {
             <p className="settings-frame-purpose">{t('settings:frame.head.purpose')}</p>
           </div>
         </header>
-        <SettingsFrameCrumb />
         <div className="lg:flex lg:items-start lg:gap-6">
           {/*
               Desktop sidebar menu, from lg (1024px; settings.js

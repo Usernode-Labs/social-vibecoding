@@ -98,7 +98,10 @@ test('the open place is the current page, lit as the rail lights a row; a page u
 });
 
 test('counts say what they count aloud, and a zero says nothing', () => {
-  const { countPhrase, countText } = loadTsx(LIST);
+  const { countPhrase } = loadTsx(LIST);
+  // The shell's one cap (lib/count-cap.ts), which the list draws its counts with.
+  const { capCount: countText } = loadTsx('frontend/src/lib/count-cap.ts');
+  assert.match(read(LIST), /import \{ capCount \} from '\.\.\/\.\.\/\.\.\/lib\/count-cap';/);
   assert.equal(countPhrase('needs', 29), '29 to vote');
   assert.equal(countPhrase('c:onboarding', 3), '3 unread');
   assert.equal(countPhrase('needs', 0), null);

@@ -17,11 +17,6 @@
 // author knows it while building, so it is said then, with the two ways out:
 // seed the state in the same change, or declare impact none and say why.
 
-// The looks a start path can pin with ?skin=, as the Look menu lists them
-// (MENU_SKINS in frontend/src/lib/skin.ts, the head's SKINS).
-const LOOK_SKINS = Object.freeze(['brand']);
-const LOOK_EXAMPLES = Object.freeze(['brand']);
-
 // Each limit, as a clause that follows "The copies cannot show everything:".
 const COPY_LIMITS = Object.freeze([
   'Homeroom bot is switched off there and says only that, so none of its replies, working cards, plans or builds'
@@ -31,13 +26,6 @@ const COPY_LIMITS = Object.freeze([
   'a controlled failure covers one API GET, never a POST, PUT or DELETE',
   'there is no native phone app, so anything only its bridge shows cannot be shown',
   'two requests cannot be made to race, so a state only a race reaches cannot be staged',
-  // 18 Nov 2026 (PR 6812, change 13944): a change for the brand look was
-  // declared through the Look menu, as the member, who never sees that menu.
-  // `?skin=` pins a look for one load, for anyone (frontend/src/head.html,
-  // MENU_SKINS in frontend/src/lib/skin.ts).
-  // The examples are named, not the whole list: a work order may not say
-  // "paste", and one of the looks is "pastel" (external-agent-tasks.test.js).
-  `Settings › Experimental › Look is shown to admins only, so a change made for a particular look is declared with that look's ?skin=<look> in its start path (such as ?skin=${LOOK_EXAMPLES.join(' or ?skin=')}), never through that menu`,
 ]);
 
 // Where the seed goes, for any app the author may be building.
@@ -81,4 +69,4 @@ function copyLimitsLines({ width = 115, indent = '', rule = true } = {}) {
   return lines;
 }
 
-module.exports = { COPY_LIMITS, COPY_LIMITS_RULE, LOOK_SKINS, SEED_PLACE, copyLimitsText, copyLimitsLines };
+module.exports = { COPY_LIMITS, COPY_LIMITS_RULE, SEED_PLACE, copyLimitsText, copyLimitsLines };

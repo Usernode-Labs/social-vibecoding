@@ -393,15 +393,25 @@ test('#6234: while Homeroom bot fixes its change\'s checks, the Testing card say
 });
 
 test('the before & after card marks a failed change as not working, with what happened', () => {
-  const html = AppView.shotsHtml(pageShots(), { sessionId: 6269 });
-  const item = /<li data-shots-story="tick-and-undo" data-shots-shot-status="failed"[\s\S]*?<\/li>/.exec(html);
+  // The one before & after viewer (frontend/src/features/review-flow/), as
+  // the About sheet and the admin gallery draw it. The run's state reads
+  // AppView's words through `window`.
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { ShotsPanel } = loadTsx('frontend/src/features/review-flow/shots-panel.tsx');
+  const card = (value) => {
+    globalThis.window = { AppView };
+    try { return renderToHtml(createElement(ShotsPanel, { source: { shots: value, sessionId: 6269 } })); }
+    finally { delete globalThis.window; }
+  };
+  const html = card(pageShots());
+  const item = /<li class="shots-claim" data-shots-story="tick-and-undo" data-shots-shot-status="failed"[\s\S]*?<\/li>/.exec(html);
   assert.ok(item, 'the failed change is marked');
   assert.match(item[0], /Didn’t work</);
   assert.match(item[0], /bg-red-500\/10 text-red-700/);
   assert.match(item[0], /returned a 500 from POST \/api\/chores\/1\/done/);
   assert.doesNotMatch(item[0], />Skipped</);
   // A run whose only change failed says so in its state.
-  const failedRun = AppView.shotsHtml({ ...pageShots(), state: 'failed', failureCode: 'shots_change_failed', failureReason: 'Tried it, and it did not work.', repairAvailable: true }, { sessionId: 6269 });
+  const failedRun = card({ ...pageShots(), state: 'failed', failureCode: 'shots_change_failed', failureReason: 'Tried it, and it did not work.', repairAvailable: true });
   assert.match(failedRun, /<strong class="text-sm">Something didn’t work<\/strong>/);
   assert.match(failedRun, /Tried it, and it did not work\./);
   assert.match(failedRun, /bg-red-500\/10 text-red-700 dark:text-red-400">Something didn’t work</);

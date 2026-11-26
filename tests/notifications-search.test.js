@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const SEARCH_PATH = path.join(
   __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-search.js'
@@ -25,14 +26,13 @@ const SHEET_PATH = path.join(
   __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-sheet.tsx'
 );
 
-const SEARCH_SRC = fs.readFileSync(SEARCH_PATH, 'utf8');
 const SHEET_SRC = fs.readFileSync(SHEET_PATH, 'utf8');
 
-// The module is import-free ESM; strip the `export` keywords and evaluate it
-// as a plain script, then hand back its two functions.
-const { normalizeNotificationQuery, matchesNotificationQuery } = new Function(
-  `${SEARCH_SRC.replace(/^export /gm, '')}; return { normalizeNotificationQuery, matchesNotificationQuery };`
-)();
+// The shipped module, bundled with the shell's one matcher it imports
+// (frontend/src/lib/search-rank.js), so these run what the sheet calls.
+const { normalizeNotificationQuery, matchesNotificationQuery } = loadTsx(
+  path.relative(path.join(__dirname, '..'), SEARCH_PATH)
+);
 
 // A notif entry as the sheet builds it (an Entry): the
 // view's `appLine` is the project name, `label` the kind line, `segments`
@@ -79,6 +79,14 @@ test('a notification matches on its project name, kind line and subject', () => 
   assert.equal(q('vote'), true);
   assert.equal(q('WATERING'), true);
   assert.equal(q('chess'), false);
+});
+
+test('accents aside, as every search in the shell (lib/search-rank.js)', () => {
+  const entry = notifEntry({ appLine: 'Café Corner' });
+  const q = (raw) => matchesNotificationQuery(entry, normalizeNotificationQuery(raw));
+  assert.equal(q('cafe'), true, '"cafe" finds a project called Café');
+  assert.equal(q('CAFÉ corner'), true);
+  assert.equal(matchesNotificationQuery(sessionEntry({ appName: 'Crème' }), normalizeNotificationQuery('creme')), true);
 });
 
 test('a notification does not match on the time or the by line alone', () => {

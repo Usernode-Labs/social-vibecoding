@@ -289,7 +289,6 @@ test('every surface says every state of the table in the server\'s words, for it
   const { requestFoot } = loadTsx('frontend/src/features/dev-board/topic/card-model.ts');
   const { requestRail } = loadTsx('frontend/src/features/dev-board/topic/rail-model.ts');
   const { requestPill, threadLayout } = loadTsx('frontend/src/features/dev-board/topic/thread-model.ts');
-  const { threadPillKind } = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts');
   const { trackStateWord } = loadTsx('frontend/src/features/messages/bot-track.tsx');
   // A thread with a change in it, so the header always names the work.
   const layout = threadLayout({ thread: { number: 7 }, items: [
@@ -315,7 +314,6 @@ test('every surface says every state of the table in the server\'s words, for it
       const pill = requestPill(layout, work, sayId, yours);
       assert.equal(pill.label, say(phrase), `pill: ${at}`);
       if (failing) assert.equal(pill.tone, 'blocked', `pill tone: ${at}`);
-      assert.ok(['ok', 'wait', 'act', ''].includes(threadPillKind(pill)), `pill kind: ${at}`);
       // The timeline's last step: the server's words, but a stop's title is
       // the short "Stopped" (the foot says the reason).
       const steps = requestRail({ asker: 'maya', askedAt: '2026-11-07T09:12:00Z', specs: [], changes: [], standing: work, yours });

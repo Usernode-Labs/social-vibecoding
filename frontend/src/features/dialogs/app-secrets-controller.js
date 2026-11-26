@@ -41,7 +41,7 @@
 
 import { htmlRich, htmlText, t } from '../../lib/i18n/runtime';
 import { attachReturnKey, pressButton } from '../../lib/return-to-next';
-import { inZone } from '../../lib/time-zone';
+import { shortDate } from '../../lib/timestamp';
 
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
@@ -478,16 +478,12 @@ const Secrets = {
       </div>`;
   },
 
-  // Short, locale-aware date for a GitHub timestamp. Falls back to the raw
-  // string when it isn't parseable — better than rendering "Invalid Date".
+  // The day of a GitHub timestamp, in the shell's one short form
+  // (lib/timestamp.ts shortDate: "Nov 2", the year once it is not this one).
+  // Falls back to the raw string when it isn't parseable — better than
+  // rendering "Invalid Date".
   formatDate(iso) {
-    try {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return String(iso);
-      return d.toLocaleDateString(undefined, inZone({ year: 'numeric', month: 'short', day: 'numeric' }));
-    } catch {
-      return String(iso);
-    }
+    return shortDate(iso) || String(iso);
   },
 
   // ──────────────────────────────────────────────────────────────────

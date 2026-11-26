@@ -76,7 +76,7 @@ import { ChangeFoot, ChangeGates, PreviousShotsLine, ShotsCard , headPill, phase
 import { ballotHeadline, fixStanding } from './card-model';
 import { StepLayer, ThreadCardContext, ThreadFoot , NoPicture } from './thread-card';
 import { closeStep, openStep, publishLead, useOpenStep } from './step-store';
-import { dotLine } from './frame/topic-page';
+import { dotLine } from './topic-page';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
@@ -84,6 +84,7 @@ import { outcomeLine, type GovernanceView } from './governance-model';
 import { RequestWords, sentences } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
+import { openShotsDetail } from './shots-detail';
 import { pageSlug } from './thread-items';
 import { useThreadMenu } from './thread-menu';
 import { swatchFor } from '../../group-chat/swatch';
@@ -438,41 +439,35 @@ export function PlanLine({ plan, builtFrom }: { plan: RequestSpecCard; builtFrom
 
 /**
  * 1 Nov 2026: a verified run's first screen, before and after, small, with
- * Expand: the change page's own viewer (AppView.shotsHtml's `thread`
- * reading) opens in the detail column beside the thread (#6230).
+ * Expand: the one before & after viewer (review-flow/shots-viewer.tsx)
+ * opens in the detail column beside the thread (#6230).
  *
  * #6315: the column is drawn by every page that has one (a request's, the
  * Workshop's panel, the general chat), and by the bot page. Where a surface
  * has none — Expand pressed on a page that hosts no detail — the person is
  * sent to the change's page instead, and the arrival below opens the before
  * and after as soon as the change is drawn. A restored address (a reload
- * while the before and after were open) has a shots entry with no html: this
- * page carries it, so the effect fills it in rather than leaving "Loading…".
+ * while the before and after were open) has a shots entry with no shots:
+ * this page carries them, so the effect fills them in rather than leaving
+ * "Loading…".
  */
 function ShotsPair({ id, number, s }: {
   id: number; number: number | null; s: NonNullable<ChangeThreadView['shots']>;
 }): ReactNode {
   const t = useMessages('project');
   const thumbs = s.state === 'verified' ? s.thumbs : null;
-  const html = s.html;
-  const open = () => {
-    (window as any).UsernodeReact?.detail?.open({
-      kind: 'shots',
-      ref: { changeId: id },
-      version: null,
-      payload: { html },
-    });
-  };
+  const source = s.source || null;
+  const open = () => { if (source) openShotsDetail(source); };
   useEffect(() => {
-    if (!thumbs || !html) return;
+    if (!thumbs || !source) return;
     const entry = detailEntry();
-    // A reload's restored entry: the same change, no html yet.
-    if (entry && entry.kind === 'shots' && entry.ref.changeId === id && !entry.payload?.html) open();
+    // A reload's restored entry: the same change, no shots yet.
+    if (entry && entry.kind === 'shots' && entry.ref.changeId === id && !entry.payload?.shots) open();
     else if (takeShotsArrival(id)) open();
-    // `open` is rebuilt with `html` and `id`, which are the dependencies.
+    // `open` is rebuilt with `source`, which is the dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, html, thumbs]);
-  if (!thumbs || !html) return null;
+  }, [id, source, thumbs]);
+  if (!thumbs || !source) return null;
   // #6230: Expand opens the change's before and after in the detail column
   // beside the thread, as a design's preview and a plan do, instead of in a
   // popover over the page.

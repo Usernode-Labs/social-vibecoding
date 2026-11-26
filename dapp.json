@@ -1047,14 +1047,14 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: every unfinished Home card draws the shared progress rail beside its arrow (Iteration 03 card, #4563)",
-      "path": "/?demo=1&skin=brand",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card:not([data-challenge-state=done]) [role=progressbar][aria-valuetext] + span.bg-zinc-100 > svg[aria-hidden=true]"
+      "name": "Challenges: every unfinished Home poster draws its progress meter (#4563; posters since 20 Nov 2026)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel [data-wip-challenges] .wip-poster:not([data-state=done]) .wip-item-text > .wip-meter > span"
     },
     {
       "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
-      "path": "/?demo=1&skin=brand",
-      "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > [data-wip-challenges] .wip-poster",
       "expectText": "Next challenges"
     },
     {
@@ -1065,14 +1065,14 @@
     },
     {
       "name": "Challenges: with two open, Next challenges shows just those two",
-      "path": "/?demo=1&challenges=few&skin=brand",
-      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
+      "path": "/?demo=1&challenges=few",
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] [data-wip-challenges] .wip-poster",
       "expectText": "Next challenges"
     },
     {
       "name": "Challenges: Next challenges shows at most three, the furthest along first",
-      "path": "/?demo=1&skin=brand",
-      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .wip-posters > .wip-poster[data-challenge-id=\"900512\"]:first-child",
       "expectText": "4/8 Apps tested this week"
     },
     {
@@ -1082,8 +1082,8 @@
     },
     {
       "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
-      "path": "/?demo=1&skin=brand",
-      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card[data-challenge-state=done])) > .home-challenge-card"
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section [data-wip-challenges]:not(:has(h3)):not(:has(.wip-poster[data-state=done])) > .wip-posters > .wip-poster"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
@@ -1611,12 +1611,12 @@
     },
     {
       "name": "Import Feature from a PR entry present in the hub's ⋯ menu (#687)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
       "name": "The hub's ⋯ menu leads with Suggest an improvement, then Build it now, then names its settings group (#1900, #852 review, B8)",
-      "path": "/?demo=1&ws=status&shot=plus-menu&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child + button[data-plus=\"new-change\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Suggest an improvement"
     },
@@ -1634,7 +1634,7 @@
     },
     {
       "name": "The hub's ⋯ menu offers Suggest an improvement directly and keeps New change in Improve (#1900)",
-      "path": "/?demo=1&ws=status&shot=plus-menu&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
       "expectText": "Suggest an improvement"
     },
@@ -1748,12 +1748,12 @@
     },
     {
       "name": "The hub's ⋯ menu opens as an action sheet on touch (#929)",
-      "path": "/?ws=status&shot=plus-menu&un-platform=ios&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?ws=status&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
     },
     {
       "name": "The hub's ⋯ menu still opens the anchored dropdown on desktop (#929)",
-      "path": "/?ws=status&shot=plus-menu&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
@@ -2162,7 +2162,7 @@
     },
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
       "expectText": "Workshop"
     },
@@ -2334,7 +2334,7 @@
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"
     },
     {
@@ -2399,12 +2399,12 @@
     },
     {
       "name": "Re-pointed: the ⋯ ends the hero's actions row, after Invite, in the hub's head after the project's name (across from it on a wide window)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-ws-hero.dev-ws-hero-summary[data-ws-community] > .dev-ws-hero-id ~ .dev-ws-hero-row > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
       "name": "A project's page opens on its Hub, the place bar naming it, with who is around this week on the hero and the votes you owe as For you's first door",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has(.dev-ws-hero [data-ws-active-people]) > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
       "expectText": "to vote"
     },
@@ -2436,8 +2436,8 @@
     },
     {
       "name": "A project's hub leads with a hero that says what it is and who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
-      "path": "/?shot=invite-join&skin=brand#app/usernode-2d5619/dev/hub",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite-line + .dev-ws-hero-row [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
+      "path": "/?shot=invite-join#app/usernode-2d5619/dev/hub",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite-line + .dev-ws-hero-row [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > .wip-hub-meta > .wip-hub-meta-kind[data-audience=\"open\"]",
       "expectText": "Public community"
     },
     {
@@ -2520,7 +2520,7 @@
     },
     {
       "name": "Back from a project's Workshop returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop's place, then goes Back",
-      "path": "/?demo=1&ws=status&shot=tab-back&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status&shot=tab-back#app/usernode-2d5619/workshop",
       "expectSelector": "html[data-shot-tab-back=\"status\"] #app-view:not(.hidden) .dev-ws[data-ws-tab=\"status\"] > [data-place-bar=\"status\"] [data-place-title]",
       "expectText": "Hub"
     },
@@ -2536,12 +2536,6 @@
       "expectText": "new since you were last here"
     },
     {
-      "name": "What happened with nothing new says so in one line, Mark all seen waits disabled, and this week is still there (#4457) (the brand look's Workshop tab, which keeps What happened)",
-      "path": "/?demo=1&shot=since-seen&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-happened-head]:has(> button[data-ws-since-clear][disabled]) + [data-ws-happened] > p[data-ws-since-none] + [data-ws-this-week]",
-      "expectText": "Nothing new since you were last here."
-    },
-    {
       "name": "This week's All of this week opens the week as its own page in the Workshop tab, with the way back and its items grouped (#3947, #4457)",
       "path": "/?demo=1&shot=week-page&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"] .dev-ws-weekpage[data-ws-week-page=\"thisWeek\"] > [data-ws-pagehead]:has(button[data-ws-page-back]) ~ [data-ws-week-group] > .dev-ws-wlist > .dev-ws-wrow",
@@ -2549,13 +2543,13 @@
     },
     {
       "name": "A project's hub ends on what went live lately: the last three changes as pictures that open their pages, with its door to the Workshop, where what landed is listed week by week (#3510)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-recent]:has(button[data-ws-recent-all]) li:nth-child(3) > a.dev-ws-recent-card[href*=\"/dev/changes/\"] > .dev-ws-recent-pic + .dev-ws-recent-title",
       "expectText": "Recently live"
     },
     {
       "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels, with no Topics group (#4417)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"]:last-child > [data-place=\"discussion\"]",
       "expectText": "general"
     },
@@ -2567,15 +2561,9 @@
     },
     {
       "name": "The hub's discussion is For you's Discussion row (its last line, a door to the Discussion place, with no composer on the hub), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has([data-ws-hub-for-you] button[data-ws-channel=\"preview\"][data-ws-channel-open]):not(:has([data-ws-channel-compose])):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
-    },
-    {
-      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab (the brand look's tab; the standard look's front page opens them as a page from its foot)",
-      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"]:not(:has([data-private-badge])) svg",
-      "expectText": "Staging demo private request"
     },
     {
       "name": "The Workshop's path: four stops a change travels, in order, under In the workshop now, the approval rule its last line, and for an admin Private requests' quiet row at the page's foot (#3487, #3528, #5048; 24 Nov 2026)",
@@ -3534,12 +3522,12 @@
     },
     {
       "name": "The hub's ⋯ menu holds rename and secrets in its Settings & rules panel, not behind App settings (#645, #4045)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
       "name": "The hub's ⋯ menu offers Custom domain in its Settings & rules panel to whoever manages the project (#4405)",
-      "path": "/?demo=1&ws=status&skin=brand#app/staging-demo-custom-domain/dev",
+      "path": "/?demo=1&ws=status#app/staging-demo-custom-domain/dev",
       "expectSelector": "#dev-plus-menu [data-plus='domain']"
     },
     {
@@ -3562,12 +3550,12 @@
     },
     {
       "name": "The hub's ⋯ menu shows Members & approvals on a managed app (#2304)",
-      "path": "/app/staging-demo-readonly/dev?ws=status&skin=brand",
+      "path": "/app/staging-demo-readonly/dev?ws=status",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
       "name": "The hub's ⋯ menu shows the approver roster in its Settings & rules panel on an invited-approvers app (#646, #4045)",
-      "path": "/?demo=1&ws=status&shot=plus-menu-settings&skin=brand#app/staging-demo-invited-approvers/dev",
+      "path": "/?demo=1&ws=status&shot=plus-menu-settings#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
       "expectText": "Members & approvals"
     },
@@ -4235,7 +4223,7 @@
     },
     {
       "name": "Re-pointed: the ⋯ ends the hero's actions, its menu hung off that end edge so it opens on-screen (the right in English, the left in Arabic)",
-      "path": "/?demo=1&ws=status&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.end-0.top-full"
     },
     {
@@ -4475,6 +4463,12 @@
       "path": "/#app/staging-demo-app/dev/proposals/900001",
       "expectSelector": "#dev-topic-thread [data-change-shots=\"legacy\"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty) .usn-visual-more > .usn-visual-more-summary",
       "expectText": "All 5 screens"
+    },
+    {
+      "name": "One before & after viewer: a change's verified shots are the Needs you slider, with a tile per screen, the change numbered under it, and what the screenshot agent also noticed",
+      "path": "/#app/staging-demo-gallery-app/dev/proposals/900108",
+      "expectSelector": "#dev-topic-thread section.shots-one[data-change-shots=\"verified\"]:has(.dev-thread-compare .rf-compare[data-rf-compare]):has(.dev-thread-tiles[data-thread-tiles=\"2\"] .shots-change[data-shots-n=\"1\"]) .shots-noticed[data-shots-noticed=\"2\"]",
+      "expectText": "Also noticed"
     },
     {
       "name": "#2327: an author can edit an underway proposal title; the draft's steps are the path it will take, its own Submitted for review step first",

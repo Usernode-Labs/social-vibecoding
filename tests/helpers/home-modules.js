@@ -89,8 +89,13 @@ const MODE_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATU
 // an <html data-motion="reduce">) answers through the shipped reader rather
 // than an unbound name the glide's try swallows.
 const REDUCED_MOTION_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, '..', '..', 'lib', 'reduced-motion.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
+// And the shell's one age formatter (frontend/src/lib/timestamp.ts): the
+// import binds the sandbox's PlatformI18n.agoStamp, which is that module's own
+// function (tests/lib/platform-i18n.js), as the shell's classic scripts read it.
+const TIMESTAMP_BINDING = 'var agoStamp = (...args) => PlatformI18n.agoStamp(...args);';
 const HOME_SRC = HOME_RAW
   .replace(/^import \{ readInterfaceMode \}.*$/m, MODE_SRC)
+  .replace(/^import \{ agoStamp \} from '\.\.\/\.\.\/lib\/timestamp';$/m, () => TIMESTAMP_BINDING)
   .replace(/^import \{ reducedMotion \} from '\.\.\/\.\.\/lib\/reduced-motion';$/m, () => REDUCED_MOTION_SRC)
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)

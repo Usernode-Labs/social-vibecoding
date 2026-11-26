@@ -47,8 +47,7 @@
  *    left this page: All of this week, a bar and Earlier weeks open it, with
  *    its unread rows and Mark all seen there (./week-pages.tsx).
  *
- * Under the standard look only (./workshop.tsx draws today's tab under the
- * brand look). Nothing here is read in a first render that could differ
+ * Nothing here is read in a first render that could differ
  * from the next: the page mounts client-side into the legacy host, and its
  * numbers fill in as their reads land, each part holding its height.
  */
