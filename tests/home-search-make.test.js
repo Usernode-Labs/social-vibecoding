@@ -86,7 +86,7 @@ test('the button opens the make screen with the whole search, as a search\'s ide
   assert.deepEqual(calls, [{ idea: 'a chore wheel for a flat of four, with a weekly reset', ideaSource: 'search' }]);
   // The make screen still credits it (make.tsx), and the shell still passes
   // the source through (first-session/index.tsx).
-  assert.match(read('frontend/src/features/first-session/make.tsx'), /ideaSource === 'search' \? \{ attr: 'data-make-search-idea'/);
+  assert.match(read('frontend/src/features/first-session/make.tsx'), /ideaSource === 'search' \? <p data-make-search-idea="" className=\{HINT\}>\{t\(SEARCH_IDEA_LINE\)\}<\/p> : null\}/);
   assert.match(read('frontend/src/features/first-session/index.tsx'), /opts\?\.ideaSource === 'search' \? 'search'/);
 });
 
@@ -139,8 +139,8 @@ test('Home draws nothing before a search, or while the lists are still out', () 
   assert.equal(render('zz', { view: 'search', emptyQuery: 'z' }, {}), '', 'the grid judged a single letter');
 });
 
-test('Home mounts it under the apps section, outside a look\'s own page', () => {
+test('Home mounts it under the apps section', () => {
   const src = read('frontend/src/features/home/index.tsx');
   assert.match(src, /import \{ HomeSearchMake \} from '\.\/search-make';/);
-  assert.match(src, /\{wip \? null : <AppsMore \/>\}\s*<\/WipCard>\s*<\/section>\s*\{\/\*[\s\S]*?\*\/\}\s*\{frame \? null : <HomeSearchMake \/>\}/);
+  assert.match(src, /<AppGrid \/>\s*<\/WipCard>\s*<\/section>\s*\{\/\*[\s\S]*?\*\/\}\s*<HomeSearchMake \/>/);
 });

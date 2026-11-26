@@ -121,9 +121,6 @@ import {
 import { oldAddressPending } from './where';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
-import { AiFrameList } from './frame-list';
-import { showsPicked } from './lines';
-import { isFrameSkin, useSkin } from '../../lib/skin';
 import { bareTab, historyAsked, isBotTabHash, kindOf, progressAddress, progressAsked, projectsOf, waitingAddress, waitingAsked, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { cleanQuery, useBotSearch } from './search';
@@ -137,8 +134,7 @@ import { useNewChatBar } from './new-chat-bar';
 import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, movedSince, needsYou, owedCount, rankProjects,
-  standingsOf, upNext, withoutDismissed, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
+  applyWorkState, inProgress, isTopicHref, liveThisWeek, movedSince, needsYou, owedCount, rankProjects, standingsOf, upNext, withoutDismissed, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
 import type { WorkStatePush } from '../../lib/work-state';
 import { noteOpened, useListVisit } from './use-visit';
@@ -389,12 +385,11 @@ export function AiScreen(): ReactNode {
   // and S14). This screen stays mounted while another is shown, so what was
   // typed here an hour ago was still narrowing every list when You › Your
   // changes opened History: one row of 2,330, the box scrolled out of sight.
-  // So the box is emptied and closed when the tab is left, and when a door
-  // asks for History (`#homeroom-bot/history`), which is asking for all of it.
-  const [searchOpen, setSearchOpen] = useState(false);
+  // So the box is emptied when the tab is left, and when a door asks for
+  // History (`#homeroom-bot/history`), which is asking for all of it.
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const endSearch = useCallback(() => { setQuery(''); setSearchOpen(false); }, []);
+  const endSearch = useCallback(() => { setQuery(''); }, []);
   // Read again each time the tab is shown, too: an old address the router
   // swaps for one of the tab's in place (#profile/your-changes, which is
   // History on changes now) fires no hashchange.
@@ -1186,10 +1181,8 @@ export function AiScreen(): ReactNode {
   }, [phone, level, threadUp, at]);
   // ONE LOOK (25 Nov 2026): on a phone New chat is named by the bar, with
   // its back disc, while it is the drawer's level in view (./new-chat-bar.ts).
-  // A thread keeps the plain bar and its own head. The standard look's only:
-  // the other looks keep New chat's own head (app.css scopes the same).
-  const standardLook = useSkin() === 'standard';
-  const newChatHere = mounted && standardLook && visible && phone && blank && !openRoot;
+  // A thread keeps the plain bar and its own head.
+  const newChatHere = mounted && visible && phone && blank && !openRoot;
   const newChatBar = useNewChatBar({
     shown: newChatHere && level === 1,
     away: newChatHere && level === 0,
@@ -1301,19 +1294,14 @@ export function AiScreen(): ReactNode {
   // SEARCH (#6398, 6 Nov 2026): every list narrows to the threads whose
   // title, number or project matches what the box says (./lists.tsx). 24 Nov
   // 2026 (the three bands): on the standard list the box is always there, on
-  // the head card's tools line, rather than behind a round button; the look's
-  // list (./frame-list.tsx) keeps its button, so what it says counts only
-  // while that is open. Its state is declared above, with the filter, which
-  // empties it when the tab is left or a door opens History; it is not kept
-  // in the address: the project filter is what a link carries.
-  // A look of the one frame draws the list with the kit (./frame-list.tsx),
-  // from the same rows and presses. Read after mount (lib/skin.ts says why).
-  const frame = isFrameSkin(useSkin());
-  const asked = frame ? (searchOpen ? query : '') : query;
-  useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
+  // the head card's tools line, rather than behind a round button. Its state
+  // is declared above, with the filter, which empties it when the tab is
+  // left or a door opens History; it is not kept in the address: the project
+  // filter is what a link carries.
+  const asked = query;
   // Ctrl+K (⌘K) puts the cursor in the box while the tab is showing
   // (./search-shortcut.ts); the box names the key at its end on a computer.
-  useEffect(() => (frame ? undefined : installBotSearchShortcut(() => (visible ? searchRef.current : null))), [frame, visible]);
+  useEffect(() => installBotSearchShortcut(() => (visible ? searchRef.current : null)), [visible]);
   const searchHint = useSearchHint();
   // 13 Nov 2026: the box also searches what was said, in the person's own
   // threads with the bot, on the server (./search.ts). Asked
@@ -1332,16 +1320,6 @@ export function AiScreen(): ReactNode {
     if (mark && mark.q !== marked) clearSearchMark();
   }, [marked]);
 
-  // #6744: the look's line under the bot's name summarises the lists below
-  // it, so it counts only the projects the filter shows, as every list does.
-  // Search does not narrow it (./lines.ts owedShown does), so it does not
-  // jump while you type. (The standard list's head counts its own bands,
-  // ./lists.tsx, from the same rows.)
-  const heroShows = showsPicked(picked);
-  const heroRows = rows.filter((row) => heroShows(row.app));
-  const heroLine = work
-    ? heroWords(owedCount(heroRows), progress.filter((th) => heroShows(th.app)).length, freshCount(heroRows))
-    : null;
   // THE HEAD CARD'S TOOLS LINE (./lists.tsx draws the card): the search
   // field, always there. Escape empties it, and a second Escape leaves it.
   const searchField = (
@@ -1389,39 +1367,6 @@ export function AiScreen(): ReactNode {
 
   const listContent = (
     <>
-      {frame ? (
-        <AiFrameList
-          heroLine={heroLine}
-          query={searchOpen ? query : ''}
-          onQuery={setQuery}
-          searchOpen={searchOpen}
-          onSearch={setSearchOpen}
-          searchRef={searchRef}
-          found={search.found}
-          onFoundRetry={search.retry}
-          lit={lit}
-          ready={!!work && !!needs}
-          failed={failed}
-          onRetry={() => setMoved((n) => n + 1)}
-          rows={rows}
-          owed={owed}
-          progress={progressDrawn}
-          waiting={waitingDrawn}
-          live={live}
-          openRow={openRow}
-          openThread={openThread}
-          onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
-          picked={picked}
-          onPick={pick}
-          appFor={appFor}
-          onNew={openNewChat}
-          history={history}
-          historyKind={historyKind}
-          onHistoryKind={pickKind}
-          openHistory={openHistory}
-          historyRef={historyRef}
-        />
-      ) : (
       <div className="ai-screen-body max-w-2xl mx-auto pb-8">
         <AiLists
           newChat={<NewChatButton onOpen={openNewChat} />}
@@ -1462,7 +1407,6 @@ export function AiScreen(): ReactNode {
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
-      )}
 
       {/* Ask Homeroom bot: a new chat, as the head's New chat opens. A bar
           over the tab bar; on a desktop the column is docked beside the list
@@ -1497,7 +1441,6 @@ export function AiScreen(): ReactNode {
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
       data-ai-list-closed={oneUp ? '' : undefined}
-      data-frame-list={frame ? '' : undefined}
       style={{ position: 'relative' }}
     >
       {phone ? (

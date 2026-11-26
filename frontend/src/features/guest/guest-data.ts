@@ -205,13 +205,6 @@ export function featuredApps(apps: readonly GuestApp[], tryable: (app: GuestApp)
  */
 export const MIN_MEMBERS = 25;
 export const MIN_ACTIVE = 10;
-export const MIN_BUILDERS = 5;
-/**
- * A Discover card's people pill (a profile glyph and how many used it
- * lately) shows from this many. Lower than the band's sentence: on the
- * picture it is a figure beside others, not a claim on its own.
- */
-export const MIN_PEOPLE = 5;
 
 /** A project made in the last 30 days wears "New" on its card. */
 const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
@@ -267,11 +260,6 @@ export function projectPath(slug: string): string {
  */
 export function projectVotesHash(slug: string): string {
   return `#app/${encodeURIComponent(slug)}/workshop?ws=workshop`;
-}
-
-/** Whether a project link names its Workshop (projectVotesHash) rather than its hub. */
-export function linksToWorkshop(target: string): boolean {
-  return /[?&]ws=workshop(?:&|$)/.test(String(target || ''));
 }
 
 /** A project's overview, or null when it is not public (404) or cannot be read. */

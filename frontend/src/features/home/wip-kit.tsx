@@ -1,13 +1,13 @@
 /**
- * Standard (WIP)'s kit: the few components Home draws only under that look
- * (lib/skin.ts 'wip').
+ * The few pieces Home and the Communities page are drawn with (the kit that
+ * began as Standard (WIP), the standard look's since 20 Nov 2026).
  *
  * Each is a class from app.css's "STANDARD (WIP)" block, which reads every
  * colour, radius, size and gap from that block's tokens (`--wip-*`), and
  * those from the shell's own (`--dc-sheet-solid`, `--app-sheet-line`,
  * `--accent`, `--text-muted`). A piece of Home that needs a card, the page's
- * filled action or a heading's link under this look takes it from here
- * instead of spelling the classes again, so the look changes in one place.
+ * filled action or a heading's link takes it from here instead of spelling
+ * the classes again, so the look changes in one place.
  */
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 

@@ -371,7 +371,7 @@ test('the identity card renders picture, name and the way in to editing', () => 
   assert.match(fn, /IdentityAvatar/, 'the picture, or the brand pair fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
-  assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  assert.match(fn, /identity\.username && identity\.username !== identity\.name \? <div className="profile-id-handle">/, 'the handle under the name, when it is not the name');
   // #7135: the two-person drawing is no longer a stand-in picture. A person
   // with no photo has a generated picture of their own, sent as avatarUrl;
   // the component only names no picture for an unknown account.
@@ -407,7 +407,9 @@ test('the bio is a text node, never innerHTML', () => {
     const code = src.replace(/^\s*\/\/.*$/gm, '');
     assert.doesNotMatch(code, /innerHTML/, `${name} must render text as text`);
   }
-  assert.match(profileViewTsx, /whitespace-pre-line/, 'newlines in a bio still render');
+  const inlineEdit = read('frontend/src/features/profile/identity-inline-edit.tsx');
+  assert.doesNotMatch(inlineEdit.replace(/^\s*\/\/.*$/gm, ''), /innerHTML/, 'identity-inline-edit.tsx must render text as text');
+  assert.match(inlineEdit, /<p className="profile-id-bio [^"]*whitespace-pre-line[^"]*">/, 'newlines in a bio still render');
 });
 
 test('outbound handle links are scheme-guarded and rel-protected', () => {

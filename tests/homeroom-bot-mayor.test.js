@@ -74,16 +74,12 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   // Whoever has the bot (a list, or everyone): botBuildsHere says where it builds.
   assert.match(prompt, /You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says/);
   // The welcome and the maker's hello both offer "How do I invite friends?".
-  assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
+  assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite\. It makes a link to share, and anybody\n  who opens it joins the project, somebody new to Homeroom included\./);
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  // The hub's Invite leads with its glyph under the standard look.
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*(?:\{wipLook \? <UserPlusIcon aria-hidden="true" \/> : null\}\s*)?\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
+  // The hub's Invite leads with its glyph.
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*<UserPlusIcon aria-hidden="true" \/>\s*\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
     'the buttons it names are called that');
   assert.equal(require('./lib/platform-i18n').message('project:communityCard.invite.button'), 'Invite');
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.share\.invite'\)\}\s*<\/Button>/);
-  assert.equal(require('./lib/platform-i18n').message('project:communityCard.share.invite'), 'Invite people');
-  assert.match(card, /<span className="dev-ws-head-title">\{t\('project:communityCard\.share\.title'\)\}<\/span>/);
-  assert.equal(require('./lib/platform-i18n').message('project:communityCard.share.title'), 'Share it');
   assert.doesNotMatch(prompt, /an admin has turned you on for/);
   assert.match(prompt, /Cartoon or fantasy combat and weapons in a game, pretend-currency card and\n  casino games, and apps where people post and comment are allowed: never decline those\./);
   assert.match(prompt, /To read what a request says, use get_request; what people said about it, get_discussion/);

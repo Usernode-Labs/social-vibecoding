@@ -244,7 +244,7 @@ const BASE_CSS = [
   'summary{cursor:pointer}',
 ].join('');
 
-// The brand skin's Geist is this site's own file. The frame has an origin of
+// The page's Geist is this site's own file. The frame has an origin of
 // its own and may load nothing, so the file is read once here and written
 // into each document as data.
 const GEIST_PATH = '/fonts/geist/Geist-Variable.woff2';
@@ -295,9 +295,9 @@ export function botReplyHtml(message: ConversationMessage): string | null {
   return meta?.kind === 'chat' && typeof meta.html === 'string' && meta.html.trim() ? meta.html : null;
 }
 
-// How the page looks right now, as a key: a change of theme, skin, text size
-// or contrast draws the frame again with the new tokens.
-const LOOK_ATTRS = ['class', 'data-skin', 'data-text-size', 'data-contrast', 'data-app-tone'];
+// How the page looks right now, as a key: a change of theme, text size or
+// contrast draws the frame again with the new tokens.
+const LOOK_ATTRS = ['class', 'data-text-size', 'data-contrast', 'data-app-tone'];
 function lookKey(): string {
   if (typeof document === 'undefined') return '';
   const root = document.documentElement;
