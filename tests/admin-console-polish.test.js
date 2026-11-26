@@ -180,7 +180,9 @@ test('every page of the console is drawn in option A, from hooks on the shared r
   assert.match(sticker, /\.adm-btn\.adm-b2 \{ border-color: var\(--stk-line\); background: var\(--stk-b2\); box-shadow: var\(--stk-edge\);/);
   assert.match(sticker, /\.adm-btn\.adm-bd \{ border-color: var\(--stk-danger\);/);
   assert.match(sticker, /\.adm-btn:active:not\(:disabled\) \{ transform: translate\(2px, 2px\); box-shadow: none; \}/);
-  assert.match(sticker, /#admin-screen \.adm-card,[\s\S]{0,120}\{ border: 1px solid var\(--stk-line\); border-radius: 16px; background: var\(--stk-card\); box-shadow: var\(--stk-edge\);/);
+  // What repeats is quiet: a card carries a soft line and no hard edge.
+  assert.match(sticker, /#admin-screen \.adm-card,[\s\S]{0,120}\{ border: 1px solid var\(--stk-card-line\); border-radius: 16px; background: var\(--stk-card\); box-shadow: none;/);
+  assert.match(sticker, /textarea\) \{ border: 1px solid var\(--stk-field-line\); border-radius: 12px;/);
   // The recipes carry the hooks, so a section that draws with them is aligned.
   for (const pin of [/card: 'adm-card /, /primary: 'adm-btn adm-b1 /, /outline: 'adm-btn adm-b2 /, /destructive: 'adm-btn adm-bd /,
     /primarySm: 'adm-btn adm-b1 adm-sm /, /link: 'adm-linkbtn /, /input: 'adm-field /, /select: 'adm-field /, /success: 'adm-badge is-live /]) {

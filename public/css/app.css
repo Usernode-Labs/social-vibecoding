@@ -4330,7 +4330,7 @@ html.dark body, html[data-app-tone="dark"] body {
   --stk-danger: #a3281a;
   --stk-danger-edge: 2px 2px 0 0 #a3281a;
   --stk-focus: #3090e1;
-  --stk-badge-line: #121a0e;
+  --stk-badge-line: rgb(18 26 14 / 0.24);
   --stk-vote: #3090e1;
   --stk-on-vote: #000000;
   --stk-live: #a9cf97;
@@ -4338,6 +4338,12 @@ html.dark body, html[data-app-tone="dark"] body {
   --stk-off: #b9b9b9;
   --stk-on-status: #121a0e;
   --stk-well: rgb(18 26 14 / 0.04);
+  /* What repeats is quiet: a card, a table, the menu and a field carry a
+     soft line and no hard edge. The outline and the edge are kept for
+     what is pressed. */
+  --stk-card-line: rgb(18 26 14 / 0.14);
+  --stk-field-line: rgb(18 26 14 / 0.3);
+  --stk-chip-line: rgb(18 26 14 / 0.24);
 }
 html.dark #admin-screen,
 html[data-app-tone="dark"] #admin-screen {
@@ -4356,13 +4362,16 @@ html[data-app-tone="dark"] #admin-screen {
   --stk-danger-edge: 2px 2px 0 0 #ff9c8a;
   --stk-badge-line: transparent;
   --stk-well: rgb(255 254 234 / 0.06);
+  --stk-card-line: rgb(255 254 234 / 0.16);
+  --stk-field-line: rgb(255 254 234 / 0.32);
+  --stk-chip-line: rgb(255 254 234 / 0.28);
   /* The dashboard and the menu follow the same sheet. */
   --adm-paper: #171715;
-  --adm-line: rgb(255 254 234 / 0.7);
+  --adm-line: rgb(255 254 234 / 0.16);
 }
 #admin-screen {
   --adm-paper: var(--stk-card);
-  --adm-line: var(--stk-line);
+  --adm-line: var(--stk-card-line);
   --adm-sun: var(--stk-sun);
   --adm-serif-weight: 500;
 }
@@ -4376,13 +4385,13 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
    and no shadow. */
 #admin-screen .adm-card,
 #admin-screen .admin-dashboard-panel,
-#admin-screen .admin-sidebar { border: 1px solid var(--stk-line); border-radius: 16px; background: var(--stk-card); box-shadow: var(--stk-edge); color: var(--stk-ink); }
+#admin-screen .admin-sidebar { border: 1px solid var(--stk-card-line); border-radius: 16px; background: var(--stk-card); box-shadow: none; color: var(--stk-ink); }
 #admin-screen .adm-card .adm-card { border-color: var(--stk-hair); box-shadow: none; background: transparent; }
-#admin-screen .adm-dialog { box-shadow: var(--stk-edge); }
+#admin-screen .adm-dialog { border-color: var(--stk-line); box-shadow: var(--stk-edge); }
 #admin-screen .admin-metric-card,
-#admin-screen .admin-quick-actions button { border: 1px solid var(--stk-line); box-shadow: var(--stk-edge); }
+#admin-screen .admin-quick-actions button { border: 1px solid var(--stk-card-line); box-shadow: none; }
 #admin-screen .admin-metric-card:hover,
-#admin-screen .admin-quick-actions button:hover { box-shadow: var(--stk-edge); }
+#admin-screen .admin-quick-actions button:hover { border-color: var(--stk-line); box-shadow: var(--stk-edge); }
 #admin-screen .admin-metric-card:active,
 #admin-screen .admin-quick-actions button:active { transform: translate(2px, 2px); box-shadow: none; }
 /* A well a section drew by hand inside its card: a level 3 row. */
@@ -4390,7 +4399,7 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 #admin-section-content :is(div, li, section, article, details, form):is(.bg-white):not(.adm-card) { background-color: var(--stk-card); }
 #admin-section-content :is(div, li, section, article, details):is(.bg-zinc-100, .bg-zinc-50):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-2xl) { box-shadow: inset 0 0 0 1px var(--stk-hair); }
 /* A table a section framed by hand: the same card. */
-#admin-section-content div.overflow-x-auto:is(.rounded-xl, .rounded-lg, .rounded-2xl).border:not(.adm-card) { border: 1px solid var(--stk-line); border-radius: 16px; background: var(--stk-card); box-shadow: var(--stk-edge); }
+#admin-section-content div.overflow-x-auto:is(.rounded-xl, .rounded-lg, .rounded-2xl).border:not(.adm-card) { border: 1px solid var(--stk-card-line); border-radius: 16px; background: var(--stk-card); box-shadow: none; }
 #admin-section-content div.overflow-x-auto.border thead { background: transparent; }
 
 /* HEADINGS, in the serif. */
@@ -4404,7 +4413,7 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 #admin-section-content .admin-dashboard-heading h1 { font-size: clamp(2.25rem, 3.2vw, 3rem); line-height: 1.05; letter-spacing: -0.02em; }
 #admin-section-content :is(.admin-dashboard-section-head, .admin-quick-actions) h2 { font-size: 1.5rem; }
 #admin-screen .adm-table thead { background: transparent; }
-#admin-section-content div.adm-card.adm-table { border-color: var(--stk-line); }
+#admin-section-content div.adm-card.adm-table { border-color: var(--stk-card-line); }
 #admin-section-content button.adm-card:active { transform: translate(2px, 2px); box-shadow: none; }
 
 /* BUTTONS. A pill; the level says how loud. */
@@ -4435,7 +4444,7 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 #admin-section-content :is(button, a[role="button"]):is(.bg-red-600, .bg-red-500, .border-red-200, .border-red-300):not(.adm-btn) { border: 1px solid var(--stk-danger); border-radius: 999px; background: var(--stk-b2); box-shadow: 1.5px 1.5px 0 0 var(--stk-danger); color: var(--stk-danger); }
 #admin-section-content button:not(.adm-btn):is(.bg-violet-600, .bg-violet-500, .bg-zinc-100, .bg-zinc-200, .bg-white, .bg-red-600, .border-zinc-300):active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 /* A tile that is pressed is a card, not a pill: it keeps a card's corners. */
-#admin-section-content button:is(.rounded-xl, .rounded-2xl, .rounded-3xl):not(.adm-btn) { border-radius: 16px; box-shadow: var(--stk-edge); }
+#admin-section-content button:is(.rounded-xl, .rounded-2xl, .rounded-3xl):not(.adm-btn) { border-radius: 16px; border-color: var(--stk-card-line); box-shadow: none; }
 /* The one on of a pair of filter pills: the ink, as a selected tab is. */
 #admin-section-content :is(button, a):is(.bg-zinc-900, .bg-zinc-800):not(.adm-btn) { border: 1px solid var(--stk-line); border-radius: 999px; background: var(--stk-ink); color: var(--stk-surface); }
 /* A link written as text. */
@@ -4444,9 +4453,9 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 
 /* FIELDS. White, the outline, the blue ring on focus. */
 #admin-screen .adm-field,
-#admin-section-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select, textarea) { border: 1px solid var(--stk-line); border-radius: 12px; background-color: var(--stk-card); box-shadow: none; color: var(--stk-ink); }
+#admin-section-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select, textarea) { border: 1px solid var(--stk-field-line); border-radius: 12px; background-color: var(--stk-card); box-shadow: none; color: var(--stk-ink); }
 #admin-screen .adm-field:focus,
-#admin-section-content :is(input, select, textarea):focus { outline: 2px solid var(--stk-focus); outline-offset: 1px; border-color: var(--stk-line); box-shadow: none; }
+#admin-section-content :is(input, select, textarea):focus { outline: 2px solid var(--stk-focus); outline-offset: 1px; border-color: var(--stk-field-line); box-shadow: none; }
 #admin-section-content :is(input, textarea)::placeholder { color: var(--stk-mute); }
 #admin-section-content :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--stk-ink); }
 
@@ -4477,9 +4486,9 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 
 /* THE MENU: white with the outline; the row you are on is the sun with
    the outline. The badges of pages opened lately follow the chips. */
-#admin-screen .admin-sidebar-row.is-active, #admin-screen .admin-sidebar-row.is-active:hover { box-shadow: inset 0 0 0 1px var(--stk-line); }
-#admin-open-tabs .admin-tab-strip > [data-admin-tab] { background: var(--stk-card); box-shadow: inset 0 0 0 1px var(--stk-line); color: var(--stk-ink); }
-#admin-open-tabs .admin-tab-strip > [data-admin-tab]:hover { background: var(--stk-card-2); box-shadow: inset 0 0 0 1px var(--stk-line); }
+#admin-screen .admin-sidebar-row.is-active, #admin-screen .admin-sidebar-row.is-active:hover { box-shadow: inset 0 0 0 1px var(--stk-chip-line); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab] { background: var(--stk-card); box-shadow: inset 0 0 0 1px var(--stk-chip-line); color: var(--stk-ink); }
+#admin-open-tabs .admin-tab-strip > [data-admin-tab]:hover { background: var(--stk-card-2); box-shadow: inset 0 0 0 1px var(--stk-chip-line); }
 #admin-open-tabs .admin-tab-strip > [data-admin-tab][aria-current="page"] { background: var(--stk-sun); box-shadow: inset 0 0 0 1px var(--stk-line); color: var(--stk-on-sun); }
 #admin-screen .admin-dashboard-refresh { min-height: 36px; border: 1px solid var(--stk-line); border-radius: 999px; background: var(--stk-b2); box-shadow: var(--stk-edge); font-family: var(--adm-serif); font-size: 0.9375rem; font-weight: 400; }
 #admin-screen .admin-dashboard-refresh:hover:not(:disabled) { background: var(--stk-card-2); color: var(--stk-ink); }
@@ -4490,6 +4499,9 @@ html #admin-screen#admin-screen { background-color: var(--stk-surface); color: v
 :where(html[data-motion="reduce"]) #admin-screen .adm-btn { transition: none; }
 @media (max-width: 767px) {
   #admin-section-content .admin-dashboard-heading h1 { font-size: 1.875rem; }
+  /* A finger needs more than a pointer does. */
+  #admin-screen .adm-btn { min-height: 44px; }
+  #admin-screen .adm-btn.adm-sm { min-height: 36px; }
   #admin-section-content :is(.admin-dashboard-section-head, .admin-quick-actions) h2 { font-size: 1.375rem; }
 }
 /* END OF THE CONSOLE IN OPTION A. */
