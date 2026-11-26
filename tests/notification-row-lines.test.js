@@ -470,7 +470,8 @@ test('#6901: a refusal at the app limit says someone was turned away, then the c
   early.setHours(0, 30, 0, 0);
   const crossDay = await lines({ kind: 'platform_limit', detail: 'apps_away:3:210:180',
     appName: null, sourceUsername: null, createdAt: early.toISOString() });
-  assert.match(crossDay.subject, /^3 people were turned away since [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
+  // (On New Year's Day the previous day is last year's, and carries its year.)
+  assert.match(crossDay.subject, /^3 people were turned away since [A-Z][a-z]{2} \d{1,2}, (?:\d{4}, )?\d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
 });
 
 test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {

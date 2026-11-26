@@ -98,11 +98,9 @@ test('Messages\' words are sized in rem, so Text size reaches them, at the same 
   // Text size scales rem. These were fixed pixels, so at 150% the page's
   // headings grew and the messages themselves did not.
   const css = cssSrc();
+  // The inbox's rows are the shared row now (ListRow and its ListRowMeta,
+  // @/components/ui/grouped-list.tsx), which sizes them in rem itself.
   const sizes = {
-    '.messages-row-name': 15,
-    '.messages-row-preview': 13,
-    '.messages-row-time': 13,
-    '.messages-unread': 13,
     '.messages-message-head': 17,
     '.messages-markdown.gc-msg-content': 17,
     '.messages-bubble': 17,
@@ -125,13 +123,13 @@ test('Messages\' words are sized in rem, so Text size reaches them, at the same 
 
 test('on a phone, a Home icon is never wider than its cell, so large text sizes cannot make icons meet', () => {
   const css = cssSrc();
-  const at = css.indexOf('html:not([data-skin]) #app-list > .app-card > .relative { width: min(');
+  const at = css.indexOf('html:root #app-list > .app-card > .relative { width: min(');
   assert.ok(at >= 0, 'the phone grid bounds the icon by its cell');
   assert.ok(css.lastIndexOf('@media (max-width: 639.98px) {', at) > css.lastIndexOf('\n}\n', at),
     'inside the phone block, not the wider grids\'');
   assert.match(css.slice(at), /^[^}]*width: min\(3\.5rem, calc\(100% - 0\.1875rem\)\); height: auto; aspect-ratio: 1 \/ 1; \}/,
     '3.5rem at the default size, and less only when the cell is narrower');
-  assert.match(css, /html:not\(\[data-skin\]\) #app-list > \.app-card > \.relative > \.app-icon-tile \{ width: 100%; height: 100%; border-radius: min\(1\.25rem, 36%\); \}/);
+  assert.match(css, /html:root #app-list > \.app-card > \.relative > \.app-icon-tile \{ width: 100%; height: 100%; border-radius: min\(1\.25rem, 36%\); \}/);
 });
 
 test('the cascade self-check measures its probe against the root, so a large text size is not reported as broken', () => {

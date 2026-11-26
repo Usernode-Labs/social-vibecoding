@@ -56,6 +56,7 @@ import { reducedMotion } from './reduced-motion';
 
 import { adoptKitSurface, type KitAdoption } from './kit-surface';
 import { useIsomorphicLayoutEffect } from './legacy-dom';
+import { lockPage } from './page-lock';
 
 /**
  * The gesture guard `AppView.revealModal` used to stamp.
@@ -163,7 +164,7 @@ function present(
  * as it is now; by its text otherwise. The shell is a node the kit created and
  * owns, never one React rendered, so this write has nothing to reconcile with.
  */
-function nameKitShell(adoption: KitAdoption | null): void {
+export function nameKitShell(adoption: KitAdoption | null): void {
   const shell = adoption?.handle?.el as HTMLElement | null | undefined;
   const card = adoption?.contentEl;
   if (!shell || !card || typeof shell.setAttribute !== 'function') return;
@@ -444,6 +445,15 @@ export function useStaticModal(
       }
     }
   }, [rootRef, open, dismissFromKit]);
+
+  // The page held still while the dialog is up (./page-lock.ts, without
+  // `inert`: only the document's own scroll, a phone's page), as a sheet
+  // holds it (./sheet.ts). Let go on the close tick and on unmount.
+  useIsomorphicLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!open || !root) return undefined;
+    return lockPage(root, { inert: false });
+  }, [rootRef, open]);
 
   // Legacy-compatibility bridge — see StaticModalOptions.onExternalToggle.
   // Watching `class` is what the retired adopter did too, but this observer

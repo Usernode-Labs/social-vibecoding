@@ -114,9 +114,9 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
   // definition of that row's geometry, and it goes wrong silently the first
   // time the real one moves. Each of these names the same class the loaded
   // row is drawn with.
-  assert.match(MESSAGES, /<div key=\{i\} className="messages-conversation-row">/,
-    'messages: the row class itself — which owns the 66px height, the padding '
-    + 'and the inset separator, all in app.css');
+  assert.match(MESSAGES, /<GroupedList className="mx-0">\s*\{Array\.from\(\{ length: 6 \}, \(_, i\) => \(\s*<ListRow\s+key=\{i\}/,
+    'messages: the shared row in the shared card, the same ListRow the loaded '
+    + 'rows are, which owns the padding, the gap and the inset separator');
   assert.match(KUDOS, /<div key=\{i\} className=\{ROW\}>/,
     'kudos: ROW, the constant all four of that pane’s lists draw with');
   assert.match(STANDINGS, /className=\{`overflow-hidden \$\{CARD\}`\}/,
@@ -131,11 +131,11 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
 
 test('each stands in for what that screen actually renders', () => {
   // Not "some grey rectangles" — the shapes a viewer is about to see.
-  assert.match(MESSAGES, /shape="block" className="w-11 h-11 rounded-xl"/,
+  assert.match(MESSAGES, /shape="block" className="w-11 h-11 shrink-0 rounded-xl"/,
     'messages: the lg square UserAvatar’s 44px box — the widget language’s '
     + 'avatar for a person speaking in a conversation');
-  assert.match(MESSAGES, /shape="muted" className="ms-auto w-8"/,
-    'and the timestamp, pushed right the way the real row’s <time> is');
+  assert.match(MESSAGES, /trailing=\{<Skeleton shape="muted" className="w-8 self-start" \/>\}/,
+    'and the timestamp, on the trailing edge where the real row’s <time> is');
   assert.match(KUDOS, /shape="circle" className="w-9 h-9"/, 'kudos: the 36px avatar');
   assert.match(KUDOS, /shape="block" className="w-12 h-6 rounded-full"/,
     'and the kudos pill — a row whose right edge is empty and then suddenly '

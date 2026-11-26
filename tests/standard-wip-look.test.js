@@ -20,70 +20,70 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
   // Home has no Pinned communities section under the look.
-  'html:not([data-skin]) #home-communities-section',
+  'html:root #home-communities-section',
   // A pinned project's tile has no description under the look (asked 19 Nov 2026).
-  'html:not([data-skin]) #app-list .app-card-desc',
+  'html:root #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
-  'html:not([data-skin]) #app-list .app-card-people',
+  'html:root #app-list .app-card-people',
   // On a phone New project is the grid's last tile, not a button on the search row that waits under the header (phone review, 23 Nov 2026).
-  'html:not([data-skin]) #home-search-bar #home-new-project-top',
+  'html:root #home-search-bar #home-new-project-top',
   // While words are in the Communities page's search, New community gives the field its place, as New project does on Home (phone review, 23 Nov 2026).
-  'html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top',
+  'html:root #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top',
   // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
-  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
+  'html:root body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
-  'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
+  'html:root #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
-  'html:not([data-skin])[data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
+  'html:root[data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
   // Under this look alone: the standard look's door opens the overview, and its board keeps the line (20 Nov 2026).
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
-  'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  'html:root #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // The end of a run shows a picture of the brand's where the little pile, or the tick, was (20 Nov 2026).
-  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark)',
+  'html:root #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark)',
   // Needs you does not carry the project's paused-changes notice: voting goes on (20 Nov 2026).
-  'html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice',
+  'html:root #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice',
   // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it (20 Nov 2026). Its dim
   // stays, unseen, until a sheet is up on the change, when it dims the side card as the scrim does the change (24 Nov 2026).
-  'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
+  'html:root #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
   // And the short claim over the picture: the full text is beside it, so it is said once.
-  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
+  'html:root #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
   // Messages' empty pane holds the guide from 768px: its own heading and line give way to the guide's.
-  'html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p)',
+  'html:root .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p)',
   // (24 Nov 2026: the Workshop's four figure cards, and the dot they hid, went with its front page: the path's stops say it.)
   // Beside the open sidebar, on Homeroom's own pages, the bar shows the place alone: the panel's brand is the community's name already.
-  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile, html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg)',
+  'html:root body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile, html:root body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg)',
   // A request's page has no title of its own while the top bar names the place.
-  'html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title',
+  'html:root:not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title',
   // The project's preview is a card beside the hero from 1024px; narrower, the hero keeps the picture at its side (20 Nov 2026).
-  'html:not([data-skin]) #dev-workshop .wip-hero-preview',
+  'html:root #dev-workshop .wip-hero-preview',
   // And where the card is there, the hero's own tilted copy of the picture is not.
-  'html:not([data-skin]) #dev-workshop .dev-ws-hero-summary[data-has-preview] .wip-hero-art-pic',
+  'html:root #dev-workshop .dev-ws-hero-summary[data-has-preview] .wip-hero-art-pic',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
-  'html:not([data-skin]) #app-list .app-card-opened',
+  'html:root #app-list .app-card-opened',
 ];
 
 /**
  * The left menu and the top bar were drawn for this look first and are the
  * standard look's too since 20 Nov 2026: their rules moved to a block of
  * their own, after this look's, scoped to the two together
- * (html:not([data-skin])). The same rules hold there: every value a token,
+ * (html:root). The same rules hold there: every value a token,
  * declared once, and nothing hidden but what MENU_HIDES lists.
  */
-const MENU_SCOPE = 'html:not([data-skin])';
+const MENU_SCOPE = 'html:root';
 const MENU_HIDES = [
   // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
-  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  'html:root body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
-  'html:not([data-skin]) #platform-tabs::before',
-  'html:not([data-skin]) body #platform-header#platform-header::before',
+  'html:root #platform-tabs::before',
+  'html:root body #platform-header#platform-header::before',
   // Home's and Communities' bar layer is off while the overlay scrim paints: in Firefox on a Mac the scrim over it was a darker band (24 Nov 2026).
-  'html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[data-painting]) #platform-header#platform-header::before',
+  'html:root body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[data-painting]) #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
-  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
+  'html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
   // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
   // places stay, on their glyphs' corners (phone review #81, 23 Nov 2026).
-  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
+  'html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
 ];
 
 function menuBlock() {
@@ -168,20 +168,20 @@ function menuMath(all) {
   return { decl, parts, token, px };
 }
 
-test('the removed look leaves nothing behind: the head sets no attribute for it, and no rule asks for one', () => {
+test('the removed looks leave nothing behind: the head sets no attribute for one, and no rule asks for one', () => {
   const head = read('frontend', 'src', 'head.html');
   assert.doesNotMatch(head, /setAttribute\('data-skin-wip'|setAttribute\('data-wip-tokens'|WIP_TOKENS/);
-  assert.match(head, /const SKINS = \['brand'\];/);
-  assert.match(head, /if \(skin !== 'standard'\) \{\s*root\.setAttribute\('data-skin', skin\);/);
+  // 26 Nov 2026: the brand and Paper looks went too, and with them data-skin.
+  assert.doesNotMatch(head, /data-skin|SKINS/);
   const rulesOnly = read('public', 'css', 'app.css').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.doesNotMatch(rulesOnly, /data-skin-wip|data-wip-tokens/, 'no rule is written for the removed look');
+  assert.doesNotMatch(rulesOnly, /data-skin/, 'no rule is written for a removed look');
 });
 
 test('every rule of its block is scoped to the look or is a component of its kit', () => {
   for (const { selector } of rules(wipBlock())) {
     for (const one of topLevel(selector)) {
-      // Home's rules are the standard look's too since 20 Nov 2026 (html:not([data-skin]): the two looks, and no other).
-      assert.match(one, /^html:not\(\[data-skin\]\)|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle another look`);
+      // Home's rules are the standard look's too since 20 Nov 2026 (html:root: the two looks, and no other).
+      assert.match(one, /^html:root|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle another look`);
     }
   }
 });
@@ -189,7 +189,7 @@ test('every rule of its block is scoped to the look or is a component of its kit
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
   // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
-  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--(wip|lit)-/.test(r.body));
+  const tokens = all.filter((r) => /^html:root(\.dark)?$/.test(r.selector) && /--(wip|lit)-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -214,7 +214,7 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     }
   }
   // Colours are written in the token rules alone (light, then dark), and every token a rule reads is declared there.
-  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-nav-/.test(r.body));
+  const tokens = all.filter((r) => /^html:root(\.dark)?$/.test(r.selector) && /--wip-nav-/.test(r.body));
   assert.equal(tokens.length, 2, 'one rule in light and one in dark');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-nav-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -234,9 +234,9 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   // Nothing of the old menu and bar is hidden but what MENU_HIDES lists.
   const hidden = all.filter((r) => /display:\s*none|visibility:\s*hidden|content:\s*none/.test(r.body)).map((r) => r.selector);
   assert.deepEqual(hidden.sort(), [...MENU_HIDES].sort());
-  // A folded sidebar opens from its arrow alone, in both.
+  // A folded sidebar opens from its arrow alone.
   assert.match(read('frontend', 'src', 'features', 'nav', 'rail-peek.ts'),
-    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);\s*(?:\/\/[^\n]*\n\s*)*\}/);
 });
 
 test('the pin on the lit row is drawn in the row\'s dark ink, not the panel\'s white', () => {
@@ -253,7 +253,7 @@ test('the pin on the lit row is drawn in the row\'s dark ink, not the panel\'s w
   assert.ok(pinRules.length >= 1, 'the lit row\'s pin has a rule of its own');
   const base = pinRules.find((r) => /--lit-tint:/.test(r.body));
   assert.ok(base, 'the rule that sets the pin\'s tokens');
-  assert.match(base.selector, /^html:not\(\[data-skin\]\) #platform-tabs /);
+  assert.match(base.selector, /^html:root #platform-tabs /);
   assert.match(base.body, /color:\s*var\(--wip-nav-on-ink\);/, 'its glyph is the row\'s ink');
   assert.match(base.body, /--lit-ink:\s*var\(--wip-nav-on-ink\);/, 'hover and pressed take that ink');
   assert.match(base.body, /--lit-tint:\s*var\(--wip-nav-on-pin-hover\);/, 'its ground is the ink\'s tint');
@@ -348,7 +348,7 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
 
 test('on a community\'s page the Communities tab gives way to its row', () => {
   const block = menuBlock();
-  const GIVE = 'html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"]';
+  const GIVE = 'html:root #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"]';
   const all = rules(block);
   const row = all.find((r) => r.selector === GIVE);
   assert.ok(row, 'the tab gives up its fill while a community\'s row is current');
@@ -364,14 +364,14 @@ test('on a community\'s page the Communities tab gives way to its row', () => {
   // It is a wide display's rule and it is in this block, whose scope is what out-ranks the lit row.
   assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
   // The look's own lit row is still there, so the give-way rule is what makes the difference.
-  assert.match(block, /html:not\(\[data-skin\]\) #platform-tabs :is\(\.platform-tab, [^{]*\)\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);/);
+  assert.match(block, /html:root #platform-tabs :is\(\.platform-tab, [^{]*\)\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);/);
 });
 
 test('folded, the menu is a strip of icons and logos, and a medium display starts on it', () => {
   const css = read('public', 'css', 'app.css');
   const block = menuBlock();
-  const STRIP = 'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
-  const FOLDED = 'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden))';
+  const STRIP = 'html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
+  const FOLDED = 'html:root body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden))';
   // It is still drawn (the shell's own rule takes a folded rail away), at the strip's width, which the page keeps clear.
   assert.ok(block.includes(`${STRIP} { display: flex; }`));
   assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
@@ -382,21 +382,21 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   // The top bar starts beside the strip as it does beside the open menu, and says Homeroom there: only the open menu hides the bar's own brand.
   assert.ok(block.includes(`${FOLDED} #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }`));
   assert.ok(!rules(block).some((r) => r.selector.startsWith(FOLDED) && r.selector.includes('#header-title')), 'folded, the top bar shows its own title');
-  // Nothing slides away: the strip stays, so the rail's leaving slide is skipped where <html> has no data-skin.
+  // Nothing slides away: the strip stays, so the rail has no leaving slide.
   const slide = read('frontend', 'src', 'features', 'nav', 'rail-slide.ts');
-  assert.match(slide, /const strip = !document\.documentElement\.hasAttribute\('data-skin'\);\s*if \(!open && !fromPeek && !strip\) bar\.classList\.add\('platform-tabs-leaving'\);/);
-  assert.match(slide, /if \(fromPeek \|\| strip\) return;/);
-  // A medium display starts on the strip, and only where a folded menu is a strip.
+  assert.doesNotMatch(slide, /platform-tabs-leaving|data-skin/);
+  assert.match(slide, /if \(bar\.classList\.contains\('platform-tabs-folded'\) === open\) return;/);
+  // A medium display starts on the strip.
   const auto = read('frontend', 'src', 'features', 'nav', 'rail-auto.ts');
   assert.match(auto, /export const RAIL_MEDIUM = '\(min-width: 768px\) and \(max-width: 1023\.98px\)';/);
-  assert.match(auto, /if \(document\.documentElement\.hasAttribute\('data-skin'\)\) return;/);
+  assert.doesNotMatch(auto, /data-skin/);
   assert.match(read('frontend', 'src', 'features', 'nav', 'tab-bar.tsx'), /useEffect\(\(\) => followDisplaySize\(\), \[\]\);/);
   // A phone's bar keeps the shell's height: the lit pill's inset comes out of the tab, so the resume strip is not covered.
-  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
+  assert.match(css, /html:root #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
 });
 
 test('folded, a count is pinned by its end so its figures stay whole inside the tab (asked 23 Nov 2026, #7055)', () => {
-  const STRIP = 'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
+  const STRIP = 'html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
   const count = rules(menuBlock()).find((r) => r.selector === `${STRIP} .platform-tab :is(.platform-tab-votes, .platform-tab-badge)`);
   assert.ok(count, 'the folded strip draws the counts on their glyphs\' corners');
   // The tab is 44px wide and clips its overflow: a start anchor let a second figure ("25") run past the edge and be cut.
@@ -414,7 +414,7 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   const css = read('public', 'css', 'app.css');
   const block = menuBlock();
   const all = rules(block);
-  const RAIL = 'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
+  const RAIL = 'html:root body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
   // ONE RULE PLACES IT, whatever the menu's state: its glyph in the rows' icon column, on the logo's line.
   assert.ok(block.includes(`${RAIL} #platform-header #sidebar-toggle {\n    position: absolute;\n`
     + '    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
@@ -431,10 +431,10 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   assert.equal((px('--wip-nav-mini-w') - px('--wip-nav-ic-size')) / 2, px('--wip-nav-pad') + px('--wip-nav-row-pad'),
     'the strip\'s glyphs stand where the open rows\' do');
   // The logotype starts where the rows' words do, after the button.
-  assert.match(block, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*inset-inline-start: calc\(var\(--wip-nav-pad\) \+ var\(--wip-nav-row-pad\) \+ var\(--wip-nav-ic-size\) \+ var\(--wip-nav-row-gap\)\);/);
+  assert.match(block, /html:root #platform-tabs::before \{[^}]*inset-inline-start: calc\(var\(--wip-nav-pad\) \+ var\(--wip-nav-row-pad\) \+ var\(--wip-nav-ic-size\) \+ var\(--wip-nav-row-gap\)\);/);
   // ONE GLYPH: the shell's own SidebarIcon, the same in both states, at the rows' weight; no drawing of the look's own.
   assert.doesNotMatch(css, /--wip-nav-ic-(un)?fold\b/);
-  const glyph = all.find((r) => r.selector === 'html:not([data-skin]) #platform-header #sidebar-toggle > svg');
+  const glyph = all.find((r) => r.selector === 'html:root #platform-header #sidebar-toggle > svg');
   assert.ok(glyph, 'the look styles the icon the button renders');
   assert.match(glyph.body, /stroke-width: var\(--wip-nav-fold-stroke\);/);
   assert.doesNotMatch(glyph.body, /mask|background/, 'it is the icon itself, not a mask over it');
@@ -507,7 +507,7 @@ test('where the page scrolls under the top bar, the bar has a ground from the me
   const brand = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs::before` && /mask:/.test(r.body));
   assert.match(brand.body, /inset-block-start: calc\(var\(--platform-safe-top, 0px\) \+ var\(--wip-nav-brand-top\)\);/);
   // The project's pause pill stands in the bar's row from 900px; where the bar is sticky at 30 with a ground, it rises over it.
-  assert.match(css, /html:not\(\[data-skin\]\)\[data-browser-scroller\] body:has\(#platform-header \.header-place-name\) #dev-forum-scroll:has\([^{]*\) > #dev-code-pause-notice \{ z-index: 31; \}/);
+  assert.match(css, /html:root\[data-browser-scroller\] body:has\(#platform-header \.header-place-name\) #dev-forum-scroll:has\([^{]*\) > #dev-code-pause-notice \{ z-index: 31; \}/);
   assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s*position: sticky;\s*top: var\(--browser-banner-h\);\s*z-index: 30;/, 'the bar it rises over');
 });
 
@@ -518,7 +518,7 @@ test('the All items head meets the top bar where the place bar is folded (asked 
   // the pinned head. In that same block the All items head drops it and rests
   // on the top bar's measured foot (`--ws-pin-top`), as the Hub's header does.
   assert.match(css,
-    /html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-pane-head \{\s*top: var\(--ws-pin-top, 0px\);\s*\}/);
+    /html:root body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-pane-head \{\s*top: var\(--ws-pin-top, 0px\);\s*\}/);
   const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
   const head = css.indexOf('#dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head');
   assert.ok(fold > 0 && head > fold, 'it goes in the 768px block that folds the bar, so it applies exactly when the bar is gone');
@@ -530,9 +530,9 @@ test('the All items board starts closer under the top bar (asked 25 Nov 2026, #7
   const css = read('public', 'css', 'app.css');
   // The head's card sat about 40px under the bar: the page's top padding plus
   // the tab body's shared 0.75rem. All items keeps only a few pixels of air.
-  const own = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] > \.dev-ws-tabbody \{\s*padding-block-start: 0;\s*\}/);
+  const own = css.match(/html:root body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] > \.dev-ws-tabbody \{\s*padding-block-start: 0;\s*\}/);
   assert.ok(own, 'the All items tab body drops the shared padding');
-  const page = css.match(/html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-body:has\(> #dev-workshop > \.dev-ws\[data-ws-tab="all"\]\) \{\s*padding-top: 4px;\s*\}/);
+  const page = css.match(/html:root body:has\(#platform-header \.header-place-name\) #dev-body:has\(> #dev-workshop > \.dev-ws\[data-ws-tab="all"\]\) \{\s*padding-top: 4px;\s*\}/);
   assert.ok(page, 'the page keeps 4px above the board');
   // Both sit in the 768px block that folds the place bar, after the shared
   // rule they override (same specificity, so the later rule wins), so the
@@ -566,7 +566,7 @@ test('open, Settings is a square at the end of You\'s row, centred on its line, 
   assert.ok(desk > 0, 'the shell\'s rule for the button');
   assert.match(css.slice(desk, css.indexOf('}', desk)), /display: inline-flex;\s*align-items: center;\s*justify-content: center;/);
   // Its own box, every measure from the menu's tokens.
-  const COG = 'html:not([data-skin]) #platform-tabs .platform-rail-settings';
+  const COG = 'html:root #platform-tabs .platform-rail-settings';
   const cog = all.find((r) => r.selector === COG && /width:/.test(r.body));
   assert.ok(cog, 'Settings has a box of its own in the menu block');
   const { decl, parts, token, px } = menuMath(all);
@@ -646,7 +646,7 @@ test('open, You\'s row ends short of Settings, and on Settings only Settings is 
   assert.ok(rowHover, 'the menu\'s hover rule');
   assert.equal(decl(hover.body, 'background'), decl(rowHover.body, 'background'));
   // Settings keeps the lit row's own rule, so it is the one thing lit.
-  const lit = all.find((r) => /^html:not\(\[data-skin\]\) #platform-tabs :is\(\.platform-tab, \.platform-rail-settings, .*\)\[aria-current="page"\]$/.test(r.selector) && /background:/.test(r.body));
+  const lit = all.find((r) => /^html:root #platform-tabs :is\(\.platform-tab, \.platform-rail-settings, .*\)\[aria-current="page"\]$/.test(r.selector) && /background:/.test(r.body));
   assert.ok(lit, 'the lit-row rule lights Settings');
   assert.equal(decl(lit.body, 'background'), 'var(--wip-nav-on-bg)');
   assert.ok(block.indexOf(GIVE) > block.indexOf(lit.selector), 'after the lit-row rule, which it out-ranks');
@@ -664,12 +664,12 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.ok(all.length > 15);
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
-      assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|rf-prev|rf-switch|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+      assert.ok(one.startsWith('html:root'), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.match(one, /^html:root(\.dark)?$|#admin-screen \*|^html:root \.gc-vote-btn|^html:root(\.dark)? \.(rf-pair|rf-morph|rf-prev|rf-switch|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.
-  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body));
+  const tokens = all.filter((r) => /^html:root(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body));
   assert.equal(tokens.length, 3, 'the levels in light and in dark, then the vote pair');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-btn-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -696,7 +696,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[1].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-shade\);/);
   assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
-  assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+  assert.match(css.slice(start, end), /html:root :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
   // Level 4, an action written as text, leaves a control that cannot be pressed out,
   // and one rule gives it the muted look instead (request 7131).
   const link = all.find((r) => r.selector.includes(':is(.text-violet-600, .text-violet-700') && /color: var\(--wip-btn-link-ink\);/.test(r.body));
@@ -719,10 +719,10 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
 test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {
   const all = rules(wipBlock());
   // Its own rule gives it the page's font, which is Geist in this look.
-  const rule = all.find((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-new-top');
+  const rule = all.find((r) => r.selector === 'html:root #communities-screen #communities-new-top');
   assert.ok(rule, 'the page action\'s family is a rule of the look\'s own block');
   assert.equal(rule.body.trim(), 'font-family: var(--wip-font);');
-  const token = all.find((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-font: 'Geist'/.test(r.body));
+  const token = all.find((r) => /^html:root(\.dark)?$/.test(r.selector) && /--wip-font: 'Geist'/.test(r.body));
   assert.ok(token, 'the page\'s font is the one the rest of the page reads');
   // Two ids, so it outranks the BUTTONS block's shape (its classes are inside :where()).
   assert.equal((rule.selector.match(/#/g) || []).length, 2, 'it beats the class rules and the one-id page top action rule');
@@ -733,9 +733,9 @@ test('New community wears the Communities page\'s typeface, not the buttons\' se
   const start = css.indexOf('── BUTTONS (20 Nov 2026)');
   const end = css.indexOf('END OF BUTTONS.');
   const buttons = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
-  const serif = buttons.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
+  const serif = buttons.filter((r) => /^html:root(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
   assert.match(serif.body, /--wip-btn-font: var\(--wip-font\);/);
-  const top = buttons.find((r) => r.selector === 'html:not([data-skin]) :is(#home-new-project-top, #communities-new-top)');
+  const top = buttons.find((r) => r.selector === 'html:root :is(#home-new-project-top, #communities-new-top)');
   assert.ok(top, 'the page top action rule is still the buttons block\'s');
   assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project reads the buttons\' face');
 });
@@ -761,21 +761,18 @@ test('no sheen: a pointer sends no band of light across a project\'s icon, a com
       assert.doesNotMatch(one, /\[data-ws-community-(open-app|join)\]\)(:hover)?::(after|before)/, `"${one}" draws over the hub's filled action`);
     }
   }
-  // What the pointer does there stays: a community's tint deepens a step, and nothing moves.
-  assert.ok(all.some((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover'
-    && /background-color: var\(--wip-soft-bg-on\);/.test(r.body)));
 });
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
-  assert.match(block, /html:not\(\[data-skin\]\) #home-screen \.home-main > \* \{ order: 4; \}/);
+  assert.match(block, /html:root #home-screen \.home-main > \* \{ order: 4; \}/);
 });
 
 test('its pieces come from the kit, not from classes spelled in place', () => {
   const kit = read('frontend', 'src', 'features', 'home', 'wip-kit.tsx');
   for (const name of ['WipCard', 'WipCta', 'WipHeadMore']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
-  assert.match(island, /<WipCard on=\{wip\}>/);
+  assert.match(island, /<WipCard>/);
   assert.match(island, /<WipCta id="home-new-project-top"/);
   assert.doesNotMatch(island, /bg-gradient-to-br/, 'the filled action\'s gradient is the kit\'s, from tokens');
 });

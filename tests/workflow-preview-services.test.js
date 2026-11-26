@@ -166,9 +166,14 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
   const input = { sessionId: 5, appId: 2, n: 3, head, db: 'app_shop_staging_s5_abcdef' };
   assert.deepEqual(await handlers[WORK.prepare].run(ctx(input)), {
     ok: true, db: 'app_shop_staging_s5_abcdef', url: 'https://shop--s5.apps', runtimeKind: 'kubernetes', runtimeName: 'sv-preview-2-s5',
-    containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1',
+    containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1', timings: null,
   });
   assert.deepEqual(calls[0], ['prepare', head, 3, 'app_shop_staging_s5_abcdef']);
+  // The build's step times ride the receipt to the checks run's trace; the
+  // server log was their only record.
+  const timings = { startedAt: 1, sourceFetchMs: 1077, imageBuildMs: 255000, cloneMs: 1879, healthMs: 5511, totalMs: 263000 };
+  state.build = { ...state.build, timings };
+  assert.deepEqual((await handlers[WORK.prepare].run(ctx(input))).timings, timings);
 
   state.build = Object.assign(new Error('Deployment cannot start: CrashLoopBackOff'), { healthcheckFailed: true, servingRemoved: false });
   const failed = await handlers[WORK.prepare].run(ctx(input));
@@ -273,8 +278,13 @@ test('each claim of a checks run has an id of its own; a retry collects what the
   const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-7', trigger: 'commit-push',
     runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
   calls.length = 0;
+  captured.length = 0;
   assert.deepEqual(await handlers[WORK.run].run(ctx(input)), { outcome: 'verdict', state: 'passing' });
   assert.deepEqual(calls, [['capture', head, 'sv-preview-2-s5', first]], 'a first claim runs under its own id');
+  assert.equal(captured.at(-1).buildTimings, null, 'a run with no build before it has no build steps to trace');
+  const timings = { sourceFetchMs: 1077, imageBuildMs: 255000 };
+  await handlers[WORK.run].run(ctx({ ...input, timings }));
+  assert.deepEqual(captured.at(-1).buildTimings, timings, 'the run right after a build hands its steps to the trace');
   calls.length = 0;
   collected.next = { outcome: 'verdict', state: 'failing' };
   assert.deepEqual(await handlers[WORK.run].run(ctx(input, { attempt: 2 })), { outcome: 'verdict', state: 'failing' });

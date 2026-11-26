@@ -58,6 +58,7 @@ import { ArrowRightShortIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
+import { matchesSearch } from '../../lib/search-rank.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { CommunitiesToJoin } from '../home/communities-to-join';
 import { CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
@@ -320,7 +321,7 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   const all = apps || [];
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
   const q = query.trim();
-  const matches = (app: GuestApp) => !q || [app.name, app.slug, app.description].some((f) => typeof f === 'string' && f.toLowerCase().includes(q.toLowerCase()));
+  const matches = (app: GuestApp) => matchesSearch(q, app.name, app.slug, app.description);
   const pinnedApps = device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
   const pinnedCommunities = device.communities.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
   const open = onOpenInside || (() => {});

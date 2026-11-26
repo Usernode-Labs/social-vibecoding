@@ -128,6 +128,15 @@ function catalogFixtures(curation = false) {
       name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
+    // A name with accents that its address does not spell, so a search
+    // shows the name is found however it is typed: "creme" finds "Crème
+    // Brûlée" on Home, Communities and the guest's page, as it finds an app
+    // (frontend/src/lib/search-rank.js). Nothing in the slug says "creme".
+    {
+      ...base, id: 990037, slug: 'staging-demo-dessert-club',
+      name: 'Staging demo Crème Brûlée', icon_emoji: '🍮', active_users: 3,
+      created_at: demoAgo(20 * 24), last_deploy_at: demoAgo(9 * 24),
+    },
   ];
   // ?curation=1: one app of each kind Discover tells apart
   // (services/discovery-curation.js). Listed (and featured), flagged by an

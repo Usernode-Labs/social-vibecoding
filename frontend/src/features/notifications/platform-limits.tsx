@@ -40,6 +40,17 @@
  * effect, so the prerendered shell is unchanged and hydration matches. Their
  * whole subtree is React's; no public/js module writes into it.
  *
+ * ON A PHONE (request 7164, the phone audit of 25 Nov 2026). The whole card
+ * stood between the sheet's title and its list, so the first notification
+ * began below the middle of a 780px screen. Under 768px the area is one
+ * line, 44px tall: the worst row's kicker and figure, how many more there
+ * are, and a chevron. A press opens the same card under it, and the line
+ * then reads the area's name. It folds again each time the sheet closes.
+ * Folding is not putting away: the line stays for as long as a row does, in
+ * its row's ink. From 768px nothing changes and the line is not drawn. Each
+ * row's action keeps its 32px pill and takes a 44px tap area
+ * (`.un-touch-target`, native.css).
+ *
  * LIVE. The figures arrive on boot, when the sheet opens, every five minutes
  * while the page is visible, and when the server says a level moved (the
  * `platform_limits_changed` socket frame, routed by app.js to
@@ -53,7 +64,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   AppWindowIcon, ArchiveBoxIcon, ArrowPathIcon, ArrowTopRightOnSquareIcon, ArrowsRightLeftIcon, ChartBarIcon,
-  HomeroomBotIcon, TerminalIcon, WalletIcon,
+  ChevronDownIcon, HomeroomBotIcon, TerminalIcon, WalletIcon,
 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
@@ -488,7 +499,7 @@ function RowIcon({ name }: { name: LimitKey }) {
 
 function ActionControl({ view, busy, onCheck }: { view: RowView; busy: boolean; onCheck: () => void }) {
   const t = useMessages('notifications');
-  const look = cn(ACTION_LOOK[view.tone], 'min-h-[32px] font-semibold');
+  const look = cn(ACTION_LOOK[view.tone], 'min-h-[32px] font-semibold un-touch-target');
   if (view.action.kind === 'check') {
     return (
       <button type="button" className={look} disabled={busy} onClick={onCheck} data-limit-action="check">
@@ -516,18 +527,61 @@ function ActionControl({ view, busy, onCheck }: { view: RowView; busy: boolean; 
 }
 
 /** The card itself, from a payload. Pure render: the tests draw it directly. */
-export function PlatformLimitsCard({ payload, busy = false, onCheck = () => {} }: {
+export function PlatformLimitsCard({ payload, busy = false, onCheck = () => {}, unfolded = false, onFold = () => {} }: {
   payload: LimitsPayload | null;
   busy?: boolean;
   onCheck?: () => void;
+  /** Under 768px: whether the card is showing under its one line. */
+  unfolded?: boolean;
+  onFold?: () => void;
 }) {
   const t = useMessages('notifications');
   if (!payload || !payload.rows.length) return null;
   const views = payload.rows.map((row) => rowView(row, t as Translate));
+  const worst = views[0];
+  const more = views.length - 1;
   return (
     <section className="px-3 pt-1 pb-2 shrink-0" data-platform-limits="" aria-label={t('notifications:limits.heading')}>
-      <SectionHeader className="px-1 pt-1 pb-1.5">{t('notifications:limits.heading')}</SectionHeader>
-      <div className="rounded-[20px] bg-white dark:bg-zinc-900 overflow-hidden shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05)]">
+      {/* The phone's one line (see ON A PHONE above). The server ranks the
+          rows worst first, so the first is the one to name. */}
+      <button
+        type="button"
+        data-limit-fold={unfolded ? 'open' : 'folded'}
+        aria-expanded={unfolded}
+        aria-controls="platform-limits-card"
+        className={'md:hidden flex w-full min-h-[44px] items-center gap-2 rounded-[14px] bg-white dark:bg-zinc-900 px-3 text-start '
+          + 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)] '
+          + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+        onClick={onFold}
+      >
+        {unfolded ? (
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {t('notifications:limits.heading')}
+          </span>
+        ) : (
+          <>
+            <span className={cn('shrink-0 text-xs font-semibold', KICKER_TONE[worst.tone])}>{worst.kicker}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{worst.title}</span>
+            {more > 0 ? (
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                {t('notifications:limits.fold.more', { count: more })}
+              </span>
+            ) : null}
+          </>
+        )}
+        <ChevronDownIcon
+          aria-hidden="true"
+          className={cn('h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400', unfolded ? 'rotate-180' : '')}
+        />
+      </button>
+      <SectionHeader className="hidden md:block px-1 pt-1 pb-1.5">{t('notifications:limits.heading')}</SectionHeader>
+      <div
+        id="platform-limits-card"
+        className={cn(
+          'rounded-[20px] bg-white dark:bg-zinc-900 overflow-hidden shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05)]',
+          unfolded ? 'mt-2 md:mt-0' : 'hidden md:block',
+        )}
+      >
         <ul className="max-h-[40vh] overflow-y-auto overscroll-contain">
           {views.map((view, i) => (
             <li
@@ -567,13 +621,18 @@ export function PlatformLimitsCard({ payload, busy = false, onCheck = () => {} }
 export function PlatformLimitsArea({ open }: { open: boolean }) {
   const payload = usePlatformLimits();
   const [busy, setBusy] = useState(false);
+  // The phone's fold: per opening, like the sheet's own reveals.
+  const [unfolded, setUnfolded] = useState(false);
   useEffect(() => {
     if (open && Date.now() - lastRead > FRESH_MS) void refreshPlatformLimits();
+    if (!open) setUnfolded(false);
   }, [open]);
   return (
     <PlatformLimitsCard
       payload={payload}
       busy={busy}
+      unfolded={unfolded}
+      onFold={() => setUnfolded((was) => !was)}
       onCheck={() => {
         if (busy) return;
         setBusy(true);

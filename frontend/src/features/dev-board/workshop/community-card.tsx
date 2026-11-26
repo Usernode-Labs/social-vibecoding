@@ -84,10 +84,8 @@ import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
-import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
 import { communityScene } from '../../home/pinned-communities';
-import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
 import { CardPreview } from '../../guest/card-preview';
 import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
@@ -209,7 +207,8 @@ export type CommunityPayload = {
   invite_link?: boolean;
   /** The invite links out, summed (services/community-invites.js
       inviteSummary): the viewer's own, or every one to someone who manages
-      the project. Share it says it in one line. Null when not read. */
+      the project. No screen draws it since the Share it card went (26 Nov
+      2026); it stays in the payload. Null when not read. */
   invite_summary?: InviteSummary | null;
   /** Since when the app itself has been live (routes/apps.js: when it
       first ran), for Recently live's card of the app while none of its
@@ -720,9 +719,8 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   const solo = data.audience === 'solo';
   const count = Number(data.member_count) || 0;
   const t = useMessages('project');
-  // Standard (WIP): who it is for and who is in it are two things on the
-  // line, each with its own mark, in place of one run of words.
-  const wipLook = isKitHome(useLiveSkin());
+  // Who it is for and who is in it are two things on the line, each with
+  // its own mark, in place of one run of words.
   return (
     <div className="dev-ws-hero-id" data-ws-community-id="">
       <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
@@ -731,41 +729,31 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
       <span className="dev-ws-hero-id-text">
         <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
         <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
-          {wipLook ? (
-            // One line: what kind of community, and who is in it. Invite is
-            // the action row's (CommunityCard).
-            <span className="wip-hub-meta">
-              <span className="wip-hub-meta-kind" data-audience={data.audience}>
-                <AudienceGlyph audience={data.audience} />
-                <span className="dev-ws-hero-audience" data-ws-community-audience="">
-                  {solo || !data.audience_label ? (justYouSoFar(data, member) || audienceLine(data)) : data.audience_label}
-                </span>
+          {/* One line: what kind of community, and who is in it. Invite is
+              the action row's (CommunityCard). */}
+          <span className="wip-hub-meta">
+            <span className="wip-hub-meta-kind" data-audience={data.audience}>
+              <AudienceGlyph audience={data.audience} />
+              <span className="dev-ws-hero-audience" data-ws-community-audience="">
+                {solo || !data.audience_label ? (justYouSoFar(data, member) || audienceLine(data)) : data.audience_label}
               </span>
-              {!solo && data.audience_label ? (
-                // Phone review #52 (23 Nov 2026): the faces and the count
-                // looked like a way to see who is in it and did nothing; the
-                // roster was three levels down the ⋯ menu. They open it.
-                <button
-                  type="button"
-                  className="wip-hub-meta-people"
-                  data-ws-members-open=""
-                  title={t('project:communityCard.people.open')}
-                  onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
-                >
-                  <HeroFaces members={data.members} />
-                  {t('project:communityCard.people.members', { count })}
-                </button>
-              ) : null}
             </span>
-          ) : solo || !data.audience_label ? (
-            <span className="dev-ws-hero-audience" data-ws-community-audience="">{justYouSoFar(data, member) || audienceLine(data)}</span>
-          ) : (
-            <RichMessage
-              id="project:communityCard.people.audienceMembers"
-              values={{ audience: data.audience_label, count }}
-              components={[<span className="dev-ws-hero-audience" data-ws-community-audience="" />]}
-            />
-          )}
+            {!solo && data.audience_label ? (
+              // Phone review #52 (23 Nov 2026): the faces and the count
+              // looked like a way to see who is in it and did nothing; the
+              // roster was three levels down the ⋯ menu. They open it.
+              <button
+                type="button"
+                className="wip-hub-meta-people"
+                data-ws-members-open=""
+                title={t('project:communityCard.people.open')}
+                onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+              >
+                <HeroFaces members={data.members} />
+                {t('project:communityCard.people.members', { count })}
+              </button>
+            ) : null}
+          </span>
         </span>
         <HeroLineage data={data} />
       </span>
@@ -817,7 +805,7 @@ export async function verifiedToGoPublic(): Promise<boolean> {
   return askToVerifyForPublic();
 }
 
-/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm): a message id. */
+/** What making it public means, said before it is proposed (the Make it public popup): a message id. */
 export const MAKE_PUBLIC_LINE = 'project:communityCard.makePublic.explain';
 
 /**
@@ -951,11 +939,9 @@ function MakePublic({ slug, name, onOpened }: {
  * the button: the hero's Join question.
  */
 /**
- * Standard (WIP) only: "Make it public" in the hero, beside Open app, for
- * exactly whom the Share it card offers it under every other look (a just
- * yours project its viewer manages, with no such change already up). That
- * card is not drawn under this look, so this is its one place there.
- * Under Standard the hero has no such button (#4045, #4666).
+ * "Make it public" in the hero, beside Open app, for a just-yours project
+ * its viewer manages, with no such change already up (#4045, #4666). This
+ * is its one place on the hub.
  */
 function WipHeroPublic({ slug, name, data }: { slug: string; name: string; data: CommunityPayload }): ReactNode {
   if (data.audience !== 'solo' || !data.can_manage || data.audience_change) return null;
@@ -1009,7 +995,7 @@ export function hubAppLive(data: Pick<CommunityPayload, 'first_version'> | null 
   return !fv || fv.line === 'live';
 }
 
-export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, platform = false }: {
   slug: string;
   /** Homeroom's own community: its hero wears the brand's own page (cream, the people, the three-colour rule). */
   platform?: boolean;
@@ -1029,21 +1015,11 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   /** Where Join through the invite link this page was opened from lands
       (./invite-offer.ts): the page's own choice, Needs you or the hub. */
   onJoinedByInvite?: () => void;
-  /** The page draws the Invite card beside this hero (InviteHeroCard), so
-      the row's small Invite is left out: one Invite on a page. Once that
-      card's ✕ closes it (./hub-dismissed.ts), the row's Invite comes back. */
-  inviteCard?: boolean;
 }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
-  // Standard (WIP) draws the hero as a poster, with the project's picture at its side.
-  const wipLook = isKitHome(useLiveSkin());
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
-  // The Invite card's ✕ (InviteHeroCard): once closed, the row's small
-  // Invite is the way in. Read here, above every return, so the pill and the
-  // card agree (./hub-dismissed.ts).
-  const [inviteClosed] = useHubDismissed(slug, 'invite');
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
   // (lib/join-required.ts's offerJoin), which does the joining, unless the
@@ -1359,8 +1335,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   }
 
   // The project's picture (its moving loop plays over it while it is pointed at) stands beside the hero, in its
-  // row, where the look is the kit's and there is one (asked 20 Nov 2026).
-  const previewBeside = wipLook && !platform && !!data.cover?.illustration_url;
+  // row, where there is one (asked 20 Nov 2026).
+  const previewBeside = !platform && !!data.cover?.illustration_url;
   return (
     <>
     <section
@@ -1376,11 +1352,10 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
-      {/* Standard (WIP): the hero is a poster. At its side, for show only, the
-          project's own picture (the one its group voted in for its card)
-          when it has one, and its icon again, large, in front of it. */}
-      {wipLook ? (
-        <>
+      {/* The hero is a poster. At its side, for show only, the project's own
+          picture (the one its group voted in for its card) when it has one,
+          and its icon again, large, in front of it. */}
+      <>
           {/* The brand kit's background this community wears on its pinned card (asked 20 Nov 2026), fading into the card toward the words. */}
           <span className="wip-hero-wash" data-scene={platform ? 'home' : String(communityScene(slug))} aria-hidden="true" />
           <span className="wip-hero-art" aria-hidden="true">
@@ -1393,8 +1368,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
               </span>
             </span>
           </span>
-        </>
-      ) : null}
+      </>
       {/* WHAT IT IS AND WHO IT IS FOR: the tile and the name, the page's one
           large heading, over "Public community · 266 members", or "Just you
           so far" to the one person in a project that is just theirs. */}
@@ -1422,12 +1396,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         {/* Opened from an invite link: Join leads the row, before Open app. */}
         {inviteJoin}
         {appButton}
-        {/* Standard (WIP): Invite is a full-size button beside Open app, its
+        {/* Invite is a full-size button beside Open app, its
             outlined second, with the invite glyph; on Homeroom's own hub,
             which has no Open app, it stands alone in the row. It was a small
             pill at the end of the line about who is here, with a drawn arrow
             to it that was left pointing at nothing once the pill wrapped. */}
-        {member && !(inviteCard && showsInviteHero(data) && !inviteClosed) ? (
+        {member ? (
           <Button
             type="button"
             variant="pillNeutral"
@@ -1437,12 +1411,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
             title={t('project:communityCard.invite.title')}
             onClick={openInviteLinks}
           >
-            {wipLook ? <UserPlusIcon aria-hidden="true" /> : null}
+            <UserPlusIcon aria-hidden="true" />
             {t('project:communityCard.invite.button')}
           </Button>
         ) : null}
-        {/* Standard (WIP): "Make it public" after them (WipHeroPublic). */}
-        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
+        {/* "Make it public" after them (WipHeroPublic). */}
+        <WipHeroPublic slug={slug} name={displayName} data={data} />
         {menuFor('hero')}
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
@@ -1476,142 +1450,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
 }
 
 /**
- * Whether the hub draws the Invite card (InviteHeroCard): for a member of a
- * community other people are in. A project that is just yours keeps the
- * row's small Invite beside "Just you so far" (#4896) and its Share it card.
- */
-export function showsInviteHero(data: CommunityPayload | null | undefined): boolean {
-  if (!data || !data.is_member || data.audience === 'solo') return false;
-  return (Number(data.member_count) || 0) > 1;
-}
-
-/** How many faces fan out at the top of the Invite card, before its "+". */
-const INVITE_FACES = 3;
-
-/**
- * INVITE, AS A CARD (request 6654): the hub's Invite was a small grey pill
- * in the hero's row and was easy to miss. It is a card of its own now, drawn
- * as Home's New project card is: faces of people already here fanned out
- * with an open seat after them, what an invite does, one full-width button
- * and how many people are in. Under the hero (app.css
- * `.dev-ws-invite-hero`). The button opens the same invite
- * pane the small Invite did (openInviteLinks).
- *
- * Its ✕ (request 6687, ./hub-dismissed.ts) closes it for that person on
- * that project, as Share it's does; Invite is then the hero row's small pill
- * again (CommunityCard), which does everything this card did.
- */
-export function InviteHeroCard({ slug, data }: { slug: string; data: CommunityPayload | null | undefined }): ReactNode {
-  const t = useMessages('project');
-  const [closed, close] = useHubDismissed(slug, 'invite');
-  if (!showsInviteHero(data) || !data || closed) return null;
-  const people = (data.activity?.active_people || []).filter((p) => p && p.username).slice(0, INVITE_FACES);
-  const members = Number(data.member_count) || 0;
-  const active = Number(data.activity?.active_week) || 0;
-  return (
-    <section className="dev-ws-invite-hero" data-ws-invite-hero="" aria-label={t('project:hub.invite.title')}>
-      <HubCardClose card="invite" onClose={close} />
-      <span className="dev-ws-invite-hero-fan" aria-hidden="true">
-        {people.map((p) => (
-          <span key={p.id} className="dev-ws-invite-hero-face" style={{ background: swatchFor(p.username) }}>
-            {(p.username || '?').charAt(0).toUpperCase()}
-          </span>
-        ))}
-        <span className="dev-ws-invite-hero-face dev-ws-invite-hero-seat">+</span>
-      </span>
-      <h2 className="dev-ws-invite-hero-title">{t('project:hub.invite.title')}</h2>
-      <p className="dev-ws-invite-hero-text">{t('project:hub.invite.text', { community: data.name || '' })}</p>
-      <Button
-        type="button"
-        layout="fullIconRow"
-        variant="roundedFull"
-        size="pill"
-        ink="solid"
-        className="dev-ws-invite-hero-btn"
-        data-ws-community-invite=""
-        title={t('project:communityCard.invite.title')}
-        onClick={openInviteLinks}
-      >
-        <UserPlusIcon className="w-[18px] h-[18px]" aria-hidden="true" />
-        {t('project:hub.invite.button')}
-      </Button>
-      <p className="dev-ws-invite-hero-count" data-ws-invite-hero-count="">
-        {active
-          ? t('project:hub.invite.membersActive', { members: t('project:communityCard.people.members', { count: members }), active: t('project:hub.people.active', { count: active }) })
-          : t('project:communityCard.people.members', { count: members })}
-      </p>
-    </section>
-  );
-}
-
-/**
- * SHARE IT: how a project that is just yours grows, on its hub right under
- * the hero (and the First version card while Homeroom bot builds it), ahead
- * of what to change (15 Oct 2026). The same two levers the hero offers a
- * community (Invite makes it a private community; "Make it public" proposes
- * making it public, voted in like any other line of dapp.json), gathered
- * under one line that says what they do, since on a project of one they are
- * the whole of what there is to do with people. Offered to exactly whom the
- * hero would offer them; nothing when neither applies, and nothing until
- * the shared read has answered.
- *
- * While Homeroom bot builds its first version (the First version card above
- * it, ./hub-cards.tsx), the line says what an invite is for right now, in
- * the made screen's words: people can follow along while it is being built.
- *
- * WHAT INVITE IS OUT (inviteSentLine): once a live link is out, one line
- * over that says so, who came in through it and how long it has left. And
- * a ✕, which closes the card on this project for good (./hub-dismissed.ts):
- * Invite is still in the hero's row, and Make it public in the ⋯'s Who can
- * see & change it.
- */
-export function shareItLine(building: boolean): string {
-  return building
-    ? translate('project:communityCard.share.lineBuilding')
-    : translate('project:communityCard.share.line');
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * How long the soonest live link has left, in words: "7 days left", "1 day
- * left", or "expires today" under a day. '' for a link with no end. Days
- * are rounded, so a link made a minute ago for seven days says seven. Pure;
- * `now` is the reader's clock.
- */
-export function linkTimeLeft(expiresAt: string | null | undefined, now: number = Date.now()): string {
-  const at = expiresAt ? Date.parse(expiresAt) : NaN;
-  if (!Number.isFinite(at)) return '';
-  const left = at - now;
-  if (left < DAY_MS) return translate('project:communityCard.share.expiresToday');
-  return translate('project:communityCard.share.daysLeft', { count: Math.max(1, Math.round(left / DAY_MS)) });
-}
-
-/**
- * Share it's line about the invite that is out (15 Oct 2026): "Invite link
- * sent · nobody has joined yet · 7 days left", then "Invite link sent · 1
- * joined · 6 days left" once somebody has come in through it. "2 invite
- * links sent" for two, the soonest of them saying the time left, and no
- * time at all when none of them ends. '' with no live link, which says
- * nothing. Pure; the summary is the hub read's `invite_summary`.
- */
-export function inviteSentLine(summary: InviteSummary | null | undefined, now: number = Date.now()): string {
-  const links = Math.max(0, Number(summary?.links) || 0);
-  if (!summary || !links) return '';
-  const joined = Math.max(0, Number(summary.joined) || 0);
-  const sent = translate('project:communityCard.share.sent', { count: links });
-  const who = joined
-    ? translate('project:communityCard.share.joined', { count: joined })
-    : translate('project:communityCard.share.nobodyJoined');
-  const line = translate('project:facts.pair', { first: sent, second: who });
-  const left = linkTimeLeft(summary.expires_at, now);
-  return left ? translate('project:facts.pair', { first: line, second: left }) : line;
-}
-
-/**
- * The ✕ that closes a card on the hub for good (./hub-dismissed.ts): Share
- * it's, and "What do you want to change?"'s (./workshop.tsx
- * StartHereBanner). At the end of the card's head, quiet until pressed.
+ * The ✕ that closes a card on the hub for good (./hub-dismissed.ts): "What
+ * do you want to change?"'s (./workshop.tsx StartHereBanner). At the end of the card's head, quiet until pressed.
  */
 export function HubCardClose({ onClose, card }: { onClose: () => void; card: string }) {
   const t = useMessages('project');
@@ -1629,46 +1469,6 @@ export function HubCardClose({ onClose, card }: { onClose: () => void; card: str
   );
 }
 
-export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
-  const t = useMessages('project');
-  const data = useCommunity(slug);
-  // Standard (WIP) has both of its actions in the hero (CommunityCard).
-  const wipLook = isKitHome(useLiveSkin());
-  const [closed, close] = useHubDismissed(slug, 'share');
-  if (!data || data.audience !== 'solo' || closed) return null;
-  if (wipLook) return null;
-  const canInvite = !!data.is_member;
-  const canOpenUp = !!data.can_manage && !data.audience_change;
-  if (!canInvite && !canOpenUp) return null;
-  const sent = inviteSentLine(data.invite_summary);
-  return (
-    <section className="dev-ws-strip dev-ws-share" data-ws-share="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">{t('project:communityCard.share.title')}</span>
-        <HubCardClose card="share" onClose={close} />
-      </div>
-      {sent ? <p className="dev-ws-share-sent" data-ws-share-sent="">{sent}</p> : null}
-      <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
-      <div className="dev-ws-share-actions">
-        {canInvite ? (
-          <Button
-            type="button"
-            variant="pillNeutral"
-            size="sm"
-            ink="neutral"
-            data-ws-share-invite=""
-            onClick={openInviteLinks}
-          >
-            {t('project:communityCard.share.invite')}
-          </Button>
-        ) : null}
-        {canOpenUp ? (
-          <MakePublic slug={slug} name={name || data.name || slug} onOpened={() => { void reloadCommunity(slug); }} />
-        ) : null}
-      </div>
-    </section>
-  );
-}
 
 /**
  * The approvers' names on an invited-approvers project, for the drawing

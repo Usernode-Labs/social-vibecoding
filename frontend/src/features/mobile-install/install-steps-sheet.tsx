@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState, type Ref } from 'react';
+import { useRef, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList } from '@/components/ui/grouped-list';
 import { ArrowUpTrayIcon, EllipsisVerticalIcon, XIcon } from '@/components/ui/icons';
-import { pushDismissible } from '../../lib/back-stack';
 import { useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useSheet } from '../../lib/sheet';
 import { A2HS_STEP_LIST, type A2hsStep, type MobileOs } from './detect';
 
 /**
@@ -19,9 +17,9 @@ import { A2HS_STEP_LIST, type A2hsStep, type MobileOs } from './detect';
  * and a "Got it" that closes it. Closing it does not dismiss the banner; the
  * banner's own ✕ still does that.
  *
- * Presented the way the staking sheet and the community switcher are: handed
- * to the native kit as a `sheet` when one is there (lib/kit-surface.ts), and a
- * CSS sheet over a scrim when not. Back, Escape, the scrim, ✕ and "Got it" all
+ * Presented the way the staking sheet and the community switcher are, by the
+ * Sheet (lib/sheet.ts): the native kit's `sheet` when one is there, and a CSS
+ * sheet over a scrim when not. Back, Escape, the scrim, ✕ and "Got it" all
  * close it.
  *
  * Island rules: rendered only while open, into document.body, from state that
@@ -29,47 +27,18 @@ import { A2HS_STEP_LIST, type A2hsStep, type MobileOs } from './detect';
  * shell.
  */
 export function InstallStepsSheet({ os, onClose }: { os: MobileOs; onClose: () => void }) {
-  const panel = useRef<HTMLDivElement | null>(null);
   const done = useRef<HTMLButtonElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const [adopted, setAdopted] = useState(false);
-
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; onCloseRef.current(); },
-    });
-    setAdopted(!!adoption);
-    done.current?.focus({ preventScroll: true });
-    return () => {
-      if (adoption) adoption.release();
-      previousFocus?.focus?.({ preventScroll: true });
-    };
-  }, []);
-
-  // The device back button closes it (lib/back-stack.ts). Closed any other
-  // way, the claim is handed back; closed BY back, the record is already spent.
-  useEffect(() => {
-    let backed = false;
-    const release = pushDismissible(() => {
-      backed = true;
-      onCloseRef.current();
-      return true;
-    });
-    return () => { if (!backed) release(); };
-  }, []);
+  const { panelRef: panel, adopted, scrimProps } = useSheet({
+    kind: 'sheet',
+    onClose,
+    initialFocus: () => done.current,
+  });
 
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div
       className={adopted ? 'contents' : 'fixed inset-0 z-[70] bg-black/60 flex items-end justify-center'}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -83,7 +52,6 @@ export function InstallStepsSheet({ os, onClose }: { os: MobileOs; onClose: () =
         // row the title, the steps and Got it stood side by side, the steps
         // cut off in a narrow strip (shots of #5695).
         className="w-full max-w-md rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] flex flex-col"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         <InstallStepsContent os={os} onClose={onClose} doneRef={done} />
       </div>

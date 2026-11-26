@@ -46,15 +46,11 @@ import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGro
 
 import { useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
+import { capCount } from '../../../lib/count-cap';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../../app-frame/live-apps';
 import { noteResumeOrigin } from '../../nav/resume-motion';
 import type { PlacesPayload } from './community-card';
 import { channelPlace, isChannelPlace, litPlace, liveTopics, PAGE_PLACES, placeHref, type PlaceKey } from './places';
-
-/** "99+" past 99, as every count on the page caps. */
-export function countText(n: number): string {
-  return n > 99 ? '99+' : String(n);
-}
 
 /** What a place's count says aloud, or null for none (a zero says nothing).
  *  `shown` is the number as displayed (capped as 99+); the plural form
@@ -112,7 +108,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   const phrase = channel && lit ? null : countPhrase(k, count);
   // A channel's pill says what it counts ("9 unread", capped as "99+ unread"),
   // its hover text the same; Needs you keeps the bare number.
-  const shown = channel ? countPhrase(k, count, countText(count)) : null;
+  const shown = channel ? countPhrase(k, count, capCount(count)) : null;
   const press = (event: MouseEvent<HTMLAnchorElement>) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
     if (nav?.isNativeClick?.(event)) return;
@@ -133,7 +129,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
       <span className="dev-ws-place-label">{label}</span>
       {phrase ? (
         <>
-          <span className="dev-ws-place-count" data-place-count="" aria-hidden="true" title={shown ?? undefined}>{shown ?? countText(count)}</span>
+          <span className="dev-ws-place-count" data-place-count="" aria-hidden="true" title={shown ?? undefined}>{shown ?? capCount(count)}</span>
           <span className="sr-only">{` ${t('project:places.list.countAloud', { phrase })}`}</span>
         </>
       ) : null}

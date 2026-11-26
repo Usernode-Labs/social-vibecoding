@@ -63,10 +63,8 @@ import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
-import { useFramePage } from '../frame/frame-page-store';
 import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
 import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
-import { navStore } from '../nav/nav-store.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 interface FilterPart {
@@ -1044,34 +1042,4 @@ export function SettingsPagePin() {
       </button>
     </div>
   );
-}
-
-/**
- * THE BAR'S TRAIL UNDER A LOOK (looks v2, s56 to s73). The frame's bar reads
- * a page's own breadcrumb from ../frame/frame-page-store.ts; Settings says
- * "You › Settings" on the phone's list of sections and "Settings › <page>"
- * wherever a section is open (a phone's bar shows the last word alone). The
- * arrow stays the shell's own back button, whose target settings.js keeps
- * (`_syncChrome`: the list from a section on a phone, You otherwise).
- * Published only while the screen is up; the standard header never reads it.
- * Draws nothing.
- */
-const pressBack = () => { document.getElementById('back-btn')?.click(); };
-
-export function SettingsFrameCrumb() {
-  const t = useMessages('settings');
-  const tCore = useMessages('core');
-  // The router's last revealed screen: Settings does not publish through the visibility store.
-  const shown = (useStoreState(navStore) as { screen: string | null }).screen === 'settings-screen';
-  const { desktop, mobile } = useStoreState(settingsNavStore) as NavState;
-  let page = '';
-  for (const group of desktop || []) {
-    const hit = group.items.find((item) => item.active);
-    if (hit) { page = hit.label; break; }
-  }
-  const settings = t('settings:screen.title');
-  // `mobile` is the level-1 menu's descriptor: set only while the list is the page.
-  const crumb = !shown || !desktop ? null : mobile || !page ? [tCore('core:tabs.me'), settings] : [settings, page];
-  useFramePage(crumb, crumb ? pressBack : null);
-  return null;
 }

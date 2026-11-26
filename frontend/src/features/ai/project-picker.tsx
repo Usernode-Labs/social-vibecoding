@@ -3,8 +3,7 @@
  * drawn on a canvas): every project in any list, to pick the ones whose work
  * the lists show. 24 Nov 2026 (the three bands): the standard list opens it
  * from its one project filter, "All projects", on the head card's tools line
- * (./lists.tsx `data-ai-project-more`); the look's list from its rail's last
- * chip (./frame-list.tsx).
+ * (./lists.tsx `data-ai-project-more`).
  *
  *   ( Find a project               )
  *   NEEDS YOU
@@ -22,9 +21,10 @@
  *
  * From 768px it hangs under the filter, right edges together, sliding
  * right to stay 8px inside the window when it is near the window's left edge,
- * and closes on a press outside it, Escape, or the page scrolling under it.
- * On a phone it is a sheet from the floor, handed to the native kit when
- * there is one, as the community switcher's is
+ * and closes on a press outside it, Escape, Back, or the page scrolling under
+ * it (lib/menu.ts).
+ * On a phone it is a sheet from the floor, presented by the Sheet
+ * (lib/sheet.ts) as the community switcher's is
  * (features/workshop/community-switcher.tsx).
  *
  * Rendered only while open, into document.body: nothing here is in the
@@ -39,8 +39,9 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { matchesSearch } from '../../lib/search-rank.js';
+import { useMenu } from '../../lib/menu';
+import { useSheet } from '../../lib/sheet';
 import type { ProjectTally } from './model';
 import { pickerMenuBox } from './picker-box';
 import { SmallTile } from './small-tile';
@@ -70,8 +71,7 @@ function PickerBody({ ranked, picked, onToggle, onClear, onClose, search }: Pick
   const t = useMessages('messages');
   const note = useNote();
   const [query, setQuery] = useState('');
-  const q = query.trim().toLowerCase();
-  const shown = q ? ranked.filter((p) => (p.app.name || p.app.slug).toLowerCase().includes(q)) : ranked;
+  const shown = ranked.filter((p) => matchesSearch(query, p.app.name || p.app.slug));
   const groups = [
     { key: 'needs', head: t('messages:ai.filter.group.needs'), items: shown.filter((p) => p.needs) },
     { key: 'busy', head: t('messages:ai.filter.group.busy'), items: shown.filter((p) => !p.needs && (p.progress || p.waiting)) },
@@ -141,41 +141,17 @@ function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): Re
   const t = useMessages('messages');
   const panel = useRef<HTMLDivElement | null>(null);
   const search = useRef<HTMLInputElement | null>(null);
-  const close = useRef(props.onClose);
-  close.current = props.onClose;
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    search.current?.focus();
-    const inside = (e: Event) => {
-      const target = e.target as Node | null;
-      return !!target && !!panel.current?.contains(target);
-    };
-    const onDown = (e: Event) => {
-      if (inside(e)) return;
-      // The filter toggles it on its own: a press on it must not close and reopen.
-      if (e.target instanceof Element && e.target.closest('[data-ai-project-more]')) return;
-      close.current();
-    };
-    // Hung against the window, so the page moving under it leaves it behind;
-    // its own list scrolling does not.
-    const onScroll = (e: Event) => { if (!inside(e)) close.current(); };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      close.current();
-      previousFocus?.focus?.();
-    };
-    const onResize = () => close.current();
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('scroll', onScroll, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('resize', onResize);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('scroll', onScroll, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', onResize);
-    };
-  }, []);
+  // A press outside it, Escape, Back, the page moving under it, and focus:
+  // into the search, and back to the filter (lib/menu.ts). The filter toggles
+  // it on its own, so a press on it is not outside.
+  const { panelProps } = useMenu(true, {
+    panel,
+    onClose: props.onClose,
+    keys: 'panel',
+    move: true,
+    inside: (target) => !!target.closest('[data-ai-project-more]'),
+    initialFocus: () => search.current,
+  });
   // Right edges together when there is room; slid right to 8px inside the
   // window when the chip sits near its left edge (#6675, ./picker-box.ts).
   const box = pickerMenuBox(anchor, window.innerWidth);
@@ -188,6 +164,7 @@ function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): Re
       aria-label={t('messages:ai.filter.label')}
       style={style}
       data-ai-project-picker="menu"
+      {...panelProps}
     >
       <PickerBody {...props} search={search} />
     </div>
@@ -197,31 +174,15 @@ function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): Re
 /** Under 768px: a sheet from the floor. */
 function PickerSheet(props: PickerProps): ReactNode {
   const t = useMessages('messages');
-  const panel = useRef<HTMLDivElement | null>(null);
   const search = useRef<HTMLInputElement | null>(null);
-  const [adopted, setAdopted] = useState(false);
-  useIsomorphicLayoutEffect(() => {
-    if (!panel.current) return undefined;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    let adoption: KitAdoption | null = adoptKitSurface({
-      kind: 'sheet',
-      contentEl: panel.current,
-      home: 'placeholder',
-      gate: 'kit',
-      onDismiss: () => { adoption = null; props.onClose(); },
-    });
-    setAdopted(!!adoption);
-    // Not the search: a phone's keyboard would come up over the list.
-    panel.current.focus();
-    return () => {
-      if (adoption) adoption.release();
-      previousFocus?.focus?.();
-    };
-  }, []);
+  // The kit's sheet when there is one (lib/sheet.ts). Focus goes to the
+  // sheet itself, not the search: a phone's keyboard would come up over the
+  // list.
+  const { panelRef: panel, adopted, scrimProps } = useSheet({ kind: 'sheet', onClose: props.onClose });
   return (
     <div
       className={adopted ? 'contents' : 'fixed inset-0 z-[60] flex items-end bg-black/30'}
-      onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
+      {...scrimProps}
     >
       <div
         ref={panel}
@@ -230,7 +191,6 @@ function PickerSheet(props: PickerProps): ReactNode {
         role="dialog"
         aria-modal="true"
         aria-labelledby="ai-pick-title"
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); props.onClose(); } }}
         data-ai-project-picker="sheet"
       >
         {adopted ? null : <span className="mx-auto mb-2 mt-0.5 h-[5px] w-9 shrink-0 rounded-[3px] bg-zinc-900/15 dark:bg-white/20" aria-hidden="true" />}

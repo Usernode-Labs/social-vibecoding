@@ -9,6 +9,13 @@
 //                             name, what it is, its address and its cover.
 //   withPreview(html, app, origin)  the shell document with those tags,
 //                             and its <title> named for the project.
+//   landingTags({ origin, canonical })  the same for the front page, signed
+//                             out: what Homeroom is, a brand picture, and
+//                             the records that name the site and who runs it.
+//   withHead(html, tags, title)  the shell document with any page's tags
+//                             and exactly that <title>.
+//   pictureSize(bytes)        a picture's width and height, read from its
+//                             first bytes (PNG, JPEG, GIF, WebP).
 //   coverPng(app, icon)       the cover, 1200 x 630: the project's colour
 //                             with its icon in the middle, the picture its
 //                             Discover card shows. No words in it; the chat
@@ -46,6 +53,18 @@ function escapeAttr(value) {
 // `withPreview` takes it out before inserting a project's, so the page has
 // exactly one. A document from an older build has none, and the removal is
 // a no-op.
+// The front page's own words, signed out (request 7166). The description is
+// head.html's sentence; the title says the same promise with the vote in it,
+// where the bare word "Homeroom" told a search result nothing.
+const LANDING_TITLE = 'Homeroom: make apps together, one vote at a time';
+const LANDING_DESCRIPTION = 'Homeroom is where people make apps together: suggest a change, vote on it, and see it go live.';
+// The picture a shared link to the front page shows: the clouds behind the
+// landing's own hero (public/brand/README.md). No brand picture is 1200 x 630;
+// this is the widest one there is, and its real size is said beside it.
+const LANDING_PICTURE = { path: '/brand/sky.webp', width: 1920, height: 1080, type: 'image/webp', alt: 'Homeroom' };
+const LANDING_LOGO_PATH = '/brand/homeroom-mark.png';
+const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.-]+(?::\d+)?$/;
+
 const SHELL_DESCRIPTION_RE = /[ \t]*<meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live\.">\n?/;
 
 /**
@@ -205,6 +224,46 @@ function coverPng(app, icon) {
   return PNG.sync.write(out, { colorType: 2 });
 }
 
+/**
+ * A picture's width and height from its header, or null when they cannot be
+ * read. Reads the first bytes only and decodes nothing, so it also answers
+ * for the kinds `coverPng` cannot draw (JPEG, WebP, GIF).
+ */
+function pictureSize(bytes) {
+  const b = Buffer.isBuffer(bytes) ? bytes : null;
+  if (!b || b.length < 24) return null;
+  const sized = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
+  if (b.readUInt32BE(0) === 0x89504e47 && b.toString('latin1', 12, 16) === 'IHDR') {
+    return sized(b.readUInt32BE(16), b.readUInt32BE(20));
+  }
+  if (b.toString('latin1', 0, 3) === 'GIF') return sized(b.readUInt16LE(6), b.readUInt16LE(8));
+  if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP' && b.length >= 30) {
+    const kind = b.toString('latin1', 12, 16);
+    if (kind === 'VP8 ') return sized(b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff);
+    if (kind === 'VP8L') {
+      const bits = b.readUInt32LE(21);
+      return sized((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+    }
+    if (kind === 'VP8X') return sized(b.readUIntLE(24, 3) + 1, b.readUIntLE(27, 3) + 1);
+    return null;
+  }
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    // JPEG: walk the segments to the frame header, which holds the size.
+    let at = 2;
+    while (at + 9 < b.length) {
+      if (b[at] !== 0xff) return null;
+      const marker = b[at + 1];
+      if (marker === 0xff) { at += 1; continue; }
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return sized(b.readUInt16BE(at + 7), b.readUInt16BE(at + 5));
+      }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { at += 2; continue; }
+      at += 2 + b.readUInt16BE(at + 2);
+    }
+  }
+  return null;
+}
+
 /** What the link says the project is: its own words, and its members once there are enough to say. */
 function descriptionOf(app) {
   const own = app.description ? String(app.description).trim() : '';
@@ -222,12 +281,14 @@ function coverPath(slug) { return `/api/public/apps/${encodeURIComponent(slug)}/
 /**
  * The head tags for a public project's page. `cover`: whether the cover can
  * be drawn (canDrawCover); without it the picture is the project's icon, and
- * the card a small one. `player`: whether the project can be used in a post
+ * the card a small one. `imageSize`: that icon's width and height when the
+ * server could read them (pictureSize), said beside it as the cover's are.
+ * `player`: whether the project can be used in a post
  * on X (services/project-embed.js embedFor), which makes X's card a frame
  * around its embed page, with the picture as the still before it plays and
  * where X runs no players. X shows no player without a picture.
  */
-function previewTags(app, origin, { cover = true, player = false } = {}) {
+function previewTags(app, origin, { cover = true, player = false, imageSize = null } = {}) {
   const title = app.name || app.slug;
   const description = descriptionOf(app);
   const image = cover ? `${origin}${coverPath(app.slug)}` : (app.icon_url ? `${origin}${app.icon_url}` : null);
@@ -257,8 +318,9 @@ function previewTags(app, origin, { cover = true, player = false } = {}) {
   }
   if (image) {
     tags.push(`<meta property="og:image" content="${escapeAttr(image)}">`);
-    if (cover) {
-      tags.push(`<meta property="og:image:width" content="${WIDTH}">`, `<meta property="og:image:height" content="${HEIGHT}">`);
+    const size = cover ? { width: WIDTH, height: HEIGHT } : imageSize;
+    if (size && Number.isInteger(size.width) && Number.isInteger(size.height) && size.width > 0 && size.height > 0) {
+      tags.push(`<meta property="og:image:width" content="${size.width}">`, `<meta property="og:image:height" content="${size.height}">`);
     }
     tags.push(`<meta property="og:image:alt" content="${escapeAttr(`${title} on Homeroom`)}">`);
   }
@@ -282,20 +344,107 @@ function previewTags(app, origin, { cover = true, player = false } = {}) {
   return tags.join('\n');
 }
 
-/** The shell document with the project's tags in its head and its name in the title. */
-function withPreview(html, tags, title) {
+/**
+ * The head tags for the front page as somebody signed out gets it: what
+ * Homeroom is, for a search result and for a link pasted into a chat.
+ *
+ * `canonical` is the platform's CONFIGURED origin (app-identity-env.js
+ * platformOrigin) or null: the page's one address and its og:url come from
+ * it alone, never from the request's Host, so a forged Host cannot name
+ * another site as this page (the rule search-robots.js shellCanonicalLink
+ * keeps for the Link header). A staging copy and a server with no configured
+ * address pass null and get neither. `origin` is where the pictures are
+ * fetched from when there is no configured origin (the request's own, as a
+ * project's cover uses); with neither, the tags carry words only.
+ */
+function landingTags({ origin = null, canonical = null } = {}) {
+  const own = ORIGIN_RE.test(String(canonical || '')) ? canonical : null;
+  const base = own || (ORIGIN_RE.test(String(origin || '')) ? origin : null);
+  const tags = [
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Homeroom">',
+    `<meta property="og:title" content="${escapeAttr(LANDING_TITLE)}">`,
+    `<meta property="og:description" content="${escapeAttr(LANDING_DESCRIPTION)}">`,
+  ];
+  if (own) {
+    tags.push(
+      `<meta property="og:url" content="${escapeAttr(`${own}/`)}">`,
+      `<link rel="canonical" href="${escapeAttr(`${own}/`)}">`,
+    );
+  }
+  tags.push(
+    `<meta name="description" content="${escapeAttr(LANDING_DESCRIPTION)}">`,
+    `<meta name="twitter:card" content="${base ? 'summary_large_image' : 'summary'}">`,
+    `<meta name="twitter:title" content="${escapeAttr(LANDING_TITLE)}">`,
+    `<meta name="twitter:description" content="${escapeAttr(LANDING_DESCRIPTION)}">`,
+  );
+  if (!base) return tags.join('\n');
+  const image = `${base}${LANDING_PICTURE.path}`;
+  tags.push(
+    `<meta name="twitter:image" content="${escapeAttr(image)}">`,
+    `<meta name="twitter:image:alt" content="${escapeAttr(LANDING_PICTURE.alt)}">`,
+    `<meta property="og:image" content="${escapeAttr(image)}">`,
+    `<meta property="og:image:type" content="${LANDING_PICTURE.type}">`,
+    `<meta property="og:image:width" content="${LANDING_PICTURE.width}">`,
+    `<meta property="og:image:height" content="${LANDING_PICTURE.height}">`,
+    `<meta property="og:image:alt" content="${escapeAttr(LANDING_PICTURE.alt)}">`,
+  );
+  // The records a search engine reads for the site's name and who runs it:
+  // the two a project's page already points at (isPartOf, publisher).
+  const root = `${base}/`;
+  const data = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'WebSite',
+        '@id': `${root}#website`,
+        name: 'Homeroom',
+        url: root,
+        description: LANDING_DESCRIPTION,
+        publisher: { '@id': `${root}#organization` },
+      },
+      {
+        '@type': 'Organization',
+        '@id': `${root}#organization`,
+        name: 'Homeroom',
+        url: root,
+        logo: `${base}${LANDING_LOGO_PATH}`,
+      },
+    ],
+  };
+  tags.push(`<script type="application/ld+json">${safeJson(data)}</script>`);
+  return tags.join('\n');
+}
+
+/**
+ * The shell document with a page's tags in its head and exactly `title` as
+ * its <title>. The shell's own description comes out, so the page has the
+ * one its tags carry.
+ */
+function withHead(html, tags, title) {
   const at = html.indexOf('</head>');
   if (at === -1) return html;
   const named = html
-    .replace('<title>Homeroom</title>', `<title>${escapeAttr(title)} · Homeroom</title>`)
+    .replace('<title>Homeroom</title>', () => `<title>${escapeAttr(title)}</title>`)
     .replace(SHELL_DESCRIPTION_RE, '');
   const end = named.indexOf('</head>');
   return `${named.slice(0, end)}${tags}\n${named.slice(end)}`;
 }
 
+/** The shell document with the project's tags in its head and its name in the title. */
+function withPreview(html, tags, title) {
+  return withHead(html, tags, `${title} · Homeroom`);
+}
+
 module.exports = {
   previewTags,
   withPreview,
+  landingTags,
+  withHead,
+  pictureSize,
+  LANDING_TITLE,
+  LANDING_DESCRIPTION,
+  LANDING_PICTURE,
   SHELL_DESCRIPTION_RE,
   createdDay,
   coverPng,

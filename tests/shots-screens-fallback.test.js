@@ -259,11 +259,11 @@ test('the card draws a run with stand-in screens with the current viewer, framin
   const shown = view.cleanScreens(screens, [{ id: 'badge' }]);
   assert.equal(shown.length, 1, 'the view keeps it');
   assert.deepEqual(shown[0].regions, []);
-  // The chooser: a verified run with screens is the ThreadPicture's.
+  // The chooser: a verified run is the one before & after viewer's.
   const change = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/topic/change-head.tsx'), 'utf8');
-  assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
+  assert.match(change, /if \(s\.state === 'verified' && s\.source\) \{/);
   // ...which frames a screen with nothing outlined without falling over.
-  const { pictureFrame } = require('./lib/render-tsx').loadTsx('frontend/src/features/dev-board/topic/thread-picture.tsx');
+  const { pictureFrame } = require('./lib/render-tsx').loadTsx('frontend/src/features/review-flow/shots-viewer.tsx');
   const frame = pictureFrame({ viewport: 'mobile', width: 384, before: { url: '/b', height: 1500 }, after: { url: '/a', height: 1600 },
     regions: [], changes: [1] }, 360);
   assert.ok(Number.isFinite(frame.height) && frame.height > 0, `height ${frame.height}`);

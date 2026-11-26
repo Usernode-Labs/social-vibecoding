@@ -600,7 +600,7 @@ test('#17: a request the bot is on is in progress, in its own state, naming nobo
   assert.equal(st.key, 'bot');
   assert.equal(st.label, 'Homeroom bot is building this');
   assert.equal(st.spinner, true, 'it is working this minute');
-  assert.equal(st.tone, 'sky');
+  assert.equal(st.tone, 'bot', '#7182: the bot\'s own periwinkle, not the shared running tone');
   assert.equal(st.who, null, 'there is no person to name');
   assert.equal(st.note, 'The Homeroom bot started building this request 20 minutes ago. Anyone can still pick it up and work on it alongside the bot.');
   assert.ok(!/nobody needs to claim/.test(st.note), '#4190: it no longer tells people not to claim');
@@ -619,6 +619,20 @@ test('#17: a request the bot is on is in progress, in its own state, naming nobo
   assert.match(chip, /<span[^>]*data-work-state="bot"/, 'an informational chip');
   assert.match(chip, /Homeroom bot is building this/);
   assert.ok(!chip.includes(' · '), 'no name on a bot state');
+  // #7182: the chip wears the bot's own periwinkle, and the Workshop's row
+  // tag says the same tone (spinning), so both surfaces read alike.
+  assert.match(chip, /text-\[color:var\(--bot-ink\)\]/, chip);
+  assert.match(chip, /bg-\[color:var\(--bot-tint\)\]/, chip);
+  const brief = AppView._workshopBrief('issue', baseIssue({ bot: building() }), null);
+  const tag = brief.tags.find((t) => t.label === 'Homeroom bot is building this');
+  assert.ok(tag, JSON.stringify(brief.tags));
+  assert.equal(tag.tone, 'bot');
+  // Other running work keeps the shared tone.
+  const running = AppView._workshopBrief('issue', baseIssue({
+    in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], target: null,
+      sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: true, lastActivityAt: null }] },
+  }), null);
+  assert.ok(running.tags.every((t) => t.tone !== 'bot'), JSON.stringify(running.tags));
 });
 
 test('#17: precedence: a person in review or at work outranks the bot; the bot outranks the rest', () => {
@@ -980,6 +994,7 @@ test('a request waiting for its plan\'s OK: the chip says the row\'s word, not t
     const got = named(state);
     assert.equal(got.key, 'bot', JSON.stringify(state));
     assert.equal(got.label, message(id), JSON.stringify(state));
+    assert.equal(got.tone, 'bot', `#7182: ${JSON.stringify(state)} wears the bot tone`);
     assert.equal(got.rowWords, undefined, JSON.stringify(state));
   }
   // A credit wait is in the bot's queue, as the server reads it.

@@ -34,7 +34,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
+  api, cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
 } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
@@ -401,6 +401,46 @@ test('the detail head takes the same one vote button (topic page, round three)',
   assert.doesNotMatch(html, /gc-vote-btn-yes|gc-vote-btn-no/);
   assert.match(html, /class="dev-vote-btn" data-vote-btn="open"/);
   assert.match(html, /dev-card-topic/, 'and wears the topic card class the shared rules dress');
+});
+
+// #7101: the board row kept the old tally and the open Vote face after a vote
+// the server had saved, because it drew only the row's own `my_vote`. The
+// saved-vote store is the same instance the rendered tree reads, so a
+// published yes settles both the face and the approvals count at once.
+test('#7101: a saved yes settles the row at once — the face and the count', () => {
+  const AppView = makeAppView(ME);
+  const board = api();
+  const pr = baseProposal({ approvals_required: 1, yes_count: 0, approval_epoch: 3 });
+  const before = cardHtml(AppView._proposalCardModel(pr));
+  assert.match(before, /data-vote-btn="open"[^>]*>Vote</, 'open until the vote is saved');
+  assert.match(before, />0 of 1 approval</);
+  board.publishVoteSaved(7, 'yes', 3);
+  try {
+    const after = cardHtml(AppView._proposalCardModel(pr));
+    assert.match(after, /class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes"[^>]*>[\s\S]*?Yes/,
+      'the face shows the saved side');
+    assert.match(after, /data-vote-btn="yes"[^>]*title="You voted Yes\. Press to change your vote\."/);
+    assert.match(after, />1 of 1 approval</, 'and the count is the real one, not the stale 0 of 1');
+    assert.match(after, /gc-vote-count-ok/, 'a reached count reads green at once');
+  } finally {
+    board.voteSavedStore.set({});
+  }
+});
+
+test('#7101: a saved vote at an older epoch leaves the row asking again', () => {
+  const AppView = makeAppView(ME);
+  const board = api();
+  // The row has moved to epoch 4 (a new version was pushed); the saved vote
+  // is the old epoch 3, so it does not answer this row.
+  const pr = baseProposal({ approvals_required: 1, yes_count: 0, approval_epoch: 4 });
+  board.publishVoteSaved(7, 'yes', 3);
+  try {
+    const html = cardHtml(AppView._proposalCardModel(pr));
+    assert.match(html, /data-vote-btn="open"[^>]*>Vote</);
+    assert.match(html, />0 of 1 approval</);
+  } finally {
+    board.voteSavedStore.set({});
+  }
 });
 
 test('proposal card: read-only viewer keeps the icon Preview and loses Yes/No', () => {

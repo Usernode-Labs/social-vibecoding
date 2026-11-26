@@ -16,12 +16,12 @@
  * ── Why a second kit modal, and what that costs ───────────────────────
  *
  * It is presented the way the editor under it is (./profile-edit-sheet.tsx):
- * rendered in place, then its card handed to `PlatformUI.modal` through
- * lib/kit-surface.ts, with the no-kit fallback being the markup where React
- * put it. That keeps the three ways out the viewer already knows from every
+ * rendered in place, then its card handed to `PlatformUI.modal` by the Sheet
+ * (lib/sheet.ts), with the no-kit fallback being the markup where React put
+ * it. That keeps the three ways out the viewer already knows from every
  * other dialog, each meaning Cancel here: the kit's backdrop and Escape (it
  * dismisses only the topmost modal, and this one is presented last) and the
- * device Back, whose claim Profile.beginAvatarCrop takes above the editor's.
+ * device Back, whose claim the Sheet takes above the editor's.
  *
  * Two things follow from stacking it over another kit modal:
  *
@@ -79,8 +79,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard } from '@/components/ui/dialog';
 import { PhotoIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { useSheet } from '../../lib/sheet';
 import {
   CROP_MAX_ZOOM,
   initialCrop,
@@ -154,14 +153,20 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const cardRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  // Lifted into the kit's modal over the editor (lib/sheet.ts). The backdrop,
+  // Escape (the kit's, for the topmost modal) and Back all mean Cancel. Focus
+  // goes to the frame, where the arrow keys work. The root's name and
+  // description carry over to the kit's shell.
+  const { rootRef, panelRef: cardRef } = useSheet({
+    kind: 'modal',
+    hugDesignWidth: true,
+    onClose: onCancel,
+    initialFocus: () => stageRef.current,
+  });
   // The latest square, for the handlers that read it outside a render.
   const cropRef = useRef(crop);
   cropRef.current = crop;
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
 
   // The gesture in flight: every pointer that is down and where it last was,
   // where the first one went down, whether the arbiter gave us the finger,
@@ -169,50 +174,6 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<{ start: Point; claimed: boolean } | null>(null);
   const pinch = useRef<{ spread: number; zoom: number; mid: Point } | null>(null);
-
-  // Hand the card to the kit, exactly once, and put it back before React
-  // removes it. Mirrors the editor's own adoption, including the rule that a
-  // dismissal the kit reports AFTER our own teardown is ignored.
-  useIsomorphicLayoutEffect(() => {
-    const contentEl = cardRef.current;
-    const flagEl = rootRef.current;
-    if (!contentEl || !flagEl) return;
-    // The kit focuses `[autofocus]` when the card is presented, else the card
-    // itself. The frame is where the arrow keys work, so it is the one. Set
-    // as an attribute because React's `autoFocus` focuses on mount instead,
-    // and the lift that follows would take that focus straight away again.
-    stageRef.current?.setAttribute('autofocus', '');
-    let adoption: KitAdoption | null = null;
-    adoption = adoptKitSurface({
-      kind: 'modal',
-      contentEl,
-      adoptedOn: flagEl,
-      home: 'placeholder',
-      gate: 'kit',
-      hugDesignWidth: true,
-      // The backdrop or Escape: Cancel.
-      onDismiss: () => {
-        if (!adoption) return;
-        adoption = null;
-        onCancelRef.current();
-      },
-    });
-    // The kit's shell is the dialog now (role="dialog", aria-modal), and it
-    // has no name of its own. The kit owns that node, not React, so writing
-    // to it is not a second owner of anything React renders.
-    const shell = adoption?.handle.el;
-    if (shell) {
-      shell.setAttribute('aria-labelledby', 'profile-photo-crop-title');
-      shell.setAttribute('aria-describedby', 'profile-photo-crop-help');
-    }
-    if (!adoption) stageRef.current?.focus({ preventScroll: true });
-    return () => {
-      if (!adoption) return;
-      const handle = adoption;
-      adoption = null;
-      handle.release();
-    };
-  }, []);
 
   // The wheel, bound by hand: React's onWheel is passive, and a wheel over
   // the frame must zoom the photo rather than scroll the card.

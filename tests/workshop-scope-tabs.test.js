@@ -215,7 +215,10 @@ test('#5290: Recent is your pins, then the sidebar\'s five; the search matches e
   const at = SWITCHER.indexOf('data-switcher-community="all"');
   assert.ok(at > SWITCHER.indexOf('data-switcher-section="recent"') && at > SWITCHER.indexOf('data-switcher-results'));
   // ⌘K focuses the search; a press on the header lands on the row you are on.
-  assert.match(SWITCHER, /if \(from === 'shortcut'\) \{\s*panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\)\?\.focus\(\);/);
+  assert.match(SWITCHER, /if \(from === 'shortcut'\) return panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\);/);
+  assert.match(SWITCHER, /return panel\.querySelector<HTMLButtonElement>\('\[aria-current="true"\]'\);/);
+  // The sheet and the menu both focus it on open (lib/sheet.ts, lib/menu.ts).
+  assert.equal((SWITCHER.match(/initialFocus: \(el\) => focusTarget\(el, (st\.)?switcher\)/g) || []).length, 2);
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
@@ -316,7 +319,10 @@ function renderHeader({
   const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
     stubs: {
       './header-title-store.js': { headerTitleStore: fixed({ text: name, subtitle: '' }) },
-      '../nav/nav-store.js': { navStore: fixed({ screen }) },
+      '../nav/nav-store.js': {
+        navStore: fixed({ screen }),
+        TAB_FOR_SCREEN: { 'home-screen': 'home', 'settings-screen': 'me' },
+      },
       '../improve/improve-store.js': {
         improveStore: fixed({ tab: 'dev', subTab, name, iconUrl: null, iconEmoji: '🍲', selfHosted }),
       },
@@ -375,6 +381,36 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   assert.doesNotMatch(header, /allAppsSwitcher/);
   assert.match(header, /const sidebarRows = useSidebarRows\(\);/);
   assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
+});
+
+test('request #7166: the bar\'s title is a level-1 heading only when it has words, and never an <h1>', () => {
+  const OPEN = /^<div id="header-title"( role="heading" aria-level="1")? class="flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\s+text-start"/;
+  const role = (html) => {
+    const m = html.match(OPEN);
+    assert.ok(m, 'one node, with the class the centring writes to, whatever it says');
+    assert.doesNotMatch(html, /<h1[\s>]/, 'not an <h1>: the served page carried it with no words in it');
+    return !!m[1];
+  };
+  // The served page and the first client render: no screen yet, the bare
+  // logotype. A drawing hidden from screen readers is not a heading.
+  const served = renderHeader({ name: 'Homeroom', screen: null });
+  assert.equal(role(served), false, 'the bare logotype is no heading in the served page');
+  assert.match(served, /<span id="header-title-name" class="min-w-0 truncate"><svg [^>]*aria-hidden="true">[\s\S]*?<\/svg><\/span>/);
+  // The signed-out landing has its own headline: the bar adds no second
+  // level-1 heading over it.
+  const landing = renderHeader({ name: 'Homeroom', screen: 'auth-landing-screen' });
+  assert.equal(role(landing), false);
+  assert.doesNotMatch(landing, /sr-only/);
+  // On one of the platform's own signed-in places the bar is the page's
+  // heading, named in words under the drawing.
+  const home = renderHeader({ name: 'Homeroom', screen: 'home-screen' });
+  assert.equal(role(home), true, 'Home has a level-1 heading');
+  assert.match(home, /<\/svg><span class="sr-only">Homeroom<\/span><\/span>/, 'with a name a screen reader can say');
+  // A title in words is the heading, as it was.
+  assert.equal(role(renderHeader({ name: 'Settings', screen: 'settings-screen' })), true);
+  assert.equal(role(renderHeader()), true, 'and a community\'s switcher, named by its button');
+  const src = read('frontend/src/features/header/header-title.tsx');
+  assert.match(src, /role=\{isHeading \? 'heading' : undefined\}\s+aria-level=\{isHeading \? 1 : undefined\}/);
 });
 
 test('#3497: on Homeroom\'s own pages the switcher names it with the logotype, not the word', () => {

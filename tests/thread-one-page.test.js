@@ -152,8 +152,11 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   // #6230 (3 Nov 2026): Expand opens the change's before and after in the
   // detail column beside the thread, as a design's preview and a plan do,
   // instead of popping the viewer over the page; the request asked for it.
-  assert.match(src, /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: id \},/,
+  // It is the one before & after viewer, the same one a change's own card
+  // expands to (./shots-detail.ts).
+  assert.match(src, /const open = \(\) => \{ if \(source\) openShotsDetail\(source\); \};/,
     'Expand opens the change\'s before and after in the detail column');
+  assert.match(read(`${TOPIC}/shots-detail.ts`), /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: source\.sessionId \},/);
   assert.doesNotMatch(src, /showPopover/, 'the viewer no longer pops over the page');
   assert.match(src, /<ChangeSheets id=\{item\.id\} row=\{view\.row\} body=\{view\.body\} \/>/);
   const head = read(`${TOPIC}/topic-head.tsx`);
@@ -163,12 +166,13 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   assert.match(sheets, /\{body\.canEditIssues \? \(\s+<IssueAssociations[\s\S]*?editorOnly/, 'and ⋯ Edit requests has its editor');
   assert.match(head, /if \(editorOnly\) \{\s+return editing \|\| notice \? \(/, 'nothing while it is shut');
   const view = read('public/js/app-view.js');
-  assert.match(view, /viewer: `shots-\$\{Number\(item\.id\)\}-viewer`/, 'the thumbnails name the viewer their Expand opens');
+  assert.match(view, /return \{ state: 'verified', source: \{ shots, sessionId: Number\(item\.id\) \}, line: null, thumbs,/,
+    'the thumbnails come with the shots their Expand opens');
   for (const id of ['more', 'moreNumbered', 'shotBefore', 'shotAfter', 'shotsOpen', 'shotsExpand']) {
     assert.ok(message(`project:topic.thread.page.${id}`, { number: 6063 }), id);
   }
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-thread-shots-viewer \.shots-viewer:not\(:popover-open\) \{ display: none; \}/, 'shut, the viewer takes no room');
+  assert.doesNotMatch(css, /\.dev-thread-shots-viewer/, 'no viewer is kept shut on the page');
 });
 
 test('D1: rendered, a change built for a request is a line with its title, and a ballot\'s folds start shut', () => {

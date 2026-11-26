@@ -22,16 +22,15 @@
 // product used to switch at seven days in one place, thirty in another and
 // never in five more.
 //
-// The rule lives three times, because two legacy classic scripts sit outside
-// the bundle and cannot import from it: `frontend/src/lib/timestamp.ts` serves
-// the React surfaces with both forms, `GroupChat._stamp` in
-// `public/js/group-chat.js` serves the app chat's view model, and `relStamp`
-// in `public/js/app-view.js` serves the board's cards and the session
-// transcript. Copies drift, so this file does not pin them by grep. It
-// EXECUTES all three against one table and asserts they answer identically:
-// the frontend copy through the esbuild loader the render tests already use,
-// the legacy copies by lifting them out of the shipped source into callable
-// functions.
+// The rule lives twice: `frontend/src/lib/timestamp.ts` serves the React
+// surfaces with both forms, and `GroupChat._stamp` in `public/js/group-chat.js`
+// serves the app chat's view model. Copies drift, so this file does not pin
+// them by grep. It EXECUTES both against one table and asserts they answer
+// identically: the frontend copy through the esbuild loader the render tests
+// already use, the legacy copy by lifting it out of the shipped source into a
+// callable function. The board's cards and the session transcript
+// (`relStamp` in `public/js/app-view.js`) keep no copy: they read the bundle's
+// own `agoStamp`, which lib/i18n/runtime.ts publishes on PlatformI18n.
 //
 // The clock is injected on both, because the whole behaviour is the boundary
 // between those three branches and a test that cannot move "today" only ever
@@ -83,27 +82,13 @@ function legacyStamp(i18n = englishPlatformI18n()) {
 
 const stampLegacy = legacyStamp();
 
-// Lift `relStamp` out of app-view.js. A plain file-scope function, so the
-// slice is simpler than `_stamp`'s method lift — but it closes over
-// `REL_FLOOR_MS`, which is the whole point of the copy, so that declaration
-// is evaluated with it rather than substituted for a literal here.
+// `relStamp` as app-view.js ships it: one line handing the instant to the
+// PlatformI18n it is given.
 function legacyRelStamp(i18n = englishPlatformI18n()) {
-  const src = read('public/js/app-view.js');
-  const floor = src.match(/^const REL_FLOOR_MS = .*;$/m);
-  assert.ok(floor, 'REL_FLOOR_MS must still exist in app-view.js');
-  const head = 'function relStamp(iso, now) {';
-  const start = src.indexOf(head);
-  assert.ok(start > 0, 'relStamp must still exist in app-view.js');
-  let depth = 0;
-  let i = start + head.length - 1;
-  for (; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
-  }
-  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`, { PlatformI18n: i18n });
+  const line = read('public/js/app-view.js').match(/^function relStamp\(iso\) \{[^\n]*\}$/m);
+  assert.ok(line, 'relStamp must still exist in app-view.js, as one line');
+  return vm.runInNewContext(`${line[0]}\nrelStamp;`, { PlatformI18n: i18n });
 }
-
-const relStampLegacy = legacyRelStamp();
 
 // ─── the branch table ───────────────────────────────────────────────
 
@@ -193,15 +178,12 @@ test('#6103: an English interface on a UK device writes "2 Nov" in every copy', 
     const at = new Date(2026, 10, 2, 9, 5); // 2 Nov 2026
     const now = new Date(2026, 11, 20, 14, 41); // Dec 20: past the floor, same year
     assert.equal(agoStamp(at, { now }).text, '2 Nov', 'a card reads the day first');
-    assert.equal(relStampLegacy(at, now).text, '2 Nov', 'and so does the session transcript');
     assert.ok(messageStamp(at, { now }).text.startsWith('2 Nov, '),
       `the date part is day first, got ${messageStamp(at, { now }).text}`);
     assert.ok(stampLegacy(at, now).text.startsWith('2 Nov, '),
       `the chat copy agrees, got ${stampLegacy(at, now).text}`);
     assert.equal(stampLegacy(at, now).text, messageStamp(at, { now }).text,
       'the two transcript copies print the same instant alike');
-    assert.equal(relStampLegacy(at, now).text, agoStamp(at, { now }).text,
-      'the two card copies print the same instant alike');
   } finally {
     if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
     else delete globalThis.navigator;
@@ -212,8 +194,6 @@ test('polish N5: no copy pads the hour, so "04:14 AM" and "1:28 AM" never sit si
   for (const file of ['frontend/src/lib/timestamp.ts', 'public/js/group-chat.js', 'frontend/src/features/leaderboard/activity-row.tsx']) {
     assert.doesNotMatch(read(file), /hour: '2-digit'/, file);
   }
-  const relStampSrc = read('public/js/app-view.js').match(/function relStamp\(iso, now\) \{[\s\S]*?\n\}/)[0];
-  assert.doesNotMatch(relStampSrc, /hour: '2-digit'/, 'relStamp');
 });
 
 test('#1808: both copies default their clock to now', () => {
@@ -323,36 +303,29 @@ test('#1808: the age carries an unelided title in every branch', () => {
 
 test('#1808: an unstamped card renders nothing in either form', () => {
   for (const bad of [null, undefined, '', 'not a date', NaN]) {
-    for (const [copy, stamp] of [['agoStamp', agoStamp(bad, { now: NOW })],
-      ['relStamp', relStampLegacy(bad, NOW)]]) {
+    for (const [copy, stamp] of [['agoStamp', agoStamp(bad, { now: NOW })]]) {
       assert.equal(stamp.text, '', `${copy} on ${JSON.stringify(bad)}`);
       assert.equal(stamp.title, '', `${copy} on ${JSON.stringify(bad)}`);
     }
   }
 });
 
-test('#1808: relStamp and agoStamp answer identically', () => {
-  // The board's cards and the session transcript read the app-view.js copy;
-  // everything in the bundle reads the other. Executed, not grepped.
-  for (const [label, when] of AGO_CASES) {
-    const legacy = relStampLegacy(when, NOW);
-    const shared = agoStamp(when, { now: NOW });
-    assert.equal(legacy.text, shared.text, `${label}: same age`);
-    assert.equal(legacy.title, shared.title, `${label}: same title`);
-  }
-  // Including the floor itself, which is the number most likely to be edited
-  // in one copy and not the other.
-  for (let days = 5; days <= 10; days += 1) {
-    const when = ago(days * DAY);
-    assert.equal(relStampLegacy(when, NOW).text, agoStamp(when, { now: NOW }).text,
-      `${days} days: both copies must place the floor in the same place`);
-  }
-});
-
-test('#1808: relStamp defaults its clock to now, like the other two', () => {
+test('relStamp keeps no copy: it is the bundle\'s agoStamp, published on PlatformI18n', () => {
+  // The board's cards and the session transcript read relStamp; it hands
+  // the instant to the one formatter rather than spelling ages of its own.
+  const appView = read('public/js/app-view.js');
+  assert.doesNotMatch(appView, /REL_FLOOR_MS/, 'no floor of its own');
+  assert.doesNotMatch(appView, /changes:age\./, 'no age words of its own');
+  const runtime = read('frontend/src/lib/i18n/runtime.ts');
+  assert.match(runtime, /^import \{ agoStamp, messageStamp, shortDate \} from '\.\.\/timestamp';$/m);
+  assert.match(runtime.slice(runtime.indexOf('PlatformI18n = {')), /^ {2}agoStamp, messageStamp, shortDate,$/m,
+    'the classic scripts\' adapter carries lib/timestamp.ts\'s agoStamp');
+  // Executed: what a card prints is what agoStamp prints, at every branch.
+  const card = legacyRelStamp();
   const when = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  assert.equal(relStampLegacy(when).text, '3h ago');
-  assert.equal(agoStamp(when).text, '3h ago');
+  assert.deepEqual(card(when), agoStamp(when));
+  assert.equal(card(when).text, '3h ago');
+  for (const bad of [null, undefined, '', 'not a date']) assert.deepEqual(card(bad), { text: '', title: '' });
 });
 
 // ─── the surfaces that render it ────────────────────────────────────
@@ -458,13 +431,12 @@ test('#1808: the topic page keeps no formatter of its own, and draws no Activity
 // ─── #6479: the zone picked in Settings › Language ──────────────────
 
 test('#6479: with a zone picked, every copy writes the time and decides "today" in that zone', () => {
-  // One instance of the zone module, handed to all three copies: the bundle's
-  // through its import, the classic copies through PlatformI18n.
+  // One instance of the zone module, handed to both copies: the bundle's
+  // through its import, the chat's copy through PlatformI18n.
   const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
   const zoned = loadTsx('frontend/src/lib/timestamp.ts', { cache: false, stubs: { './time-zone': zone } });
   const i18n = { ...englishPlatformI18n(), timeZone: zone.getTimeZone, zonedDay: zone.zonedDay };
   const chat = legacyStamp(i18n);
-  const card = legacyRelStamp(i18n);
   // 03:30 UTC on 16 Jun: still the evening of the 15th in New York, midday
   // of the 16th in Tokyo.
   const now = new Date(Date.UTC(2026, 5, 16, 3, 30));
@@ -491,8 +463,6 @@ test('#6479: with a zone picked, every copy writes the time and decides "today" 
     const nye = new Date(Date.UTC(2025, 11, 31, 23, 30));
     const later = new Date(Date.UTC(2026, 1, 1, 12, 0));
     assert.equal(zoned.agoStamp(nye, { now: later }).text, dayIn(nye, 'Asia/Tokyo'));
-    assert.equal(card(nye, later).text, zoned.agoStamp(nye, { now: later }).text, 'relStamp agrees');
-    assert.equal(card(nye, later).title, zoned.agoStamp(nye, { now: later }).title);
 
     // Auto again: back to the device's zone, exactly the stamps without one.
     zone.setTimeZone(null);

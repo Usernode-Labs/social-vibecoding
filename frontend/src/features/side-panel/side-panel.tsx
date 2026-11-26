@@ -67,7 +67,7 @@ import { EllipsisHorizontalIcon, ListBulletIcon, XIcon } from '@/components/ui/i
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
-import { useMenuKeyboard } from '../../lib/menu-keys';
+import { useMenu } from '../../lib/menu';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { pageLinkFor } from '../ai/door';
@@ -75,7 +75,6 @@ import { useShowListButton } from '../ai/list-closed';
 import { StatusPill } from '../dev-board/card/dev-card';
 import type { StatusPillState } from '../dev-board/card/model';
 import { copyToClipboard } from '../message-actions/clipboard';
-import { useDismiss } from '../message-actions/use-dismiss';
 import { SidePanel as controller, type PanelMenuRow } from './controller';
 import { panelPage, samePage, titleFor, workshopItemOf } from './routes';
 import {
@@ -354,8 +353,8 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const close = () => setOpen(false);
-  useDismiss(open, [wrapRef], close);
-  const menuKeys = useMenuKeyboard(open, menuRef, btnRef, close);
+  // A press outside, Escape, Back, the arrows and focus (lib/menu.ts).
+  const { panelProps } = useMenu(open, { trigger: btnRef, panel: menuRef, onClose: close });
   // Another page is another heading: a menu left open does not follow.
   useEffect(() => { setOpen(false); }, [route]);
   if (!link) return null;
@@ -385,7 +384,7 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
           className="messages-thread-menu"
           role="menu"
           aria-label={t('agent:sidePanel.moreLabel')}
-          onKeyDown={menuKeys.onKeyDown}
+          {...panelProps}
         >
           <button
             type="button"

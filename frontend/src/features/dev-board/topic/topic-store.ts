@@ -21,6 +21,11 @@ export interface TopicHeadState {
    */
   slug?: string | null;
   route?: string | null;
+  /**
+   * The topic's own title (a request's, a change's, a decision's), for the
+   * browser tab's title (../../header/document-title.ts, request #7164).
+   */
+  title?: string;
   /** The route names a different topic whose page is not loaded yet. */
   loading?: boolean;
 }

@@ -27,22 +27,11 @@
  * challenges" link. The Challenges tab, one tap away behind "See all", has
  * the whole list.
  *
- * ── A ROW OF CARDS (One Home, #6361; a column until then), and the card
- *    is the Challenges tab's ─────────────────────────────────────────
+ * ── A ROW OF POSTERS ───────────────────────────────────────────────────
  *
  * The cards sit straight on the page ground, in one row under the section
  * heading that scrolls sideways, with no plate around them (`PanelShell
- * plate="none"`): the cards are surfaces of their own. The heading ends on
- * `pb-1.5` and the body opens on `pt-2`, a 14px step, and the cards sit
- * `gap-2.5` (10px) apart, the step of the featured apps rail. Nothing is
- * inset: the cards start where the heading's label starts.
- *
- * THE CARD IS SHARED. It is `ChallengeCard` from
- * features/leaderboard/challenge-card.tsx, the same component the
- * Leaderboard screen's Challenges tab draws, so a challenge reads the same
- * state, words and reward on both surfaces. Home hands it no deadline. Only
- * the root class `home-challenge-card` and `data-challenge-id` are this
- * block's, because the declared checks and the tests select on them.
+ * plate="none"`): WipChallengePosters, below, says how each is drawn.
  *
  * ── The one line ──────────────────────────────────────────────────────
  *
@@ -68,8 +57,6 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
-import { useLiveSkin, isKitHome } from '../../../lib/skin';
-import { ChallengeCard } from '../../leaderboard/challenge-card';
 import type { ChallengeRowView, ChallengesView } from '../panels-store';
 import { WIP_CARD } from '../wip-kit';
 import { PanelShell, panels } from './ui';
@@ -88,8 +75,7 @@ function WipChallengeArt({ row }: { row: ChallengeRowView }) {
 }
 
 /**
- * The standard look and Standard (WIP) (lib/skin.ts isKitHome): the
- * challenges as posters in the look's own kit (../wip-kit.tsx, app.css
+ * The challenges as posters in the kit's pieces (../wip-kit.tsx, app.css
  * "STANDARD (WIP)"), each a card of its own: the kit's card, in the "goal"
  * colours (`data-tone`, which re-points the tokens its insides read). The
  * row around them draws no card. Each is as wide as one of the look's
@@ -181,7 +167,6 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
 }
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
-  const wip = isKitHome(useLiveSkin());
   if (view.note) {
     return (
       <PanelShell panelKey={view.key} plate="none" stamps={{ rows: 0 }}>
@@ -205,36 +190,9 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
     );
   }
 
-  if (wip) {
-    return (
-      <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
-        <WipChallengePosters view={view} />
-      </PanelShell>
-    );
-  }
-
   return (
     <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
-      {/* ONE HOME (#6361): ONE ROW THAT SCROLLS SIDEWAYS, under Pinned
-          communities. The cards are the same; each is a fixed width so the
-          next one peeks in from the edge and says the row goes on. The row
-          runs to the screen's edges on a phone (`-mx-3 px-3`, the section's
-          own gutter given back) and snaps a card to the gutter. */}
-      <div className="home-panel-body pt-2">
-        <div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {/* Each card is the row's own child, as the declared checks
-              select it (`.home-panel-rows > .home-challenge-card`). */}
-          {view.rows.map((row) => (
-            <ChallengeCard
-              key={row.id}
-              view={row}
-              className="home-challenge-card w-[min(19rem,82vw)] shrink-0 snap-start"
-              data-challenge-id={row.id}
-              onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
-            />
-          ))}
-        </div>
-      </div>
+      <WipChallengePosters view={view} />
     </PanelShell>
   );
 }

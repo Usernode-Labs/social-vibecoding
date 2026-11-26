@@ -70,7 +70,7 @@ function audienceWords(audience: unknown): string {
 
 function RowIcon({ icon }: { icon: IconView }) {
   if (icon.kind === 'image') {
-    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
+    return <img src={icon.src} alt="" loading="lazy" decoding="async" draggable={false} className="w-full h-full object-cover" />;
   }
   if (icon.kind === 'emoji') return <span className="text-2xl leading-none">{icon.emoji}</span>;
   return <>{icon.letter}</>;

@@ -211,5 +211,5 @@ test('the form says Tap on a touch screen, lights its destination and sets its b
   const controller = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(controller, /const activeTargetClasses = \['bg-\[var\(--lit-tint\)\]', 'text-\[var\(--lit-ink\)\]', 'ring-2', 'ring-inset', 'ring-\[var\(--lit-ink\)\]'\];/);
   assert.doesNotMatch(controller, /const activeTargetClasses = \[[^\]]*bg-violet-600/, 'no longer a filled block beside Post request');
-  assert.match(APP_CSS, /html:not\(\[data-skin\]\) #feedback-modal :is\(button, a, label, summary, \[role="button"\]\) \{\s*font-family: inherit;/);
+  assert.match(APP_CSS, /html:root #feedback-modal :is\(button, a, label, summary, \[role="button"\]\) \{\s*font-family: inherit;/);
 });
