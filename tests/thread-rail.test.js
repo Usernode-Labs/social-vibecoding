@@ -301,7 +301,16 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   const block = css.slice(at, next);
   assert.match(block, /\.dev-request-rail:empty \{ display: none; \}/);
   assert.match(block, /@media \(max-width: 1179\.98px\) \{\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-pile \{ display: flex; \}\s*\.dev-rail\[data-rail-fold="shut"\] \.dev-rail-step:not\(\[data-rail-now\]\) \{ display: none; \}/);
-  const wide = block.slice(block.indexOf('@media (min-width: 1180px)'));
+  // The wide layout is the one `@media (min-width: 1180px)` block and nothing
+  // after it: a later narrow block (the phone's scale) is not part of it.
+  const wideAt = block.indexOf('@media (min-width: 1180px)');
+  let wideDepth = 0;
+  let wideEnd = block.indexOf('{', wideAt);
+  for (; wideEnd < block.length; wideEnd++) {
+    if (block[wideEnd] === '{') wideDepth++;
+    else if (block[wideEnd] === '}' && --wideDepth === 0) break;
+  }
+  const wide = block.slice(wideAt, wideEnd + 1);
   const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
   const rules = wide.split('\n').filter((line) => /^\s*html/.test(line));
   assert.ok(rules.length >= 9, 'the wide layout has its rules');
@@ -326,6 +335,93 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
   assert.match(cards, /:is\(#gc-thread-head, #gc-thread-messages, \.dev-request-rail\) \{\s*min-width: 0;\s*border-radius: var\(--thread-card-r\);\s*background: var\(--thread-card\);/);
   assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+});
+
+// #7171: the rail's height cap was written for the wide sticky column, but it
+// applied at every width. Below 1180px the rail is in normal flow, has no
+// `overflow`, and its last step painted over the first reply. The cap now
+// lives only where the rail is sticky.
+test('the narrow rail is not height-capped', () => {
+  const css = read('public/css/app.css');
+
+  // The ranges of every `@media (min-width: 1180px)` block, so what is left
+  // is every rule that applies at any other width.
+  const ranges = [];
+  const header = '@media (min-width: 1180px)';
+  for (let i = 0; ;) {
+    const at = css.indexOf(header, i);
+    if (at < 0) break;
+    const open = css.indexOf('{', at);
+    let depth = 0;
+    let end = open;
+    for (; end < css.length; end++) {
+      if (css[end] === '{') depth++;
+      else if (css[end] === '}' && --depth === 0) break;
+    }
+    ranges.push([at, end + 1]);
+    i = end + 1;
+  }
+  assert.ok(ranges.length > 0, 'the wide layout block exists');
+
+  let outside = '';
+  let from = 0;
+  for (const [start, end] of ranges) {
+    outside += css.slice(from, start);
+    from = end;
+  }
+  outside += css.slice(from);
+
+  assert.doesNotMatch(outside, /\.dev-request-rail[^{]*\{[^}]*max-height/,
+    'no height cap on the rail where it is in normal flow');
+  assert.doesNotMatch(css, /\.dev-request-rail \{ max-height: calc\(100% - var\(--pill-under\)\) !important; \}/);
+
+  const wide = ranges.map(([start, end]) => css.slice(start, end)).join('\n');
+  assert.match(wide, /\.dev-request-rail \{[^}]*max-height: 100%;/, 'the sticky rail keeps its own cap');
+  assert.match(wide, /\.dev-request-rail \{[^}]*max-height: calc\(100% - var\(--pill-top\)\) !important;/, 'and with a card, the pill-aware one');
+});
+
+// #7171: one scale across the three cards on a phone's thread page.
+test("a phone's thread page uses one scale", () => {
+  const css = read('public/css/app.css');
+  const marker = css.indexOf("ONE SCALE ON A PHONE'S THREAD PAGE");
+  assert.ok(marker > 0, 'the phone scale block exists');
+  const open = css.indexOf('@media (max-width: 767.98px) {', marker);
+  assert.ok(open > marker, 'it is a phone block');
+  let depth = 0;
+  let end = open;
+  for (; end < css.length; end++) {
+    if (css[end] === '{') depth++;
+    else if (css[end] === '}' && --depth === 0) break;
+  }
+  const block = css.slice(open, end + 1);
+
+  const value = (selector) => {
+    const at = block.indexOf(selector);
+    assert.ok(at > 0, `the block sets ${selector}`);
+    const rule = block.slice(at, block.indexOf('}', at));
+    const size = /font-size:\s*([^;]+);/.exec(rule);
+    assert.ok(size, `${selector} sets a size`);
+    return size[1].trim();
+  };
+
+  assert.equal(value('.dev-rail-time'), '0.8125rem');
+  assert.equal(value('.dev-rail-title'), '0.75rem');
+  assert.equal(value('.dev-rail-name'), '0.9375rem');
+  assert.equal(value('.dev-thread-foot-head'), '0.9375rem');
+  assert.match(block, /\.messages-thread-name \{ font-size: 1\.125rem;/, "the head's title is the one larger line");
+  assert.match(block, /\.flex > \.truncate \{ font-size: 0\.9375rem; \}/, 'the reply name is the words\' size');
+  assert.match(block, /\.flex > \.shrink-0 \{ font-size: 0\.8125rem; \}/, 'the reply time is the times\' size');
+  assert.match(block, /\.gc-msg-content \{ font-size: 0\.9375rem; line-height: 1\.4; \}/, 'the reply words are 15 over 1.4');
+
+  // No in-between size survives in it.
+  for (const m of block.matchAll(/font-size:\s*([^;]+);/g)) {
+    assert.doesNotMatch(m[1].trim(), /^(12\.5|13\.5|14\.5|15\.5|17)(px|rem|em)$/, `no in-between size: ${m[1].trim()}`);
+  }
+  // Scoped to the standard and brand looks, on the page's own thread, so
+  // desktop and the Homeroom bot column are untouched.
+  for (const line of block.split('\n').filter((l) => /^\s*html/.test(l))) {
+    assert.match(line, /^\s*html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #dev-topic-thread /, `scoped to the two looks and the thread page: ${line.trim().slice(0, 90)}`);
+  }
 });
 
 // #6807: a change waiting on the bot's fix for a check that is not its own
