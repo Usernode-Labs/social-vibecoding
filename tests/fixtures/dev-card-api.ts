@@ -32,4 +32,9 @@ export {
   devKanbanStore,
   cardNowStore,
   aiEnabledStore,
+  voteSavedStore,
+  publishVoteSaved,
 } from '../../frontend/src/features/dev-board/card/cards-store';
+// The pure saved-vote helpers, so a suite can call them beside the rendered
+// store-driven card (a saved yes settles the face and the approvals count).
+export { pillWithSavedVote, savedSideFor, votedSide } from '../../frontend/src/features/dev-board/card/model';

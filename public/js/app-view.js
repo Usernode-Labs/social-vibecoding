@@ -29650,6 +29650,19 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #7101: a board row whose lists were not current when the vote was
+      // cast had no optimistic target, so nothing repainted and the row kept
+      // the stale tally until the post-vote read. The saved vote already
+      // settles the React row from the store; this lets the page header and
+      // the chat's vote controls follow too, and applies the vote to a
+      // cached row found now (an equal vote returns early, so never twice).
+      if (!optimistic) {
+        const settledRow = AppView._findItem('proposal', sessionId);
+        if (settledRow) AppView._applyVoteToRow(settledRow, vote);
+        // Only a change with NO cached row at all needs the paint: a row that
+        // already showed this vote has nothing to redraw (#1924).
+        if (!pr && !live) AppView._repaintAfterVote(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
