@@ -7,16 +7,11 @@
  * screens move over by padding, app.css), and what moves is drawn on the
  * compositor afterwards: a FLIP. The screen on view is measured before and
  * after the change and played from where it was to where it is, as a
- * transform; the rail slides in from its edge, or out to it, as a transform.
+ * transform. The rail itself folds to its strip and does not slide.
  * Nothing is laid out again on any frame of it.
  *
- * Going away, the rail is still drawn for the length of its slide:
- * `platform-tabs-leaving` keeps it on screen (app.css) over the folded
- * layout, and is taken off when the slide ends.
- *
  * Not at all under `prefers-reduced-motion`, on a phone (there is no fold
- * there), on a route with no rail, or from a peek, where the rail is
- * already on screen and only docks.
+ * there), or on a route with no rail.
  */
 
 import { flushSync } from 'react-dom';
@@ -72,33 +67,19 @@ export function slideRail(commit: () => void): void {
     commit();
     return;
   }
-  // From a peek the rail is already on screen: it docks where it is.
-  const fromPeek = bar.classList.contains('platform-tabs-peek');
   const screen = onScreen();
   const before = screen ? screen.mark.getBoundingClientRect().left : null;
-  // The standard look and the brand kit's drawing of it (no data-skin on
-  // <html>) fold the menu to a strip of icons (app.css, "FOLDED, THE MENU IS
-  // A STRIP"): it never leaves, so nothing of it slides. The panel takes
-  // its new width at once (a width played frame by frame would lay the
-  // page out on each), and the screen still plays from where it was.
-  const strip = !document.documentElement.hasAttribute('data-skin');
-  if (!open && !fromPeek && !strip) bar.classList.add('platform-tabs-leaving');
+  // The menu folds to a strip of icons (app.css, "FOLDED, THE MENU IS A
+  // STRIP"): it never leaves, so nothing of it slides. The panel takes its
+  // new width at once (a width played frame by frame would lay the page out
+  // on each), and the screen still plays from where it was.
   // The class the fold reads is written in a layout effect, so the new
   // layout is there to measure as soon as this returns.
   flushSync(commit);
-  const leaving = () => bar.classList.remove('platform-tabs-leaving');
-  if (bar.classList.contains('platform-tabs-folded') === open) {
-    leaving();
-    return;
-  }
+  if (bar.classList.contains('platform-tabs-folded') === open) return;
   const after = screen ? screen.mark.getBoundingClientRect().left : null;
   const dx = (before !== null && after !== null ? Math.round(before - after) : 0) * dirSign();
   if (screen && dx) {
     screen.root.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], RAIL_SLIDE);
   }
-  if (fromPeek || strip) return;
-  const slide = bar.animate(open
-    ? [{ transform: `translateX(${-100 * dirSign()}%)` }, { transform: 'none' }]
-    : [{ transform: 'none' }, { transform: `translateX(${-100 * dirSign()}%)` }], RAIL_SLIDE);
-  if (!open) slide.finished.then(leaving, leaving);
 }

@@ -27,11 +27,21 @@ export function anchorRectOf(el: Element): AnchorRect {
  */
 export const ANCHOR_SCROLL_SLOP = 4;
 
+/** What a caller may turn off or add; every default is the behaviour below. */
+export interface AnchoredDismissOptions {
+  /** Close on Escape (default true). The Menu (./menu.ts) answers Escape itself. */
+  escape?: boolean;
+  /** Close on a resize and a scroll that moved the anchor (default true). */
+  move?: boolean;
+  /** More of the page that counts as inside: an opener that toggles on its own. */
+  also?: (target: Element) => boolean;
+}
+
 /**
  * While `open`, close on a click outside every element in `inside` (the
  * anchor and the panel), on Escape, on a resize, and on a scroll that MOVED
  * THE ANCHOR — a fixed panel placed from a rect is wrong the moment that rect
- * moves.
+ * moves. `options` turns the last three off or adds to what is inside.
  *
  * `inside[0]` is the anchor. It used to be any scroll at all, anywhere
  * (QA 2026-09-24 Q18): Messages' "+" sits above the inbox list, and the list
@@ -51,16 +61,21 @@ export function useAnchoredDismiss(
   open: boolean,
   inside: ReadonlyArray<RefObject<HTMLElement | null>>,
   close: () => void,
+  options: AnchoredDismissOptions = {},
 ): void {
   const closeRef = useRef(close);
   closeRef.current = close;
   const insideRef = useRef(inside);
   insideRef.current = inside;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   useEffect(() => {
     if (!open) return undefined;
+    const { escape = true, move = true } = optionsRef.current;
     const shut = () => closeRef.current();
     const within = (t: EventTarget | null) => !!t && (t as Node).nodeType === 1
-      && insideRef.current.some((ref) => ref.current?.contains(t as Node));
+      && (insideRef.current.some((ref) => ref.current?.contains(t as Node))
+        || !!optionsRef.current.also?.(t as Element));
     const nearInside = (x: number, y: number) =>
       nearAny(x, y, insideRef.current.map((ref) => ref.current));
     // Where the press that led to a click began. A click on the dimmed area
@@ -99,15 +114,19 @@ export function useAnchoredDismiss(
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('click', onDoc, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', shut);
+    if (escape) document.addEventListener('keydown', onKey);
+    if (move) {
+      window.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', shut);
+    }
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('click', onDoc, true);
       document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', shut);
+      if (move) {
+        window.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', shut);
+      }
     };
   }, [open]);
 }

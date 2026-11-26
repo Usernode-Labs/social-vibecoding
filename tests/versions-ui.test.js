@@ -147,7 +147,7 @@ test('the Update card draws nothing in its first render, and is placed under the
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const hub = lander.slice(lander.indexOf("{tab === 'status' ? ("), lander.indexOf("{tab === 'plan' ? ("));
   const at = (x) => hub.indexOf(x);
-  assert.ok(at('<FirstVersionCard') < at('<UpdateCard') && at('<UpdateCard') < at('<ShareItCard'), 'under the hero and the first version');
+  assert.ok(at('<FirstVersionCard') < at('<UpdateCard') && at('<UpdateCard') < at('<ForYouCard'), 'under the hero and the first version');
   assert.ok(at('<ForYouCard') < at('<FromVersionsCard') && at('<FromVersionsCard') < at('<RecentlyLive'), 'after For you');
 
   const src = read(HUB);

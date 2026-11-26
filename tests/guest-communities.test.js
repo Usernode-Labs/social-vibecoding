@@ -255,10 +255,10 @@ test('its address: the landing draws it at /communities in Discover\'s place, an
   assert.match(landing, /useEffect\(\(\) => \{ setOnGroupsPath\(location\.pathname === COMMUNITIES_PATH\); \}, \[\]\);/);
   // A project's page or a members' link's sheet named by the hash still comes first.
   assert.match(landing, /const groupsPage = guestPages && onGroupsPath && !guestProject && !linkPending && !gate;/);
-  // In the guest Discover's place, under either drawing of it.
+  // In the guest Discover's place.
   assert.match(landing, /\{groupsPage \? \(\s+<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>\s+\) : \(\s+<>/);
   const at = landing.indexOf('<GuestCommunities');
-  assert.ok(at > 0 && at < landing.indexOf('<LandingFrame') && at < landing.indexOf('<GuestDiscover'));
+  assert.ok(at > 0 && at < landing.indexOf('<GuestDiscover'));
 
   // A visitor with no account is who it is for: the anonymous redirect and
   // the waiting-room gate both leave that one pathname alone.
@@ -327,7 +327,7 @@ test('drawn in the website\'s look: the hero frame, the green, a soft sky, and e
   // the soft sky, which are the same picture in both modes.
   assert.doesNotMatch(dark[0], /--site-sun:|--site-on-sun:|--site-on-band:/);
   assert.match(css, /--site-on-band: #000000;/);
-  assert.match(css, /html:not\(\[data-skin\]\) #auth-landing-screen:has\(:is\(\[data-guest-discover\], \[data-guest-groups\]\)\) \{\s+background: var\(--site-ground\);/);
+  assert.match(css, /html:root #auth-landing-screen:has\(:is\(\[data-guest-discover\], \[data-guest-groups\]\)\) \{\s+background: var\(--site-ground\);/);
   // THE WALK-THROUGH IS A PICTURE OF THE APP: one palette of its own, which
   // no dark rule moves.
   assert.match(css, /#auth-landing-screen \.hr-demo \{\s+--ink: #14161a;/);

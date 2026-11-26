@@ -29,7 +29,7 @@
  * frames never re-render.
  */
 
-import { useCallback, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChevronLeftIcon } from '@/components/ui/icons';
@@ -38,16 +38,15 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { topicBack } from '../dev-board/topic/frame/topic-page';
+import { topicBack } from '../dev-board/topic/topic-page';
 import { useTopicBackName } from '../dev-board/topic/topic-back';
 import { openPlace } from '../dev-board/workshop/place-store';
 import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
-import { messagesBack, messagesDepth, messagesDrawerStore, publishChatBarHost } from './messages-drawer';
+import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
 import { dirSign } from '../../lib/i18n/direction';
-import { useLiveSkin } from '../../lib/skin';
 
 type Mode = 'communities' | 'messages' | null;
 
@@ -314,23 +313,3 @@ function Untint(): ReactNode {
   return <span ref={ref} className="nav-drawer-untint" aria-hidden="true" />;
 }
 
-/**
- * Where a conversation's own discs (its members and its ⋯) sit in the bar,
- * beside the bell (phone review #131): only while a conversation is open on
- * Messages' drawer, so never in the prerender. The host is empty here; the
- * thread's header (../messages/index.tsx ThreadHeader) portals its discs
- * into it. While it is drawn, app.css folds the look picker's two discs
- * away (they are Settings' Theme and Look), so the name and its line have
- * the bar's width.
- */
-export function ChatBarSlot(): ReactNode {
-  const { on, level, list } = useStoreState(messagesDrawerStore);
-  // ONE LOOK (25 Nov 2026): the standard look draws a conversation's discs
-  // on its own title card in the page, so only the brand look has a host.
-  // The Homeroom bot tab's New chat borrows the drawer (`list`) and has no
-  // discs to bring up in any look.
-  const skin = useLiveSkin();
-  const host = useCallback((el: HTMLSpanElement | null) => { publishChatBarHost(el); }, []);
-  if (!on || level !== 1 || list || skin !== 'brand') return null;
-  return <span ref={host} className="nav-drawer-chat-actions" data-nav-drawer-chat-actions="" />;
-}

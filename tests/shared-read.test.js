@@ -101,9 +101,6 @@ test('Home reads the public directory only while it is the screen on show', () =
   assert.match(join, /const shown = useVisibility\('home-screen', true\);/);
   assert.match(join, /if \(!shown\) return undefined;\n\s+let live = true;/);
   assert.match(join, /\}, \[attempt, shown\]\);/);
-  const frame = read('frontend/src/features/home/frame/home-frame.tsx');
-  assert.match(frame, /if \(!pins\.ready \|\| !shown\) return undefined;/);
-  assert.match(frame, /\}, \[pins\.ready, attempt, shown\]\);/);
 });
 
 // The session list Improve re-read while Messages or the bell was open, at

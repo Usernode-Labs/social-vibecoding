@@ -65,7 +65,7 @@ test('B25: on the Duo held sideways a thread in the bot tab\'s column stops at t
   // in the docked column that runs under the column of chrome. The phone's
   // drawer is already inside the body's padding (#6974): padding it again
   // left a band of empty ground beside the folded Duo's tabs.
-  assert.match(APP_CSS, /html\[data-side-strip\]:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-main-pane \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/);
+  assert.match(APP_CSS, /html\[data-side-strip\]:root #ai-screen \.ai-main-pane \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/);
   assert.doesNotMatch(APP_CSS, /#ai-screen \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/,
     'nothing pads the private thread page by --ai-edge outside the docked column: the folded Duo\'s drawer does not run under the strip');
   // The column itself still reaches the screen's edge (no band of another colour).
@@ -153,11 +153,11 @@ test('U04: the standard look\'s Duo strip reads the page\'s ink, not the blue ba
   // The capsule is the page's own plane, so the white ink chosen for the
   // phone's blue bar nearly disappeared on it in light mode. The strip inherits
   // the page's ink and keeps the standard look's sun pill for the lit place.
-  const rule = /html:not\(\[data-skin\]\)\[data-side-strip\] #platform-tabs \{\n    --text-primary: inherit;\n    --text-secondary: inherit;\n    --text-muted: inherit;\n    --text-faint: inherit;\n    --lit-tint: var\(--wip-nav-on-bg\);\n    --lit-ink: var\(--wip-nav-on-ink\);\n  \}/;
+  const rule = /html:root\[data-side-strip\] #platform-tabs \{\n    --text-primary: inherit;\n    --text-secondary: inherit;\n    --text-muted: inherit;\n    --text-faint: inherit;\n    --lit-tint: var\(--wip-nav-on-bg\);\n    --lit-ink: var\(--wip-nav-on-ink\);\n  \}/;
   assert.match(APP_CSS, rule);
   // The unlit tab reads the page's own ink; the lit pill is left to the
   // standard look's own sun rule.
-  assert.match(APP_CSS, /html:not\(\[data-skin\]\)\[data-side-strip\] \.platform-tab:not\(\[aria-current="page"\]\) \{\n    color: var\(--text-muted\);\n  \}/);
+  assert.match(APP_CSS, /html:root\[data-side-strip\] \.platform-tab:not\(\[aria-current="page"\]\) \{\n    color: var\(--text-muted\);\n  \}/);
   // It is the Duo strip's rule, inside that block's phone media query.
   const at = APP_CSS.search(rule);
   const media = APP_CSS.lastIndexOf('@media (max-width: 767px) {', at);

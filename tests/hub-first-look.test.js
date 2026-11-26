@@ -187,7 +187,8 @@ test('in the First version card\'s place, under the hero, and no second card aft
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = (s) => lander.indexOf(s);
   assert.ok(at('<FirstVersionCard slug={slug}') > 0);
-  assert.ok(at('<FirstVersionCard slug={slug}') < at('<ShareItCard slug={slug}'));
+  assert.ok(at('<CommunityCard') < at('<FirstVersionCard slug={slug}'), 'under the hero');
+  assert.ok(at('<FirstVersionCard slug={slug}') < at('<ForYouCard'), 'before For you');
   assert.doesNotMatch(lander, /FirstLookCard/);
   assert.equal(hub.FirstLookCard, undefined);
   // Versions (docs/plans/versions.md) added the Update card and From its

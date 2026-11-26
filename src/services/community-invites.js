@@ -374,8 +374,9 @@ function summarizeLinks(links) {
 }
 
 /**
- * The hub's Share it card's line about the invite that is out ("Invite link
- * sent · nobody has joined yet · 7 days left"): summarizeLinks over the very
+ * The invite that is out, summed ("Invite link sent · nobody has joined yet
+ * · 7 days left" on the hub's Share it card, which went on 26 Nov 2026; the
+ * hub's payload still carries it): summarizeLinks over the very
  * links listInvites shows this viewer, scoped as it scopes them (their own,
  * or every link when they manage the project). Null without a viewer.
  */

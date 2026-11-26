@@ -56,9 +56,7 @@ const SUGGEST_PLACE = 'shrink-0 hidden sm:inline-flex items-center justify-cente
  * page used to draw no Suggest, so the same project's bar had it on its App
  * tab and lost it on every other (audit P01, 1 Nov 2026); "Suggest" is about
  * the project either way, and the form opens on it from both
- * (Improve.giveFeedback, App.currentApp is the project's). Exported for
- * the frame's bar, which draws the same control by the same rule under a
- * look (../frame/frame-app.tsx).
+ * (Improve.giveFeedback, App.currentApp is the project's).
  */
 export function useInAppShown(): boolean {
   const { target, slug, tab, selfHosted } = useStoreState(improveStore);

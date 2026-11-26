@@ -469,8 +469,11 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
 }
 
 // Start a checks run against the serving attempt.
+// `timings`: the build this run follows, as staging.js timed it, so its
+// trace records the build's steps (visuals.captureForSession). Only the run
+// right after a build has them; the attempt that serves does not keep them.
 function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
-  extra: { work?: WorkRequest[]; data?: Partial<Data>; writes?: DomainWrite[]; push?: Push[] } = {}): Outcome<PState> {
+  extra: { work?: WorkRequest[]; data?: Partial<Data>; writes?: DomainWrite[]; push?: Push[]; timings?: Json | null } = {}): Outcome<PState> {
   const d0 = { ...s.data, ...(extra.data || {}) };
   const served = d0.serving!;
   const key = `run-${served.n}-${ctx.version + 1}`;   // a Kubernetes label value (the Jobs carry it)
@@ -481,6 +484,7 @@ function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
     work: [...(extra.work || []), { kind: WORK.run, key, input: {
       sessionId: d.sessionId, appId: d.appId, n: served.n, head: served.head, runId: key, trigger,
       runtimeName: served.runtimeName, runtimeKind: served.runtimeKind, url: served.url,
+      ...(extra.timings ? { timings: extra.timings } : {}),
     } }],
     push: [...(extra.push || []), ...checksPending(d, ctx, served.head, 'testing', trigger)],
     timer: null,
@@ -1349,6 +1353,9 @@ export interface PrepareResult {
   detail?: string; infrastructure?: boolean; platformFault?: boolean; aboutMain?: string | null; sync?: boolean;
   servingRemoved?: boolean;     // Docker removes the old container before it runs the new one
   buildError?: { line: string; excerpt: string } | null;  // a failed build's own first error (#6536)
+  // How long the build's steps took (staging.js `timings`), handed to the
+  // checks run that follows so its trace records them.
+  timings?: Json | null;
 }
 
 export interface RunResult {
@@ -1435,6 +1442,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
       writes: [{ type: 'published', sessionId: d.sessionId, appId: d.appId, served: served as unknown as Json, note: true }],
       work: [...(gone ? [gone.work] : []), ...dropped],
       push: up,
+      timings: r.timings ?? null,
     }), toShots(d, 'HeadReady', { head: served.head }));
   }
   // The attempt failed: what serves keeps serving (on Docker it was

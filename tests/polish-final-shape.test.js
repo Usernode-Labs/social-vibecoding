@@ -186,9 +186,9 @@ test('#19: a channel loads in one state, the room\'s own', () => {
     'no card list in front of a place that draws its own loading shape');
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   // 24 Nov 2026: nor does the Workshop's front page, under the standard look (front-page.tsx draws its own parts).
-  assert.match(workshop, /const frontHere = tab === 'workshop' && wipLook && !openWeek;\n\s+if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere && !frontHere\)\)\) \{/,
+  assert.match(workshop, /const frontHere = tab === 'workshop' && !openWeek;\n\s+if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere && !frontHere\)\)\) \{/,
     'a channel waits for neither the board nor the record');
-  assert.match(frame, /if \(tab === 'workshop'\) return !document\.documentElement\.hasAttribute\('data-skin'\);/,
+  assert.match(frame, /return tab === 'workshop' \|\| tab === 'status' \|\| isChannelPlace\(tab\);/,
     'and the host opens empty for it, as for the hub');
 });
 
@@ -200,11 +200,10 @@ test('#19: a room\'s picture holds its box until it has drawn', () => {
 
 // ── #24 and N13 ─────────────────────────────────────────────────────────
 
-test('#24: the votes figure is square like its neighbours, and a long step gives way with an ellipsis', () => {
+test('#24: a long step gives way with an ellipsis', () => {
+  // The square votes figure was the Overview card's, the brand look's alone
+  // (removed 26 Nov 2026).
   const css = read('public/css/app.css');
-  const button = css.slice(css.indexOf('button.dev-ws-dash-cell {'), css.indexOf('button.dev-ws-dash-cell:hover'));
-  assert.match(button, /border-radius: 0;/);
-  assert.doesNotMatch(button, /border-radius: 10px/);
   assert.match(css, /\.dev-ws-hrow-meta > \.dev-ws-hrow-tag:not\(:has\(> svg\)\) \{\s*flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;/);
 });
 

@@ -25,7 +25,6 @@
 import { type ReactNode, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { k } from '@/components/ui/kit';
 import { PLANE_CARD } from '@/components/ui/grouped-list';
 import { CheckIcon, PencilSquareIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -50,15 +49,6 @@ import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 import { WeekShareSheet } from './week-share-sheet';
-import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
-import { isFrameSkin, useLiveSkin } from '../../lib/skin';
-import { useVisibility } from '../../lib/visibility-store';
-import { YouFrame, YouLoading, type YouShell } from './frame/you-frame';
-import { YouFriends } from './frame/you-friends';
-import { YouHistory } from './frame/you-history';
-import type { YouTab } from './frame/you-tabs';
-import { walletSheetStore } from '../header/wallet-sheet-store';
-import { useFramePage } from '../frame/frame-page-store';
 
 /** The round picture. A person with no uploaded photo has a generated one,
  *  so `url` is present for every known account; it is absent only where no
@@ -85,10 +75,10 @@ function IdentityAvatar({ url }: { url: string | null }): ReactNode {
 /** Identity card (#982) — who this profile belongs to, and the way in to
  *  editing it. The prototype's compact card: the name, one muted line of
  *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio.
- *  The `profile-id-*` classes are hooks for the standard look's header
- *  (#7072, app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card
- *  spans the page there, with a larger picture and the name in the serif. */
-function IdentityCard({ identity, user, editorial = false }: { identity: any; user?: any; editorial?: boolean }): ReactNode {
+ *  The `profile-id-*` classes are hooks for the page's header (#7072,
+ *  app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card spans the
+ *  page, with a larger picture and the name in the serif. */
+function IdentityCard({ identity, user }: { identity: any; user?: any }): ReactNode {
   const t = useMessages('profile');
   // #7156: which of the two fields is open, if either. One at a time, so a
   // save never sends a half-edited second field; opening one closes the other.
@@ -110,32 +100,20 @@ function IdentityCard({ identity, user, editorial = false }: { identity: any; us
           <IdentityAvatar url={identity.avatarUrl} />
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
-                rather than losing its end at the first line. Under the
-                standard look a pencil sits beside it and opens the name for
-                editing in place (#7156); the other looks keep the plain line. */}
-            {editorial ? (
-              <div className="flex items-center gap-2">
-                {editing === 'name' ? null : (
-                  <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
-                )}
-                <InlineNameEdit
-                  user={user}
-                  open={editing === 'name'}
-                  onOpen={() => setEditing('name')}
-                  onClose={() => setEditing(null)}
-                />
-              </div>
-            ) : (
-              <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
-            )}
-            {editorial && identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
-            {!editorial && identity.sub ? (
-              // Wraps rather than truncating: a fact cut off mid-word is not
-              // a fact.
-              <div className="profile-id-sub text-sm text-zinc-500 dark:text-zinc-400">
-                {identity.sub}
-              </div>
-            ) : null}
+                rather than losing its end at the first line. A pencil sits
+                beside it and opens the name for editing in place (#7156). */}
+            <div className="flex items-center gap-2">
+              {editing === 'name' ? null : (
+                <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+              )}
+              <InlineNameEdit
+                user={user}
+                open={editing === 'name'}
+                onOpen={() => setEditing('name')}
+                onClose={() => setEditing(null)}
+              />
+            </div>
+            {identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
             {/*
                 The verified accounts are facts about the person, so they sit
                 with the other facts, in the text column: a check and a line
@@ -148,28 +126,13 @@ function IdentityCard({ identity, user, editorial = false }: { identity: any; us
           a text child, which is the whole safety story — no HTML string is ever
           built for it, here or anywhere.
       */}
-      {editorial ? (
-        <InlineBioEdit
-          user={user}
-          open={editing === 'bio'}
-          onOpen={() => setEditing('bio')}
-          onClose={() => setEditing(null)}
-        />
-      ) : identity.bio ? (
-        /*
-            `break-words` is load-bearing (#1612): a bio is free text, so it can
-            be one 280-character word or a pasted URL with no space in it, and
-            `whitespace-pre-line` alone leaves that on a single line — it spills
-            past the card and gives the whole screen a horizontal scrollbar.
-            `overflow-wrap: break-word` breaks such a run only when it would not
-            otherwise fit, so ordinary prose still wraps at spaces and nothing
-            else about the card changes.
-        */
-        <p className="profile-id-bio text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
-          {identity.bio}
-        </p>
-      ) : null}
-            {editorial && identity.about ? <p className="profile-id-about">{identity.about}</p> : null}
+      <InlineBioEdit
+        user={user}
+        open={editing === 'bio'}
+        onOpen={() => setEditing('bio')}
+        onClose={() => setEditing(null)}
+      />
+            {identity.about ? <p className="profile-id-about">{identity.about}</p> : null}
             {identity.chips.length ? (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                 {identity.chips.map((chip: any) => (
@@ -197,7 +160,7 @@ function IdentityCard({ identity, user, editorial = false }: { identity: any; us
           className="self-start ms-[68px] sm:self-auto sm:ms-0"
           onClick={() => Profile.showEditSheet()}
         >
-          {editorial ? <PencilSquareIcon aria-hidden="true" /> : null}
+          <PencilSquareIcon aria-hidden="true" />
           {t('profile:identity.edit')}
         </Button>
       </div>
@@ -444,84 +407,21 @@ function ProfileSkeleton(): ReactNode {
   );
 }
 
-/**
- * The You tab under one of the frame's looks: the kit's page
- * (./frame/you-frame.tsx) from this screen's own view, with the facts the
- * standard rows read for themselves (the App slots line, whether the viewer
- * is an admin, whether Settings holds the wallet). Its tabs are the store's
- * `tab` (./profile.js showTab): Overview here, Changes, Requests and Votes
- * from the bot's History (./frame/you-history.tsx), Friends from this view's
- * own lists (./frame/you-friends.tsx).
- */
-function YouInFrame({ view, tab, friendsPending, friendsStatus }: { view: any; tab: YouTab; friendsPending: number | null; friendsStatus: string }): ReactNode {
-  const allowance = useAppAllowance();
-  const admin = useVisibility('switcher-row-admin', false);
-  const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
-  // The bar says You, as the tab does (the standard header says Profile),
-  // and names the tab that is up after it, with the way back to the Overview.
-  const tc = useMessages('core');
-  const t = useMessages('profile');
-  const tm = useMessages('messages');
-  const here = tab === 'changes' ? tm('messages:ai.history.kind.change')
-    : tab === 'requests' ? tm('messages:ai.history.kind.request')
-      : tab === 'votes' ? tm('messages:ai.history.kind.vote')
-        : tab === 'friends' ? t('profile:friends.title') : null;
-  useFramePage(here ? [tc('core:tabs.me'), here] : [tc('core:tabs.me')], here ? toOverview : null);
-  const shell: YouShell = {
-    identity: view.identity,
-    tab,
-    onTab: (next) => Profile.showTab(next),
-    onEdit: () => Profile.showEditSheet(),
-    onFeedback: () => Profile.showFeedback(),
-  };
-  if (tab === 'changes' || tab === 'requests' || tab === 'votes') return <YouHistory shell={shell} kind={HISTORY_KIND[tab]} />;
-  if (tab === 'friends') {
-    return (
-      <YouFriends
-        shell={shell}
-        view={view.friends ?? { loaded: false, incoming: [], friends: [], outgoing: [] }}
-        pendingId={friendsPending}
-        status={friendsStatus}
-      />
-    );
-  }
-  return (
-    <YouFrame
-      shell={shell}
-      stats={view.stats}
-      activity={view.activity}
-      rows={view.rows}
-      slots={appSlotsLine(allowance.quota, allowance.requestedAt as string | null)}
-      admin={admin}
-      wallet={wallet}
-      onSlots={() => Profile.showAppSlots()}
-      onShareWeek={() => Profile.showWeekShare()}
-    />
-  );
-}
-const toOverview = () => Profile.showTab('overview');
 const HISTORY_KIND = { changes: 'change', requests: 'request', votes: 'vote' } as const;
 
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
   // Subscribed before the view is built: its lines are read as it is.
   const t = useMessages('profile');
-  // Under one of the frame's looks your own page is the kit's (the tour's
-  // s44); a public profile and the states before the data keep theirs.
-  const skin = useLiveSkin();
-  const frame = isFrameSkin(skin);
-  const editorial = skin === 'standard';
   const view = buildProfileView(state);
-  // #7134: the standard page's section row is real tabs, and the tab that is
-  // up decides the right column. It is the same store field the frame's You
-  // page reads (./profile.js _readTab / showTab).
+  // #7134: the page's section row is real tabs, and the tab that is up
+  // decides the right column (./profile.js _readTab / showTab).
   const tab = state.tab || 'overview';
   const contributions = state.data?.summary?.contributions || [];
   const onHistoryTab = tab === 'changes' || tab === 'requests' || tab === 'votes';
 
   if (view.kind === 'empty') return null;
-  // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
-  if (view.kind === 'loading') return frame ? <YouLoading /> : <ProfileSkeleton />;
+  if (view.kind === 'loading') return <ProfileSkeleton />;
   // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
   // is a normal state, and the connection-error copy blames the network for it.
   if (view.kind === 'signedOut') {
@@ -550,8 +450,6 @@ export function ProfileRoot(): ReactNode {
     );
   }
   if (view.kind === 'publicNotFound') {
-    // Under a look the one line is the kit's lone line (the tour's o26).
-    if (frame) return <div className={k('lone')} data-profile-unavailable="">{t('profile:public.unavailable')}</div>;
     return (
       <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400 lg:max-w-2xl lg:mx-auto">{t('profile:public.unavailable')}</div>
     );
@@ -615,39 +513,36 @@ export function ProfileRoot(): ReactNode {
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
-      {frame ? <YouInFrame view={view} tab={(state.tab || 'overview') as YouTab} friendsPending={state.friendsPending ?? null} friendsStatus={state.friendsStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard
             key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`}
             identity={view.identity}
             user={state.user}
-            editorial={editorial}
           />
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
         <div id="profile-main" className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
-          {editorial ? <ProfileSectionLinks tab={tab} /> : null}
-          {editorial && onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
-          {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
-          {!editorial || (!onHistoryTab && tab !== 'activity') ? (
+          <ProfileSectionLinks tab={tab} />
+          {onHistoryTab ? <ProfileHistoryList kind={HISTORY_KIND[tab as keyof typeof HISTORY_KIND]} /> : null}
+          {tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
+          {!onHistoryTab && tab !== 'activity' ? (
             <>
-              {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
-              {editorial ? <ProfileRecentActivity changes={contributions} /> : null}
+              <ProfileLiveProjects projects={state.data?.summary?.projects || []} />
+              <ProfileRecentActivity changes={contributions} />
               <WorkPanel rows={view.rows} />
               <RewardsPanel rows={view.rows} />
             </>
           ) : null}
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
-          {editorial ? <ProfilePreferences /> : null}
+          <ProfilePreferences />
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
           <AdminPanel />
         </div>
       </div>
-      )}
     </>
   );
 }

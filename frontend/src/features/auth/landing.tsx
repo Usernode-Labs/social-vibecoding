@@ -45,7 +45,6 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
-import { isFrameSkin, useSkin } from '../../lib/skin';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -66,7 +65,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeepLinkBackdrop, type DeepLinkPlace, GatePlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
+import { DeepLinkBackdrop, type DeepLinkPlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, onInviteLink, useInvitePreview } from './invite-card';
 import { type ReleaseAccount, releaseAccountFromToken } from './login';
 import {
@@ -82,9 +81,8 @@ import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestCommunities } from '../guest/guest-communities';
 import { GuestDiscover } from '../guest/guest-discover';
-import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
-import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
+import { type GuestApp, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -869,10 +867,6 @@ export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
   const t = useMessages('auth');
-  // Under one of the frame's looks the guest Discover is the kit's page
-  // (../guest/frame/landing-frame.tsx). Standard until mount: this screen
-  // is in the prerendered document.
-  const frame = isFrameSkin(useSkin());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -922,11 +916,6 @@ export function LandingScreen() {
   const [deepLink, setDeepLink] = useState<{ target: string; place: DeepLinkPlace } | null>(null);
   // Closed without signing in: the story, under an address that says so. The
   // link stays remembered, so a sign-in from the story still lands on it.
-  // Under a look it is the same sheet over the same outline (version 2 of
-  // the looks), with the place named in the frame's bar (GatePlace below).
-  // The tab a public project's page is on, which the frame's bar names
-  // under a look (../guest/guest-project.tsx says it).
-  const [projectTab, setProjectTab] = useState<'hub' | 'workshop' | 'discussion'>('hub');
   const closeGate = useCallback(() => {
     setDeepLink(null);
     closeSheet();
@@ -1127,8 +1116,6 @@ export function LandingScreen() {
   const linkedSlug = deepPlace?.kind === 'project' ? deepPlace.slug : null;
   const linkedApp = linkedSlug && apps ? apps.find((a) => a.slug === linkedSlug) ?? null : null;
   const guestProject = guestOn ? linkedApp : null;
-  const guestProjectSlug = guestProject?.slug ?? null;
-  useEffect(() => { if (!guestProjectSlug) setProjectTab('hub'); }, [guestProjectSlug]);
   // Until the directory is read, a project link is neither public nor not,
   // so neither its page nor the sheet shows yet.
   const linkPending = guestOn && !!linkedSlug && apps === null && !appsFailed;
@@ -1851,13 +1838,6 @@ export function LandingScreen() {
             carrying h-7, and the lead group must stay that div.
         */}
         <div className="w-7 shrink-0 [[data-guest-top]_&]:hidden" aria-hidden="true" />
-        {/* Under a look, the place a gated link was for, for the frame's bar
-            (./deep-link-sign-in.tsx GatePlace). Never in the first render. */}
-        {frame && gate ? <GatePlace target={gate.target} /> : null}
-        {/* …and a public project's tab, after its name, when it is not the Hub. */}
-        {frame && guestPages && guestProject && projectTab !== 'hub' ? (
-          <span hidden data-guest-place="trail">{projectTab === 'workshop' ? t('auth:guest.project.tab.workshop') : t('auth:guest.project.tab.discussion')}</span>
-        ) : null}
         {/*
             THE ONE WAY IN THE BAR CARRIES (the guest Discover, 21 Oct 2026):
             a quiet "Sign in", for somebody who has an account and is looking
@@ -2374,10 +2354,8 @@ export function LandingScreen() {
           {guestPages && guestProject ? (
             <GuestProject
               app={guestProject}
-              startOnWorkshop={!!deepLink && linksToWorkshop(deepLink.target)}
               signedIn={waitingGuest}
               primaryClass={PRIMARY_PILL}
-              onPlace={setProjectTab}
               onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onShare={shareProject}
@@ -2385,26 +2363,11 @@ export function LandingScreen() {
             />
           ) : null}
           {/* At `/communities`, the page about private communities, in the
-              guest Discover's place under either drawing of it. */}
+              guest Discover's place. */}
           {groupsPage ? (
             <GuestCommunities waitlist={accountsWait} onStart={() => setSheet('start')} />
           ) : (
             <>
-          {/* The same page in the one frame, ahead of the standard one, which
-              app.css puts away while this is up. An account still in line
-              looks around on it too. */}
-          {frame && guestPages && !guestProject && !linkPending && !gate ? (
-            <LandingFrame
-              apps={apps}
-              failed={appsFailed && !apps}
-              waitlist={accountsWait}
-              waiting={waitingGuest ? { email: sessionEmail() } : null}
-              welcomeEmail={releaseEmail}
-              onStart={() => setSheet('start')}
-              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
-              onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
-            />
-          ) : null}
           {guestPages && !guestProject && !linkPending ? (
             <GuestDiscover
               apps={apps}

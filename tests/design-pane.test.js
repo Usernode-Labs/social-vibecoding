@@ -183,5 +183,5 @@ test('phone review #132: on a phone the artifact is edge to edge, the head is on
 test('phone review #92 and S6: a ring on every app icon in dark, and a private thread keeps its way back while typing', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.dark :is\(\.app-icon-tile, img\[src\$="\/brand\/homeroom-mark\.png"\]:not\(\.platform-mark-tile\)\) \{\s+outline: 1px solid rgba\(255, 255, 255, 0\.14\);\s+outline-offset: -1px;\s+\}/);
-  assert.match(css, /html\.platform-kb-short:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.dev-request:has\(\.dev-thread-card\) > \.dev-request-back:not\(:empty\) \{\s+display: flex;\s+\}/);
+  assert.match(css, /html\.platform-kb-short:root #ai-screen \.dev-request:has\(\.dev-thread-card\) > \.dev-request-back:not\(:empty\) \{\s+display: flex;\s+\}/);
 });

@@ -660,9 +660,9 @@ test('the panel\'s head card pads the edge the top window publishes', () => {
   // the top window publishes the column's width onto the frame's root and
   // this rule spends it on the head card alone.
   const rule = APP_CSS.match(
-    /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\)\.in-side-panel\.side-panel-beside-ai \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{([^}]*)\}/
+    /html:root\.in-side-panel\.side-panel-beside-ai \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{([^}]*)\}/
   );
-  assert.ok(rule, 'one rule, scoped to the column in the looks that draw the head card there');
+  assert.ok(rule, 'one rule, scoped to the column that draws the head card there');
   assert.match(rule[1], /padding-inline-end: calc\(var\(--thread-gutter, 12px\) \+ var\(--side-panel-edge, 0px\)\);/,
     'the card narrows by the column, on its inline end');
   assert.doesNotMatch(rule[1], /padding-block/, 'the card\'s top padding belongs to --pill-top');

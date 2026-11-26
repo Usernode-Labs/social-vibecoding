@@ -141,8 +141,30 @@ test('image icon renders an <img> and wins over emoji', () => {
     baseApp({ icon_emoji: '🎮', icon_url: '/app-icons/' + 'a'.repeat(32) })
   );
   assert.match(html, /data-icon="image"/);
-  assert.match(html, /<img src="\/app-icons\/a{32}"/);
+  // Asked for at the tile's size, not the whole stored file (#7165).
+  assert.match(html, /<img src="\/app-icons\/a{32}\?w=192"/);
   assert.match(html, /object-cover/);
+});
+
+// Request #7165, point 5: an icon of 100 KB and more was loaded for a 56px
+// tile. The tile asks the server for a 192px copy; only the two stored kinds
+// of picture are sized, and only at their plain address.
+test('a stored picture is asked for at its drawn size, and nothing else is touched', () => {
+  const sandbox = { document: { createElement: fakeElement } };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const AppCard = installAppCard(sandbox);
+  const id = 'a'.repeat(32);
+  assert.equal(AppCard.sizedPicture(`/app-icons/${id}`, 192), `/app-icons/${id}?w=192`);
+  assert.equal(AppCard.sizedPicture(`/app-illustrations/${id}`, 512), `/app-illustrations/${id}?w=512`);
+  for (const other of [`/app-icons/${id}?v=2`, `https://example.com/app-icons/${id}`, 'data:image/png;base64,AAAA',
+    '/app-icons/emoji/1f4ca.png', `/avatars/${id}`, '/app-icons/short', '', null, undefined]) {
+    assert.equal(AppCard.sizedPicture(other, 192), other);
+  }
+  assert.deepEqual({ ...AppCard.iconViewFor({ icon_url: `/app-icons/${id}`, icon_emoji: '🎮' }) },
+    { kind: 'image', src: `/app-icons/${id}?w=192` });
+  const demo = 'data:image/png;base64,AAAA';
+  assert.equal(AppCard.iconViewFor({ icon_url: demo }).src, demo, 'a staging demo icon is drawn as it came');
 });
 
 // The tile treatment itself (app.css `.app-icon-tile`): a white face
@@ -650,7 +672,7 @@ test('the other lists of icons and pictures are lazy and decode off the main thr
   assert.match(format, /<img src=\{user\.avatarUrl\} alt="" loading="lazy" decoding="async" className=/, 'a person\'s picture on a Messages row');
   assert.match(format, /className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" \/>/, 'a shared project\'s icon in a message');
   const tile = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) } });
-  assert.match(tile, /<img src="\/app-icons\/a{32}" alt="" loading="lazy" decoding="async" draggable="false"/);
+  assert.match(tile, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="lazy" decoding="async" draggable="false"/);
   const first = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) }, eager: true });
-  assert.match(first, /<img src="\/app-icons\/a{32}" alt="" loading="eager" draggable="false"/);
+  assert.match(first, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="eager" draggable="false"/);
 });
