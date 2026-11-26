@@ -372,7 +372,8 @@ test('the sitemap lists the front page and each public project worth finding, at
     { slug: 'Bad Slug', description: 'x', active_users: 1 },
   ]);
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
-  assert.deepEqual([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]), ['https://app.example/', 'https://app.example/app/game-corner']);
+  assert.deepEqual([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]),
+    ['https://app.example/', 'https://app.example/communities', 'https://app.example/app/game-corner']);
   assert.match(xml, /<loc>https:\/\/app\.example\/app\/game-corner<\/loc><lastmod>2026-10-20<\/lastmod>/);
   // A public project with a description and no merges is listed at once, with
   // the day it was made as its last change.
@@ -391,5 +392,103 @@ test('the sitemap lists the front page and each public project worth finding, at
     const body = await sitemap.text();
     assert.match(body, /<loc>http:\/\/127\.0\.0\.1:\d+\/app\/game-corner<\/loc>/);
     assert.doesNotMatch(body, /echo-diagnostic/, 'nothing about itself and nobody in it');
+    assert.match(body, /<loc>http:\/\/127\.0\.0\.1:\d+\/<\/loc><lastmod>2026-10-20<\/lastmod>/, 'the front page, dated by its newest project');
+    assert.match(body, /<loc>http:\/\/127\.0\.0\.1:\d+\/communities<\/loc>/);
   } finally { await srv.close(); }
+});
+
+test('the sitemap dates the front page by its newest listed project and the communities page by the build, never by now', () => {
+  const { sitemapXml } = require('../src/routes/project-preview');
+  const communities = require('../src/services/communities-page');
+  const apps = [
+    { slug: 'older', description: 'Old', active_users: 1, last_merged_at: '2026-09-02T08:00:00.000Z' },
+    { slug: 'newer', description: 'New', active_users: 1, created_at: '2026-11-21T23:59:00.000Z' },
+    // Not listed, so its date is not the front page's.
+    { slug: 'quiet', description: null, active_users: 0, last_merged_at: '2026-11-25T00:00:00.000Z' },
+  ];
+  const xml = sitemapXml(ORIGIN, apps, { pageDay: '2026-11-24' });
+  assert.match(xml, /<url><loc>https:\/\/app\.example\/<\/loc><lastmod>2026-11-21<\/lastmod><\/url>/);
+  assert.match(xml, /<url><loc>https:\/\/app\.example\/communities<\/loc><lastmod>2026-11-24<\/lastmod><\/url>/);
+  assert.equal(sitemapXml(ORIGIN, apps, { pageDay: '2026-11-24' }), xml, 'the same input gives the same dates');
+  // Nothing to date them by: no date, never today's.
+  const bare = sitemapXml(ORIGIN, []);
+  assert.match(bare, /<url><loc>https:\/\/app\.example\/<\/loc><\/url>\n {2}<url><loc>https:\/\/app\.example\/communities<\/loc><\/url>/);
+  assert.doesNotMatch(sitemapXml(ORIGIN, [], { pageDay: 'yesterday"><x' }), /lastmod|yesterday/);
+  assert.equal(communities.documentDay(Date.UTC(2026, 10, 24, 15, 30)), '2026-11-24');
+  assert.equal(communities.documentDay(0), null, 'a build that zeroes file times gives no date');
+  assert.equal(communities.documentDay(undefined), null);
+  // The route reads the built document's time, and nothing reads the clock.
+  const route = read('src/routes/project-preview.js');
+  assert.match(route, /communitiesPage\.documentDay\(built\.mtimeMs\)/);
+  assert.doesNotMatch(route.slice(route.indexOf('function sitemapXml'), route.indexOf('function projectPreviewRoutes')), /Date\.now|new Date\(\)/);
+});
+
+test('the page about private communities has its own title, description and one address in its head', () => {
+  const communities = require('../src/services/communities-page');
+  // Its words are the page's own: the headline and the two sentences under it.
+  const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
+  assert.equal(communities.TITLE, catalog['guest.groups.title'].text);
+  assert.equal(communities.DESCRIPTION, catalog['guest.groups.sub'].text.replace(/<\/?\d+>/g, ''));
+  assert.ok(read('frontend/src/features/auth/story.tsx').includes(`export const COMMUNITIES_PATH = '${communities.COMMUNITIES_PATH}';`));
+
+  const tags = communities.communitiesTags(ORIGIN);
+  assert.match(tags, /<meta name="description" content="Say what your group needs and Homeroom builds it\. Only the people you invite can see it\.">/);
+  assert.match(tags, /<link rel="canonical" href="https:\/\/app\.example\/communities">/);
+  assert.match(tags, /<meta property="og:url" content="https:\/\/app\.example\/communities">/);
+  assert.match(tags, /<meta property="og:title" content="An app for your group, made by your group">/);
+  // No configured address (or a staging copy): the words, and no address.
+  for (const origin of [null, '', 'https://evil.example/"><x']) {
+    const bare = communities.communitiesTags(origin);
+    assert.match(bare, /<meta name="description"/);
+    assert.doesNotMatch(bare, /canonical|og:url|evil/);
+  }
+
+  const shell = '<html><head><title>Homeroom</title>\n'
+    + '  <meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live.">\n'
+    + '</head><body></body></html>';
+  const html = communities.withCommunitiesHead(shell, ORIGIN);
+  assert.match(html, /<title>An app for your group, made by your group · Homeroom<\/title>/);
+  assert.equal((html.match(/<meta name="description"/g) || []).length, 1, 'one description: the page\'s own');
+  assert.equal((html.match(/rel="canonical"/g) || []).length, 1);
+  assert.ok(html.indexOf('rel="canonical"') < html.indexOf('</head>'));
+});
+
+test('GET /communities: signed out it is that page, indexable, named by the configured address and never the Host', async (t) => {
+  if (!fs.existsSync(path.join(__dirname, '..', 'public', 'index.html'))) { t.skip('no built shell'); return; }
+  const before = { domain: process.env.USERNODE_DOMAIN, env: process.env.USERNODE_ENV };
+  t.after(() => {
+    for (const [key, value] of [['USERNODE_DOMAIN', before.domain], ['USERNODE_ENV', before.env]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const srv = await startServer();
+  const get = (headers = {}) => fetch(`${srv.base}/communities?from=mail`, { headers: { accept: 'text/html', ...headers } });
+  try {
+    process.env.USERNODE_DOMAIN = 'app.example.com';
+    delete process.env.USERNODE_ENV;
+    const page = await get({ 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http' });
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('x-robots-tag'), null, 'a search engine may list it');
+    const html = await page.text();
+    assert.match(html, /<title>An app for your group, made by your group · Homeroom<\/title>/);
+    assert.match(html, /<link rel="canonical" href="https:\/\/app\.example\.com\/communities">/);
+    assert.doesNotMatch(html, /evil\.example/, 'a forged Host names nothing');
+    assert.equal((html.match(/<meta name="description"/g) || []).length, 1);
+
+    // A staging copy, or no configured address: the page, with no canonical.
+    process.env.USERNODE_ENV = 'staging';
+    assert.doesNotMatch(await (await get()).text(), /rel="canonical"/);
+    delete process.env.USERNODE_ENV;
+    delete process.env.USERNODE_DOMAIN;
+    const unnamed = await (await get({ 'x-forwarded-host': 'evil.example' })).text();
+    assert.match(unnamed, /<title>An app for your group, made by your group · Homeroom<\/title>/);
+    assert.doesNotMatch(unnamed, /rel="canonical"|evil\.example/);
+  } finally { await srv.close(); }
+  // A signed-in load is the shell's own screen: the catch-all's.
+  const member = await startServer({ user: { id: 1 } });
+  try {
+    assert.equal(await (await fetch(`${member.base}/communities`, { headers: { accept: 'text/html' } })).text(), 'catch-all');
+  } finally { await member.close(); }
+  // The gate lets a visitor with no session reach it, and robots.txt allows it.
+  assert.match(read('src/middleware/auth.js'), /\|\| pathname === '\/communities'/);
 });
