@@ -1142,7 +1142,8 @@ test('#7216 requestVotePosts: a vote whose reason is on its row becomes a note a
   assert.equal(out[1].bodyHtml, '<p>Small and right.</p>');
   assert.equal(out[1].voteReasonPost, true, 'a post made from a vote is not a reply of the thread');
   assert.equal(out[1].id, null, 'it is no message of its own');
-  assert.deepEqual(out[1].changeOf, changeOf7213, 'it keeps the change, so it is tagged with it');
+  // #7221: the note above names the change, so the post is not tagged again.
+  assert.equal(out[1].changeOf, null, 'the note carries the change');
 });
 
 test('#7216 requestVotePosts: an older No pairs with the voter\'s message directly before it, within two minutes', () => {
@@ -1200,22 +1201,30 @@ test('#7216 RequestRows: a vote reason is the voter\'s own post, with the vote l
     ],
   };
   const html = renderComponent(TRANSCRIPT, 'RequestRows', { view }, { stubs: { '../dev-board/topic/request-model': model } });
-  // The note above the post, the page's own wording and no reason of its own.
-  assert.match(html, /class="gc-msg-system dev-request-event dev-request-vote-note" data-msg-id="12"[^>]*data-change-event="vote"[\s\S]*?<b>evan<\/b> voted no<\/span>/);
+  // #7221: the note above the post names the change in its own sentence, and
+  // still carries no reason of its own.
+  assert.match(html, /class="gc-msg-system dev-request-event dev-request-vote-note" data-msg-id="12"[^>]*data-change-event="vote"[\s\S]*?<b>evan<\/b> voted no[\s\S]*?dev-request-vote-note-on[^>]*> · on Change #7213</);
   assert.doesNotMatch(html, /dev-request-vote-note[\s\S]{0,240}dev-change-event-reason/, 'the reason is not drawn inside the line');
-  // The reason is evan's ordinary post, name and all, and the change tag is
-  // under it, not on the note.
+  // The reason is evan's ordinary post, name and all; the change is named on
+  // the note above it, so the post shows only its time.
   assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="11"[^>]*data-username="evan"[\s\S]*?I do not agree with the approach\. Sorting should happen on the server\./);
-  assert.match(html, /data-msg-id="11"[^>]*data-username="evan"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213</);
+  assert.doesNotMatch(html.split('data-msg-id="11"')[1].split('data-msg-id="14"')[0], /gc-msg-on-change/, 'evan\'s post is not tagged twice');
   // The vote row itself is not a bubble.
   assert.doesNotMatch(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="12"/, 'the vote is a note, not a bubble');
   // A Yes that kept its reason on its row reads the same way.
-  assert.match(html, /dev-request-vote-note[\s\S]*?<b>ana<\/b> voted yes<\/span>/);
+  assert.match(html, /data-msg-id="14"[^>]*data-change-event="vote"[\s\S]*?<b>ana<\/b> voted yes[\s\S]*?dev-request-vote-note-on[^>]*> · on Change #7213</);
   assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id=""[^>]*data-username="ana"[\s\S]*?Small and right\./);
-  assert.match(html, /data-username="ana"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213</);
+  assert.doesNotMatch(html.split('data-msg-id=""')[1].split('data-msg-id="15"')[0], /gc-msg-on-change/, 'ana\'s post is not tagged twice');
   // A plain reply on the change is still a message, with its tag.
   assert.match(html, /data-msg-id="15" data-username="maya"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213<[\s\S]*?Looks fine on my phone\./);
-  // Each entry is tagged once: evan's post, ana's post, maya's reply.
-  assert.equal((html.match(/on Change #7213/g) || []).length, 3, 'the note never repeats the post\'s tag');
+  // The change is named once per entry: the two notes and maya's reply.
+  assert.equal((html.match(/on Change #7213/g) || []).length, 3, 'the reason post never repeats the note\'s tag');
+});
+
+// #7221: the change on a vote's line wraps as one piece, so a narrow line
+// never begins with a lone "·".
+test('#7221: the change on a vote\'s note never breaks onto its own line', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.dev-request-vote-note-on\s*\{[^}]*white-space:\s*nowrap/);
 });
 

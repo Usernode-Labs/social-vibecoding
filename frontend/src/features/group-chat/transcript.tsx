@@ -1403,7 +1403,10 @@ export function RequestRows({ view }: { view: TranscriptView }) {
           { author: previous.username, at: previous.at },
           { author: msg.username, at: msg.at, reply: !!msg.quote },
         );
-      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={tagOf(msg)} seeVote={seeVoteOf(msg)} />);
+      // #7221: the vote's note right above names the change (ChangeEvent),
+      // so its reason post shows only its time.
+      const afterVoteNote = !!previous && previous.voteNote === true;
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={afterVoteNote ? null : tagOf(msg)} seeVote={seeVoteOf(msg)} />);
     } else if (msg.kind === 'github' && !msg.githubSpec) {
       drawn.push(<GitHubRow key={key} msg={msg} />);
     } else if (msg.kind === 'vote') {
@@ -1477,9 +1480,10 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
-  // #7216: a vote's reason is drawn as its own post under this line, so the
-  // line is only the note above it: the post carries the time and the change
-  // tag (MessageRow), never both.
+  // #7221: a vote's line now names the change in its own sentence, joined to
+  // what happened ("evan voted no · on Change #6063"), so the reason post
+  // under it carries only its time (#7216). Other rows keep the tag on their
+  // time line.
   const shownTag = msg.voteNote ? null : tag;
   return (
     <div
@@ -1495,6 +1499,9 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
         {line.id
           ? <RichMessage id={line.id} values={line.values} components={[<b />, <span className="dev-change-event-reason" />]} />
           : line.text}
+        {/* #7221: a vote's note names the change in its own sentence, so the
+            vote and its change read as one line. */}
+        {msg.voteNote && tag ? <span className="dev-request-vote-note-on" data-change-event-tag="">{` · ${tag}`}</span> : null}
         {msg.repeat && msg.repeat > 1 ? (
           <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
