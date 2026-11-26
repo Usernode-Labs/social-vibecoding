@@ -260,6 +260,12 @@
   --brand-ink: #37477b;
   --brand-tint: #e4e9f7;
   --brand-line: #c9d2f2;
+  /* HOMEROOM BOT'S OWN STATUS (#7182): the header's periwinkle, copied into
+     colour values of the bot's own so the header can change without moving
+     the bot's work-state chip. Same values as --brand-* above. */
+  --bot-ink: #37477b;
+  --bot-tint: #e4e9f7;
+  --bot-line: #c9d2f2;
   /* WHERE YOU ARE: the lit tab on the phone's bar and the lit row on the
      rail, in the product's one accent (AGENTS.md, "Type and colour"). It was
      the periwinkle above, which beside the action blue made two blues that
@@ -2940,6 +2946,10 @@ html:not([data-skin]) .messages-message.messages-message-end .messages-message-a
   --brand-ink: #c7d0f5;
   --brand-tint: #262b45;
   --brand-line: #3a4270;
+  /* #7182: the bot's own status colour in the dark palette. */
+  --bot-ink: #c7d0f5;
+  --bot-tint: #262b45;
+  --bot-line: #3a4270;
   --lit-ink: #8cc4ff;
   --lit-tint: rgba(90, 169, 255, 0.16);
   --lit-line: rgba(90, 169, 255, 0.35);
@@ -9676,6 +9686,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-tag[data-tone="bad"] { background-color: var(--wip-tag-bad-bg); color: var(--wip-tag-bad-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-tag[data-tone="warn"] { background-color: var(--wip-tag-warn-bg); color: var(--wip-tag-warn-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-tag[data-tone="run"] { background-color: var(--wip-tag-run-bg); color: var(--wip-tag-run-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-tag[data-tone="bot"] { background-color: var(--bot-tint); color: var(--bot-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban :is(.attr-chip.dev-badge, .dev-chat-badge) {
   border-radius: var(--wip-radius-pill);
   background-color: var(--wip-tag-plain-bg);
@@ -32066,6 +32077,7 @@ html.in-side-panel body {
 .dev-ws-tag svg { width: 12px; height: 12px; }
 .dev-ws-tag .dc-status-spinner-arc { width: 11px; height: 11px; }
 .dev-ws-tag[data-tone="run"] { color: var(--lit-ink); background: var(--lit-tint); }
+.dev-ws-tag[data-tone="bot"] { color: var(--bot-ink); background: var(--bot-tint); }
 .dev-ws-tag[data-tone="ok"] { color: var(--state-ok); background: var(--state-ok-bg); }
 .dev-ws-tag[data-tone="warn"] { color: var(--state-attention); background: var(--state-attention-bg); }
 .dev-ws-tag[data-tone="bad"] { color: var(--state-blocked); background: var(--state-blocked-bg); }
@@ -36350,6 +36362,7 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior) { background: var(--bl-count); color: var(--bl-on-count); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior):hover { background: color-mix(in srgb, var(--bl-count) 86%, var(--thread-000000)); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="run"] { color: var(--bl-sky); background: var(--bl-tint-sky); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="bot"] { color: var(--bot-ink); background: var(--bot-tint); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-wrow[data-on] { background: var(--bl-row-on); box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge); }
 @media (min-width: 768px) {
   html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.rf-run, .rf-page-wrap) { --rf-page: var(--bl-card); --rf-sheet: var(--bl-card); --rf-fill: var(--bl-page); }
@@ -38532,6 +38545,10 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-tag[data-tone="run"] {
   color: var(--bl-sky);
   background: var(--bl-tint-sky);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-tag[data-tone="bot"] {
+  color: var(--bot-ink);
+  background: var(--bot-tint);
 }
 /* The row open beside the board (`data-on`) was the lit tint, a block of
    pale sun the row's own pills sat on. It is an outline: a thin edge in the

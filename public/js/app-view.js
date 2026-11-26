@@ -13586,7 +13586,8 @@ const AppView = {
         }
         tags.push({
           label,
-          tone: ws.spinner ? 'run' : 'plain',
+          // #7182: the bot's own status stands apart from other running tags.
+          tone: ws.tone === 'bot' ? 'bot' : (ws.spinner ? 'run' : 'plain'),
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
@@ -28551,7 +28552,7 @@ const AppView = {
       spinner = !!busy.length; tone = busy.length ? 'emerald' : 'sky';
       who = named(s); at = s.lastActivityAt;
     } else if (bot) {
-      key = 'bot'; spinner = true;
+      key = 'bot'; spinner = true; tone = 'bot';
       at = bot.since || null;
       // The one rule (frontend/src/lib/work-state.ts): the chip names
       // Homeroom bot only in the stage the stored row says (_botChipWords).
@@ -28979,12 +28980,16 @@ const AppView = {
     sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
     emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    // #7182: Homeroom bot's own work, in the bot's periwinkle rather than
+    // the yellow every running task shares. The tokens swap for dark.
+    bot: 'bg-[color:var(--bot-tint)] text-[color:var(--bot-ink)]',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
     sky: 'hover:bg-sky-500/20',
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
+    bot: 'hover:bg-[color:var(--bot-line)]',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session

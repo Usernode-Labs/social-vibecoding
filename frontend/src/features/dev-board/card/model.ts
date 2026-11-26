@@ -441,7 +441,8 @@ export interface ChecksProgress {
 
 export interface RowTag {
   label: string;
-  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
+  /** `bot` is Homeroom bot's own work-state, always spinning (#7182). */
+  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad' | 'bot';
   /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486).
    *  `bot`: Homeroom bot built it from the viewer's request (#4728). */
   glyph?: 'eye' | 'lock' | 'bot';
