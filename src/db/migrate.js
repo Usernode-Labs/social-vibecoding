@@ -614,6 +614,9 @@ const STAGING_SEEDS = Object.freeze([
   // #7170: one fake request in an emoji project, so a thread header's tile can
   // be shot with an emoji in it. Obviously fake, idempotent.
   stagingSeed('seedStagingEmojiThreadRequest', async (pool, config) => { await seedStagingEmojiThreadRequest(pool); }),
+  // The hub's Discussion (26 Nov 2026): two fake private projects with a
+  // #general to draw as posts, one of them folded into "Earlier in #general".
+  stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
   // The signed-out project page's shots (26 Nov 2026): one obviously fake
   // public project busy enough to show who is around, changes approved by
   // several people and by its creator alone, and Top contributors.
@@ -2504,6 +2507,113 @@ async function seedStagingPinnedCommunities(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging pinned communities seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// The hub's Discussion (26 Nov 2026): a project's #general drawn as posts
+// with replies. A fresh staging copy has no project with a channel worth
+// drawing for the shots' member fixture, so two obviously fake private
+// projects are seeded, the member in each: one with four posts, their
+// replies and reactions, and one whose #general was a busy chat before
+// Discussion, twelve old messages that fold into "Earlier in #general", with
+// two posts and a reply written since. Fake people only, idempotent by
+// project (a project that already has messages is left alone), and nothing
+// here is a signal any code reads to decide anything.
+async function seedStagingDiscussion(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return seedSkipped('no user usernode-capture'); }
+    const people = {};
+    for (const name of ['priya', 'dev', 'ana', 'jo', 'marcus']) {
+      people[name] = (await tx.query(
+        `INSERT INTO users (username, password, has_platform_access)
+         VALUES ($1, 'staging-demo-not-a-login', TRUE)
+         ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+         RETURNING id`, [`staging-demo-${name}`])).rows[0].id;
+    }
+    const project = async (slug, name, emoji) => {
+      await tx.query(
+        `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, icon_emoji)
+         SELECT $1::text, $2::text, 'running', $3, 'private', 'private', $4::text
+          WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = $2::text)`,
+        [name, slug, people.priya, emoji]);
+      const app = (await tx.query('SELECT id, community_id FROM apps WHERE slug = $1', [slug])).rows[0];
+      if (!app || !app.community_id) return null;
+      for (const id of [member.id, ...Object.values(people)]) {
+        await tx.query(
+          `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+           ON CONFLICT DO NOTHING`, [app.community_id, id]);
+        await tx.query(
+          `INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')
+           ON CONFLICT DO NOTHING`, [app.id, id]);
+      }
+      const said = (await tx.query('SELECT 1 FROM chat_messages WHERE app_id = $1 LIMIT 1', [app.id])).rows[0];
+      return said ? null : app.id;
+    };
+    // `ago` is minutes before now; null is now, after the Discussion marker.
+    const say = async (appId, who, content, ago, rootId = null) => (await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::int IS NULL THEN NOW() ELSE NOW() - make_interval(mins => $6::int) END)
+       RETURNING id`,
+      [appId, people[who], `Staging demo: ${content}`, rootId ? 'message' : null, rootId, ago])).rows[0].id;
+    const react = async (messageId, emoji, who) => {
+      for (const name of who) {
+        await tx.query(
+          `INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`, [messageId, people[name], emoji]);
+      }
+    };
+    const club = await project('staging-demo-discussion', 'Staging demo: Book Club', '📖');
+    if (club) {
+      const library = await say(club, 'dev', 'the library has four copies of Piranesi on hold for us. Pick up by Friday.', 26 * 60);
+      await react(library, '👍', ['jo', 'ana']);
+      const finished = await say(club, 'ana', 'finished The Remains of the Day last night. I need a week to recover.', 300);
+      await react(finished, '❤️', ['priya', 'jo', 'dev', 'marcus', 'ana']);
+      await say(club, 'jo', 'same, the last chapter got me.', 290, finished);
+      await say(club, 'marcus', 'Adding it to my list for the winter.', 280, finished);
+      await say(club, 'dev', 'Was it the letter, or the pier?', 275, finished);
+      await say(club, 'priya', 'The pier. Every time.', 270, finished);
+      const shelf = await say(club, 'jo', 'can we get a shelf for what everyone is reading right now? I keep asking in here.', 180);
+      await react(shelf, '👍', ['marcus', 'ana', 'dev']);
+      const yeses = await say(club, 'marcus', 'Put it up as a change. It needs two more yeses.', 170, shelf);
+      await react(yeses, '👍', ['jo']);
+      const host = await say(club, 'priya', 'I can host on the 14th if we start at 7. Who is in?', 60);
+      await react(host, '👍', ['dev', 'ana', 'jo', 'marcus']);
+      await react(host, '🎉', ['ana']);
+      const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
+      await react(chairs, '🙌', ['priya', 'ana']);
+      await say(club, 'ana', 'In, and I will bring dessert.', 40, host);
+    }
+    const busy = await project('staging-demo-discussion-busy', 'Staging demo: Trail Runners', '⛰️');
+    if (busy) {
+      const old = [
+        ['marcus', 'who is running the ridge loop on Saturday?'], ['jo', 'Me, if it is not raining.'],
+        ['dev', 'Count me in.'], ['ana', 'Is the north gate open again?'], ['priya', 'Yes, since Tuesday.'],
+        ['marcus', 'Meet at the car park at 8.'], ['jo', 'Who has a spare head torch?'], ['dev', 'I have two.'],
+        ['ana', 'Pace for the long run?'], ['priya', 'Easy, about 6 minutes a kilometre.'],
+        ['marcus', 'New shoes day. Wish me luck.'], ['jo', 'Seconded on the trail shoes thread, they are worth it.'],
+      ];
+      let last = null;
+      for (let i = 0; i < old.length; i += 1) {
+        const ago = (old.length - i) * 24 * 60 + 300;
+        last = await say(busy, old[i][0], old[i][1], ago);
+        // One of them had a reply thread of its own, which stays in #general.
+        if (i === 6) await say(busy, 'dev', 'I can lend one.', ago - 30, last);
+      }
+      // Written into "Earlier in #general" since: a reply under its last message.
+      await say(busy, 'ana', 'Catching up on all of this. Count me in for the next long run.', null, last);
+      const route = await say(busy, 'marcus', 'Proposing a new Sunday route along the river. Thoughts?', null);
+      await react(route, '👍', ['jo', 'ana']);
+      await say(busy, 'jo', 'Yes please, the hills are wrecking my knees.', null, route);
+      await say(busy, 'priya', 'Race day photos are up on the shared album.', null);
+    }
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging discussion seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 

@@ -746,9 +746,13 @@ function DiscussionRow({ data, onOpen, outsider = false }: {
  * 6 Nov 2026: the Workshop's row is drawn at every width, in the place Your
  * work had, and opens the Workshop (the phone's row until then). Your work
  * is the Homeroom bot tab's, said on the Workshop tab's own card.
+ *
+ * 26 Nov 2026 (the hub's Discussion): where the hub draws #general itself,
+ * as posts with replies (./hub-discussion.tsx), For you has no row for it
+ * (`discussionHere`): the room is already on the page.
  */
 export function ForYouCard({
-  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion, discussionHere = false,
 }: {
   slug: string;
   queue: DevWorkshopView['queue'];
@@ -764,6 +768,8 @@ export function ForYouCard({
   onNeeds: () => void;
   onWork: () => void;
   onDiscussion: () => void;
+  /** The hub draws the Discussion card: no #general row here. */
+  discussionHere?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
@@ -774,9 +780,11 @@ export function ForYouCard({
   // not; a visitor has no work to be told about.
   const work = !!mine?.viewer;
   const talk = !!(data && data.channel);
+  // The Discussion card is the room on this page: no row for it as well.
+  const room = talk && !discussionHere;
   // Signed in and not in it: the votes are the group's, the room theirs to read.
   const outsider = !!data && !data.is_member;
-  if (!needs && !work && !talk) return null;
+  if (!needs && !work && !room) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
       <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
@@ -785,7 +793,7 @@ export function ForYouCard({
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} outsider={outsider} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
         {work ? <WorkshopRow onOpen={onWork} /> : null}
-        <DiscussionRow data={data} onOpen={onDiscussion} outsider={outsider} />
+        {room ? <DiscussionRow data={data} onOpen={onDiscussion} outsider={outsider} /> : null}
       </div>
     </section>
   );

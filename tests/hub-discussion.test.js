@@ -1,0 +1,258 @@
+'use strict';
+
+// The hub's Discussion (owner, 26 Nov 2026): a project's #general drawn on
+// its hub as posts with replies, the hub in two columns around it.
+//
+//   frontend/src/features/dev-board/workshop/discussion-feed.ts  the rule and the reads
+//   frontend/src/features/dev-board/workshop/hub-discussion.tsx  the card, the phone's card, the page
+//   src/services/discussion.js                                    what was said before Discussion
+//
+// A post is a message in #general's main stream and its replies are the
+// reply thread under it; with more than eight messages from before
+// Discussion, those are one "Earlier in #general" post.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
+
+const ROOT = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const FEED = 'frontend/src/features/dev-board/workshop/discussion-feed.ts';
+const CARD = 'frontend/src/features/dev-board/workshop/hub-discussion.tsx';
+const feed = loadTsx(FEED);
+
+const SINCE = '2026-11-26T12:00:00.000Z';
+const said = (id, over = {}) => ({
+  id,
+  who: { id: 1, username: 'priya' },
+  content: `message ${id}`,
+  at: over.at || new Date(Date.parse(SINCE) + id * 60000).toISOString(),
+  deleted: false,
+  reactions: [],
+  files: 0,
+  rootId: null,
+  replyCount: 0,
+  lastReplyAt: null,
+  ...over,
+});
+const before = (id, over = {}) => said(id, { at: new Date(Date.parse(SINCE) - (100 - id) * 3600000).toISOString(), ...over });
+
+test('the history from before Discussion folds into one post above eight messages, and only then', () => {
+  const summary = (count, foldAt) => ({ since: SINCE, fold_at: foldAt, earlier: { count, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', last_id: 40 } });
+  assert.equal(feed.EARLIER_FOLD_AT, 8, 'the owner\'s "say 8"');
+  assert.equal(feed.earlierFold(summary(8)), null, 'eight are eight posts');
+  assert.deepEqual(feed.earlierFold(summary(9)), { count: 9, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', lastId: 40, since: SINCE });
+  assert.equal(feed.earlierFold(summary(9, 12)), null, 'the server\'s number wins');
+  assert.equal(feed.earlierFold({ since: SINCE, earlier: null }), null);
+  assert.equal(feed.earlierFold({ since: null, earlier: { count: 50, last_id: 4 } }), null, 'no marker, no fold');
+  assert.equal(feed.earlierFold(null), null);
+  const server = require('../src/services/discussion');
+  assert.equal(server.EARLIER_FOLD_AT, feed.EARLIER_FOLD_AT, 'the server and the card count to the same number');
+});
+
+test('posts are main-stream messages, each with its replies under it, oldest first', () => {
+  const items = feed.assemble([
+    said(10, { replyCount: 2 }),
+    said(12, { rootId: 10, who: { id: 2, username: 'dev' } }),
+    said(11, { rootId: 10, who: { id: 3, username: 'ana' } }),
+    said(13),
+    said(14, { rootId: 99 }),
+    said(11, { rootId: 10, who: { id: 3, username: 'ana' }, content: 'edited' }),
+  ], null);
+  assert.equal(items.length, 2, 'a reply whose post was not read waits for it');
+  const post = items.find((i) => i.root.id === 10);
+  assert.deepEqual(post.replies.map((r) => r.id), [11, 12]);
+  assert.equal(post.replies[0].content, 'edited', 'a later read of one message wins');
+  assert.equal(post.replyCount, 2);
+  assert.equal(post.activityAt, said(12).at, 'its last reply is its activity');
+});
+
+test('with the fold, old messages and what is written into it since are the Earlier post\'s replies', () => {
+  const fold = { count: 12, from: '2026-10-02T00:00:00Z', to: '2026-11-24T00:00:00Z', lastId: 40, since: SINCE };
+  const items = feed.assemble([
+    before(38), before(39, { replyCount: 3 }), before(40, { replyCount: 2 }),
+    before(41, { rootId: 39 }),
+    before(42, { rootId: 40 }),
+    said(50, { rootId: 40 }),
+    said(51),
+  ], fold, true);
+  const earlier = items.find((i) => i.kind === 'earlier');
+  assert.deepEqual(earlier.replies.map((r) => r.id), [38, 39, 40, 50],
+    'the old messages, then the reply written into it since; an old reply stays in its old thread');
+  assert.equal(earlier.replyCount, 13, 'twelve old messages and one reply since');
+  assert.equal(earlier.olderToRead, true);
+  assert.deepEqual(items.filter((i) => i.kind === 'post').map((i) => i.root.id), [51]);
+});
+
+test('Newest is the most recent activity; Most replies the busiest; the Earlier post is never newer than a post since', () => {
+  const a = { kind: 'post', key: 'a', root: said(1), replies: [], replyCount: 5, activityAt: '2026-11-26T13:00:00Z' };
+  const b = { kind: 'post', key: 'b', root: said(2), replies: [], replyCount: 0, activityAt: '2026-11-26T14:00:00Z' };
+  const e = { kind: 'earlier', key: 'earlier', replies: [], replyCount: 214, activityAt: '2026-11-26T14:00:00Z' };
+  assert.deepEqual(feed.sortItems([a, e, b], 'newest').map((i) => i.key), ['b', 'earlier', 'a']);
+  assert.deepEqual(feed.sortItems([a, b, e], 'replies').map((i) => i.key), ['earlier', 'a', 'b']);
+});
+
+test('a post is new to the viewer past their reading, unless it is theirs; the Earlier post never is', () => {
+  const post = (id, who = 'dev') => ({ kind: 'post', key: `p${id}`, root: said(id, { who: { id: 2, username: who } }), replies: [], replyCount: 0, activityAt: SINCE });
+  assert.equal(feed.isNewTo(post(10), 9, 'priya'), true);
+  assert.equal(feed.isNewTo(post(10), 10, 'priya'), false);
+  assert.equal(feed.isNewTo(post(10, 'priya'), 9, 'priya'), false, 'your own post is not news to you');
+  assert.equal(feed.isNewTo(post(10), null, 'priya'), false, 'no reading position, nothing new');
+  assert.equal(feed.isNewTo({ kind: 'earlier', replies: [said(50)] }, 9, 'priya'), false);
+});
+
+test('a post shows its newest three replies and how many more there are', () => {
+  const item = { kind: 'post', replies: [said(1), said(2), said(3), said(4)], replyCount: 6 };
+  const closed = feed.shownReplies(item, false);
+  assert.deepEqual(closed.shown.map((r) => r.id), [2, 3, 4]);
+  assert.equal(closed.hidden, 3);
+  assert.equal(feed.shownReplies(item, true).hidden, 2, 'opened: all read, the rest still in the thread');
+  assert.equal(feed.REPLIES_SHOWN, 3);
+});
+
+test('a reaction is drawn at once: added, counted up, taken back', () => {
+  const list = [{ emoji: '👍', count: 2, reacted: false, users: ['dev', 'ana'] }];
+  const on = feed.toggledReactions(list, '👍', 'priya');
+  assert.deepEqual(on, [{ emoji: '👍', count: 3, reacted: true, users: ['dev', 'ana', 'priya'] }]);
+  assert.deepEqual(feed.toggledReactions(on, '👍', 'priya'), list);
+  assert.deepEqual(feed.toggledReactions([{ emoji: '🎉', count: 1, reacted: true, users: ['priya'] }], '🎉', 'priya'), [], 'the last one goes');
+  assert.deepEqual(feed.toggledReactions([], '🙏', 'priya'), [{ emoji: '🙏', count: 1, reacted: true, users: ['priya'] }]);
+});
+
+test('an app channel\'s rows and a Messages room\'s messages are read into one shape', () => {
+  const row = {
+    id: 7, user_id: 3, username: 'ana', content: 'hi', msg_type: 'message', thread_type: null, thread_ref: null,
+    created_at: SINCE, deleted: false, reactions: [{ emoji: '👍', count: 2, users: ['dev', 'priya'] }],
+    thread: { reply_count: 4, last_reply_at: '2026-11-26T13:00:00Z' },
+  };
+  const app = feed.fromAppRow(row, 'priya');
+  assert.equal(app.replyCount, 4);
+  assert.equal(app.rootId, null);
+  assert.equal(app.reactions[0].reacted, true, 'the viewer is one of its people');
+  assert.equal(feed.fromAppRow({ ...row, thread_type: 'message', thread_ref: 3 }, null).rootId, 3);
+  assert.equal(feed.fromAppRow({ ...row, thread_type: 'issue', thread_ref: 3 }, null), null, 'a request\'s thread is not #general');
+  assert.equal(feed.fromAppRow({ ...row, thread_type: 'category', thread_ref: 3 }, null), null, 'nor is a topic\'s');
+  assert.equal(feed.fromAppRow({ ...row, msg_type: 'system' }, null), null, 'nor a platform line');
+  const conv = feed.fromConversationMessage({
+    id: 8, conversationId: 1, sender: { id: 4, username: 'jo' }, content: 'yo', createdAt: SINCE,
+    reactions: [], attachments: [], objects: [], threadRootId: null,
+    thread: { replyCount: 2, lastReplyAt: SINCE, participants: [] },
+  });
+  assert.equal(conv.replyCount, 2);
+  assert.equal(conv.who.username, 'jo');
+  assert.equal(feed.fromConversationMessage({ id: 9, system: true, sender: null, reactions: [], attachments: [] }), null);
+});
+
+test('the card draws its frame first and reads in effects; no channel, no card', () => {
+  const { DiscussionCard } = loadTsx(CARD);
+  const data = (channel) => ({ slug: 'book-club', is_member: true, channel });
+  assert.equal(renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(null), mode: 'full' })), '');
+  const channel = { recent: [], unread_count: 0, href: '#messages/app/book-club', handle: null, discussion: { since: SINCE, earlier: null } };
+  const html = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(channel), mode: 'full' }));
+  assert.match(html, /^<section class="dev-ws-hub-section dev-ws-hub-discussion" data-ws-hub-discussion="full"/);
+  assert.match(html, />Discussion<\/h2><p class="dev-ws-hub-discussion-about">Posts and replies from everyone in Book Club<\/p>/);
+  assert.match(html, /<form class="dh-composer dh-composer-post" data-ws-discussion-compose="post">[\s\S]*placeholder="Start a post…"/);
+  assert.match(html, /data-ws-discussion-sort="newest"[\s\S]*Newest[\s\S]*Most replies/);
+  assert.match(html, /data-ws-discussion-loading=""/, 'its rows hold their place while it reads');
+  const preview = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(channel), mode: 'preview' }));
+  assert.match(preview, /data-ws-hub-discussion="preview"/);
+  assert.match(preview, /data-ws-discussion-open=""/, 'the phone\'s card is a door to the page');
+  assert.match(preview, /data-ws-discussion-start-door=""/);
+  assert.doesNotMatch(preview, /<textarea/, 'and writes nothing itself');
+  const page = renderToHtml(createElement(DiscussionCard, { slug: 'book-club', name: 'Book Club', data: data(channel), mode: 'page', onBack: () => {} }));
+  assert.match(page, /^<div class="dev-ws-discussion-page" data-ws-discussion-page=""><div class="dev-ws-pagehead" data-ws-pagehead="">/);
+  assert.match(page, /data-ws-hub-discussion="page"/);
+});
+
+test('reactions and replies are the platform\'s own: the hover bar, the long-press sheet, Enter sends', () => {
+  const src = read(CARD);
+  assert.match(src, /import \{ MessageActionBar \} from '\.\.\/\.\.\/message-actions\/action-bar';/);
+  assert.match(src, /import \{ MessageActionSheet, useLongPress \} from '\.\.\/\.\.\/message-actions\/action-sheet';/);
+  assert.match(src, /import \{ enterSends, isTouchInput \} from '\.\.\/\.\.\/\.\.\/lib\/enter-sends';/);
+  assert.doesNotMatch(src, /rx-add|data-ws-discussion-add-reaction/, 'no always-visible add-reaction button');
+  // Homeroom's own #general is a Messages room; any other project's is its app chat.
+  assert.match(read(FEED), /messagesApi\.toggleReaction\(conversationId, messageId, emoji, on\)/);
+  assert.match(read(FEED), /\$\{base\}\/\$\{messageId\}\/reactions/);
+});
+
+test('For you has no #general row where the hub draws the Discussion', () => {
+  const hub = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  const props = (over) => ({
+    slug: 'garden', queue: [], mine: { viewer: true }, alone: false, unclaimed: 0, canPost: true,
+    data: { slug: 'garden', is_member: true, channel: { recent: [], unread_count: 0, href: '#messages/app/garden', handle: null } },
+    onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
+  });
+  assert.match(renderToHtml(createElement(hub.ForYouCard, props({}))), /data-ws-channel="preview"/);
+  const here = renderToHtml(createElement(hub.ForYouCard, props({ discussionHere: true })));
+  assert.doesNotMatch(here, /data-ws-channel/);
+  assert.match(here, /data-ws-workshop-row/, 'Needs you and the Workshop stay');
+});
+
+test('the hub mounts the card beside its thin column, and the phone\'s card opens the page under the Hub', () => {
+  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(lander, /<DiscussionCard slug=\{slug\} name=\{projectName\} data=\{community\} mode="full" \/>/);
+  assert.match(lander, /<DiscussionCard slug=\{slug\} name=\{projectName\} data=\{community\} mode="preview" onOpenPage=\{\(\) => openTab\('posts'\)\} \/>/);
+  assert.match(lander, /\{tab === 'posts' && slug \? \(\s*<DiscussionCard slug=\{slug\} name=\{app\.name \|\| community\?\.name \|\| slug\} data=\{community\} mode="page" onBack=\{\(\) => upTab\('status'\)\} \/>/);
+  const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  assert.equal(places.isPlaceKey('posts'), true);
+  assert.equal(places.litPlace('posts'), 'status');
+});
+
+test('the server says what was said before Discussion, best-effort, beside the channel', async () => {
+  const route = read('src/routes/apps.js');
+  assert.match(route, /discussion: await discussion\.discussionSummary\(pool, \{ conversationId, viewerId: req\.user\?\.id \}\),/);
+  assert.match(route, /discussion: await discussion\.discussionSummary\(pool, \{ appId: app\.id, viewerId: req\.user\?\.id \}\),/);
+  assert.match(read('src/db/reference-data.js'), /\('discussion_posts_since', to_char\(NOW\(\) AT TIME ZONE 'UTC'/);
+  const server = require('../src/services/discussion');
+  server.resetDiscussionSinceForTest();
+  const failing = { query: async () => { throw new Error('down'); } };
+  assert.deepEqual(await server.discussionSummary(failing, { appId: 1 }), { since: null, fold_at: 8, earlier: null });
+  server.resetDiscussionSinceForTest();
+  const rows = (sql) => (sql.includes('platform_settings')
+    ? { rows: [{ value: SINCE }] }
+    : { rows: [{ n: 12, first_at: '2026-10-02T00:00:00Z', last_at: '2026-11-24T00:00:00Z', last_id: 40 }] });
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push([sql, params]); return rows(sql); } };
+  assert.deepEqual(await server.discussionSummary(pool, { appId: 3, viewerId: 7 }), {
+    since: SINCE, fold_at: 8,
+    earlier: { count: 12, from: '2026-10-02T00:00:00.000Z', to: '2026-11-24T00:00:00.000Z', last_id: 40 },
+  });
+  assert.match(seen[1][0], /FROM chat_messages m[\s\S]*m\.thread_type IS NULL[\s\S]*m\.created_at < \$2::timestamptz/);
+  assert.deepEqual(seen[1][1], [3, SINCE, 7]);
+  await server.discussionSummary(pool, { conversationId: 5, viewerId: 7 });
+  assert.match(seen[seen.length - 1][0], /FROM conversation_messages m[\s\S]*m\.thread_root_id IS NULL/);
+  server.resetDiscussionSinceForTest();
+});
+
+test('a reaction on an app channel has a REST door, through the socket\'s own handler', () => {
+  const chat = read('src/routes/chat.js');
+  const at = chat.indexOf("router.post('/api/apps/:slug/messages/:id/reactions'");
+  assert.ok(at > 0);
+  const route = chat.slice(at, chat.indexOf('// ── #2387: the read cursor', at));
+  assert.match(route, /groupChatWriteLimiter, sameOriginBrowserOnly/);
+  assert.match(route, /appAccess\.getAppForUser\(\s*pool, req\.params\.slug, req\.user, 'collab'/);
+  assert.match(route, /ws\.handleMessage\(\s*pool,\s*\{ user: req\.user, appId: app\.id, appSlug: app\.slug \},\s*\{ type: 'react', messageId, emoji \}\s*\)/);
+});
+
+test('the staging copies have a project to show it on, with fake people only', () => {
+  const migrate = read('src/db/migrate.js');
+  const seed = migrate.slice(migrate.indexOf('async function seedStagingDiscussion'), migrate.indexOf("// #7170's shots"));
+  assert.match(seed, /if \(process\.env\.USERNODE_ENV !== 'staging'\) return;/);
+  assert.match(seed, /'staging-demo-discussion', 'Staging demo: Book Club'/);
+  assert.match(seed, /'staging-demo-discussion-busy', 'Staging demo: Trail Runners'/);
+  assert.match(seed, /`Staging demo: \$\{content\}`/, 'every message says it is fake');
+  assert.match(migrate, /stagingSeed\('seedStagingDiscussion'/);
+});
+
+test('every word is the catalog\'s', () => {
+  assert.equal(message('project:hub.discussion.title'), 'Discussion');
+  assert.equal(message('project:hub.discussion.start.placeholder'), 'Start a post…');
+  assert.equal(message('project:hub.discussion.reply.placeholder'), 'Reply in thread…');
+  assert.equal(message('project:hub.discussion.sort.replies'), 'Most replies');
+  assert.equal(message('project:hub.discussion.earlier.title'), 'Earlier in #general');
+  assert.equal(message('project:page.title.discussion'), 'Discussion');
+});

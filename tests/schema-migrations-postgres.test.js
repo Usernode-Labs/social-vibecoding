@@ -246,7 +246,7 @@ test('boot reference rows match the fresh schema and preserve saved values witho
   const restored = (await p.query('SELECT key,value,description FROM platform_settings')).rows;
   assert.ok(restored.length >= 23, 'restore required defaults, not historical backfill markers');
   const tracking = new Set(['app_outages_tracked_since', 'model_cost_observed_since',
-    'homeroom_bot_audience_since', 'platform_live_tracked_since']);
+    'homeroom_bot_audience_since', 'platform_live_tracked_since', 'discussion_posts_since']);
   for (const row of restored) {
     const expected = fresh.get(row.key);
     assert.ok(expected, `the schema snapshot declares default ${row.key}`);

@@ -19,6 +19,10 @@
     "text": "The plan",
     "description": "Title of the page that shows the plan for a project's first version, opened from its Hub."
   },
+  "page.title.discussion": {
+    "text": "Discussion",
+    "description": "Heading of the page under a project's Hub that shows its Discussion whole: the project's #general drawn as posts with replies. A phone's Discussion card on the Hub opens it."
+  },
   "page.title.bot": {
     "text": "Homeroom bot's slots",
     "description": "Title of the page under a project's Workshop that lists what holds each of Homeroom bot's slots on the project and what waits for one."
@@ -2038,6 +2042,138 @@
   "hub.forYou.discussion.posted": {
     "text": "New message · {{ago}}",
     "description": "Second line of the Discussion row on a project's Hub when the newest message in the channel has no words to quote and no writer to name: how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+  },
+  "hub.discussion.title": {
+    "text": "Discussion",
+    "description": "Heading of the card on a project's Hub that shows its #general as posts, each with its replies under it. A noun: the place where the project's members talk."
+  },
+  "hub.discussion.about": {
+    "text": "Posts and replies from everyone in {{project}}",
+    "description": "One line under the Discussion card's heading on a project's Hub, saying what the card holds. {{project}} is the project's name, for example \"Lakeside Book Club\"."
+  },
+  "hub.discussion.start.placeholder": {
+    "text": "Start a post…",
+    "description": "Placeholder in the box at the top of a project's Discussion card where a member writes a new post. Ends with an ellipsis."
+  },
+  "hub.discussion.start.label": {
+    "text": "Start a post in {{project}}",
+    "description": "Accessible name of the box at the top of a project's Discussion card where a member writes a new post. {{project}} is the project's name."
+  },
+  "hub.discussion.start.send": {
+    "text": "Post",
+    "description": "Accessible name and tooltip of the round send button beside the Discussion card's Start a post box: publishes what was typed as a new post. A verb."
+  },
+  "hub.discussion.reply.placeholder": {
+    "text": "Reply in thread…",
+    "description": "Placeholder in the box under a post's replies on a project's Discussion card, where a member writes a reply to that post. Ends with an ellipsis."
+  },
+  "hub.discussion.reply.label": {
+    "text": "Reply to {{username}}",
+    "description": "Accessible name of the reply box under a post on a project's Discussion card. {{username}} is the name of the person who wrote the post."
+  },
+  "hub.discussion.reply.labelEarlier": {
+    "text": "Reply to the earlier #general messages",
+    "description": "Accessible name of the reply box under the \"Earlier in #general\" post on a project's Discussion card, which holds everything said in the channel before Discussion. #general is the channel's name and stays as written."
+  },
+  "hub.discussion.reply.send": {
+    "text": "Send reply",
+    "description": "Accessible name and tooltip of the round send button beside a post's reply box on a project's Discussion card."
+  },
+  "hub.discussion.sort.label": {
+    "text": "Sort by:",
+    "description": "Label before the two ways to order the posts on a project's Discussion card: Newest and Most replies. Ends with a colon."
+  },
+  "hub.discussion.sort.newest": {
+    "text": "Newest",
+    "description": "One of the two ways to order the posts on a project's Discussion card: the post with the most recent activity (a new post or a new reply) first."
+  },
+  "hub.discussion.sort.replies": {
+    "text": "Most replies",
+    "description": "One of the two ways to order the posts on a project's Discussion card: the post with the most replies first."
+  },
+  "hub.discussion.replies_one": {
+    "text": "{{count}} reply",
+    "description": "At the end of a post's header line on a project's Discussion card: how many replies the post has, when it has one. Reply is a noun: a message written in answer."
+  },
+  "hub.discussion.replies_other": {
+    "text": "{{count}} replies",
+    "description": "At the end of a post's header line on a project's Discussion card: how many replies the post has. {{count}} is that number. Replies is a noun."
+  },
+  "hub.discussion.reply": {
+    "text": "Reply",
+    "description": "At the end of a post's header line on a project's Discussion card when the post has no replies yet: pressing it opens a box to write the first reply. A verb."
+  },
+  "hub.discussion.earlierReplies_one": {
+    "text": "View {{count}} earlier reply",
+    "description": "Link at the top of a post's replies on a project's Discussion card, when one older reply is not shown: shows it."
+  },
+  "hub.discussion.earlierReplies_other": {
+    "text": "View {{count}} earlier replies",
+    "description": "Link at the top of a post's replies on a project's Discussion card, when older replies are not shown: shows them. {{count}} is how many are hidden."
+  },
+  "hub.discussion.wholeThread": {
+    "text": "Open the whole thread in #general",
+    "description": "Link at the top of a very long post's replies on a project's Discussion card, once the newest fifty are shown: opens the post's whole reply thread in the project's #general channel. #general is the channel's name and stays as written."
+  },
+  "hub.discussion.new": {
+    "text": "New",
+    "description": "Read out by screen readers for the small blue dot on a post of a project's Discussion card that has something the reader has not seen yet. An adjective."
+  },
+  "hub.discussion.morePosts": {
+    "text": "Show more posts",
+    "description": "Link at the foot of a project's Discussion card: shows older posts."
+  },
+  "hub.discussion.empty": {
+    "text": "Nothing posted yet. Start the first post.",
+    "description": "Shown on a project's Discussion card when nobody has posted in it yet."
+  },
+  "hub.discussion.loading": {
+    "text": "Loading the discussion",
+    "description": "Read out by screen readers while a project's Discussion card reads its posts."
+  },
+  "hub.discussion.failed": {
+    "text": "The discussion could not be loaded.",
+    "description": "Shown on a project's Discussion card when its posts could not be read, before a Try again link."
+  },
+  "hub.discussion.retry": {
+    "text": "Try again",
+    "description": "Link after the message that a project's Discussion card could not be loaded: reads the posts again."
+  },
+  "hub.discussion.sendFailed": {
+    "text": "That could not be sent. Try again.",
+    "description": "Shown under the box on a project's Discussion card when a post or a reply could not be sent and the server gave no reason. What was typed stays in the box."
+  },
+  "hub.discussion.deleted": {
+    "text": "This message was deleted.",
+    "description": "Shown in place of a post's or a reply's words on a project's Discussion card when its author deleted it."
+  },
+  "hub.discussion.files_one": {
+    "text": "Sent a file",
+    "description": "Shown in place of the words of a post or a reply on a project's Discussion card that is only a file, with no text."
+  },
+  "hub.discussion.files_other": {
+    "text": "Sent {{count}} files",
+    "description": "Shown in place of the words of a post or a reply on a project's Discussion card that is only files, with no text. {{count}} is how many files."
+  },
+  "hub.discussion.earlier.title": {
+    "text": "Earlier in #general",
+    "description": "Title of the one post on a project's Discussion card that holds everything said in its #general chat before Discussion arrived; its replies are those messages. #general is the channel's name and stays as written."
+  },
+  "hub.discussion.earlier.range": {
+    "text": "{{from}} to {{to}}",
+    "description": "Beside the \"Earlier in #general\" post's title on a project's Discussion card: the dates of the first and the last message it holds, for example \"2 Oct to 24 Nov\". {{from}} and {{to}} are short dates."
+  },
+  "hub.discussion.earlier.body": {
+    "text": "Everything said in the #general chat before Discussion. New replies here carry on from it.",
+    "description": "The words of the \"Earlier in #general\" post on a project's Discussion card, which holds everything said in the channel before Discussion as its replies. #general is the channel's name and stays as written."
+  },
+  "hub.discussion.oldThread_one": {
+    "text": "{{count}} reply in #general",
+    "description": "Link under one of the old messages inside the \"Earlier in #general\" post on a project's Discussion card, when that message had a reply thread: opens it in the project's #general channel. #general stays as written."
+  },
+  "hub.discussion.oldThread_other": {
+    "text": "{{count}} replies in #general",
+    "description": "Link under one of the old messages inside the \"Earlier in #general\" post on a project's Discussion card, when that message had a reply thread: opens it in #general. {{count}} is how many replies it has. #general stays as written."
   },
   "hub.recent.title": {
     "text": "Recently live",

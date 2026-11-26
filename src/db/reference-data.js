@@ -49,6 +49,8 @@ INSERT INTO platform_settings (key, value, description) VALUES
     'Points awarded for a block-production success rate of at least 50%.'),
   ('topochain_inviting_new_participant_points', '0',
     'Points awarded for inviting a new participant into the competition.'),
+('discussion_posts_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'Marker: the instant a project''s #general became its hub''s Discussion, posts with replies (services/discussion.js). A channel with more than eight messages from before it shows them as one "Earlier in #general" post. Do not delete: deleting re-stamps it at the next boot and folds every post made since into that one.'),
 ('model_cost_observed_since', NOW()::text,
     'Marker: the instant the platform began recording coding-agent spend per model (#2592). The Model costs console counts only changes created at or after it. Do not delete — deleting re-stamps it at the next boot and discards every clean change recorded so far.')
 ON CONFLICT (key) DO NOTHING;

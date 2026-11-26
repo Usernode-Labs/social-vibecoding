@@ -26,6 +26,7 @@ const topicsPr = require('../services/topics-pr');
 const platformOperations = require('../services/platform-operations');
 const versionLinks = require('../services/version-links');
 const places = require('../services/places');
+const discussion = require('../services/discussion');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
 const { rateLimit } = require('express-rate-limit');
@@ -4326,6 +4327,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // which gates it on Homeroom membership (generalNeedsJoin).
             post_url: `/api/conversations/${conversationId}/messages`,
             handle: 'general',
+            // The hub's Discussion card (services/discussion.js): which room
+            // it reads, and what was said there before Discussion.
+            conversation_id: conversationId,
+            discussion: await discussion.discussionSummary(pool, { conversationId, viewerId: req.user?.id }),
           };
         }
       } else if (canChat) {
@@ -4336,6 +4341,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // the same handler as the browser's socket, membership-gated.
           post_url: `/api/apps/${encodeURIComponent(app.slug)}/messages`,
           handle: null,
+          discussion: await discussion.discussionSummary(pool, { appId: app.id, viewerId: req.user?.id }),
         };
       }
       const activity = await communities.activitySummary(pool, app.id);

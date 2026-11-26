@@ -114,6 +114,7 @@ import { watchBoardLinks } from './board-links';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
+import { DiscussionCard } from './hub-discussion';
 import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { PageBack } from './page-back';
@@ -215,6 +216,7 @@ export function pageTitle(tab: TabKey): string {
   if (tab === 'all') return translate('project:page.title.allItems');
   if (tab === 'bot') return translate('project:page.title.bot');
   if (tab === 'plan') return translate('project:page.title.plan');
+  if (tab === 'posts') return translate('project:page.title.discussion');
   const handle = placeHandle(tab);
   if (handle) return `#${handle}`;
   if (tab === 'status') return translate('project:page.title.hub');
@@ -3464,6 +3466,8 @@ export function DevWorkshop(): ReactNode {
   // NothingToVote). The hub is otherwise the same from a project's first
   // day (15 Oct 2026): the first week's own layout is gone.
   const alone = hubAlone(community);
+  // The hub draws #general as its Discussion card where this viewer may talk in it (./hub-discussion.tsx).
+  const talkHere = !!community?.channel;
   // RECENTLY LIVE IS NEVER EMPTY: before any change has gone live it is the
   // app itself (./hub-cards.tsx RecentlyLive `own`), once the app is up and
   // not while Homeroom bot still builds its first version. Not on
@@ -3760,44 +3764,66 @@ export function DevWorkshop(): ReactNode {
       {/* Somebody in this community who did not make it: hear from it?
           (the notification ask, ../../notify-ask/community-ask.tsx). */}
       {slug ? <CommunityAsk data={community} name={app.name || slug} /> : null}
+      {/* ── THE HUB IN TWO COLUMNS (owner, 26 Nov 2026) ──
+          Under the hero, from 1024px: a thin column of the parts, one under
+          another (For you, Recently live as a list, Top contributors), and
+          the DISCUSSION filling the rest: #general drawn as posts with
+          replies (./hub-discussion.tsx). Under 1024px one column, For you
+          then the Discussion then the rest; on a phone the Discussion is a
+          card of its newest posts that opens its own page (`posts`). With
+          no channel this viewer may talk in there is no Discussion, and the
+          column is the page. For you has no #general row while the
+          Discussion is drawn (`discussionHere`). app.css, THE HUB IN TWO
+          COLUMNS. */}
       {slug ? (
-        <ForYouCard
-          slug={slug}
-          queue={v.queue}
-          unclaimed={v.dashboard ? v.dashboard.unclaimed : 0}
-          mine={v.mine}
-          alone={alone}
-          data={community}
-          canPost={canPost}
-          onNeeds={() => openTab('needs')}
-          onWork={() => openTab('workshop')}
-          onDiscussion={() => openTab('discussion')}
-        />
-      ) : null}
-      {/* TOPICS, at every width (request 6654): each live topic's channel has
-          a row here. It was the phone's alone (3 Nov 2026), a wide window
-          listing them in its sidebar only. See ./hub-cards.tsx TopicsCard. */}
-      {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
-      {/* TOP CONTRIBUTORS (request 6837): who took part most, by name and a
-          count in words, after Topics in the page. Nothing until two people
-          have taken part. See ./hub-cards.tsx ContributorsCard. */}
-      {slug ? <ContributorsCard data={community} /> : null}
-      {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
-          its versions sent it, what went live in them lately, and how its
-          last update went down. Nothing on a project nobody has made a
-          version of. See ./hub-cards.tsx FromVersionsCard. */}
-      {slug ? <FromVersionsCard slug={slug} data={community} /> : null}
-      {/* #6826: Recently live is read from the Done list. Until it lands its
-          own place holds two of the board's grey cards, so the hub does not
-          say a project has gone live with nothing to show. */}
-      {slug && v.mergedPending ? (
-        <section className="dev-ws-hub-section" data-ws-hub-recent="">
-          <div className="dev-ws-hub-sechead">
-            <SectionHeader className="px-1 pb-0 pt-2">{t('project:hub.recent.title')}</SectionHeader>
+        <div className="dev-ws-hub-cols" data-ws-hub-cols={talkHere ? 'two' : 'one'}>
+          <div className="dev-ws-hub-side">
+            <ForYouCard
+              slug={slug}
+              queue={v.queue}
+              unclaimed={v.dashboard ? v.dashboard.unclaimed : 0}
+              mine={v.mine}
+              alone={alone}
+              data={community}
+              canPost={canPost}
+              onNeeds={() => openTab('needs')}
+              onWork={() => openTab('workshop')}
+              onDiscussion={() => openTab('discussion')}
+              discussionHere={talkHere}
+            />
+            {/* TOPICS, at every width (request 6654): each live topic's channel has
+                a row here. It was the phone's alone (3 Nov 2026), a wide window
+                listing them in its sidebar only. See ./hub-cards.tsx TopicsCard. */}
+            <TopicsCard data={community} onOpen={(key) => openTab(key)} />
+            {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
+                its versions sent it, what went live in them lately, and how its
+                last update went down. Nothing on a project nobody has made a
+                version of. See ./hub-cards.tsx FromVersionsCard. */}
+            <FromVersionsCard slug={slug} data={community} />
+            {/* #6826: Recently live is read from the Done list. Until it lands its
+                own place holds two of the board's grey cards, so the hub does not
+                say a project has gone live with nothing to show. */}
+            {v.mergedPending ? (
+              <section className="dev-ws-hub-section" data-ws-hub-recent="">
+                <div className="dev-ws-hub-sechead">
+                  <SectionHeader className="px-1 pb-0 pt-2">{t('project:hub.recent.title')}</SectionHeader>
+                </div>
+                <CardSkeleton n={2} label={t('project:page.loading')} />
+              </section>
+            ) : <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} />}
+            {/* TOP CONTRIBUTORS (request 6837): who took part most, by name and a
+                count in words, after Recently live. Nothing until two people
+                have taken part. See ./hub-cards.tsx ContributorsCard. */}
+            <ContributorsCard data={community} />
           </div>
-          <CardSkeleton n={2} label={t('project:page.loading')} />
-        </section>
-      ) : slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} /> : null}
+          {talkHere ? (
+            <>
+              <DiscussionCard slug={slug} name={projectName} data={community} mode="full" />
+              <DiscussionCard slug={slug} name={projectName} data={community} mode="preview" onOpenPage={() => openTab('posts')} />
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
@@ -3813,6 +3839,14 @@ export function DevWorkshop(): ReactNode {
           onBack={() => upTab('status')}
           onDiscussion={() => openTab('discussion')}
         />
+      ) : null}
+
+      {/* ── THE DISCUSSION, WHOLE, a page under the Hub (26 Nov 2026) ──
+          Where a phone's Discussion card opens: #general as posts with
+          replies, the whole width, with the way back up to the Hub; Hub
+          stays lit. See ./hub-discussion.tsx. */}
+      {tab === 'posts' && slug ? (
+        <DiscussionCard slug={slug} name={app.name || community?.name || slug} data={community} mode="page" onBack={() => upTab('status')} />
       ) : null}
 
       {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}
