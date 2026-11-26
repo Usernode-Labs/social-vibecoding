@@ -323,7 +323,9 @@ function andTeardown(out: Outcome<MFState>): Outcome<MFState> {
 // The second look at the requests a merge closes (issues.closeAfterMerge):
 // GitHub closes `Closes #N` a few seconds after the merge, or not at all,
 // so a request still open at the first look is looked at again this much
-// later, and closed by the platform then.
+// later, and closed by the platform then. Only a GitHub repository asks for
+// it: on Homeroom's git host the first look closes the linked requests
+// itself and never answers `waiting` (#7214).
 const ISSUES_SECOND_LOOK_MS = 30 * 1000;
 
 // What every merged change has to have done: its worker goes, and the
@@ -612,7 +614,9 @@ function resultOf(status: Followup['status']) {
     // (`skipped` is a reason when the work did not run, GitHub off; the
     // watcher's own result carries a list of that name.)
     // A request it found still open at the first look is looked at again
-    // later (GitHub closes `Closes #N` late), and closed then. The close
+    // later (GitHub closes `Closes #N` late), and closed then. A repository
+    // on Homeroom's git host closes its linked requests at the first look
+    // and never answers waiting, so it is never looked at twice. The close
     // proposals whose target it saw closed or gone are superseded, by a
     // message to their own instance (filed first: one filed before the
     // governance machine ran is adopted from its row).

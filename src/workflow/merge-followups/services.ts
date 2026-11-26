@@ -178,16 +178,22 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           }
           return { closed, targets };
         }
+        // Homeroom's git host applies no closing keywords of its own, so the
+        // watcher closes the linked requests at the first look there and
+        // never asks for a second (#7214). The host is decided the same way
+        // github.getPR and closeIssue decide it for this owner, when the
+        // work runs: a merge already in progress when this ships follows too.
+        const hosted = legacy('services/repo-ref').hostOfOwner(input.owner) === 'git_host';
         const out = await watcher.closeAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: input.linkedIssues,
-          appId: input.appId, pool, look: input.look === 2 ? 2 : 1,
+          appId: input.appId, pool, look: input.look === 2 ? 2 : 1, hosted,
         });
-        // A linked request it could neither see closed nor close at the
-        // second look is retried. A number only the PR's body names is
-        // never closed here, so it is not waited for.
+        // A linked request it could neither see closed nor close is retried.
+        // A number only the PR's body names is never closed here, so it is
+        // not waited for.
         const linked = new Set((Array.isArray(input.linkedIssues) ? input.linkedIssues : []).map(Number));
         const open = (out.stillOpen || []).filter((n: number) => linked.has(n));
-        if (!out.waiting && open.length) throw new Error(`Linked request${open.length === 1 ? '' : 's'} ${open.map((n: number) => `#${n}`).join(', ')} still open on GitHub`);
+        if (!out.waiting && open.length) throw new Error(`Linked request${open.length === 1 ? '' : 's'} ${open.map((n: number) => `#${n}`).join(', ')} still open on ${hosted ? "Homeroom's git host" : 'GitHub'}`);
         return out as Json;
       },
     },

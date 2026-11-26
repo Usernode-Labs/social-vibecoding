@@ -8,7 +8,9 @@
 //   2. At the first look a LINKED request still open is left to GitHub:
 //      nothing is closed by the platform, and the look answers `waiting`,
 //      so the machine asks for a second look (its timing is the machine's:
-//      tests/workflow-merge-followups-postgres.test.js).
+//      tests/workflow-merge-followups-postgres.test.js). A repository on
+//      Homeroom's git host (`hosted`) applies no closing keywords, so its
+//      first look closes the linked requests itself and never waits (#7214).
 //   3. At the second look the linked requests GitHub left open are closed
 //      here, only for a PR merged into its repo's default branch; a number
 //      only the PR body names is never closed, at either look.
@@ -194,6 +196,59 @@ test('look 1: a linked request still open waits for GitHub; the platform closes 
     assert.deepEqual(closed.asked.map((a) => a.closed), [[5]]);
     assert.deepEqual(res.targets, [{ issueId: 62, number: 5 }], 'the close proposal for #4 waits for #4 to close');
   } finally { restore(); }
+});
+
+// Homeroom's git host applies no closing keywords, so a hosted repository's
+// linked request is always still open at the first look: the platform
+// closes it there, with the second look's own checks, and nothing waits
+// (#7214).
+test('hosted, look 1: a linked request still open is closed at once, and only a linked one', async () => {
+  const calls = [], ws = [];
+  const closed = recordingClosed();
+  const { subject, restore } = loadWithStubs({
+    calls, ws, closedRequests: closed,
+    gh: {
+      // #7 is linked; #8 is only in the body.
+      getPR: async () => mergedPr('Closes #7\nCloses #8'),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+    },
+  });
+  try {
+    const pool = recordingPool({ proposals: new Map([[7, 71], [8, 72]]) });
+    const res = await subject.closeAfterMerge({ ...BASE_ARGS, linkedIssues: [7], pool, look: 1, hosted: true });
+    assert.deepEqual(calls.filter((c) => c.type === 'closeIssue').map((c) => c.issueNumber), [7],
+      'the linked one is closed, the body\'s never');
+    assert.deepEqual([res.closed, res.stillOpen, res.waiting], [[7], [8], false], 'no second look is asked for');
+    // The same record as a close seen at the second look.
+    assert.deepEqual(pool.twinCloses().map((q) => q.params[1]), [[7]]);
+    assert.deepEqual(closed.asked.map((a) => a.closed), [[7]], 'the bot\'s proposals for it are withdrawn');
+    assert.deepEqual(res.targets, [{ issueId: 71, number: 7 }], 'its close proposal is named, the open body one\'s not');
+  } finally { restore(); }
+});
+
+test('hosted, look 1: closes nothing unless the PR reads as merged into its own default branch', async () => {
+  const cases = [
+    ['PR fetch failed', async () => { throw new Error('rate limited'); }],
+    ['not merged', async () => mergedPr('Closes #10', { merged: false })],
+    ['other base branch', async () => mergedPr('Closes #10', {
+      base: { ref: 'staging', repo: { full_name: 'usernode-bot/some-app', default_branch: 'main' } },
+    })],
+    ['other repository', async () => mergedPr('Closes #10', {
+      base: { ref: 'main', repo: { full_name: 'someone/else', default_branch: 'main' } },
+    })],
+  ];
+  for (const [label, getPR] of cases) {
+    const calls = [], ws = [];
+    const { subject, restore } = loadWithStubs({
+      calls, ws,
+      gh: { getPR, getIssue: async (o, r, n) => ({ number: n, state: 'open' }) },
+    });
+    try {
+      const res = await look(subject, { linkedIssues: [10], look: 1, hosted: true });
+      assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0, label);
+      assert.deepEqual([res.stillOpen, res.waiting, res.targets], [[10], false, []], label);
+    } finally { restore(); }
+  }
 });
 
 test('look 1 is the default; an open number only the PR body names is not waited for', async () => {

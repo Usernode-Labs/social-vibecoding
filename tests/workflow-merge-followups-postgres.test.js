@@ -828,6 +828,24 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     } finally { work.results.delete(WORK.issues); }
   });
 
+  // On Homeroom's git host the first look closes the linked requests itself
+  // (services.ts tells the watcher; issue-close-watcher's `hosted`), so it
+  // answers `waiting: false`: one look, and the request leaves Requests with
+  // its change reaching Done (#7214).
+  await t.test('a first look that closed the linked requests itself settles, with no second look', async () => {
+    const a = await app();
+    const s = await proposal(a, { linked: [5, 6] });
+    await merge(s);
+    work.results.set(WORK.issues, { closed: [5, 6], skipped: [], stillOpen: [], waiting: false, targets: [] });
+    try {
+      await settle();
+      const rows = (await workOf(s)).filter((w) => w.kind === WORK.issues);
+      assert.deepEqual([rows.map((r) => r.work_key), rows.map((r) => r.status)], [['issues'], ['settled']],
+        'one look, settled, and no issues~N queued');
+      assert.deepEqual((await instance(s)).data.followups.issues.status, 'done');
+    } finally { work.results.delete(WORK.issues); }
+  });
+
   // The close proposals for the requests a look saw closed (or gone) are
   // the governance machine's to supersede: each hears it by message, filed
   // first (one filed before the governance machine ran is adopted from its
