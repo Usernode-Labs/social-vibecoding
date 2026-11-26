@@ -4283,10 +4283,9 @@ html[data-app-tone="dark"] #admin-screen {
      own Exit leaves the console. */
   body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) #platform-header #back-btn { display: none !important; }
   body:has(#admin-screen:not(.hidden) #admin-console-bar:not(.hidden)) .admin-header-note { position: absolute; inset: 0; width: fit-content; max-width: calc(100% - 340px); height: fit-content; margin: auto; display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 24px; padding: 2px 3px 2px 8px; border-radius: 999px; background: var(--adm-note-bg, #fff7e0); box-shadow: inset 0 0 0 1px var(--adm-note-line, #f1d48a); color: var(--adm-note-ink, #7a3d0a); }
-  .admin-header-note-mark { flex: none; width: 4px; height: 14px; border-radius: 999px; background: var(--adm-note-mark, #f59e0b); }
-  .admin-header-note p { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px; margin: 0; font-size: 0.75rem; line-height: 1.3; }
-  .admin-header-note strong { flex: none; font-weight: 650; }
-  .admin-header-note p span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-header-note::before { content: ""; flex: none; width: 4px; height: 14px; border-radius: 999px; background: var(--adm-note-mark, #f59e0b); }
+  .admin-header-note p { flex: 1; min-width: 0; margin: 0; overflow: hidden; font-size: 0.75rem; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-header-note strong { font-weight: 650; }
   .admin-header-exit { flex: none; display: inline-flex; align-items: center; min-height: 22px; padding: 0 10px; border-radius: 999px; background: var(--adm-note-exit, rgb(122 61 10 / 0.1)); font-size: 0.75rem; font-weight: 600; }
   .admin-header-exit:hover { background: var(--adm-note-exit-on, rgb(122 61 10 / 0.18)); }
 }

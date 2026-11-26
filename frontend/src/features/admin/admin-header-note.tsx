@@ -24,10 +24,9 @@ function onExit(e: { preventDefault(): void }) {
 export function AdminHeaderNote() {
   return (
     <div className="admin-header-note" role="note">
-      <span className="admin-header-note-mark" aria-hidden="true"></span>
       <p>
         <strong>Admin console</strong>
-        <span>{"Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything."}</span>
+        {" Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything."}
       </p>
       <a href="#profile" onClick={onExit} className="admin-header-exit">Exit</a>
     </div>
