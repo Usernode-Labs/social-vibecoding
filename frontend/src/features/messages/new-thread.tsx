@@ -50,15 +50,24 @@
  * The box is the conversation composer's card (./composer.tsx), drawn with
  * the same pieces: the "+" and its Attach files row, the field, dictation
  * (../dictation/speak-button.tsx) and the accent send disc.
+ *
+ * 26 Nov 2026: it is drawn as a thread is at every width, a title card
+ * ("New chat" over who it is with) and then one card with the starts, the
+ * choosers and the box (app.css, A TITLE CARD, THEN ONE CARD, AT EVERY
+ * WIDTH), on a phone under a bar that says the tab's name. And once About is
+ * a project whose app can be changed live, the title card offers Live
+ * preview: START LIVE PREVIEW, below.
  */
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChatComposerBar } from '@/components/ui/chat';
 import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { NewChatInBar, publishNewChatWords } from '../ai/new-chat-bar';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { createStore } from '../../lib/plain-store.js';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -100,16 +109,17 @@ export const NEW_THREAD_STARTS = [
 ] as const;
 
 /**
- * A sixth start, drawn only once a project of its own is picked (never Any
+ * A sixth start, offered only once a project of its own is picked (never Any
  * project; Homeroom itself only for its admins, #6961): changing the project
- * live. Homeroom bot opens a live draft of it beside the chat
+ * live. Since 26 Nov 2026 it is the head's Live preview button, not a pill
+ * (START LIVE PREVIEW, below): pressing it sends these words. Homeroom bot opens a live draft of it beside the chat
  * (homeroom-bot-mayor.js open_app_preview, services/live-drafts.js) and
  * changes it as they talk. Its kind is any: the thread is no particular kind
  * of change. It writes "I want to make changes to a live preview of" and the
  * project's name, which the bot reads as the request for that draft.
  */
 export const LIVE_START = {
-  key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
+  key: 'live', kind: 'any', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
 } as const;
 
 /**
@@ -152,6 +162,19 @@ export function withStart<T extends { text: string }>(words: string, start: T, s
   const lead = String(words || '').replace(/^\s+/, '');
   const rest = (current ? lead.slice(current.text.trim().length) : lead).trim();
   return `${start.text.trim()} ${rest}`.replace(/\s+$/, ' ');
+}
+
+/**
+ * Pure: the message a live start sends. Its words lead; what the box held
+ * follows after a colon, unless the box already began with them.
+ */
+export function leadWith(words: string, lead?: string | null): string {
+  const typed = String(words || '').trim();
+  const first = String(lead || '').trim();
+  if (!first) return typed;
+  if (!typed) return first;
+  if (typed.toLocaleLowerCase().startsWith(first.toLocaleLowerCase())) return typed;
+  return `${first}: ${typed}`;
 }
 
 // Which conversation a blank thread is open beside, or none.
@@ -269,10 +292,58 @@ function key(): string {
  */
 export const NewThreadDocked = createContext(false);
 
+/**
+ * START LIVE PREVIEW (26 Nov 2026). Once About is a project whose app can be
+ * changed live (`offersLive`), the head offers it as a button, where the
+ * sixth start used to write its words into the box:
+ *
+ *   New chat                         [▶ Live preview]
+ *   With Homeroom bot, only you can see it
+ *
+ * Pressing it is the first message, sent for the person: the live start's
+ * own words (LIVE_START, with anything already typed after them), so the
+ * thread is made for that project and Homeroom bot opens the draft. A
+ * message sent the usual way starts no preview.
+ *
+ * From 1500px the bot tab draws the preview's column beside New chat instead
+ * (./live-start-pane.tsx, ../ai/index.tsx), with the button in it, or the
+ * projects to pick from while About is Any project. That column is another
+ * tree, so what it shows and does goes through this store and the two
+ * functions under it; `LiveStartBeside` tells the head its button is there.
+ */
+export interface LiveStartState {
+  /** The chat the new chat is open in. */
+  conversationId: number;
+  /** The project picked, or '' for Any project. */
+  project: string;
+  /** Its name, as the About chip says it. */
+  name: string;
+  /** A live preview of it can be started here. */
+  offered: boolean;
+  /** Homeroom bot is who works on it: a hand-off to Claude Code or ChatGPT has no preview. */
+  bot: boolean;
+  /** A send is under way, or a file is still uploading. */
+  busy: boolean;
+}
+export const liveStartStore = createStore<LiveStartState | null>(null);
+let liveStartActs: { start: () => void; pick: (slug: string) => void } | null = null;
+/** Start the live preview of the new chat's project, as its head's button does. */
+export function startLivePreview(): void { liveStartActs?.start(); }
+/** Set the new chat's project, as its About chip's picker does. */
+export function pickLiveProject(slug: string): void { liveStartActs?.pick(slug); }
+/** True where the preview's column is drawn beside New chat, with the button in it. */
+export const LiveStartBeside = createContext(false);
+/**
+ * The thread a live start just made, until Homeroom bot's draft is there:
+ * the column beside it says the draft is opening instead of going away.
+ */
+export const liveOpeningStore = createStore<{ rootId: number; name: string } | null>(null);
+
 /** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
   const docked = useContext(NewThreadDocked);
+  const beside = useContext(LiveStartBeside);
   // #6963: the bot tab's list is hidden, and a new chat under its own head
   // offers the same way back to it.
   const showList = useShowListButton();
@@ -316,13 +387,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   // Its connector is known to be missing: the steps take the thread's place.
   const setup = !!own && links.phase === 'ready' && !links.connected[own];
   // ONE LOOK (25 Nov 2026): in the Homeroom bot tab's drawer on a phone the
-  // bar names the new chat, with its back disc (../ai/new-chat-bar.ts), and
-  // app.css draws no head here: its words go up to the bar instead.
+  // bar is borrowed while the new chat is up, for its back disc
+  // (../ai/new-chat-bar.ts): these are the words it says.
+  // 26 Nov 2026: New chat is drawn there as it is from 768px, under a head
+  // of its own that names it, so the bar says the tab's name beside the disc.
   const inBar = useContext(NewChatInBar);
-  const barTitle = setup ? t('messages:newThread.builder.setup.title', { builder: ownName }) : t('messages:newThread.title');
-  const barSub = setup
-    ? t('messages:newThread.builder.setup.sub')
-    : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.barSub');
+  const barTitle = t('messages:ai.hero.name');
+  const barSub = '';
   useIsomorphicLayoutEffect(() => {
     if (!inBar) return undefined;
     publishNewChatWords({ title: barTitle, sub: barSub });
@@ -341,14 +412,20 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const scope = useSyncExternalStore(communityScopeStore.subscribe, communityScopeStore.get, communityScopeStore.get);
   // #6961: an admin may change Homeroom itself live; the mask "View as
   // non-admin" leaves isAdmin false, so it hides the start as it hides the rest.
-  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>, {
+  const live = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>, {
     platformSlug: platformSlug(),
     isAdmin: typeof window !== 'undefined' && !!(window as any).App?.user?.isAdmin,
-  }) ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
+  });
+
   // The name the live start says: the project's own, or its address name
   // until the communities you are in are read.
   const appName = (project && scope.info[project]?.name) || project || '';
-  const starts = offered.map((start) => ({ ...start, text: t(start.text, { app: appName }) }));
+  const pills = NEW_THREAD_STARTS.map((start) => ({ ...start, text: t(start.text, { app: appName }) }));
+  // The live start has no pill (26 Nov 2026: the head's Live preview button
+  // sends it). Its words are still read (`startOf`), and still written when
+  // a door carries them (a project's Workshop box).
+  const liveWords = t(LIVE_START.text, { app: appName });
+  const starts = live ? [...pills, { ...LIVE_START, text: liveWords }] : pills;
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
   // What a door carried for the box (a project's Workshop): its words, and
@@ -500,7 +577,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   };
 
   /** A start tapped: its words lead the box, and the caret waits after them. */
-  const begin = (start: (typeof starts)[number]) => {
+  const begin = (start: (typeof pills)[number]) => {
     setWords((current) => withStart(current, start, starts).slice(0, 8000));
     toField();
   };
@@ -536,9 +613,10 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     closeNewThread();
   };
 
-  const send = async (event?: FormEvent) => {
+  const send = async (event?: FormEvent, lead?: string) => {
     event?.preventDefault();
-    const content = words.trim();
+    // A live start leads with its own words; what was typed follows them.
+    const content = leadWith(words, lead);
     if (busy || dictating || uploading || (!content && !attachments.length && !object)) return;
     if (own) { handOff(content); return; }
     setBusy(true);
@@ -552,12 +630,31 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
       });
       closeNewThread();
       openThread(made.rootId);
+      // A live start: the column beside the thread says the draft is opening (../ai/index.tsx).
+      if (lead) liveOpeningStore.set({ rootId: made.rootId, name: appName });
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : t('messages:newThread.failed'));
     } finally {
       setBusy(false);
     }
   };
+
+  /** The head's Live preview, and the column's Start: the live start, sent. */
+  const liveReady = live && !own && !setup;
+  const startLive = () => { if (liveReady) void send(undefined, liveWords); };
+  // The column beside (./live-start-pane.tsx) reads what this chat is set to
+  // and acts on it through these.
+  const holding = busy || dictating || uploading > 0;
+  useIsomorphicLayoutEffect(() => {
+    liveStartStore.set({ conversationId, project, name: appName, offered: liveReady, bot: !own, busy: holding });
+  }, [conversationId, project, appName, liveReady, own, holding]);
+  const acts = useRef({ start: startLive, pick: (slug: string) => { setProject(slug || ''); toField(); } });
+  acts.current = { start: startLive, pick: (slug: string) => { setProject(slug || ''); toField(); } };
+  useEffect(() => {
+    liveStartActs = { start: () => acts.current.start(), pick: (slug) => acts.current.pick(slug) };
+    return () => { liveStartActs = null; liveStartStore.set(null); };
+  }, []);
+  const liveInHead = liveReady && !beside;
 
   // Where the count turns amber, as in every other box.
   const nearLimit = words.length > 7600;
@@ -588,10 +685,23 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
           <div className="messages-thread-sub">
             {setup
               ? t('messages:newThread.builder.setup.sub')
-              : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.sub')}
+              : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] })
+              // On a phone the button shares the head's one line with these words, so they are the short ones.
+              : inBar && liveInHead ? t('messages:newThread.barSub') : t('messages:newThread.sub')}
           </div>
         </div>
-        {docked ? null : (
+        {liveInHead ? (
+          <Button type="button" variant="unstyled" size="none" ink="none" className="messages-live-start" data-bot-new-thread-live="" disabled={holding}
+            aria-label={t('messages:newThread.live.startLabel', { app: appName })} title={t('messages:newThread.live.startLabel', { app: appName })}
+            // The field keeps the keyboard if it had it.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={startLive}>
+            <PlayIcon aria-hidden="true" />
+            <span>{t('messages:newThread.live.button')}</span>
+          </Button>
+        ) : null}
+        {/* In the phone's drawer the bar's back disc is the way out. */}
+        {docked || inBar ? null : (
           <button type="button" className="messages-thread-action" aria-label={t('messages:newThread.close')} title={t('messages:newThread.close')} onClick={() => closeNewThread()}>
             <XIcon aria-hidden="true" />
           </button>
@@ -622,7 +732,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
             <p className="messages-starts-sub">{t('messages:newThread.welcome.sub')}</p>
           </div>
           <div className="messages-starts-list" role="group" aria-label={t('messages:newThread.starts.label')} data-bot-new-thread-starts="">
-            {starts.map((start) => (
+            {pills.map((start) => (
               <button
                 key={start.key}
                 type="button"

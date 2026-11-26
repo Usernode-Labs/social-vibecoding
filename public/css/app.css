@@ -34948,7 +34948,8 @@ html:root .wip-fold-pill > .wip-head-chevron-glyph { display: none; }
    with their project tiles and a tag at their end, and on a phone the list
    running on under the Ask box to the tab bar. New chat: the five starts as
    flat white chips, About and With as menu chips, the message box with the
-   sun send; on a phone the bar names it (features/ai/new-chat-bar.ts). */
+   sun send; a title card and then one card at every width, and Live preview
+   in the title card once About is a project (26 Nov 2026, below). */
 
 /* ── The cards: white, 20px, one hairline; 10px between them. ── */
 html:root #ai-screen .ai-lists { gap: 10px; }
@@ -35171,31 +35172,130 @@ html:root [data-bot-new-thread-pane] .messages-send.messages-send-open { width: 
   html:root [data-bot-new-thread-pane] .messages-composer-input { font-size: 15px; }
 }
 
-/* On a phone, in the bot tab's drawer: a page of its own on the wash, named by the bar (features/ai/new-chat-bar.ts), so no head of its own; the mark starts near the top. */
+/* A TITLE CARD, THEN ONE CARD, AT EVERY WIDTH (26 Nov 2026). New chat is
+   drawn as a thread is, and as a Messages conversation is: a title card that
+   names it ("New chat" over who it is with), then one card holding the
+   starts, About and With and the message box, 10px under it, on the wash.
+   It was one card with its head inside from 768px, and on a phone no card
+   at all under a bar that named it. */
+/* On a phone, in the bot tab's drawer: the same two cards. The bar says the
+   tab's name beside its back disc (features/ai/new-chat-bar.ts), and the
+   title card names the chat. The card is the pane's own `::before`, laid over
+   the rows under the head, as the docked column's is (NEW CHAT IS DRAWN AS
+   CARDS). */
 html:root #ai-screen .ai-drawer-thread:has(> .ai-drawer-pane [data-bot-new-thread-pane]) { background: var(--home-washes, var(--home-ground)); }
-html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] { background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header { display: none; }
-html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-starts { margin-block: 0 auto; padding: 26px 16px 12px; }
-/* The bar's back disc while New chat is up is the shared one (SHARED PARTS, THE TOP BAR). */
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] {
+  --thread-gutter: 12px;
+  --thread-card-r: 20px;
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; isolation: isolate;
+  /* The card ends over the tab bar and the home indicator, as a Messages conversation's does: the pane clears
+     them, not the message bar inside the card (below). */
+  padding: 12px 0 calc(max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)) + 12px);
+  background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+html.un-kb:root #ai-screen .ai-drawer [data-bot-new-thread-pane],
+html.platform-kb-open:root #ai-screen .ai-drawer [data-bot-new-thread-pane] {
+  padding-bottom: calc(var(--un-kb-inset, 0px) + 8px);
+}
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane]::before {
+  content: ""; grid-row: 2 / -1; grid-column: 1; z-index: -1;
+  margin: 10px var(--thread-gutter) 0; border-radius: var(--thread-card-r);
+  background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > * { grid-column: 1; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header {
+  position: relative; inset: auto; grid-row: 1; gap: 12px; min-height: 68px; margin-inline: var(--thread-gutter); padding: 12px 14px;
+  border-radius: var(--thread-card-r); background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header .messages-thread-name { font-size: 19px; font-weight: 700; line-height: 24px; letter-spacing: -0.012em; color: var(--one-ink); }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-thread-header .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 400; line-height: 18px; color: var(--one-ink-2); }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > :is(.messages-thread-scroll, .messages-builder-setup) { grid-row: 2; margin: 10px var(--thread-gutter) 0; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] > .messages-composer { grid-row: 3; margin: 0 var(--thread-gutter); padding: 0 6px 8px !important; }
+/* About and With share the card's line, a little closer set than from 768px so both fit a 390px phone; a longer
+   project's name gives way with an ellipsis before the row runs out of the card. */
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-project-row { min-width: 0; gap: 6px; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-project-chip.one-chip { padding-inline: 10px 8px; font-size: 13px; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-project-chip.one-chip:has(> .messages-project-chip-tile) { padding-inline-start: 5px; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-project-chip.one-chip[data-bot-new-thread-project] { flex: 0 1 auto; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-project-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-starts { gap: 14px; padding: 16px 4px 12px; }
+html:root #ai-screen .ai-drawer [data-bot-new-thread-pane] .messages-starts-hello { margin-bottom: 0; }
+/* The bar's back disc while New chat is up is the shared one (SHARED PARTS, THE TOP BAR), and the tab's name is alone
+   on its line beside it, as "Messages" is over a conversation. */
+html:root body:has(#ai-screen:not(.hidden)) #platform-header .nav-drawer-title:has(> .nav-drawer-title-page:empty) { margin-top: -10px; }
 
-/* From 768px, docked beside the list: New chat is ONE card, its head inside it over a hairline. */
+/* From 768px, docked beside the list: the title card and the card under it are white with the one hairline. */
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
   --thread-card: var(--one-surface);
   --thread-card-solid: var(--one-surface);
   --thread-card-edge: inset 0 0 0 1px var(--one-hair);
 }
-html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked]::before { grid-row: 1 / -1; margin-top: 0; }
+html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked]::before { margin-top: 10px; }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header {
-  margin-inline: var(--thread-gutter); padding-block: 12px; padding-inline: 14px calc(14px + var(--ai-edge, 0px));
-  border-radius: var(--thread-card-r) var(--thread-card-r) 0 0; background: none; box-shadow: inset 0 -1px 0 var(--one-hair);
+  gap: 12px; margin-inline: var(--thread-gutter); padding-block: 12px; padding-inline: 14px calc(14px + var(--ai-edge, 0px));
 }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header .messages-thread-name { font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header .messages-thread-sub { font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--one-ink-2); }
-html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > :is(.messages-thread-scroll, .messages-builder-setup) { margin-top: 0; }
+html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > :is(.messages-thread-scroll, .messages-builder-setup) { margin-top: 10px; }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-starts { gap: 14px; }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-starts-hello { margin-bottom: 0; }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-composer { margin-bottom: 8px; padding-inline: max(14px, calc((100% - 720px) / 2 - var(--thread-gutter))); }
 html:root #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-composer-card { margin-bottom: 14px; }
+
+/* ── Start live preview (26 Nov 2026; features/messages/new-thread.tsx START LIVE PREVIEW). ── */
+/* In New chat's title card, once About is a project whose app can be changed live: a secondary action, flat in the
+   sky tint, so Send stays the one sun. */
+html:root [data-bot-new-thread-pane] .messages-live-start {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; height: 36px; padding: 0 14px 0 11px; border: 0; border-radius: 9999px;
+  background: var(--one-sky-tint); color: var(--one-sky-ink); box-shadow: none;
+  font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
+}
+html:root [data-bot-new-thread-pane] .messages-live-start > svg { width: 17px; height: 17px; flex: none; }
+html:root [data-bot-new-thread-pane] .messages-live-start:active:not(:disabled) { transform: var(--one-flat-press); filter: var(--one-flat-dim); }
+html:root [data-bot-new-thread-pane] .messages-live-start:focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
+html:root [data-bot-new-thread-pane] .messages-live-start:disabled { opacity: .45; cursor: not-allowed; }
+@media (hover: hover) {
+  html:root [data-bot-new-thread-pane] .messages-live-start:hover:not(:disabled) { background: var(--one-sky-tint-hover); }
+}
+/* From 1500px the preview's column waits beside New chat instead (features/messages/live-start-pane.tsx), drawn as the
+   column's other cards are (.detail-card: a head card, then a card): the project's tile and "Live preview" over where
+   it stands, then the words and Start live preview over a faint outline of a screen, or the projects to pick from. */
+html:root .live-start-head { flex-wrap: nowrap; gap: 12px; }
+html:root .live-start-head-tile { flex: none; width: 36px; height: 36px; border-radius: 11px; }
+html:root .live-start-name { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--one-ink); }
+html:root .live-start-sub { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--one-ink-2); }
+html:root .live-start-body { display: grid; place-items: center; padding: 14px; overflow-y: auto; }
+html:root .live-start-ghost {
+  position: absolute; inset: 14px; display: flex; flex-direction: column; gap: 12px; padding: 18px; overflow: hidden;
+  border: 1px dashed var(--one-field-line); border-radius: 14px; pointer-events: none;
+}
+html:root .live-start-ghost span { display: block; flex: none; border-radius: 10px; background: var(--one-quiet); opacity: .55; }
+html:root .live-start-ghost > div { display: flex; flex: none; gap: 12px; }
+html:root .live-start-ghost > div > span { flex: 1 1 0; height: 96px; }
+html:root .live-start-cta {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(360px, 100%); padding: 28px 24px;
+  border-radius: 20px; background: var(--one-surface); text-align: center;
+}
+html:root .live-start-tile { width: 56px; height: 56px; border-radius: 15px; }
+html:root .live-start-title { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.012em; color: var(--one-ink); }
+html:root .live-start-text { margin: 0; font-size: 14px; line-height: 1.4; color: var(--one-ink-2); }
+html:root .live-start-note { margin: 0; font-size: 13px; line-height: 1.4; color: var(--one-ink-2); }
+html:root .live-start-go { margin-top: 6px; }
+html:root .live-start-picks { display: flex; flex-direction: column; gap: 10px; width: min(280px, 100%); margin-top: 6px; }
+html:root .live-start-pick {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 16px 0 8px; border: 0; border-radius: 9999px;
+  background: var(--one-surface); color: var(--one-ink); box-shadow: inset 0 0 0 1px var(--one-field-line);
+  font-size: 16px; line-height: 20px; text-align: start;
+}
+html:root .live-start-pick:hover { background: color-mix(in srgb, var(--one-ink) 4%, var(--one-surface)); }
+html:root .live-start-pick-tile { flex: none; width: 28px; height: 28px; border-radius: 8px; }
+html:root .live-start-all {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 14px; border: 0; border-radius: 9999px;
+  background: var(--one-sky-tint); color: var(--one-sky-ink); font-size: 14px; font-weight: 600; line-height: 1;
+}
+html:root .live-start-all > svg { width: 15px; height: 15px; }
+html:root .live-start-all:hover { background: var(--one-sky-tint-hover); }
+html:root :is(.live-start-pick, .live-start-all):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
 /* ── END ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
 
 /* ── ONE LOOK · MESSAGES AND THREADS ── */

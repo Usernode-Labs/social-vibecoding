@@ -255,9 +255,9 @@ test('app.js hands the draft\'s socket frame on as the bar\'s window event', () 
   assert.match(app, new RegExp(`case 'live_draft_changed':\\s*(//[^\\n]*\\n\\s*)*window\\.dispatchEvent\\(new CustomEvent\\('${LIVE_DRAFT_EVENT}', \\{ detail: data \\}\\)\\);`));
 });
 
-test('New chat offers "I want to make changes to a live preview of…" once a project of its own is picked', () => {
+test('New chat offers a live preview once a project of its own is picked: a button that sends "I want to make changes to a live preview of…"', () => {
   const NEW = 'frontend/src/features/messages/new-thread.tsx';
-  const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf } = loadTsx(NEW);
+  const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf, leadWith } = loadTsx(NEW);
   assert.equal(offersLive('', {}), false, 'not for Any project');
   assert.equal(offersLive('gym', {}), true);
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }), true);
@@ -271,9 +271,12 @@ test('New chat offers "I want to make changes to a live preview of…" once a pr
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }, { platformSlug: 'homeroom', isAdmin: true }), true);
   const words = message(LIVE_START.text, { app: 'Gym' });
   assert.equal(words, 'I want to make changes to a live preview of Gym');
-  assert.equal(message(LIVE_START.label, { app: 'Gym' }).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
+  // 26 Nov 2026: it is no pill any more. The head's Live preview button sends its words.
+  assert.equal(LIVE_START.label, undefined, 'the live start has no pill to label');
+  assert.equal(message('messages:newThread.live.button'), 'Live preview');
+  assert.equal(message('messages:newThread.live.startLabel', { app: 'Gym' }), 'Start a live preview of Gym');
   assert.equal(LIVE_START.kind, 'any');
-  assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
+  assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the live one is the button');
   const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text, { app: 'Gym' }) }));
   assert.equal(startOf('I want to make changes to a live preview of Gym: make the button bigger', starts).key, 'live');
   assert.equal(startOf('I want to change an app live: make the button bigger', starts), null, 'the old words are no longer a start');
@@ -282,6 +285,21 @@ test('New chat offers "I want to make changes to a live preview of…" once a pr
   assert.match(read(NEW), /const appName = \(project && scope\.info\[project\]\?\.name\) \|\| project \|\| '';/);
   assert.match(read(NEW), /text: t\(start\.text, \{ app: appName \}\)/);
   assert.match(read(NEW), /<RichMessage id=\{start\.label\} values=\{\{ app: appName \}\}/);
+  // Only the five are drawn as pills; the live start is still read, and written when a door carries it.
+  assert.match(read(NEW), /const pills = NEW_THREAD_STARTS\.map\(\(start\) => \(\{ \.\.\.start, text: t\(start\.text, \{ app: appName \}\) \}\)\);/);
+  assert.match(read(NEW), /const liveWords = t\(LIVE_START\.text, \{ app: appName \}\);\s+const starts = live \? \[\.\.\.pills, \{ \.\.\.LIVE_START, text: liveWords \}\] : pills;/);
+  assert.match(read(NEW), /\{pills\.map\(\(start\) => \(/);
+  // The button is the first message, sent: the live start's words, then what the box held.
+  assert.equal(leadWith('', words), words);
+  assert.equal(leadWith('  make the button bigger ', words), `${words}: make the button bigger`);
+  assert.equal(leadWith(`${words}: make the button bigger`, words), `${words}: make the button bigger`, 'never said twice');
+  assert.equal(leadWith('just words'), 'just words', 'an ordinary send is the box alone');
+  assert.match(read(NEW), /const liveReady = live && !own && !setup;\s+const startLive = \(\) => \{ if \(liveReady\) void send\(undefined, liveWords\); \};/);
+  assert.match(read(NEW), /const content = leadWith\(words, lead\);/);
+  assert.match(read(NEW), /\{liveInHead \? \(\s+<Button type="button" variant="unstyled" size="none" ink="none" className="messages-live-start" data-bot-new-thread-live="" disabled=\{holding\}/);
+  assert.match(read(NEW), /onClick=\{startLive\}>\s+<PlayIcon aria-hidden="true" \/>\s+<span>\{t\('messages:newThread\.live\.button'\)\}<\/span>/);
+  // A secondary action, flat in the sky tint: Send stays the one sun.
+  assert.match(read('public/css/app.css'), /html:root \[data-bot-new-thread-pane\] \.messages-live-start \{\s+display: inline-flex;[^}]*background: var\(--one-sky-tint\); color: var\(--one-sky-ink\);/);
   // Homeroom bot is what opens it: the chat's tool, named for that start.
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
@@ -289,4 +307,54 @@ test('New chat offers "I want to make changes to a live preview of…" once a pr
   // Step 6 (#6864): opening it loads the draft's tools into the same turn,
   // so the change they asked for is made then, and replied to.
   assert.match(tool.description, /It gives you the draft's tools for the rest of this turn: when they asked for a change, make it then, and reply\./);
+});
+
+test('from 1500px the preview\'s column waits beside New chat: Start for a picked project, projects to pick from for Any project', () => {
+  const PANE = 'frontend/src/features/messages/live-start-pane.tsx';
+  const NEW = 'frontend/src/features/messages/new-thread.tsx';
+  const { livePicks, LIVE_PICKS } = loadTsx(PANE);
+  const info = {
+    gym: { slug: 'gym', name: 'Gym' }, books: { slug: 'books', name: 'Book Club' },
+    homeroom: { slug: 'homeroom', name: 'Homeroom', selfHosted: true },
+    a: { slug: 'a', name: 'A' }, b: { slug: 'b', name: 'B' }, c: { slug: 'c', name: 'C' },
+  };
+  const slugs = (rows) => rows.map((row) => row.slug);
+  // The recent projects that can be previewed, in the picker's own order: never one that cannot.
+  assert.deepEqual(slugs(livePicks(['homeroom', 'gym', 'gone', 'books'], info, { platformSlug: 'homeroom' })), ['gym', 'books']);
+  assert.deepEqual(slugs(livePicks(['homeroom', 'gym'], info, { platformSlug: 'homeroom', isAdmin: true })), ['homeroom', 'gym'], 'Homeroom itself for its admins');
+  assert.equal(livePicks(['gym', 'books', 'a', 'b', 'c'], info, {}).length, LIVE_PICKS, 'a handful, then All projects');
+  assert.deepEqual(livePicks([], info, {}), []);
+  // Its first render has no chat to read: it asks for a project, with the picker's door.
+  const pick = renderComponent(PANE, 'LiveStartPane', {});
+  assert.match(pick, /class="detail-card live-start" data-live-start="pick"/, 'drawn as the column\'s other cards are');
+  assert.ok(pick.includes(message('messages:newThread.live.pane.pickTitle')));
+  assert.ok(pick.includes(message('messages:newThread.live.pane.noProject')));
+  assert.match(pick, /data-live-start-all=""/);
+  assert.doesNotMatch(pick, /data-live-start-go/);
+  // Just started: it says the draft is opening rather than leaving and coming back.
+  const opening = renderComponent(PANE, 'LiveStartPane', { opening: { name: 'Gym' } });
+  assert.match(opening, /data-live-start="opening"/);
+  assert.ok(opening.includes(message('messages:newThread.live.pane.openingTitle', { app: 'Gym' })));
+  // Start is the new chat's own live start, and a pick only sets About.
+  const pane = read(PANE);
+  assert.match(pane, /<Button type="button" variant="sun" size="none" ink="none" className="live-start-go" data-live-start-go="" disabled=\{chat\.busy\} onClick=\{\(\) => startLivePreview\(\)\}>/);
+  assert.match(pane, /onClick=\{\(\) => pickLiveProject\(row\.slug\)\}/);
+  assert.match(pane, /onPick=\{\(slug\) => \{ setPicking\(false\); pickLiveProject\(slug \|\| ''\); \}\}/);
+  const fresh = read(NEW);
+  assert.match(fresh, /liveStartStore\.set\(\{ conversationId, project, name: appName, offered: liveReady, bot: !own, busy: holding \}\);/);
+  assert.match(fresh, /return \(\) => \{ liveStartActs = null; liveStartStore\.set\(null\); \};/);
+  assert.match(fresh, /const liveInHead = liveReady && !beside;/, 'with the column beside it, the head has no button');
+  assert.match(fresh, /openThread\(made\.rootId\);\s+\/\/[^\n]*\n\s+if \(lead\) liveOpeningStore\.set\(\{ rootId: made\.rootId, name: appName \}\);/);
+  // The bot page draws it only where three columns fit, beside a new chat with Homeroom bot, in the preview's own pane.
+  const ai = read('frontend/src/features/ai/index.tsx');
+  assert.match(ai, /const roomForLive = !!botId && docked && !phone && fits === 'three' && !panel\.open && !detailHere;/);
+  assert.match(ai, /const waitingNew = roomForLive && column\?\.at === 'new' && !!liveChat && liveChat\.bot;/);
+  assert.match(ai, /const openingHere = roomForLive && column\?\.at === 'thread' && !!liveOpening && liveOpening\.rootId === column\.rootId;/);
+  assert.match(ai, /const previewHere = detailHere \|\| waitingHere;/);
+  assert.match(ai, /<LiveStartBeside\.Provider value=\{waitingNew\}>/);
+  assert.match(ai, /\) : waitingHere \? \([\s\S]{0,260}<aside\s+ref=\{previewRef\}\s+id="ai-preview-pane"\s+className="ai-preview-pane"\s+data-ai-preview-pane=\{layout\}\s+data-ai-live-start=""/);
+  assert.match(ai, /<LiveStartPane opening=\{openingHere && liveOpening \? \{ name: liveOpening\.name \} : null\} \/>/);
+  // The draft arriving, or the person going elsewhere, ends the wait; so does two minutes.
+  assert.match(ai, /if \(detailHere \|\| elsewhere\) \{ liveOpeningStore\.set\(null\); return undefined; \}/);
+  assert.match(ai, /const LIVE_OPENING_MS = 120_000;/);
 });

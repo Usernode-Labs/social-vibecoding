@@ -83,7 +83,8 @@ export function pickerSections(
 }
 
 /** A community's tile, at the size the caller's class gives it. */
-function Tile({ info, className }: { info: CommunityInfo; className: string }): ReactNode {
+/** A project's own tile, as the chip and the rows draw it. */
+export function Tile({ info, className }: { info: CommunityInfo; className: string }): ReactNode {
   const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
   return (
     <span className={`app-icon-tile ${className}`} data-icon={appIconKind(app as never)} aria-hidden="true">

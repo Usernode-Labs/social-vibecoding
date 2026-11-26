@@ -2105,7 +2105,7 @@ test('a preview beside the thread: both edges drag, each the width of the column
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
   // The thread's edge keeps the three columns' width, bound and preview while
   // they fit, the list shown or put away (24 Nov 2026).
-  assert.match(src, /const threeFits = detailHere && fits === 'three';/);
+  assert.match(src, /const threeFits = previewHere && fits === 'three';/);
   assert.match(src, /const fits = detailLayout\('bot', \{ phone, wide: three \}\);/);
   assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
   assert.match(src, /neighbourMin: listMin \+ Math\.max\(0, roomEnd - endAt\), endAt/,
@@ -2949,7 +2949,7 @@ test('the list put away beside a preview (24 Nov 2026): halves where three colum
 test('the list put away: one pane, or beside a preview the thread and the preview in halves, where three columns fit', () => {
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index, /import \{ listLayout, setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
-  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: detailHere, fits, phone \}\);/,
+  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: previewHere, fits, phone \}\);/,
     'one reading of the choice, the column and the window');
   assert.match(index, /setDocked\(docked && snaps && !phone\)/, 'the button is offered wherever the list\'s bar snaps');
   assert.match(index, /data-ai-list-closed=\{oneUp \? '' : undefined\}/);

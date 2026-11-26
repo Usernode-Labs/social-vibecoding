@@ -4065,7 +4065,7 @@
   },
   "newThread.barSub": {
     "text": "Only you can see it",
-    "description": "On a phone, the small line under New chat in the top bar while a new chat with Homeroom bot is open: the thread it starts is private to the person."
+    "description": "On a phone, the small line under New chat in its title card while the Live preview button shares that card: the short form of \"With Homeroom bot, only you can see it\"."
   },
   "newThread.close": {
     "text": "Close",
@@ -6559,13 +6559,9 @@
     "text": "A problem on Homeroom's side, not your app. Close the draft and ask Homeroom bot to open it again in a few minutes.",
     "description": "Under \"The preview couldn't start\" on a private thread's opening card."
   },
-  "newThread.starts.live.label": {
-    "text": "I want to make changes to a live preview of {{app}}<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. {{app}} is the picked project's name. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
-  },
   "newThread.starts.live.text": {
     "text": "I want to make changes to a live preview of {{app}}",
-    "description": "Written into the message box when the \"I want to make changes to a live preview of…\" pill is tapped, for the person to finish the sentence (for example, \"I want to make changes to a live preview of Supply Line: make the start button bigger\"). {{app}} is the picked project's name. Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
+    "description": "The first message of a chat started with the Live preview button in a new chat with Homeroom bot, sent for the person, with anything they had typed after it (for example, \"I want to make changes to a live preview of Supply Line: make the start button bigger\"). Also written into the message box when a project's Workshop carries the live start into a new chat. {{app}} is the picked project's name. A message that begins with these words asks Homeroom bot to open a live preview of the project's app."
   },
   "artifacts.button": {
     "text": "Artifacts",
@@ -6702,5 +6698,73 @@
   "guide.bot": {
     "text": "Homeroom bot has its own tab in the sidebar.",
     "description": "Last line of the guide beside the Messages list: the chat with Homeroom bot is not in Messages, it is the Homeroom bot tab of the sidebar."
+  },
+  "newThread.live.button": {
+    "text": "Live preview",
+    "description": "A button in the title card of a new chat with Homeroom bot, with a play glyph before the words, shown once the chat is about a project whose app can be changed live. Pressing it starts the chat for that project and Homeroom bot opens a live preview of a draft of the app beside it."
+  },
+  "newThread.live.startLabel": {
+    "text": "Start a live preview of {{app}}",
+    "description": "Accessible name and tooltip of the Live preview button in a new chat with Homeroom bot. {{app}} is the picked project's name."
+  },
+  "newThread.live.pane.label": {
+    "text": "Live preview",
+    "description": "Accessible name of the column beside a new chat with Homeroom bot on a wide window, where a live preview of the project's app will run."
+  },
+  "newThread.live.pane.title": {
+    "text": "Live preview",
+    "description": "Title of the column beside a new chat with Homeroom bot on a wide window, where a live preview of the project's app will run."
+  },
+  "newThread.live.pane.notStarted": {
+    "text": "{{app}} · not started",
+    "description": "Line under \"Live preview\" in the column beside a new chat, while a project is picked and its preview has not been started. {{app}} is the project's name."
+  },
+  "newThread.live.pane.noProject": {
+    "text": "No project picked yet",
+    "description": "Line under \"Live preview\" in the column beside a new chat, while the chat is about Any project."
+  },
+  "newThread.live.pane.opening": {
+    "text": "{{app}} · opening",
+    "description": "Line under \"Live preview\" in the column beside a chat whose live preview was just started, until Homeroom bot's draft of the app is running. {{app}} is the project's name."
+  },
+  "newThread.live.pane.startTitle": {
+    "text": "See {{app}} change as you talk",
+    "description": "Heading in the middle of the live preview column beside a new chat, over the Start live preview button. {{app}} is the picked project's name."
+  },
+  "newThread.live.pane.startBody": {
+    "text": "Homeroom bot opens a draft of {{app}} here and edits it while you chat.",
+    "description": "Under the heading in the live preview column beside a new chat. {{app}} is the picked project's name."
+  },
+  "newThread.live.pane.start": {
+    "text": "Start live preview",
+    "description": "The main button of the live preview column beside a new chat with Homeroom bot, with a play glyph before the words. Pressing it starts the chat for the picked project and Homeroom bot opens a live preview of a draft of its app in this column."
+  },
+  "newThread.live.pane.startNote": {
+    "text": "Starting sends your first message and keeps this chat about {{app}}.",
+    "description": "Small line under the Start live preview button in the column beside a new chat. {{app}} is the picked project's name."
+  },
+  "newThread.live.pane.pickTitle": {
+    "text": "Pick a project to preview",
+    "description": "Heading in the middle of the live preview column beside a new chat with Homeroom bot, while the chat is about Any project; the person's recent projects are listed under it as buttons."
+  },
+  "newThread.live.pane.pickBody": {
+    "text": "Homeroom bot can open a draft of it here and edit it while you chat.",
+    "description": "Under \"Pick a project to preview\" in the live preview column beside a new chat. \"it\" is the project the person picks."
+  },
+  "newThread.live.pane.pickAll": {
+    "text": "All projects",
+    "description": "A button under the recent projects in the live preview column beside a new chat: opens the project picker with every project the person is in."
+  },
+  "newThread.live.pane.pickNote": {
+    "text": "Picking one sets About for this chat. Nothing starts until you press Start.",
+    "description": "Small line at the foot of the live preview column beside a new chat, while the chat is about Any project. \"About\" is the label of the chip over the message box that says which project the chat is about; \"Start\" is the Start live preview button."
+  },
+  "newThread.live.pane.openingTitle": {
+    "text": "Opening a draft of {{app}}",
+    "description": "Heading in the live preview column beside a chat whose live preview was just started, until Homeroom bot's draft of the app is running. {{app}} is the project's name."
+  },
+  "newThread.live.pane.openingBody": {
+    "text": "Homeroom bot is starting it. The preview shows here in a moment.",
+    "description": "Under \"Opening a draft of …\" in the live preview column, while the draft is starting."
   }
 }
