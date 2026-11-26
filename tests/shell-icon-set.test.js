@@ -539,6 +539,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
     'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── #6653: the composer's strikethrough ────────────────────────────
     //
+    // FormatTextIcon ("Aa", request #7164) is the "+" menu's row that opens
+    // that row on a phone: in the same composer, so not in the static
+    // document either.
+    'M3.5 18.5 8 5.5l4.5 13M5.2 14h5.6M20.5 12.25v6.25M20.5 15.4a3.1 3.1 0 1 1-6.2 0 3.1 3.1 0 0 1 6.2 0Z',    //
     // StrikethroughIcon (the S and the line through it) draws in a channel's
     // formatting row and its right-click menu, which mount only once a
     // channel is open. LinkIcon is already on this list above.

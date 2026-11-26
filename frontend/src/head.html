@@ -483,123 +483,14 @@
     }());
   </script>
   <script>
-    // Skin module — the looks, experiments all (Settings › Experimental,
-    // off by default). The same head-blocking pattern as window.Display:
-    // the stored choice lands on <html> before app.css, whose rules read
-    // it, is applied, so a look never flashes in after first paint.
-    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
-    //                      styling": the standard pages in the website's
-    //                      colours and typefaces. The id is the old New
-    //                      look's, whose switch is gone.
-    //                      Drawn in light and dark; the Look menu's,
-    //                      an admin's preview.
-    //                    → anything else, a retired look's id among them
-    //                      ('brandkit', 'workbench', 'today', 'playground',
-    //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
-    //                      'sunrise', gone 19 Nov 2026; 'paper', the one
-    //                      frame's last look, gone 20 Nov 2026), reads as
-    //                      the standard look
-    //                    → key removed for the standard look (the default)
-    // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
-    // every rule of a look to html[data-skin="<look>"]. Every storage access
-    // sits in try/catch: unreadable storage means the standard look. A pick
-    // is held in memory for the page's life as well (`chosen`), so it always
-    // applies even when the browser refuses to store it; reading storage is
-    // only what restores a pick after a reload.
-    // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
-    // stored: the capture runner reaches the page by URL with a fresh
-    // profile, the same way `?theme=` pins the mode above. A pick takes the
-    // parameter out of the address, so a reload keeps what was picked.
-    window.Skin = (function () {
-      const SKIN_KEY = 'homeroom:skin';
-      // The one look the Look menu offers after Standard. The same list is
-      // MENU_SKINS in src/lib/skin.ts. 'brand' keeps the standard pages.
-      // ('wip', "Homeroom brand kit (WIP)", where a change to the standard
-      // look was tried first, was removed on 24 Nov 2026: a device that had
-      // it saved reads as the standard look.)
-      const SKINS = ['brand'];
-      const _listeners = [];
-
-      let pinned = null;
-      // The pick made on this page, held even when storage refuses it.
-      let chosen = null;
-      try {
-        const want = new URLSearchParams(window.location.search).get('skin');
-        if (want === 'standard' || SKINS.includes(want)) pinned = want;
-      } catch {}
-
-      function get() {
-        if (pinned) return pinned;
-        if (chosen) return chosen;
-        try {
-          const val = window.localStorage.getItem(SKIN_KEY);
-          return SKINS.includes(val) ? val : 'standard';
-        } catch {
-          return 'standard';
-        }
-      }
-
-      // Sets or removes data-skin on <html>. Like data-text-size, the
-      // attribute lives OUTSIDE React's body tree, so hydrating the shell
-      // never disagrees with it.
-      function apply() {
-        const root = document.documentElement;
-        const skin = get();
-        // Settings > Experimental > Advanced mode, on <html> for the looks
-        // that keep a detail for it (the same device key the switch writes,
-        // features/settings/interface-mode.ts). Advanced unless Basic is saved.
-        let basic = false;
-        try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
-        root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
-        if (skin !== 'standard') {
-          root.setAttribute('data-skin', skin);
-        } else {
-          root.removeAttribute('data-skin');
-        }
-      }
-
-      function set(skin) {
-        pinned = null;
-        // Held for the page's life whether or not the browser stores it.
-        chosen = SKINS.includes(skin) ? skin : 'standard';
-        try {
-          if (SKINS.includes(skin)) {
-            window.localStorage.setItem(SKIN_KEY, skin);
-          } else {
-            window.localStorage.removeItem(SKIN_KEY);
-          }
-        } catch { /* unwritable storage: the pick still holds in memory */ }
-        // A pick replaces a look named in the address, so a reload keeps it.
-        try {
-          const url = new URL(window.location.href);
-          if (url.searchParams.has('skin')) {
-            url.searchParams.delete('skin');
-            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
-          }
-        } catch { /* no address to rewrite */ }
-        apply();
-        _listeners.forEach(function (fn) { try { fn(); } catch {} });
-      }
-
-      function onChange(fn) {
-        _listeners.push(fn);
-      }
-
-      // Other tabs in the same browser follow (the settings pane re-reads
-      // through the same listener). The in-memory pick is dropped first, so
-      // a choice made in another tab still wins here.
-      window.addEventListener('storage', function (e) {
-        if (e.key === SKIN_KEY) {
-          chosen = null;
-          apply();
-          _listeners.forEach(function (fn) { try { fn(); } catch {} });
-        }
-      });
-
-      // Apply before first paint: the no-flash guard.
-      apply();
-
-      return { get, set, apply, onChange };
+    // Settings › Experimental › Advanced mode, on <html> before app.css,
+    // whose rules read it, is applied (the same device key the switch
+    // writes, features/settings/interface-mode.ts). Advanced unless Basic is
+    // saved; unreadable storage means Advanced.
+    (function () {
+      let basic = false;
+      try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
+      document.documentElement.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
     }());
   </script>
   <script>

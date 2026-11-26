@@ -885,7 +885,7 @@ test('an opened screen is framed on its declared change, at real size at most', 
 // edge nothing covers it, and the brand look draws its card line there too.
 test('the vote card\'s hairline is drawn outside its edge, so every side shows it', () => {
   const css = read('public/css/app.css');
-  const rule = css.match(/^html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
+  const rule = css.match(/^html:root #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
   assert.ok(rule, 'the standard look\'s Needs you vote card rule is there');
   const shadow = (rule[1].match(/box-shadow:\s*([^;]*);/) || [])[1];
   assert.equal(shadow && shadow.trim(), '0 0 0 1px var(--wip-card-line)',

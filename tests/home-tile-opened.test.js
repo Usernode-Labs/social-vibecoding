@@ -129,7 +129,7 @@ test('the line fits the tile\'s caption lane uncut, and Standard (WIP) does not 
   assert.doesNotMatch(rule[0], /ellipsis|overflow|margin/, 'a time is never cut, and the line stays in its lane');
   assert.match(css, /\n\.app-card-opened-short \{ display: none; \}\n@media \(max-width: 639\.98px\) \{\n  \.app-card-opened-long \{ display: none; \}\n  \.app-card-opened-short \{ display: inline; \}\n\}/,
     'under the tile\'s own 640px breakpoint the time alone is shown');
-  assert.match(css, /html:not\(\[data-skin\]\) #app-list \.app-card-opened \{ display: none; \}/,
+  assert.match(css, /html:root #app-list \.app-card-opened \{ display: none; \}/,
     'the kit\'s Home (Standard (WIP), and the standard look since 20 Nov 2026) does not draw the line');
 });
 

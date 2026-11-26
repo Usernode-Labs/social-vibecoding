@@ -141,33 +141,25 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-link ${KIT}"`), 'How voting works');
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-btn ${KIT}"`), 'the ? beside it');
   has('frontend/src/features/dev-board/card/fold.tsx', new RegExp(`className="dev-fold-mark ${KIT}" data-open="1"`), 'Fold the card');
-  const ws = 'frontend/src/features/dev-board/workshop/workshop.tsx';
   // "Show past week" went with the walk: the weeks head the since list now,
   // and Show an earlier week below them steps back a week (#3524 renamed it
   // from "Show older").
-  // #4457: the reveals under a list (All of this week, Earlier weeks, Show
-  // N more) sit 4px under its last row, so they take the dense 32px slop
-  // rather than the kit's 44px, as Your work's does.
+  // #4457: the reveals under a list (Earlier weeks, Show N more) sit 4px
+  // under its last row, so they take the dense 32px slop rather than the
+  // kit's 44px, as Your work's does.
   const weeks = 'frontend/src/features/dev-board/workshop/week-pages.tsx';
-  has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week=\{week\.key\} data-ws-week-all=""/, 'All of this week');
-  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Earlier weeks');
+  has(weeks, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Earlier weeks');
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
-  has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
+  has(weeks, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
   // New for you folded into What happened (5 Nov 2026): one Mark all seen,
   // and no Show N more of its own.
-  // After-Workshop-B: the Overview's Rules, and a row's one act (Vote,
-  // Build it, the card's own), wear the kit's slop.
+  // After-Workshop-B: the Overview's Rules wear the kit's slop.
   has('frontend/src/features/dev-board/workshop/community-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-ov-rule-edit ${KIT}"`), 'Rules');
-  has('frontend/src/features/dev-board/workshop/work-row.tsx', new RegExp(`className="${KIT}"\\s+data-act=\\{a\\.act\\?\\.fn\\}`), 'a row\'s act');
-  // "N more of yours" is gone: the Workshop tab shows your own work in full.
-  has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
   has('frontend/src/features/dev-board/workshop/page-back.tsx', new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
   // The hub's Recently live: All in Workshop, the door beside its label
   // (the since card's Week by week was that door, #3510). The For you rows
   // are the grouped list's rows, a full row tall each.
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}" data-ws-recent-all=""`), 'Recently live\'s All in Workshop');
-  const ui = 'frontend/src/features/home/panels/ui.tsx';
-  has(ui, new RegExp(`className="home-panel-see-all [^"]*${KIT}"`), 'See all challenges');
   has('frontend/src/features/home/panels/discover.tsx', new RegExp(`card-add-btn absolute [^$]*${KIT} \\$\\{`), 'the Discover +');
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
     has(`frontend/src/features/settings/${f}`, /bg-red-50 [^"]*touch-target-32"/, `Revoke in ${f}`);
@@ -307,13 +299,13 @@ test('7164: the bar\'s controls keep their 44px tap box, and neighbours do not o
   assert.match(mark, /id="platform-mark-btn"[\s\S]{0,900}className="[^"]*un-touch-target/, 'the Homeroom menu');
   // The bell is 28px, so its box reaches 8px to each side: the gap to the
   // menu (which is wider than 44px and reaches nowhere) has to be more.
-  const gap = CSS.match(/html:not\(\[data-skin\]\) #platform-header > \.ms-auto \{ gap: (\d+)px; \}/);
+  const gap = CSS.match(/html:root #platform-header > \.ms-auto \{ gap: (\d+)px; \}/);
   assert.ok(gap, 'the standard look sets the bar\'s gap on a phone');
   assert.ok(Number(gap[1]) >= 8, `a ${gap[1]}px gap holds the bell's 8px of reach`);
 });
 
 test('7164: a conversation\'s discs reach 44px on a phone without touching each other', () => {
-  const size = CSS.match(/html:not\(\[data-skin\]\) #messages-screen \.messages-thread-header \.messages-thread-action \{\s*width: (\d+)px;\s*height: (\d+)px;/);
+  const size = CSS.match(/html:root #messages-screen \.messages-thread-header \.messages-thread-action \{\s*width: (\d+)px;\s*height: (\d+)px;/);
   assert.ok(size, 'the title card\'s discs have one size');
   const reach = PHONE_AUDIT.match(/#messages-screen \.messages-thread-header \.messages-thread-action::after \{ content: ''; position: absolute; inset: -(\d+)px; \}/);
   assert.ok(reach, 'each disc has a tap box beyond itself');
@@ -335,13 +327,13 @@ test('7164: the text boxes the audit named are 16px on a phone', () => {
     '#settings-screen :is(input:not(',
     ':is(#profile-root, #settings-root) .profile-details-card .profile-details-input',
     '#dev-kanban-search',
-  ]) assert.ok(selectors.includes(`html:not([data-skin]) ${box}`), `${box} is in the rule`);
+  ]) assert.ok(selectors.includes(`html:root ${box}`), `${box} is in the rule`);
   assert.match(selectors, /#settings-screen :is\(input:not\(\[type="checkbox"\], \[type="radio"\][^)]*\), textarea\)/,
     'Settings: every field you type in, and no tick box');
   assert.doesNotMatch(selectors, /admin/, 'the admin console keeps its own density');
   // The ones One look already made 16px stay so under 768px.
-  assert.match(CSS, /html:not\(\[data-skin\]\) :is\(#home-search-input, #communities-search-input\) \{[^}]*font-size: 16px;/);
-  assert.match(CSS, /html:not\(\[data-skin\]\) #messages-screen \.messages-search-input \{[^}]*font-size: 16px;/);
+  assert.match(CSS, /html:root :is\(#home-search-input, #communities-search-input\) \{[^}]*font-size: 16px;/);
+  assert.match(CSS, /html:root #messages-screen \.messages-search-input \{[^}]*font-size: 16px;/);
   // The zoom lock is a separate decision: this change leaves the viewport alone.
   assert.match(read('frontend/src/head.html'), /<meta name="viewport"[^>]*user-scalable=no/);
 });

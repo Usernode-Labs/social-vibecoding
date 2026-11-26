@@ -54,7 +54,6 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
 import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
   SparklesIcon,
@@ -62,10 +61,9 @@ import {
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
-import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
-import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
-import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag, StatusPillState } from '../card/model';
+import { itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
+import type { DevCardModel, ListRow, RowBrief, RowTag, StatusPillState } from '../card/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -199,7 +197,7 @@ export const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
     <span className="dev-ws-tag" data-tone={t.tone} title={t.title || (t.short ? t.label : undefined)}>
-      {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
+      {t.tone === 'run' || t.tone === 'bot' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}
@@ -246,8 +244,6 @@ export function WorkRow({
 }): ReactNode {
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
-  // Standard (WIP) says who and when first, then the item's number as a code.
-  const wipLook = isKitHome(useLiveSkin());
   // The line row's title link, which a click on its tags line opens (#4716).
   const b = row.brief;
   if (!b) return null;
@@ -283,9 +279,9 @@ export function WorkRow({
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
       data-on={on ? '1' : undefined}
       {...(board ? itemHooks(card) : {})}
-      // Standard (WIP), on the board: what the row is and what it is for, for
-      // the ties drawn while a card is rested on (./board-links.ts).
-      {...(board && wipLook && b.n ? {
+      // On the board: what the row is and what it is for, for the ties drawn
+      // while a card is rested on (./board-links.ts).
+      {...(board && b.n ? {
         'data-ws-noun': b.noun,
         'data-ws-num': String(b.n),
         'data-ws-for': (b.kind === 'live' ? b.closed : b.linked).join(',') || undefined,
@@ -304,7 +300,7 @@ export function WorkRow({
             {card.title.text}
           </a>
         ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
-        <span className="dev-ws-wrow-sub">{rowWords(b, { whoFirst: wipLook })}</span>
+        <span className="dev-ws-wrow-sub">{rowWords(b, { whoFirst: true })}</span>
         {b.twin && slug ? (
           <span className="relative z-[1] text-[13px] leading-snug text-zinc-500 dark:text-zinc-400" data-ws-twin={b.twin.number}>
             <RichMessage id="project:workRow.twin" values={{ number: b.twin.number }} components={[
@@ -358,44 +354,6 @@ export function WorkList({ rows, slug, openKey, onOpen, variant = 'list', catego
         );
       })}
     </div>
-  );
-}
-
-/**
- * The card's own next step, when it has one: a request's primary act (Ask
- * Homeroom bot to build this, Build it now, See progress, …:
- * AppView._issuePrimaryActionSpec) or an imported change's Ask for
- * approval. Never a disabled one ("Homeroom bot is building…"), which is a
- * state, and the row's line in words already says where it stands.
- */
-export function primaryAct(card: DevCardModel): ActionSpec | null {
-  return (card.actions || []).find((a) => (a.key === 'primary' || a.key === 'promote') && !!a.act && !a.disabled) || null;
-}
-
-/**
- * One of the card's acts as a row's button: the shell's neutral pill, which
- * calls the AppView method the act names, as the card's own pill does
- * (dev-card.tsx ActionButton), the button itself last when the act asks for
- * it. `label` replaces the act's words where the row says it shorter; the
- * act's own words are then its tooltip.
- */
-export function ActButton({ a, label, accent = false }: { a: ActionSpec; label?: string; accent?: boolean }): ReactNode {
-  return (
-    <Button
-      type="button"
-      variant={accent ? 'pillAccent' : 'pillNeutral'}
-      ink={accent ? 'solid' : 'neutral'}
-      size="sm"
-      className="un-touch-target"
-      data-act={a.act?.fn}
-      title={label ? (a.title || a.label) : a.title}
-      onClick={(e) => {
-        if (!a.act) return;
-        callAppView(a.act.fn, ...(a.act.args || []), ...(a.passNode ? [e.currentTarget] : []));
-      }}
-    >
-      {label || a.label}
-    </Button>
   );
 }
 

@@ -28,10 +28,6 @@ const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
-// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
-const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
-const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const LANDER = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 const TABS = read('frontend/src/features/nav/tab-bar.tsx');
@@ -118,18 +114,19 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // 2026): the hero (what it is, who is around, what you can do), the first
   // version while Homeroom bot builds it, with its maker's first look once
   // it is drawn (tests/hub-just-you.test.js, tests/hub-first-look.test.js),
-  // Share it for a project that is just yours, "What do you want to change?"
+  // "What do you want to change?"
   // for one nobody has started on, For you (Needs you, Your work, the
   // Discussion), and Recently live. One
   // column at every width, and no metrics card or chart anywhere on it.
   // Start a new change ended it until #852's review moved it into the
   // hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
-  const order = ['<CommunityCard', '<FirstVersionCard', '<ShareItCard', '<StartHereBanner', '<ForYouCard', '<RecentlyLive']
+  const order = ['<CommunityCard', '<FirstVersionCard', '<StartHereBanner', '<ForYouCard', '<RecentlyLive']
     .map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
+  assert.ok(order.every((n) => n >= 0), `all five on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order,
-    'hero, first version, Share it, what to change, for you, recently live');
+    'hero, first version, what to change, for you, recently live');
+  assert.doesNotMatch(hub, /<ShareItCard/, 'Share it was a removed look\'s hub card');
   assert.doesNotMatch(hub, /<SinceSummaryCard|<YourWorkCard|<NeedsCard|<ChannelCard|<GoingCard|ApprovalRules/,
     'what landed since your last visit, your work in full and the approval rule are the Workshop\'s');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
@@ -145,7 +142,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // Each row is a door to its place.
   assert.match(hub, /onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}/);
   assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} own=\{ownLive\} ident=\{recentIdent\} month=\{community\?\.activity\?\.shipped_month\} \/>/, 'All in Workshop is the Workshop place, and so is "N more live this month"');
-  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard } = loadTsx(HUB);
   const quiet = renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine: null, alone: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, canPost: true,
@@ -157,38 +154,13 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
   assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
-  // The Workshop tab (After-Workshop-B): OVERVIEW, All items with See all,
-  // where the open work is and the approval rule as its last line (no
-  // notices panel since the #4698 follow-up); then YOUR WORK, one row that
-  // opens the Homeroom bot tab narrowed to the project (5 Nov 2026: it was
-  // What's happening, your work and what is new for you); WHAT HAPPENED,
-  // this week and a row for each week before it, its new requests nobody has
-  // picked up ending with Build it.
-  // 24 Nov 2026: that is the brand look's tab. The standard look draws the
-  // front page in its place (./front-page.tsx; tests/workshop-front-page.test.js).
-  assert.match(LANDER, /\{tab === 'workshop' && !weekUp && !frontPage && wipLook \? \(\n\s*<WorkshopFront\n/);
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp && !frontPage && !wipLook ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
-  const w = (x) => ws.indexOf(x);
-  // #4457: a week's page replaces the tab's body.
-  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', '<YourWorkCard',
-    'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
-  assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
-  assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
-    'Overview (All items and the rule), Your work, then What happened');
-  assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
-  assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
-  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? \(\n\s+<YourWorkCard\n\s+slug=\{slug\}\n\s+name=\{projectName\}\n\s+solo=\{community\?\.audience === 'solo'\}\n\s+live=\{[^\n]+\}\n\s+\/>\n\s+\) : null\}/,
-    'your work is one row, for a signed-in viewer');
-  assert.ok(!/data-ws-mine=|data-ws-fresh|data-ws-part="happening"/.test(ws), 'and What\'s happening is gone');
-  assert.match(ws, /act=\{freshAct\}/, 'What happened\'s new requests end with Build it');
-  assert.equal(message('project:workshop.allItems.title'), 'All items');
-  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // The Overview label opens the Workshop page, All items straight under it;
-  // the approval rule is the card's last line, and only there.
-  assert.match(ws, /^\{tab === 'workshop' && !weekUp && !frontPage && !wipLook \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
-    'the Overview opens the Workshop page');
-  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>/, 'the rule ends the card');
-  assert.equal(ws.split('<ApprovalLine').length - 1, 1, 'and only there');
+  // The Workshop tab is the front page (./front-page.tsx;
+  // tests/workshop-front-page.test.js). The brand look's tab (Overview, Your
+  // work, What happened) went with that look, 26 Nov 2026.
+  assert.match(LANDER, /\{tab === 'workshop' && !weekUp && !frontPage \? \(\n\s*<WorkshopFront\n/);
+  assert.ok(!/data-ws-dashboard|data-ws-happened|<ThisWeek|<WeekRow/.test(LANDER), 'no second Workshop tab');
+  // The approval rule is the front page's line (front-page.tsx), and only there.
+  assert.equal(LANDER.split('<ApprovalLine').length - 1, 0, 'not on the lander');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalLine'), 'and All items does not lead with it');
   // `?ws=discussion` is a deep link like the others, and so is `?ws=plan`,
@@ -208,7 +180,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
 });
 
 test('For you\'s Discussion row: the channel\'s name, its last line, what is new, and the way in', () => {
-  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard } = loadTsx(HUB);
   const card = (data, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine: null, alone: false, canPost: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, data, ...over,
@@ -247,7 +219,7 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
 });
 
 test('For you\'s Needs you opens the queue and counts the votes owed', () => {
-  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
+  const { ForYouCard } = loadTsx(HUB);
   const row = (key, title, who) => ({ t: 'card', key, card: { title: { text: title } }, who, kind: 'vote' });
   const card = (queue, canPost = true) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', name: 'Garden', queue, mine: null, workEmpty: null, alone: false, canPost,
@@ -266,20 +238,22 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   assert.match(outsider, /<p class="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these\.<\/p>/);
   assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
   // #3408: no vote owed, no door. One quiet line says so.
-  const { NothingToVote, owesVote } = loadTsx(HUB, LEGACY_HUB);
+  const { NothingToVote, owesVote } = loadTsx(HUB);
   assert.equal(owesVote([]), false);
+  // A card of For you's row, shaped as its neighbours are: a tile, "Needs
+  // you", then the line under it.
   const none = renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} }));
-  assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
-  assert.match(card([]), /<div class="dev-ws-strip dev-ws-foryou"><p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on\.<\/p><\/div>/);
+  assert.match(none, /^<div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""><div class="[^"]*">[\s\S]*?<\/div><span class="wip-hub-door-text"><span class="wip-hub-door-title">Needs you<\/span><span class="wip-hub-door-sub">Nothing more to vote on\.<\/span><\/span><\/div>$/);
+  assert.match(card([]), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*?Nothing more to vote on\.<\/span><\/span><\/div>/);
 
   // Members & activity is the hero's since #3268, and the fortnight How
   // it's going's: pinned in tests/community-hub-details.test.js.
-  assert.equal(loadTsx(HUB, LEGACY_HUB).MembersCard, undefined, 'no separate Members & activity card');
-  assert.equal(loadTsx(HUB, LEGACY_HUB).NeedsCard, undefined, 'and no Needs you card beside the For you row');
+  assert.equal(loadTsx(HUB).MembersCard, undefined, 'no separate Members & activity card');
+  assert.equal(loadTsx(HUB).NeedsCard, undefined, 'and no Needs you card beside the For you row');
 });
 
 test('Recently live: the last three changes that went live, as pictures that open their pages', () => {
-  const { RecentlyLive, RECENT_LIVE_SHOWN } = loadTsx(HUB, LEGACY_HUB);
+  const { RecentlyLive, RECENT_LIVE_SHOWN } = loadTsx(HUB);
   assert.equal(RECENT_LIVE_SHOWN, 3);
   const r = (id, over = {}) => ({
     key: `live:${id}`, sessionId: id, prNumber: 900 + id, title: `Change ${id}`, who: 'Homeroom bot',
@@ -310,7 +284,7 @@ test('Recently live: the last three changes that went live, as pictures that ope
   // NEVER EMPTY (15 Oct 2026): before any change has gone live, one card
   // for the app itself, its tile and name and since when it has been live,
   // opening the app. Its label has no door: nothing has landed to list.
-  const { liveSinceLine } = loadTsx(HUB, LEGACY_HUB);
+  const { liveSinceLine } = loadTsx(HUB);
   const own = (since, rows = []) => renderToHtml(createElement(RecentlyLive, {
     slug: 'garden', rows, onAll: () => {}, own: { name: 'Garden', iconUrl: null, iconEmoji: '🌱', since },
   }));

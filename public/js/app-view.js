@@ -12107,18 +12107,12 @@ const AppView = {
       GroupChat.sendTyping();
     });
 
-    // Multi-line submit semantics: a <textarea> doesn't auto-submit on
-    // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
-    // inserts a newline (default). On touch the on-screen return key
-    // always inserts a newline (no Shift chord there) — the Send button is
-    // the reliable send action. ⌘/Ctrl+Enter sends anywhere (#2145), touch
-    // included: the chord every other composer on the platform answers to,
-    // and the one way to send from a hardware keyboard on a touch screen.
-    // Bubble phase, so the autocomplete's capture-phase keydown still owns
-    // Enter while its dropdown is open.
+    // A <textarea> doesn't submit on Enter, so we drive it here, by the one
+    // rule every message box keeps (frontend/src/lib/enter-sends.ts, via
+    // `GroupChat._enterSends`). Bubble phase, so the autocomplete's
+    // capture-phase keydown still owns Enter while its dropdown is open.
     gcInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
+      if (GroupChat._enterSends(e)) {
         e.preventDefault();
         submitGeneral();
       }
@@ -13584,7 +13578,8 @@ const AppView = {
         }
         tags.push({
           label,
-          tone: ws.spinner ? 'run' : 'plain',
+          // #7182: the bot's own status stands apart from other running tags.
+          tone: ws.tone === 'bot' ? 'bot' : (ws.spinner ? 'run' : 'plain'),
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
@@ -27916,7 +27911,7 @@ const AppView = {
       spinner = !!busy.length; tone = busy.length ? 'emerald' : 'sky';
       who = named(s); at = s.lastActivityAt;
     } else if (bot) {
-      key = 'bot'; spinner = true;
+      key = 'bot'; spinner = true; tone = 'bot';
       at = bot.since || null;
       // The one rule (frontend/src/lib/work-state.ts): the chip names
       // Homeroom bot only in the stage the stored row says (_botChipWords).
@@ -28344,12 +28339,16 @@ const AppView = {
     sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
     emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    // #7182: Homeroom bot's own work, in the bot's periwinkle rather than
+    // the yellow every running task shares. The tokens swap for dark.
+    bot: 'bg-[color:var(--bot-tint)] text-[color:var(--bot-ink)]',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
     sky: 'hover:bg-sky-500/20',
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
+    bot: 'hover:bg-[color:var(--bot-line)]',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session
@@ -29010,6 +29009,19 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #7101: a board row whose lists were not current when the vote was
+      // cast had no optimistic target, so nothing repainted and the row kept
+      // the stale tally until the post-vote read. The saved vote already
+      // settles the React row from the store; this lets the page header and
+      // the chat's vote controls follow too, and applies the vote to a
+      // cached row found now (an equal vote returns early, so never twice).
+      if (!optimistic) {
+        const settledRow = AppView._findItem('proposal', sessionId);
+        if (settledRow) AppView._applyVoteToRow(settledRow, vote);
+        // Only a change with NO cached row at all needs the paint: a row that
+        // already showed this vote has nothing to redraw (#1924).
+        if (!pr && !live) AppView._repaintAfterVote(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote

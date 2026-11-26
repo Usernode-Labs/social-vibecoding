@@ -71,10 +71,9 @@ test('#4527, After-Workshop-B: the rule is one line, worded shorter where the ca
   // The three steps went, and their stacking with them: the rule is the
   // last line of the Overview card.
   assert.doesNotMatch(CSS, /\.dev-ws-rule-step|\.dev-ws-rule-join|\.dev-ws-strip\[data-ws-approval-rules\]/);
-  // The card is its own container, so the shorter wording ("Goes live
-  // when …") fires when the CARD is narrow — a phone, or beside the side
-  // panel — not only when the window is.
-  assert.match(CSS, /^\.dev-ws-strip\[data-ws-dashboard\] \{ container-type: inline-size; \}$/m);
+  // The shorter wording ("Goes live when …") fires when its container is
+  // narrow, not only when the window is. (The Overview card that was its own
+  // container was the brand look's, removed 26 Nov 2026.)
   assert.match(CSS, /\.dev-ws-ov-narrow \{ display: none; \}\n@container \(max-width: 520px\) \{\n\s*\.dev-ws-ov-wide \{ display: none; \}\n\s*\.dev-ws-ov-narrow \{ display: inline; \}\n\}/);
   // A rule over it, the shield, the words, then Rules at its far end.
   assert.match(CSS, /\.dev-ws-ov-rule \{\s*margin: 0; padding-top: 10px; border-top: 1px solid var\(--app-sheet-line\);\s*display: flex; align-items: flex-start; gap: 8px;/);
@@ -99,7 +98,7 @@ test('#4896: the hero says "Just you so far" to the one person in a project nobo
   assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
   assert.match(read('frontend/src/features/dialogs/who-decides.tsx'), /audience: audienceLine\(community\)/);
   const src = read(CARD);
-  assert.match(src, /data-ws-community-audience="">\{justYouSoFar\(data, member\) \|\| audienceLine\(data\)\}<\/span>/,
+  assert.match(src, /data-ws-community-audience="">\s*\{solo \|\| !data\.audience_label \? \(justYouSoFar\(data, member\) \|\| audienceLine\(data\)\) : data\.audience_label\}\s*<\/span>/,
     'under the name, from the first day');
   // 15 Oct 2026: one hub from the first day, and a link out is still Just
   // you: no first week's people row, and no "Private community" said for a
@@ -177,9 +176,8 @@ test('the channel is a hub card at its old address; Join asks under its button a
   assert.match(src, /const member = data\.is_member && !offer\?\.preview;/);
   // #4896: on a project that is just yours too, beside "Just you so far":
   // it was left to the Share it card, and a newcomer met "Just you" alone.
-  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
-    'Invite is offered to members, a project of one included, and comes back once the Invite card is closed');
-  assert.match(src, /const \[inviteClosed\] = useHubDismissed\(slug, 'invite'\);/, 'the hero reads the Invite card\'s ✕');
+  assert.match(src, /\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+    'Invite is offered to members, a project of one included');
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
 

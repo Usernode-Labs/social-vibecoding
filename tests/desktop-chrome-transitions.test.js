@@ -90,63 +90,9 @@ test('the ground is installed at the browser entry and painted by app.css on des
 });
 
 // ── #2764: the folded rail peeks from the toggle ────────────────────────
-
-function loadPeek() {
-  let state = { peek: false, peekOut: false, railOpen: false };
-  const navStore = { get: () => state, set: (patch) => { state = { ...state, ...patch }; } };
-  const mod = loadTsx('frontend/src/features/nav/rail-peek.ts', {
-    stubs: { './nav-store.js': { navStore } },
-  });
-  return { mod, peek: () => state.peek, peekOut: () => state.peekOut };
-}
-
-test('entering a peek target shows the rail, leaving fades it away after the grace period', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { mod, peek, peekOut } = loadPeek();
-  mod.enterPeek();
-  assert.equal(peek(), true);
-  mod.leavePeek();
-  t.mock.timers.tick(mod.PEEK_GRACE_MS - 1);
-  assert.equal(peek(), true, 'the pointer is still crossing the gap');
-  assert.equal(peekOut(), false);
-  // #2795: the grace period ends in a FADE, not a snap. The peek stays up
-  // for the fade so the element is still there to fade.
-  t.mock.timers.tick(1);
-  assert.equal(peek(), true, 'the rail is still drawn while it fades');
-  assert.equal(peekOut(), true, 'and the fade has started');
-  assert.equal(mod.PEEK_FADE_MS, 200);
-  t.mock.timers.tick(mod.PEEK_FADE_MS);
-  assert.equal(peek(), false);
-  assert.equal(peekOut(), false, 'a finished fade leaves nothing set');
-});
-
-test('pointing back at the rail during its fade cancels the fade (#2795)', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { mod, peek, peekOut } = loadPeek();
-  mod.enterPeek();
-  mod.leavePeek();
-  t.mock.timers.tick(mod.PEEK_GRACE_MS + 80);
-  assert.equal(peekOut(), true, 'mid-fade');
-  mod.enterPeek();
-  assert.equal(peek(), true);
-  assert.equal(peekOut(), false, 'the fade is undone at once');
-  t.mock.timers.tick(mod.PEEK_FADE_MS * 3);
-  assert.equal(peek(), true, 'and the pending removal never lands');
-});
-
-test('leaving the toggle and reaching the rail is ONE timer, not two', (t) => {
-  // The toggle and the rail are different components. If each kept its own
-  // grace timer, the toggle's would fire after the pointer had already
-  // arrived on the rail and put it away under the pointer.
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { mod, peek } = loadPeek();
-  mod.enterPeek();            // pointer on the toggle
-  mod.leavePeek();            // …leaves it, heading down
-  t.mock.timers.tick(100);
-  mod.enterPeek();            // …and arrives on the rail
-  t.mock.timers.tick(mod.PEEK_GRACE_MS * 2);
-  assert.equal(peek(), true, 'the rail stays up under the pointer');
-});
+// What the peek did once it started was only reachable under the looks that
+// set data-skin on <html>, removed 26 Nov 2026: the standard look's folded
+// rail stays folded until its arrow is pressed. The wiring stays pinned.
 
 // ── #27: a tap is not a hover ───────────────────────────────────────────
 //
@@ -155,26 +101,6 @@ test('leaving the toggle and reaching the rail is ONE timer, not two', (t) => {
 // it, running the grace and fade timers (and re-rendering the bar) in the
 // middle of taps. The peek targets now listen to pointer events through
 // mouseOnly, which answers only a real mouse (a trackpad reports as one).
-
-test('a finger or a pen never starts or ends a peek; a mouse does (#27)', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { mod, peek, peekOut } = loadPeek();
-  mod.enterPeekByMouse({ pointerType: 'touch' });
-  mod.enterPeekByMouse({ pointerType: 'pen' });
-  mod.enterPeekByMouse({});
-  assert.equal(peek(), false, 'a tap is not a hover');
-  mod.enterPeekByMouse({ pointerType: 'mouse' });
-  assert.equal(peek(), true, 'a mouse still peeks the folded rail');
-  mod.leavePeekByMouse({ pointerType: 'touch' });
-  t.mock.timers.tick((mod.PEEK_GRACE_MS + mod.PEEK_FADE_MS) * 2);
-  assert.equal(peek(), true, 'a touch leaving starts no grace or fade timer');
-  assert.equal(peekOut(), false);
-  mod.leavePeekByMouse({ pointerType: 'mouse' });
-  t.mock.timers.tick(mod.PEEK_GRACE_MS);
-  assert.equal(peekOut(), true, 'the mouse leaving starts the fade');
-  t.mock.timers.tick(mod.PEEK_FADE_MS);
-  assert.equal(peek(), false, 'the mouse leaving still fades it away');
-});
 
 test('the toggle peeks only a FOLDED rail, and its markup does not change to do it', () => {
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');

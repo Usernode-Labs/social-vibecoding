@@ -1,10 +1,6 @@
 /**
- * You's tabs under a look (./you-frame.tsx; the version 2 tour's s44 to s49)
- * and their addresses. Pure: ../profile.js reads the address with it, and the
- * page writes its tabs' links with it.
- *
- * Feedback is not here: its tab opens the product's own "Your feedback" card
- * (../feedback-sheet.tsx) over whichever tab is up.
+ * You's tabs and their addresses. Pure: ./profile.js reads the address with
+ * it, and the page writes its tabs' links with it (./profile-preferences.tsx).
  */
 export const YOU_TABS = ['overview', 'changes', 'requests', 'votes', 'activity', 'friends'] as const;
 export type YouTab = typeof YOU_TABS[number];

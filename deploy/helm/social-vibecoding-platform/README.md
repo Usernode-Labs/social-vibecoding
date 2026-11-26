@@ -702,6 +702,17 @@ images can still be reused. Existing work
 finishes under its original scheduling rules. Coding workers, apps and
 preview servers keep their existing placement.
 
+`config.buildNodePool` (`BUILD_NODE_POOL`, default empty) gives the two build
+lanes a pool of their own, as the same kind of label `key=value`, for example
+`usernodelabs.org/node-pool=build`. Label and taint its nodes the same way. When
+it is set, kpack and BuildKit Pods require that pool and tolerate its taint, and
+a build waits (at most 15 minutes, as above) for a Ready node there rather than
+for room in the checks pool. Empty keeps builds on the checks pool. An invalid
+pair is logged once and builds keep the checks pool. The node needs
+`user.max_user_namespaces > 0`, or BuildKit falls back to kpack. On 26 Nov 2026
+builds shared the one checks node with several proposals' unit suites, and a
+20-second image build took four minutes while using a tenth of a core.
+
 Required-pool mode requires a positive checks-queue limit. At most one
 unit suite can start during its preview build. It reserves a proposal slot
 only when the regular queue is empty and another shared slot will stay free.

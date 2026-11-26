@@ -615,130 +615,6 @@
     "text": "{{took}} of {{offered}} took it",
     "description": "Second line of the \"Your last update\" row when none skipped it and every version has decided. {{offered}} is how many versions were given the update and {{took}} how many took it."
   },
-  "workshop.allItems.title": {
-    "text": "All items",
-    "description": "Heading of the first section on a project's Workshop tab: the four figures about the project's requests and proposals."
-  },
-  "workshop.part.overview": {
-    "text": "Overview",
-    "description": "Small-caps label over the first part of the Workshop tab of a project's page: the All items card with its figures, where the open work is, and the approval rule."
-  },
-  "workshop.part.happened": {
-    "text": "What happened",
-    "description": "Small-caps label over the last part of the Workshop tab of a project's page: this week's changes and requests row by row, then one row for each week before it."
-  },
-  "workshop.allItems.seeAll": {
-    "text": "See all",
-    "description": "Button at the end of the All items heading on a project's Workshop tab: opens the All items page, the whole board of requests and proposals."
-  },
-  "workshop.allItems.seeAllFiltered": {
-    "text": "See all<0></0><1> (filtered)</1>",
-    "description": "The See all button on a project's Workshop tab while a search or filter is still set on the All items page it opens. <0></0> is a small dot (keep it empty); <1></1> is read only by screen readers and adds that the list is filtered."
-  },
-  "workshop.dash.open_one": {
-    "text": "open item",
-    "description": "Label under the first large figure on a project's Workshop tab: the number of open requests and proposals. The number is drawn above it, so it is not in the text."
-  },
-  "workshop.dash.open_other": {
-    "text": "open items",
-    "description": "Label under the first large figure on a project's Workshop tab: the number of open requests and proposals. The number is drawn above it, so it is not in the text."
-  },
-  "workshop.dash.unclaimed": {
-    "text": "nobody on them",
-    "description": "Label under the second large figure on a project's Workshop tab: how many of the open items nobody has taken on. The number is drawn above it; \"them\" is the open items counted by the figure before."
-  },
-  "workshop.dash.votes_one": {
-    "text": "waiting on a vote",
-    "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
-  },
-  "workshop.dash.asOf": {
-    "text": "as of {{time}}",
-    "description": "A small line under the Workshop's waiting-on-votes figure while Homeroom cannot be reached and the figure was saved on this device earlier: when it is from. {{time}} is a time of day such as 12:41, or a short date such as Nov 17. Lower case, no full stop."
-  },
-  "workshop.dash.votes_other": {
-    "text": "waiting on votes",
-    "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
-  },
-  "workshop.dash.none": {
-    "text": "Nothing open. Ask Homeroom bot for a change.",
-    "description": "One line in place of the four figures at the top of a project's Workshop (open items, nobody on them, waiting on votes, live this week) when all four are zero: the project has nothing going on, and the person can ask Homeroom bot to make a change."
-  },
-  "workshop.dash.shipped": {
-    "text": "live this week",
-    "description": "Label under the fourth large figure on a project's Workshop tab: how many changes were merged and went live in the app this week. The number is drawn above it."
-  },
-  "workshop.dash.shippedPartial": {
-    "text": "At least this many: there is more history than the page loaded.",
-    "description": "Tooltip on the \"live this week\" figure on a project's Workshop tab, when the number is a lower bound (it is drawn with a plus sign after it)."
-  },
-  "workshop.dash.shippedWeek": {
-    "text": "This calendar week, counted from Monday 00:00 UTC.",
-    "description": "Tooltip on the \"live this week\" figure on a project's Workshop tab: says which week is counted. UTC is the time zone."
-  },
-  "workshop.dash.onYou_one": {
-    "text": "{{count}} on you",
-    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
-  },
-  "workshop.dash.onYou_other": {
-    "text": "{{count}} on you",
-    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
-  },
-  "workshop.dash.fromLastWeek_one": {
-    "text": "from {{count}} by this time last week",
-    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes had gone live last week by this same point in the week, for comparison. {{count}} is that number."
-  },
-  "workshop.dash.fromLastWeek_other": {
-    "text": "from {{count}} by this time last week",
-    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes had gone live last week by this same point in the week, for comparison. {{count}} is that number."
-  },
-  "workshop.pace.nonePartial": {
-    "text": "Nothing has landed this week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: no change has been merged this week. Landed means merged into the app."
-  },
-  "workshop.pace.atLeast_one": {
-    "text": "At least {{count}} change landed this week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: a lower bound on how many changes were merged this week, used when the full history was not loaded. Change is a noun; landed means merged into the app."
-  },
-  "workshop.pace.atLeast_other": {
-    "text": "At least {{count}} changes landed this week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: a lower bound on how many changes were merged this week, used when the full history was not loaded. Change is a noun; landed means merged into the app."
-  },
-  "workshop.pace.noneFortnight": {
-    "text": "Nothing has landed in the last fortnight.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: no change was merged this week or the week before. A fortnight is two weeks."
-  },
-  "workshop.pace.firstInFortnight_one": {
-    "text": "{{count}} change landed this week, the first in a fortnight.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many changes were merged this week, when none were merged the week before. Change is a noun; a fortnight is two weeks."
-  },
-  "workshop.pace.firstInFortnight_other": {
-    "text": "{{count}} changes landed this week, the first in a fortnight.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many changes were merged this week, when none were merged the week before. Change is a noun; a fortnight is two weeks."
-  },
-  "workshop.pace.up_one": {
-    "text": "{{count}} landed this week, up from {{previous}} by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
-  },
-  "workshop.pace.up_other": {
-    "text": "{{count}} landed this week, up from {{previous}} by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
-  },
-  "workshop.pace.down_one": {
-    "text": "{{count}} landed this week, down from {{previous}} by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
-  },
-  "workshop.pace.down_other": {
-    "text": "{{count}} landed this week, down from {{previous}} by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
-  },
-  "workshop.pace.same_one": {
-    "text": "{{count}} landed this week, the same as by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as had gone live last week by this same point in the week."
-  },
-  "workshop.pace.same_other": {
-    "text": "{{count}} landed this week, the same as by this time last week.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as had gone live last week by this same point in the week."
-  },
   "workshop.desk.title": {
     "text": "Your work",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's title."
@@ -1035,14 +911,6 @@
     "text": "Make and vote on changes",
     "description": "The line under \"Workshop\", the Workshop row of a project's Hub (For you): what the Workshop is for, making changes and voting on them. It opens the project's Workshop. Not the person's own work, which has its own card on the Workshop tab (Your work)."
   },
-  "workshop.fresh.buildIt": {
-    "text": "Build it",
-    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: asks Homeroom bot to build it."
-  },
-  "workshop.fresh.workOnIt": {
-    "text": "Work on it",
-    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this request, as the request's own \"Work on this with Homeroom bot\" does. \"Work on\" is a verb."
-  },
   "workshop.private.title": {
     "text": "Private requests",
     "description": "Small-caps label over the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
@@ -1086,10 +954,6 @@
   "workshop.private.actionFailed": {
     "text": "That didn't work. Try again.",
     "description": "Error under an opened private request when posting a comment or closing it failed, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
-  },
-  "since.none": {
-    "text": "Nothing new since you were last here.",
-    "description": "Line in the Since your last visit section of a project's Workshop tab when nobody else has done anything since this person's last visit."
   },
   "since.markAllSeen": {
     "text": "Mark all seen",
@@ -2147,22 +2011,6 @@
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
   },
-  "hub.invite.title": {
-    "text": "Know someone who'd like it here?",
-    "description": "Heading of the Invite card at the top of a project's Hub, shown to a member of a community that other people are in. A friendly question asking whether they know somebody who would enjoy this community."
-  },
-  "hub.invite.text": {
-    "text": "Invite them to {{community}}. They can join the discussion, suggest ideas and vote on changes.",
-    "description": "Text of the Invite card at the top of a project's Hub, under its heading \"Know someone who'd like it here?\". {{community}} is the community's name. Says what an invited person can do once they join."
-  },
-  "hub.invite.button": {
-    "text": "Invite people",
-    "description": "Button of the Invite card at the top of a project's Hub. A verb: opens the pane that makes an invite link to the community."
-  },
-  "hub.invite.membersActive": {
-    "text": "{{members}} · {{active}}",
-    "description": "Small line at the foot of the Invite card at the top of a project's Hub. {{members}} is how many members the community has, already in the reader's language, like \"236 members\"; {{active}} is how many were active this week, already in the reader's language, like \"25 active this week\". Only the order and the separator are yours to change."
-  },
   "hub.forYou.needs.firstAndMore_one": {
     "text": "{{title}}, and {{count}} more",
     "description": "Second line of the Needs you row on a project's Hub: the title of the first change waiting on this person's vote, then how many more are waiting. {{title}} is that change's title."
@@ -2539,10 +2387,6 @@
     "text": "Not now",
     "description": "Declining button under the question \"Make {{project}} a public community?\": closes it and leaves the project as it is."
   },
-  "communityCard.share.title": {
-    "text": "Share it",
-    "description": "Heading of a card at the foot of the Hub of a project only its maker is in, offering to invite people or make it public. Share is a verb; \"it\" is the project."
-  },
   "communityCard.lineage.madeFrom.gets": {
     "text": "Made from <0>{{project}}</0> · Gets its updates",
     "description": "Line in the hero at the top of a project's hub, on a version (a project made from another, the original), when it gets the original's changes to try and vote on. {{project}} is the original's name; the tagged name links to it. Keep the middle dot as a separator."
@@ -2571,53 +2415,9 @@
     "text": "{{versions}} versions · {{count}} get its updates",
     "description": "Line in the hero at the top of a project's hub: {{versions}} is how many versions others have made of this project (always more than one here), and {{count}} how many of them get its changes to try and vote on. Keep the middle dot as a separator."
   },
-  "communityCard.share.line": {
-    "text": "Invite people to make it a private community, or make it public so anyone can join.",
-    "description": "Text of the \"Share it\" card on the Hub of a project only its maker is in, above the Invite people and Make it public buttons. \"It\" is the project."
-  },
-  "communityCard.share.lineBuilding": {
-    "text": "Invite people to follow along while it’s being built, or make it public so anyone can join.",
-    "description": "Text of the \"Share it\" card on the Hub of a project only its maker is in, while Homeroom bot is still building the project's first version. \"It\" is the project."
-  },
-  "communityCard.share.invite": {
-    "text": "Invite people",
-    "description": "Button on the \"Share it\" card: opens the pane that makes an invite link to the project."
-  },
   "communityCard.share.makePublic": {
     "text": "Make it public",
     "description": "Button on the \"Share it\" card: opens a small popup asking whether to propose making the project a public community. \"It\" is the project."
-  },
-  "communityCard.share.sent_one": {
-    "text": "Invite link sent",
-    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, once they have made an invite link for it that still works. Followed by who has joined and how long the link has left, for example \"Invite link sent · nobody has joined yet · 7 days left\"."
-  },
-  "communityCard.share.sent_other": {
-    "text": "{{count}} invite links sent",
-    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, when more than one invite link for it still works. Followed by who has joined and how long the soonest link has left, for example \"2 invite links sent · 1 joined · 3 days left\"."
-  },
-  "communityCard.share.nobodyJoined": {
-    "text": "nobody has joined yet",
-    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": nobody has joined the project through the invite link yet. Lower case because it follows a separator in the middle of the line."
-  },
-  "communityCard.share.joined_one": {
-    "text": "{{count}} joined",
-    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
-  },
-  "communityCard.share.joined_other": {
-    "text": "{{count}} joined",
-    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
-  },
-  "communityCard.share.daysLeft_one": {
-    "text": "{{count}} day left",
-    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
-  },
-  "communityCard.share.daysLeft_other": {
-    "text": "{{count}} days left",
-    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
-  },
-  "communityCard.share.expiresToday": {
-    "text": "expires today",
-    "description": "Ends the one line on the \"Share it\" card when the invite link stops working in less than a day. Lower case because it follows a separator in the middle of the line."
   },
   "communityCard.inviteCard.note": {
     "text": "“{{note}}”",
@@ -3807,10 +3607,6 @@
     "text": "Saving…",
     "description": "Replaces \"Save\" on the button under the editor of a request's words, on the request's page, while the edit is being saved."
   },
-  "topic.request.status.label": {
-    "text": "Where this request is",
-    "description": "Accessible name of the card on a request's page that shows how far the request has come: asked, plan written, built, voted in."
-  },
   "topic.request.ownAgent.summary": {
     "text": "Build it with your own Claude Code",
     "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
@@ -4259,6 +4055,14 @@
     "text": "Screenshot details",
     "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Screenshot\" names one of the pictures."
   },
+  "card.pill.approvals_one": {
+    "text": "{{yes}} of {{count}} approval",
+    "description": "Status bar of a change that merges once a fixed number of members approve it, after a vote saved on this page was counted in. {{yes}} is how many yes votes it has and {{count}} how many it needs, for example \"1 of 1 approval\". The singular form is used when {{count}} is 1."
+  },
+  "card.pill.approvals_other": {
+    "text": "{{yes}} of {{count}} approvals",
+    "description": "Status bar of a change that merges once a fixed number of members approve it, after a vote saved on this page was counted in. {{yes}} is how many yes votes it has and {{count}} how many it needs, for example \"2 of 3 approvals\"."
+  },
   "card.pill.goesLiveIn": {
     "text": "Goes live in {{time}}",
     "description": "Status bar on a proposal's card while its approval window counts down: the change will be merged and go live when the time runs out. {{time}} is the time left, already abbreviated, for example ~2h 5m."
@@ -4402,6 +4206,10 @@
   "card.vote.sheet.notThisTimeTally": {
     "text": "✕  Not this time ({{tally}})",
     "description": "Row in the phone's action sheet when the person voted Yes on an earlier version of the proposal: votes No on the new version. {{tally}} is where the No side stands, for example 1/3. Keep the cross and the two spaces first."
+  },
+  "card.vote.alreadyYes": {
+    "text": "Your yes is already recorded.",
+    "description": "Short message at the bottom of the screen when someone presses Yes on a change they have already voted Yes on. Nothing is sent; it says the vote is already saved."
   },
   "card.vote.face.approved": {
     "text": "Approved",
@@ -5891,10 +5699,6 @@
     "text": "Channels",
     "description": "Small upper-case heading in a project's list of places, over the project's own chat channel (#general)."
   },
-  "places.list.topics": {
-    "text": "Topics",
-    "description": "Small upper-case heading in a project's list of places, over its topics: the categories its members set up, each a chat channel of its own."
-  },
   "places.list.switchCommunity": {
     "text": "Switch community",
     "description": "Last entry of a project's list of places in the tray on a phone: opens the list of the person's communities to go to another one."
@@ -6818,66 +6622,6 @@
   "topic.request.openDesign": {
     "text": "Open the artifact, version {{version}}",
     "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen in their private Homeroom bot thread. Opens that artifact itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
-  },
-  "frame.hub.people": {
-    "text": "People",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."
-  },
-  "frame.hub.channel": {
-    "text": "#{{handle}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of a channel's row and tab: the channel's handle after a hash sign, such as #general."
-  },
-  "frame.place.workshop": {
-    "text": "Everything asked for, being built and voted on in {{project}}.",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Workshop's title."
-  },
-  "frame.place.needs": {
-    "text": "What waits for your vote in {{project}}.",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Needs you page's title."
-  },
-  "frame.place.channel": {
-    "text": "Where {{project}} talks.",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under a channel's title."
-  },
-  "frame.topics.purpose": {
-    "text": "Each topic is a channel and a category of work.",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
-  },
-  "frame.workshop.bot": {
-    "text": "Homeroom bot",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says how many of the bot's build slots are in use. Homeroom bot is a name."
-  },
-  "frame.workshop.building": {
-    "text": "Building {{used}} of {{cap}}",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row about Homeroom bot's build slots: how many it is building now, of how many it may build at once."
-  },
-  "frame.workshop.rule": {
-    "text": "Who decides",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
-  },
-  "frame.topic.theRequest": {
-    "text": "The request",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the request in the asker's own words."
-  },
-  "frame.topic.theChange": {
-    "text": "The change",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the change's summary and who put it up."
-  },
-  "frame.topic.status": {
-    "text": "Status",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
-  },
-  "frame.place.general": {
-    "text": "Where everyone in {{project}} talks.",
-    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title: what the channel is for, as the standard page's line says it."
-  },
-  "frame.channel.this": {
-    "text": "This channel",
-    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small label over the card beside the conversation that says how many members the channel reaches and holds its Mute button."
-  },
-  "frame.allItems.purpose": {
-    "text": "Every request and change in {{project}}, by stage.",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title; {{project}} is the project's name."
   },
   "topic.change.gate.closesClosed": {
     "text": "already closed",

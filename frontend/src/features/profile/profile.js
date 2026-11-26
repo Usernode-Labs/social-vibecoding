@@ -68,8 +68,7 @@ import {
 } from './profile-store.js';
 import { pushDismissible } from '../../lib/back-stack';
 import { claimSurface } from '../../lib/open-surfaces';
-import { currentSkin, isFrameSkin } from '../../lib/skin';
-import { tabAddress, tabFromHash } from './frame/you-tabs';
+import { tabAddress, tabFromHash } from './you-tabs';
 import { t } from '../../lib/i18n/runtime';
 import { sourceRect } from './avatar-crop';
 import {
@@ -206,10 +205,9 @@ const Profile = {
     else if (Profile._takeFriendsRoute()) Profile._friendsRequested = true;
     else if (Profile._takeSheetAsk('edit')) Profile._editRequested = true;
     else if (Profile._takeSheetAsk('slots')) Profile._appSlotsRequested = true;
-    // Under a look You has tabs (./frame/you-frame.tsx), and the address
-    // names the one that is up (`#profile?tab=changes`): read on every entry,
-    // so a plain `#profile` is the Overview again. The standard page's
-    // section row reads the same field (#7134): its words are real tabs.
+    // The address names the tab that is up (`#profile?tab=changes`): read on
+    // every entry, so a plain `#profile` is the Overview again. The page's
+    // section row reads the field (#7134): its words are real tabs.
     Profile._readTab(targetUsername);
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and
@@ -726,13 +724,12 @@ const Profile = {
     return true;
   },
 
-  // ── You's tabs, under a look ─────────────────────────────────────────
+  // ── You's tabs ───────────────────────────────────────────────────────
   //
-  // The kit's You page (./frame/you-frame.tsx) has tabs: Overview, Changes,
-  // Requests, Votes and Friends (Feedback is a tab that opens the "Your
-  // feedback" card). Which one is up is the store's `tab`, and the address
-  // says it (`#profile?tab=<name>`, ./frame/you-tabs.ts), so a reload or a
-  // step Back from a row's page comes back to the tab it was opened from.
+  // You has tabs (./profile-preferences.tsx ProfileSectionLinks). Which one
+  // is up is the store's `tab`, and the address says it
+  // (`#profile?tab=<name>`, ./you-tabs.ts), so a reload or a step Back from
+  // a row's page comes back to the tab it was opened from.
   // The address is replaced, never pushed: a tab is a view of this page,
   // and Back leaves the page.
   _readTab(targetUsername) {
@@ -760,8 +757,6 @@ const Profile = {
   _releaseFriends: null,
 
   showFriends() {
-    // Under a look Friends is a tab of You (the tour's s49), not a card over it.
-    if (isFrameSkin(currentSkin())) { Profile.showTab('friends'); return; }
     if (profileStore.get().friendsOpen) return;
     profileStore.set({ friendsOpen: true });
     Profile._releaseFriends = pushDismissible(() => {
