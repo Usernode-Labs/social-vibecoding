@@ -14,6 +14,13 @@
 //     phone untouched;
 //   - unlinking another account's phone, or one already unlinked, changes
 //     nothing and answers false (the route's 404).
+//   - #7159: the page shows one row per device. The platform keeps no id
+//     that outlives a reinstall, so every install of one kind (iPhone,
+//     Android, or unknown) is one device with its count and newest dates,
+//     the device in hand first;
+//   - unlinking a device revokes every install of that kind the account
+//     holds and nothing else; an unknown key or a kind with no install
+//     changes nothing and answers 0.
 //
 // Run with: TEST_DATABASE_URL=... node --test tests/linked-phones-postgres.test.js
 
@@ -23,7 +30,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Pool } = require('pg');
 
-const { listLinkedPhones, unlinkPhone, isPhoneId } = require('../src/services/linked-phones');
+const {
+  listLinkedPhones, unlinkPhone, isPhoneId,
+  groupLinkedPhones, unlinkPhoneDevice, isPhoneDeviceKey, phoneDeviceKey,
+} = require('../src/services/linked-phones');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
@@ -271,5 +281,99 @@ test('unlinking signs that phone out of this account only', async (t) => {
 
     // Already unlinked: nothing left to do, the route's 404.
     assert.equal(await unlinkPhone(pool, 1, pixel), false);
+  });
+});
+
+test('a phone device key is one of the three kinds', () => {
+  assert.equal(isPhoneDeviceKey('ios'), true);
+  assert.equal(isPhoneDeviceKey('android'), true);
+  assert.equal(isPhoneDeviceKey('phone'), true);
+  assert.equal(isPhoneDeviceKey('windows'), false);
+  assert.equal(isPhoneDeviceKey(opaque('nsi_', 1)), false, 'never an installation id');
+  assert.equal(isPhoneDeviceKey(undefined), false);
+  assert.equal(phoneDeviceKey({ platform: 'ios' }), 'ios');
+  assert.equal(phoneDeviceKey({ platform: null }), 'phone');
+});
+
+test('several installs of one kind of phone are one device (#7159)', async (t) => {
+  await withDatabase(t, async (pool) => {
+    await addUser(pool, 1);
+    const first = await addInstallation(pool, 21);
+    const second = await addInstallation(pool, 22);
+    const third = await addInstallation(pool, 23);
+    const iphone = await addInstallation(pool, 24);
+    const pixel = await addInstallation(pool, 25);
+
+    // Three installs that never registered for notifications: "Phone".
+    await signIn(pool, { userId: 1, installationId: first, lastUsedDaysAgo: 40, createdDaysAgo: 60 });
+    await signIn(pool, { userId: 1, installationId: second, lastUsedDaysAgo: 2, createdDaysAgo: 8 });
+    await signIn(pool, { userId: 1, installationId: third, lastUsedDaysAgo: 20, createdDaysAgo: 30 });
+    const here = await signIn(pool, { userId: 1, installationId: iphone, platform: 'ios', lastUsedDaysAgo: 9 });
+    await signIn(pool, { userId: 1, installationId: pixel, platform: 'android', lastUsedDaysAgo: 1 });
+
+    const phones = await listLinkedPhones(pool, 1, { currentCredential: here.reference });
+    assert.equal(phones.length, 5, 'the per-install list is unchanged');
+    const devices = groupLinkedPhones(phones);
+    assert.deepEqual(devices.map((d) => [d.key, d.platform, d.count, d.current]), [
+      ['ios', 'ios', 1, true],
+      ['android', 'android', 1, false],
+      ['phone', null, 3, false],
+    ], 'the phone in hand first, then by newest use');
+    for (const device of devices) {
+      assert.deepEqual(Object.keys(device).sort(), ['count', 'current', 'key', 'lastUsedAt', 'linkedAt', 'platform']);
+    }
+    const unknown = devices[2];
+    assert.ok(Date.parse(unknown.lastUsedAt) > Date.now() - 3 * 86400e3, 'last used at its newest use');
+    assert.ok(Date.parse(unknown.linkedAt) > Date.now() - 9 * 86400e3, 'linked at its newest install');
+    assert.ok(Date.parse(unknown.linkedAt) < Date.now() - 7 * 86400e3);
+    assert.deepEqual(groupLinkedPhones([]), []);
+  });
+});
+
+test('unlinking a device signs every install of that kind out, of this account only', async (t) => {
+  await withDatabase(t, async (pool) => {
+    await addUser(pool, 1);
+    await addUser(pool, 2);
+    const first = await addInstallation(pool, 31);
+    const second = await addInstallation(pool, 32);
+    const iphone = await addInstallation(pool, 33);
+    const a = await signIn(pool, { userId: 1, installationId: first });
+    const b = await signIn(pool, { userId: 1, installationId: second });
+    const mine = await signIn(pool, { userId: 1, installationId: iphone, platform: 'ios' });
+    const neighbour = await signIn(pool, { userId: 2, installationId: first });
+
+    // A malformed key, an installation id, and a kind the account has none of.
+    assert.deepEqual(await unlinkPhoneDevice(pool, 1, 'windows'), { unlinked: 0, current: false });
+    assert.deepEqual(await unlinkPhoneDevice(pool, 1, first), { unlinked: 0, current: false });
+    assert.deepEqual(await unlinkPhoneDevice(pool, 1, 'android'), { unlinked: 0, current: false });
+    assert.deepEqual(await unlinkPhoneDevice(pool, 2, 'ios'), { unlinked: 0, current: false });
+    assert.equal((await listLinkedPhones(pool, 1)).length, 3);
+
+    assert.deepEqual(
+      await unlinkPhoneDevice(pool, 1, 'phone', { currentCredential: mine.reference }),
+      { unlinked: 2, current: false },
+    );
+    const { rows: creds } = await pool.query(
+      'SELECT credential_reference, state, mobile_auth_token_id FROM native_session_credentials',
+    );
+    const byRef = Object.fromEntries(creds.map((r) => [r.credential_reference, r]));
+    for (const gone of [a, b]) {
+      assert.equal(byRef[gone.reference].state, 'revoked');
+      assert.equal(byRef[gone.reference].mobile_auth_token_id, null, 'its bearer is gone');
+    }
+    assert.equal(byRef[mine.reference].state, 'valid', 'the account\'s iPhone stays');
+    assert.equal(byRef[neighbour.reference].state, 'valid', 'another account on the same install stays');
+    assert.deepEqual((await listLinkedPhones(pool, 1)).map((p) => p.id), [iphone]);
+    assert.deepEqual((await listLinkedPhones(pool, 2)).map((p) => p.id), [first]);
+
+    // Already unlinked: the route's 404.
+    assert.deepEqual(await unlinkPhoneDevice(pool, 1, 'phone'), { unlinked: 0, current: false });
+
+    // The phone in hand says so.
+    assert.deepEqual(
+      await unlinkPhoneDevice(pool, 1, 'ios', { currentCredential: mine.reference }),
+      { unlinked: 1, current: true },
+    );
+    assert.deepEqual(await listLinkedPhones(pool, 1), []);
   });
 });

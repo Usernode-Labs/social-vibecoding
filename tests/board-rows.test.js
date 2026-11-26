@@ -304,6 +304,26 @@ test('All items in the Workshop: the head is one row, the strip pins with it, an
   assert.ok(!html.includes('data-ws-pagebar'), 'no back bar of its own above the pane');
 });
 
+test('#7101: a vote with no cached row still repaints once the server saves it', async () => {
+  const AppView = makeAppView();
+  // The board read this row from a list `_findItem` does not consult (or its
+  // lists were not current), so no optimistic target existed and nothing
+  // repainted when the vote was cast.
+  AppView._proposals = [];
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._merged = [];
+  AppView._topicProposal = null;
+  let repaints = 0;
+  AppView._repaintDevBody = () => { repaints += 1; };
+  AppView._publishVoteSaved = () => {};
+  AppView.refreshDevData = () => {};
+  AppView._sendVote = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  const ok = await AppView.castVote(7, 'yes');
+  assert.equal(ok, true);
+  assert.equal(repaints, 1, 'the board is repainted once, after the vote is saved');
+});
+
 test('a row is square at rest, so the hairline between rows runs straight', () => {
   // The hairline is the row's top border: a corner on the row bent both ends
   // of it down, and every row read as the top of a card of its own.

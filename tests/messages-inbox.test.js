@@ -281,12 +281,12 @@ test('one row shape, under one People heading; nothing folds and nothing waits b
   assert.match(fn, /<h3 className="messages-section-head" data-inbox-section="people">\s*<span className="messages-section-name">\{t\('messages:inbox\.section\.people'\)\}<\/span>\s*\{aside \? <span className="messages-section-aside">\{aside\}<\/span> : null\}\s*<\/h3>/);
   assert.doesNotMatch(fn, /<button|onClick/, 'the heading is no button: nothing folds');
   // The rows, in a card under it, once there are any to show.
-  assert.match(SCREEN, /\{found\.length \? \(\s*<>\s*<PeopleHead aside=\{unreadAside\} \/>\s*<div className="messages-section-card" data-inbox-card="people">\s*\{found\.map\(inboxRow\)\}\s*<\/div>/,
-    'the rows in a card of their own, so the last row drops its separator');
+  assert.match(SCREEN, /\{found\.length \? \(\s*<>\s*<PeopleHead aside=\{unreadAside\} \/>\s*<GroupedList className="mx-0 mb-4" data-inbox-card="people">\s*\{found\.map\(inboxRow\)\}\s*<\/GroupedList>/,
+    'the rows in the shared card of their own, so the last row drops its separator');
   for (const id of ['messages:inbox.older.show_one', 'messages:inbox.older.show_other', 'messages:inbox.older.hide']) {
     assert.throws(() => message(id), `${id} went with the Agents fold`);
   }
-  const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('const GeneralChannelRow = memo('));
+  const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('const NEW_CHOICES = ['));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
 });
@@ -318,7 +318,7 @@ test('the bot\'s row says what waits on you, and the heading counts what is unre
   // the search reads.
   assert.match(SCREEN, /return ownDirection\(botLine \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\);/,
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
-  assert.match(SCREEN, /<span className=\{`messages-row-preview \$\{invited \? 'messages-row-preview-invited' : ''\}`\}>\{rowPreview\(conversation, t, preview\)\}<\/span>/,
+  assert.match(SCREEN, /subtitle=\{rowPreview\(conversation, t, preview\)\}/,
     'the row draws that line');
   assert.throws(() => message('messages:inbox.section.working', { count: 1 }), 'no Agents heading to say "1 working"');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
@@ -341,8 +341,8 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.match(faces, /<UserAvatar user=\{others\[0\]\} size="sm" shape="square" \/>/, 'each face the kit\'s own sm square');
   // The row draws it for a group the viewer is in; a DM and an unanswered
   // invitation keep today's tile.
-  const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const GeneralChannelRow = memo('));
-  assert.match(row, /conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
+  const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const NEW_CHOICES = ['));
+  assert.match(row, /leading=\{conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
   assert.doesNotMatch(row.slice(row.indexOf('<UserAvatar')), /<GroupFaces/, 'the fallback tile is the old one');
   // The preview names its last sender, the way #general's row already does
   // (rowPreview, which the search reads too since #44): an invitation has
@@ -354,10 +354,11 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.match(preview, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
   assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
   assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
-  // The pair keeps the row's own geometry: a 44px box on the 74px inset.
+  // The pair keeps the shared row's tile geometry: a 44px box, so the row's
+  // tile inset (16 + 44 + 16, ListRow's start-[4.75rem]) holds.
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
-  assert.match(css, /\.messages-conversation-row::after \{[^}]*inset-inline-start: 74px;/);
+  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /after:start-\[4\.75rem\]/);
   assert.match(css, /\.messages-group-faces > :last-child \{ inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
   // The sidebar nested the latest conversations with one face each (v3)
   // until 7 Nov 2026; nothing is nested under Messages now.
@@ -510,18 +511,17 @@ test('bug h: the discussion header draws the tile the inbox row draws', () => {
   // The row, once, feeding both the #handle and the artwork.
   assert.match(body, /const row = snap\.discussions\.find\(\(item\) => item\.slug === slug\) \|\| null;/);
   assert.match(body, /const handle = row\?\.channel \|\| null;/);
-  // The row's own two fields first — the same pair AppChannelRow hands the
-  // tile — and the fetched app record when there is no row.
+  // The row's own two fields first (the pair an app tile is drawn from)
+  // and the fetched app record when there is no row.
   assert.match(body, /icon_url: row \? row\.iconUrl : \(ready \? context\.iconUrl : null\),/);
   assert.match(body, /icon_emoji: row \? row\.iconEmoji : \(ready \? context\.iconEmoji : null\),/);
   const header = body.slice(body.indexOf('<header className="messages-thread-header">'));
   assert.match(header, /data-icon=\{appIconKind\(iconRecord as never\)\}/);
   assert.match(header, /<AppIconContent app=\{iconRecord as never\} \/>/);
   assert.doesNotMatch(header, /\{ name \} as never/, 'never the name alone again');
-  // ...which is what the row itself does, so the two tiles are one recipe.
-  const rowFn = SCREEN.slice(SCREEN.indexOf('function AppChannelRow'));
-  assert.match(rowFn.slice(0, rowFn.indexOf('\n}\n')),
-    /icon_url: discussion\.iconUrl,\s*icon_emoji: discussion\.iconEmoji,/);
+  // The inbox's own channel rows that drew the same pair were never
+  // rendered, and went with the move onto the shared row.
+  assert.doesNotMatch(SCREEN, /function (AppChannelRow|GeneralChannelRow)\b/);
 });
 
 test('bug h: the discussion context carries the app artwork, for a header with no inbox row', async () => {

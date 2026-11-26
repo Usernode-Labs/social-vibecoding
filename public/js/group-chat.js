@@ -1993,16 +1993,12 @@ const GroupChat = {
         GroupChat._autoGrowTextarea(input);
         GroupChat.sendTyping({ type, ref });
       }, { signal });
-      // Multi-line submit semantics, same as the general composer: Enter
-      // sends, Shift+Enter inserts a newline, touch keyboards always insert
-      // a newline (Send button sends) — and ⌘/Ctrl+Enter sends anywhere
-      // (#2145), touch included: it is the chord every other composer on the
-      // platform answers to, and the one way to send from a hardware
-      // keyboard on a touch screen. Bubble phase so the autocomplete's
-      // capture-phase Enter handling wins while its dropdown is open.
+      // Enter sends by the one rule every message box keeps
+      // (frontend/src/lib/enter-sends.ts, via `_enterSends`). Bubble phase so
+      // the autocomplete's capture-phase Enter handling wins while its
+      // dropdown is open.
       input.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return;
-        if ((e.metaKey || e.ctrlKey) || (!e.shiftKey && !GroupChat._isTouch())) {
+        if (GroupChat._enterSends(e)) {
           e.preventDefault();
           submitThread();
         }
@@ -3864,10 +3860,15 @@ const GroupChat = {
     if (atBottom) scroller.scrollTop = scroller.scrollHeight;
   },
 
-  // Touch devices have no Shift+Enter chord, so Enter inserts a newline and
-  // the Send button is the send action (composer) / Save button (editor).
-  _isTouch() {
-    return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+  // Whether this keydown sends the message (or saves the edit): the one rule
+  // every message box keeps, frontend/src/lib/enter-sends.ts, which the shell
+  // bundle publishes for the classic scripts. Enter sends where there is a
+  // keyboard and Shift+Enter is a new line; on a touch device Enter is a new
+  // line and the button sends; ⌘/Ctrl+Enter sends anywhere (#2145); the Enter
+  // that ends an IME composition never sends.
+  _enterSends(e) {
+    const rule = window.UsernodeEnterSends;
+    return !!(rule && rule.enterSends(e));
   },
 
   // When a message was posted, in the two forms a row needs (#1808).
@@ -4002,9 +4003,8 @@ const GroupChat = {
     ta.addEventListener('input', () => GroupChat._autoGrowTextarea(ta));
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); GroupChat._cancelEdit(row); return; }
-      // Enter saves, Shift+Enter adds a newline (touch: newline only — Save
-      // button saves).
-      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+      // Enter saves by the message boxes' rule (`_enterSends`).
+      if (GroupChat._enterSends(e)) {
         e.preventDefault();
         GroupChat._saveEdit(id, row, ta);
       }

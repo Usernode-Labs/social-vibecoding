@@ -45,7 +45,7 @@ test('the big card: its picture (and its dark twin), its icon, its name over the
     assert.ok(at > last, `${part} comes after what is before it`);
     last = at;
   }
-  assert.match(html, /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/dark" alt="" loading="lazy" draggable="false" class="cm-card-img hidden dark:block"\/><\/span>/,
+  assert.match(html, /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img dark:hidden"\/><img src="\/app-illustrations\/dark" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img hidden dark:block"\/><\/span>/,
     'not shaded: the picture alone, decorative');
   assert.match(html, /<span class="cm-card-icon" data-icon="image" aria-hidden="true">/);
   assert.match(html, /<span class="cm-card-members" data-cm-members="">1,284 members<\/span>/);
@@ -54,7 +54,7 @@ test('the big card: its picture (and its dark twin), its icon, its name over the
   assert.doesNotMatch(html, /cm-week-glyph|cm-week-sr|<svg/, 'no glyphs, and no second copy for a screen reader');
   assert.doesNotMatch(html, /cm-band-|data-cm-band|data-cm-bare/, 'a card with a picture is as it was');
   // A picture with no dark twin is one picture.
-  assert.match(draw('CommunityCardContent', { community: { ...TIDE, pictureDarkUrl: null } }), /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" draggable="false" class="cm-card-img"\/><\/span>/);
+  assert.match(draw('CommunityCardContent', { community: { ...TIDE, pictureDarkUrl: null } }), /<span class="cm-card-pic"><img src="\/app-illustrations\/light" alt="" loading="lazy" decoding="async" draggable="false" class="cm-card-img"\/><\/span>/);
 });
 
 test('no picture: the icon is the picture, large in the band on its wash, and nothing beside the name (23 Nov 2026)', () => {
