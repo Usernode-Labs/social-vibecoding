@@ -87,7 +87,7 @@ import { openBotTab } from '../../ai/door';
 import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
-import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { HubFace, reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { swatchFor } from '../../messages/format';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
@@ -921,11 +921,7 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
             chevron={false}
             className="dev-ws-foryou-row dev-ws-contrib-row"
             data-ws-contributor={person.username}
-            leading={(
-              <span className="dev-ws-hero-face dev-ws-contrib-face" style={{ background: swatchFor(person.username) }} aria-hidden="true">
-                {(person.username || '?').charAt(0).toUpperCase()}
-              </span>
-            )}
+            leading={<HubFace person={person} className="dev-ws-contrib-face" decorative />}
             title={person.username}
             // ONE LOOK (25 Nov 2026): the count is the row's second line, as every row's is.
             subtitle={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}

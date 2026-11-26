@@ -39,6 +39,8 @@
 // lines have no author and would bury the count under vote and conflict
 // notices), not deleted, not by somebody the reader blocked.
 
+const { avatarUrlFor } = require('./avatar-url');
+
 const MESSAGE_THREAD = 'message';
 // #4417: a topic's channel: thread_type 'category', thread_ref = its
 // app_category_registry row's id (origin 'topic'). Its own stream, with its
@@ -79,7 +81,7 @@ function strippedMetadata(metadata) {
 // Shape one transcript row for the wire. `deleted_at` is read so the flag can
 // be derived, and not sent: the client needs "is it deleted", not when.
 function shapeRow(row) {
-  const { deleted_at: deletedAt, ...rest } = row;
+  const { deleted_at: deletedAt, avatar_id: avatarId, ...rest } = row;
   const out = {
     ...rest,
     username: rest.username
@@ -90,6 +92,12 @@ function shapeRow(row) {
     out.content = '';
     out.metadata = strippedMetadata(out.metadata);
     out.edited_at = null;
+  }
+  // The author's picture (#7230), kept on a deleted row because the author
+  // is still shown. Only rows that carry the account's avatar_id say so;
+  // a row with no account keeps null, and the client draws its initial.
+  if (Object.prototype.hasOwnProperty.call(row, 'avatar_id')) {
+    out.avatar_url = row.user_id == null ? null : avatarUrlFor(avatarId, row.user_id);
   }
   return out;
 }
@@ -105,11 +113,12 @@ async function findThreadRoot(db, appId, rootId, viewerId = null) {
   const id = positiveInt(rootId);
   if (!id || !appId) return null;
   const { rows } = await db.query(
-    `SELECT root.id, root.user_id, u.username, root.content, root.msg_type, root.metadata,
+    `SELECT root.id, root.user_id, u.username, av.id AS avatar_id, root.content, root.msg_type, root.metadata,
             root.thread_type, root.thread_ref, root.created_at, root.edited_at,
             root.posted_via, root.deleted_at
        FROM chat_messages root
        LEFT JOIN users u ON u.id = root.user_id
+       LEFT JOIN user_avatars av ON av.user_id = u.id
       WHERE root.id = $1 AND root.app_id = $2
         AND (root.thread_type IS NULL OR root.thread_type = 'category')
         AND root.msg_type IN ('message', 'spec_share')

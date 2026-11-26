@@ -767,11 +767,12 @@ function chatRoutes(config) {
     }
     params.push(limit);
     const { rows } = await db.query(
-      `SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
+      `SELECT m.id, m.user_id, u.username, av.id AS avatar_id, m.content, m.msg_type, m.metadata,
               m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via,
               m.deleted_at, m.moderation_hidden_at
          FROM chat_messages m
          LEFT JOIN users u ON m.user_id = u.id
+         LEFT JOIN user_avatars av ON av.user_id = u.id
         WHERE ${where}
           AND NOT EXISTS (
             SELECT 1 FROM user_blocks blocked

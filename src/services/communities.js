@@ -29,6 +29,7 @@ const appAccess = require('./app-access');
 const appAdmins = require('./app-admins');
 const { positiveId } = require('./row-id');
 const homePins = require('./home-pins');
+const { avatarUrlFor } = require('./avatar-url');
 
 // The three audiences, in the order the Workshop lists them.
 const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
@@ -429,10 +430,11 @@ function requireSessionMembership(pool) {
 // dialog's, which this card opens.
 async function listMembers(pool, appId, limit = 8) {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.display_name, m.source, m.joined_at
+    `SELECT u.id, u.username, u.display_name, av.id AS avatar_id, m.source, m.joined_at
        FROM apps a
        JOIN community_members m ON m.community_id = a.community_id
        JOIN users u ON u.id = m.user_id
+       LEFT JOIN user_avatars av ON av.user_id = u.id
       WHERE a.id = $1
       ORDER BY (m.source = 'creator') DESC, m.joined_at DESC, u.id
       LIMIT $2`,
@@ -442,6 +444,7 @@ async function listMembers(pool, appId, limit = 8) {
     id: r.id,
     username: r.username,
     display_name: r.display_name || null,
+    avatarUrl: avatarUrlFor(r.avatar_id, r.id),
     source: r.source,
   }));
 }
@@ -639,7 +642,7 @@ async function activitySummary(pool, appId) {
   // days, and the same people-only join, so a name here is always one of
   // `active_week`.
   const { rows: people } = await pool.query(
-    `SELECT u.id, u.username, u.display_name
+    `SELECT u.id, u.username, u.display_name, av.id AS avatar_id
        FROM (
          SELECT m.user_id, m.created_at AS at FROM chat_messages m
           WHERE m.app_id = $1 AND m.user_id IS NOT NULL
@@ -654,7 +657,8 @@ async function activitySummary(pool, appId) {
           WHERE s.app_id = $1 AND v.user_id IS NOT NULL
             AND v.created_at > NOW() - INTERVAL '7 days'
        ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE
-      GROUP BY u.id, u.username, u.display_name
+       LEFT JOIN user_avatars av ON av.user_id = u.id
+      GROUP BY u.id, u.username, u.display_name, av.id
       ORDER BY MAX(who.at) DESC, u.id
       LIMIT $2`,
     [appId, ACTIVE_PEOPLE_SHOWN]
@@ -662,7 +666,12 @@ async function activitySummary(pool, appId) {
   return {
     ...counts,
     daily: days.map((d) => ({ day: d.day, n: d.n })),
-    active_people: people.map((p) => ({ id: p.id, username: p.username, display_name: p.display_name || null })),
+    active_people: people.map((p) => ({
+      id: p.id,
+      username: p.username,
+      display_name: p.display_name || null,
+      avatarUrl: avatarUrlFor(p.avatar_id, p.id),
+    })),
   };
 }
 
@@ -693,19 +702,26 @@ async function contributorsSummary(pool, appId) {
        SELECT i.created_by, i.created_at FROM issues i
         WHERE i.app_id = $1 AND i.kind = 'general' AND i.created_by IS NOT NULL
      )
-     SELECT u.id, u.username, u.display_name,
+     SELECT u.id, u.username, u.display_name, av.id AS avatar_id,
             COUNT(*)::int AS all_time,
             (COUNT(*) FILTER (WHERE a.at >= date_trunc('month', NOW())))::int AS month,
             MAX(a.at) AS last_at
        FROM acts a JOIN users u ON u.id = a.user_id AND u.is_synthetic IS NOT TRUE
-      GROUP BY u.id, u.username, u.display_name`,
+       LEFT JOIN user_avatars av ON av.user_id = u.id
+      GROUP BY u.id, u.username, u.display_name, av.id`,
     [appId]
   );
   const top = (key) => rows
     .filter((row) => row[key] > 0)
     .sort((a, b) => b[key] - a[key] || new Date(b.last_at) - new Date(a.last_at) || a.id - b.id)
     .slice(0, CONTRIBUTORS_SHOWN)
-    .map((row) => ({ id: row.id, username: row.username, display_name: row.display_name || null, n: row[key] }));
+    .map((row) => ({
+      id: row.id,
+      username: row.username,
+      display_name: row.display_name || null,
+      avatarUrl: avatarUrlFor(row.avatar_id, row.id),
+      n: row[key],
+    }));
   return { month: top('month'), all_time: top('all_time') };
 }
 

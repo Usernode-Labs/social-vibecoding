@@ -188,7 +188,14 @@ export interface PlacesPayload {
 }
 
 /** One row of the hub's Top contributors card: a person and how many contributions. */
-export interface HubContributor { id: number; username: string; display_name?: string | null; n: number }
+export interface HubContributor {
+  id: number;
+  username: string;
+  display_name?: string | null;
+  /** #7230: their picture (uploaded or generated), null with no account. */
+  avatarUrl?: string | null;
+  n: number;
+}
 
 export type CommunityPayload = {
   slug: string;
@@ -220,7 +227,7 @@ export type CommunityPayload = {
   is_creator: boolean;
   audience: Audience;
   audience_label: string;
-  members: Array<{ id: number; username: string; display_name?: string | null; source?: string }>;
+  members: Array<{ id: number; username: string; display_name?: string | null; avatarUrl?: string | null; source?: string }>;
   channel: {
     last_message: string | null;
     last_at: string | null;
@@ -245,7 +252,7 @@ export type CommunityPayload = {
     active_week: number;
     shipped_month: number;
     daily?: Array<{ day: string; n: number }>;
-    active_people?: Array<{ id: number; username: string; display_name?: string | null }>;
+    active_people?: Array<{ id: number; username: string; display_name?: string | null; avatarUrl?: string | null }>;
   } | null;
   /** Who took part most (communities.js contributorsSummary, request 6837):
       up to five people this calendar month and up to five over all time,
@@ -551,17 +558,39 @@ export function useCommunity(slug: string): CommunityPayload | null {
 /** How many faces the hero shows before the count says the rest. */
 export const HERO_FACES = 5;
 
+/**
+ * One face in the hub's rows (#7230): the person's picture when the server
+ * sent one, over their coloured initial, which stays for somebody no account
+ * is known for. Sizes, the ring and the overlap are the face's own CSS.
+ */
+export function HubFace({ person, className, title, decorative }: {
+  person: { username: string; avatarUrl?: string | null };
+  className?: string;
+  title?: string;
+  decorative?: boolean;
+}) {
+  return (
+    <span
+      className={className ? `dev-ws-hero-face ${className}` : 'dev-ws-hero-face'}
+      style={{ background: swatchFor(person.username) }}
+      title={title ?? `@${person.username}`}
+      aria-hidden={decorative || undefined}
+    >
+      {(person.username || '?').charAt(0).toUpperCase()}
+      {person.avatarUrl ? (
+        <img src={person.avatarUrl} alt="" loading="lazy" decoding="async" className="dev-ws-hero-face-img" />
+      ) : null}
+    </span>
+  );
+}
+
 /** Up to HERO_FACES faces, overlapping; nothing for nobody. */
 function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
   const faces = (members || []).slice(0, HERO_FACES);
   if (!faces.length) return null;
   return (
     <span className="dev-ws-hero-faces" aria-hidden="true">
-      {faces.map((m) => (
-        <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-          {(m.username || '?').charAt(0).toUpperCase()}
-        </span>
-      ))}
+      {faces.map((m) => <HubFace key={m.id} person={m} />)}
     </span>
   );
 }
@@ -642,11 +671,7 @@ export function HeroActive({ activity }: { activity: CommunityPayload['activity'
     <div className="dev-ws-hero-active" data-ws-members="" data-ws-active-people={String(count)}>
       {people.length ? (
         <span className="dev-ws-hero-faces" aria-hidden="true">
-          {people.map((p) => (
-            <span key={p.id} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
-              {(p.username || '?').charAt(0).toUpperCase()}
-            </span>
-          ))}
+          {people.map((p) => <HubFace key={p.id} person={p} />)}
           {rest ? <span className="dev-ws-hero-face dev-ws-hero-face-more">{t('project:hub.people.moreFaces', { count: rest })}</span> : null}
         </span>
       ) : null}

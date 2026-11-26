@@ -57,6 +57,23 @@ test('the history from before Discussion folds into one post above eight message
   assert.equal(server.EARLIER_FOLD_AT, feed.EARLIER_FOLD_AT, 'the server and the card count to the same number');
 });
 
+test('a post carries its author\'s picture, loaded and live (#7230)', () => {
+  const row = (over = {}) => ({
+    id: 7, user_id: 2, username: 'drea', content: 'hi there', msg_type: 'message',
+    created_at: SINCE, deleted: false, reactions: [], ...over,
+  });
+  assert.equal(feed.fromAppRow(row({ avatar_url: '/avatars/abcdef' }), null).who.avatarUrl, '/avatars/abcdef');
+  assert.equal(feed.fromAppRow(row(), null).who.avatarUrl, null, 'an older answer without a picture keeps the initial');
+  assert.equal(feed.fromAppRow(row({ deleted: true, avatar_url: '/avatars/g/0123456789abcdef0123.svg' }), null).who.avatarUrl,
+    '/avatars/g/0123456789abcdef0123.svg', 'a deleted post still shows who wrote it');
+  const live = (over = {}) => feed.liveFromAppFrame({
+    type: 'chat', id: 9, userId: 2, username: 'drea', content: 'live', msgType: 'message', createdAt: SINCE, ...over,
+  }, null);
+  assert.equal(live({ avatarUrl: '/avatars/1234' }).said.who.avatarUrl, '/avatars/1234');
+  assert.equal(live().said.who.avatarUrl, null);
+  assert.equal(live({ userId: null, username: null, content: 'a platform line' }).said.who.avatarUrl, null);
+});
+
 test('posts are main-stream messages, each with its replies under it, oldest first', () => {
   const items = feed.assemble([
     said(10, { replyCount: 2 }),
