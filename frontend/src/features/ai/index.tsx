@@ -106,6 +106,8 @@ import {
   AI_MAIN_WIDTH_KEY,
   AI_PREVIEW_COLUMN_WIDTH_KEY,
   AI_PREVIEW_WIDTH_KEY,
+  AI_LIVE_COLUMN_WIDTH_KEY,
+  AI_LIVE_PREVIEW_WIDTH_KEY,
   MIN_PANEL_W,
   inlineStartOf,
   probeLayout,
@@ -696,6 +698,10 @@ export function AiScreen(): ReactNode {
   // columns' width, bound and preview to watch, so pulling the list back
   // opens the thread where it was, measured as three columns.
   const threeFits = previewHere && fits === 'three';
+  // Which remembered width the thread's edge sets. Beside a column that only
+  // waits it is the waiting pair's own (../side-panel/resize.ts): a real
+  // preview's widths, dragged wide for an app, are not a new chat's.
+  const threadWidthKey = waitingHere ? AI_LIVE_COLUMN_WIDTH_KEY : threeFits ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY;
   useEffect(() => {
     setDocked(docked && snaps && !phone);
   }, [docked, snaps, phone]);
@@ -1470,6 +1476,8 @@ export function AiScreen(): ReactNode {
       data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={previewHere ? layout : undefined}
+      // The column is only waiting for a live preview: its widths are the waiting pair's own (app.css).
+      data-ai-live-wait={waitingHere ? '' : undefined}
       data-ai-list-closed={oneUp ? '' : undefined}
       style={{ position: 'relative' }}
     >
@@ -1502,7 +1510,7 @@ export function AiScreen(): ReactNode {
             shown={columnOpen}
             id="ai-main-divider"
             controls="ai-main-pane"
-            widthKey={threeFits ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
+            widthKey={threadWidthKey}
             probe={threeFits ? threadProbe : undefined}
             watch={threeFits ? previewRef : undefined}
             collapsed={oneUp}
@@ -1565,7 +1573,7 @@ export function AiScreen(): ReactNode {
             shown={columnOpen}
             id="ai-preview-divider"
             controls="ai-preview-pane"
-            widthKey={AI_PREVIEW_WIDTH_KEY}
+            widthKey={AI_LIVE_PREVIEW_WIDTH_KEY}
             probe={previewProbe}
           />
           <LiveStartPane opening={openingHere && liveOpening ? { name: liveOpening.name } : null} />

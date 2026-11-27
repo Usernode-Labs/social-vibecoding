@@ -354,6 +354,25 @@ test('from 1500px the preview\'s column waits beside New chat: Start for a picke
   assert.match(ai, /<LiveStartBeside\.Provider value=\{waitingNew\}>/);
   assert.match(ai, /\) : waitingHere \? \([\s\S]{0,260}<aside\s+ref=\{previewRef\}\s+id="ai-preview-pane"\s+className="ai-preview-pane"\s+data-ai-preview-pane=\{layout\}\s+data-ai-live-start=""/);
   assert.match(ai, /<LiveStartPane opening=\{openingHere && liveOpening \? \{ name: liveOpening\.name \} : null\} \/>/);
+  // Waiting, the two edges remember widths of their own, in a real preview's rules, so each drags on its own
+  // (27 Nov 2026: clamping the column to the chat's width made one edge move the other).
+  assert.match(ai, /data-ai-live-wait=\{waitingHere \? '' : undefined\}/);
+  assert.match(ai, /const threadWidthKey = waitingHere \? AI_LIVE_COLUMN_WIDTH_KEY : threeFits \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY;/);
+  assert.match(ai, /data-ai-live-start=""[\s\S]{0,400}widthKey=\{AI_LIVE_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
+  const resize = loadTsx('frontend/src/features/side-panel/resize.ts');
+  assert.equal(new Set([resize.AI_MAIN_WIDTH_KEY, resize.AI_PREVIEW_COLUMN_WIDTH_KEY, resize.AI_PREVIEW_WIDTH_KEY,
+    resize.AI_LIVE_COLUMN_WIDTH_KEY, resize.AI_LIVE_PREVIEW_WIDTH_KEY]).size, 5, 'the waiting pair is kept apart from a real preview\'s');
+  const set = new Map();
+  const root = { style: { setProperty: (k, v) => set.set(k, v), removeProperty: (k) => set.delete(k) } };
+  resize.applyWidth(500, root, resize.AI_LIVE_COLUMN_WIDTH_KEY);
+  resize.applyWidth(620, root, resize.AI_LIVE_PREVIEW_WIDTH_KEY);
+  assert.deepEqual([...set], [['--ai-live-col-chosen-w', '500px'], ['--ai-live-preview-chosen-w', '620px']]);
+  const css = read('public/css/app.css');
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]\[data-ai-live-wait\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(360px, min\(var\(--ai-live-preview-chosen-w, min\(440px, calc\(var\(--ai-room\) - 920px\)\)\), calc\(var\(--ai-room\) - 800px\)\)\);\s+--ai-col-w: max\(320px, min\(var\(--ai-live-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);\s+\}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-live-wait\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-live-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+\}/);
+  // Neither width is read from the other, and neither reads a real preview's.
+  const waiting = css.slice(css.indexOf('body:has(#ai-screen[data-ai-preview="three"][data-ai-live-wait]'), css.indexOf("/* From 1500px the preview's column waits beside New chat instead"));
+  assert.doesNotMatch(waiting, /--ai-live-col:|var\(--ai-live-col\)|var\(--ai-preview-chosen-w|var\(--ai-col-chosen-w/);
   // The draft arriving, or the person going elsewhere, ends the wait; so does two minutes.
   assert.match(ai, /if \(detailHere \|\| elsewhere\) \{ liveOpeningStore\.set\(null\); return undefined; \}/);
   assert.match(ai, /const LIVE_OPENING_MS = 120_000;/);
