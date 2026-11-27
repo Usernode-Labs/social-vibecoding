@@ -191,10 +191,13 @@ test('#4238: a note they wrote goes in the group chat whether shared or copied',
 test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
-  // Nothing in the sheet closes it but ✕, the backdrop, Escape and Done,
-  // each through `close`, which slides it down first (20 Oct 2026).
-  assert.equal((sheet.match(/\bclose\(\);/g) || []).length, 1, 'Escape');
-  assert.equal((sheet.match(/onClick=\{close\}/g) || []).length, 3, 'the backdrop, ✕ and Done');
+  // Nothing in the sheet closes it but ✕, the backdrop, Escape, Back and
+  // Done, each through `close`, which slides it down first (20 Oct 2026).
+  // The backdrop, Escape and Back are the Sheet's (lib/sheet.ts), whose
+  // onClose is `close`.
+  assert.match(sheet, /onClose: \(\) => close\(\),/, 'the Sheet closes it through close');
+  assert.match(sheet, /<div aria-hidden="true" \{\.\.\.scrimProps\}/, 'the backdrop');
+  assert.equal((sheet.match(/onClick=\{close\}/g) || []).length, 2, '✕ and Done');
   assert.doesNotMatch(sheet, /onClick=\{onClose\}|\bonClose\(\)/, 'nothing takes it off the page at once');
   assert.match(sheet, /\{out \? \(\s+<Button\s+type="button"\s+data-first-session-invite-done=""\s+onClick=\{close\}\s+layout="full"\s+variant="pillRaised"\s+size="pillLg"\s+ink="neutral"/);
   // Not drawn before anything went out.
@@ -239,7 +242,7 @@ test('the sheet slides down before it goes, and opens on <body>, out of the made
   const { INVITE_SLIDE_MS } = loadTsx(MADE);
   assert.equal(INVITE_SLIDE_MS, 200, 'the duration-200 it slides on');
   // A drag on the dim or the sheet stays there.
-  assert.match(sheet, /<div aria-hidden="true" onClick=\{close\} className=\{`absolute inset-0 touch-none bg-black\/40 /);
+  assert.match(sheet, /<div aria-hidden="true" \{\.\.\.scrimProps\} className=\{`absolute inset-0 touch-none bg-black\/40 /);
   assert.match(sheet, /overflow-y-auto overscroll-contain rounded-t-\[20px\]/);
   // On <body>, after the screen, so its page lock leaves it live; unmounted
   // only once the sheet has gone.
@@ -248,7 +251,9 @@ test('the sheet slides down before it goes, and opens on <body>, out of the made
 
 test('Escape closes the sheet, but not while it is dismissing the OS share sheet', () => {
   const src = read(MADE);
-  assert.match(src, /if \(sharing\.current \|\| Date\.now\(\) - shareGoneAt\.current < SHARE_ESCAPE_MS\) return;\s+close\(\);/);
+  // Escape is the Sheet's (lib/sheet.ts), which asks the sheet first.
+  assert.match(src, /mayEscape: \(\) => !sharing\.current && Date\.now\(\) - shareGoneAt\.current >= SHARE_ESCAPE_MS,/);
+  assert.match(read('frontend/src/lib/sheet.ts'), /if \(!top\.mayEscape\(\)\) return;\s*e\.preventDefault\(\);\s*top\.close\(\);/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   assert.match(share, /sharing\.current = true;\s+try \{\s+await nav\.share\(/);
   assert.match(share, /\} finally \{\s+sharing\.current = false;\s+shareGoneAt\.current = Date\.now\(\);\s+\}/);

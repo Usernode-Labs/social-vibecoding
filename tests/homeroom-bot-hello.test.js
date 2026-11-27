@@ -50,10 +50,16 @@ test('B5: the bot is named by its name, a person by their handle', () => {
 test('B5: every place Messages names the bot names it, with an AI badge beside it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.equal(message('messages:row.aiBadge'), 'AI');
-  assert.match(row, /\{senderName\(message\.sender, \{ bare: true \}\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span> : null\}/);
+  // Dedupe step 2: the shared row (MessageRowView) draws the badge for every
+  // place, after the author's name; Messages hands it the sender's name and
+  // whether it is the bot.
+  assert.match(row, /author=\{senderName\(message\.sender, \{ bare: true \}\)\}\n\s*bot=\{!!message\.sender\.bot\}/);
+  const view = read('frontend/src/features/messages/message-row-view.tsx');
+  assert.match(view, /\{author\}<\/span>\n\s*\{bot \? <BotBadge \/> : null\}/);
+  assert.match(view, /<span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span>/);
   assert.doesNotMatch(row, />Bot<\/span>/);
   assert.match(row, /<span>\{senderName\(message\.reply\.sender, \{ bare: true \}\)\}<\/span>/, 'the quote');
-  assert.match(row, /preview=\{\{ who: senderName\(message\.sender, \{ bare: true \}\)/, 'the action sheet');
+  assert.match(row, /preview: \{ who: senderName\(message\.sender, \{ bare: true \}\)/, 'the action sheet');
   assert.equal(message('messages:row.reportLabel', { name: 'Homeroom bot' }), 'Message from Homeroom bot');
   assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender, \{ bare \}\) \}\), userId/, 'the report');
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);

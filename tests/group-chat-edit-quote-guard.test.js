@@ -246,18 +246,23 @@ test('a tap on the event box still follows its link instead of quoting', () => {
   assert.equal(calls.length, 0, 'the anchor wins');
 });
 
-test('an event row still opens no reaction bar on long-press', () => {
+test('the module arms no long press of its own on any row', () => {
+  // Dedupe step 2: every row a transcript draws (a person's message, a
+  // notice, a shared plan) answers a long press itself with the shared
+  // sheet (features/message-actions/controls.tsx); the module's floating
+  // reaction bar and the timer that opened it are gone. Its pointerdown
+  // only notes where the press began, for the tap-versus-drag test.
   const GC = loadGroupChat();
   const container = makeEl('div', ['gc-messages']);
-  let opened = 0;
-  GC._openReactionBar = () => { opened += 1; };
-  GC._setMsgSelect = () => {};
   GC._attachQuoteHandlers(container);
   const { header } = makeEventRow(container, 79);
-  // pointerdown on an event row must not arm the long-press timer at all.
-  container._listeners.pointerdown[0]({ target: header, clientX: 0, clientY: 0 });
-  assert.equal(GC._pressActive, false, 'no press armed on an event row');
-  assert.equal(opened, 0);
+  assert.equal(container._listeners.pointerdown.length, 1);
+  container._listeners.pointerdown[0]({ target: header, clientX: 3, clientY: 4 });
+  assert.deepEqual({ ...GC._tap }, { x: 3, y: 4 });
+  for (const gone of ['_openReactionBar', '_ensureReactionBar', '_closeReactionBar', '_pressTimer', '_longPressed', '_setMsgSelect']) {
+    assert.equal(GC[gone], undefined, `no ${gone}`);
+  }
+  assert.equal((container._listeners.pointermove || []).length, 0, 'no drag-versus-hold bookkeeping');
 });
 
 // #4029: a tap on an @mention staged a reply to the row it sat in, which the

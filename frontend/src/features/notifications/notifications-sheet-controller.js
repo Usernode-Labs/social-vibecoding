@@ -26,11 +26,13 @@
  * made a notification nobody had looked at leave Unread on every device.
  */
 
-import { createSheetController } from '../../lib/sheet-controller.js';
+import { createStandingSheet } from '../../lib/sheet';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 
-export const NotificationsSheet = createSheetController({
-  elementId: 'notifications-sheet',
+// A standing sheet (../../lib/sheet.ts): this is the name it is opened and
+// closed by, and ./index.tsx presents it through `useSheet`.
+export const NotificationsSheet = createStandingSheet({
+  id: 'notifications-sheet',
   store: notificationsSheetStore,
   // Opening the sheet only refreshes it (#6527): the rows that arrived while
   // it was closed land on screen, and nothing is marked read. Reading is

@@ -31,6 +31,7 @@
 
 import { type ReactNode, type Ref, useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { PauseIcon, PlayIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
@@ -63,12 +64,23 @@ export const PEOPLE_CARD = 'rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(
  * The card's picture, 16:10. A loop plays over the still once the island has
  * mounted and only where previews may play; the pause button stops it and
  * plays it again. Anything that goes wrong with the loop leaves the still.
+ *
+ * WITH `onOpen` THE PICTURE IS PRESSED TO OPEN THE APP (27 Nov 2026): it is
+ * a picture of the running app, and people press it expecting the app. One
+ * layer over the picture takes the press and hands the caller the picture's
+ * own box, which the app then grows out of (features/auth/landing.tsx).
+ * It is for a pointer or a finger only: the card's Open button beside it is
+ * the same action with a name, so the layer is out of the tab order and
+ * hidden from a screen reader, which would otherwise hear Open twice. The
+ * pause button and its label are drawn after it and stay on top.
  */
-export function ProjectPreview({ app, cover, hero = false }: {
+export function ProjectPreview({ app, cover, hero = false, onOpen }: {
   app: GuestApp;
   cover: ProjectCover | null | undefined;
   /** The picture a Discover card grows into as the page opens (./card-morph.ts). */
   hero?: boolean;
+  /** Press the picture to open the app; handed the picture's box to grow from. */
+  onOpen?: (from: HTMLElement) => void;
 }) {
   const t = useMessages('auth');
   const src = cover?.preview_url || null;
@@ -107,38 +119,51 @@ export function ProjectPreview({ app, cover, hero = false }: {
         </span>
       )}
       {canPlay && src ? (
-        <>
-          <video
-            ref={video}
-            src={src}
-            poster={still || undefined}
-            muted
-            loop
-            playsInline
-            autoPlay
-            preload="auto"
-            tabIndex={-1}
-            disablePictureInPicture
-            aria-hidden="true"
-            data-project-preview-video=""
-            className={cn('absolute inset-0 h-full w-full object-cover transition-opacity duration-200 motion-reduce:transition-none', shown ? 'opacity-100' : 'opacity-0')}
-            onPlaying={() => setShown(true)}
-            onError={() => { markPreviewFailed(src); setCanPlay(false); }}
-          />
-          <div className="absolute bottom-2.5 start-2.5 flex items-center gap-1.5">
-            <button
-              type="button"
-              data-project-preview-pause=""
-              aria-pressed={paused}
-              aria-label={paused ? t('auth:guest.project.card.play') : t('auth:guest.project.card.pause')}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-950/75 text-white hover:bg-zinc-950/90"
-              onClick={() => setPaused((p) => !p)}
-            >
-              {paused ? <PlayIcon className="h-4 w-4" aria-hidden="true" /> : <PauseIcon className="h-4 w-4" strokeWidth="3" aria-hidden="true" />}
-            </button>
-            <span className="rounded-full bg-zinc-950/75 px-2.5 py-1 text-[12px] font-bold text-white">{t('auth:guest.project.card.previewLabel')}</span>
-          </div>
-        </>
+        <video
+          ref={video}
+          src={src}
+          poster={still || undefined}
+          muted
+          loop
+          playsInline
+          autoPlay
+          preload="auto"
+          tabIndex={-1}
+          disablePictureInPicture
+          aria-hidden="true"
+          data-project-preview-video=""
+          className={cn('absolute inset-0 h-full w-full object-cover transition-opacity duration-200 motion-reduce:transition-none', shown ? 'opacity-100' : 'opacity-0')}
+          onPlaying={() => setShown(true)}
+          onError={() => { markPreviewFailed(src); setCanPlay(false); }}
+        />
+      ) : null}
+      {onOpen ? (
+        <Button
+          type="button"
+          variant="unstyled"
+          size="none"
+          ink="none"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-project-preview-open=""
+          className="absolute inset-0 h-full w-full cursor-pointer rounded-2xl hover:bg-white/10"
+          onClick={(e) => onOpen(e.currentTarget.parentElement || e.currentTarget)}
+        />
+      ) : null}
+      {canPlay && src ? (
+        <div className="absolute bottom-2.5 start-2.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            data-project-preview-pause=""
+            aria-pressed={paused}
+            aria-label={paused ? t('auth:guest.project.card.play') : t('auth:guest.project.card.pause')}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-950/75 text-white hover:bg-zinc-950/90"
+            onClick={() => setPaused((p) => !p)}
+          >
+            {paused ? <PlayIcon className="h-4 w-4" aria-hidden="true" /> : <PauseIcon className="h-4 w-4" strokeWidth="3" aria-hidden="true" />}
+          </button>
+          <span className="rounded-full bg-zinc-950/75 px-2.5 py-1 text-[12px] font-bold text-white">{t('auth:guest.project.card.previewLabel')}</span>
+        </div>
       ) : null}
     </div>
   );
@@ -148,7 +173,7 @@ export function ProjectPreview({ app, cover, hero = false }: {
  * The card itself. `actions` is one row of buttons (Open, Join, ⋯ or Share),
  * the first growing to fill; `note` hangs under them.
  */
-export function ProjectCard({ place, app, cover, color, description, actions, note = null, headingLevel = 1, cardRef, ...data }: {
+export function ProjectCard({ place, app, cover, color, description, actions, note = null, headingLevel = 1, cardRef, onOpenPicture, ...data }: {
   place: ProjectCardPlace;
   /** The project's identity: its slug, name and icon. */
   app: GuestApp;
@@ -161,6 +186,8 @@ export function ProjectCard({ place, app, cover, color, description, actions, no
   /** The page's one large heading by default. */
   headingLevel?: 1 | 2;
   cardRef?: Ref<HTMLElement>;
+  /** Pressing the picture opens the app (ProjectPreview `onOpen`); the signed-out page hands it in. */
+  onOpenPicture?: (from: HTMLElement) => void;
 } & { [key: `data-${string}`]: string | undefined }) {
   const Heading = headingLevel === 1 ? 'h1' : 'h2';
   return (
@@ -172,7 +199,7 @@ export function ProjectCard({ place, app, cover, color, description, actions, no
       style={{ background: color }}
     >
       <div className="min-w-0 flex-[1.15_1_340px]">
-        <ProjectPreview app={app} cover={cover} hero={place === 'guest'} />
+        <ProjectPreview app={app} cover={cover} hero={place === 'guest'} onOpen={onOpenPicture} />
       </div>
       <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-3 px-1.5 pb-1.5 md:px-0 md:pb-0">
         <div className="flex min-w-0 items-center gap-3">

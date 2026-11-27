@@ -48,9 +48,11 @@ const render = (messages, request = { loaded: true, githubMore: null }) => rende
 
 test('a GitHub comment is the stream\'s named row: avatar, author, its stamp, then "· on GitHub"', () => {
   const html = render([github({}), github({ key: '2', username: 'usernode-bot', time: '', timeTitle: '' })]);
+  // Dedupe step 2: Messages' own row (MessageRowView), its stamp a <time>
+  // so it reads as every row's time does.
   assert.equal((html.match(/class="[^"]*gc-msg gc-msg-github"/g) || []).length, 2);
   assert.match(html, /data-github-comment="1" data-username="evan"/);
-  assert.match(html, /<span class="gc-msg-time" title="Mar 4, 2026, 03:30 PM">Mar 4, 03:30 PM<\/span><span class="gc-msg-via"> · on GitHub<\/span>/);
+  assert.match(html, /<time class="gc-msg-time" datetime="2026-03-04T15:30:00Z" title="Mar 4, 2026, 03:30 PM">Mar 4, 03:30 PM<\/time><span class="gc-msg-via"> · on GitHub<\/span>/i);
   // GitHub's bot account is the bot on screen, by its name.
   assert.match(html, />Homeroom bot</);
   // A row with no timestamp omits the stamp rather than drawing an empty span.
@@ -131,18 +133,13 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.equal(old.title, 'Fix the banner');
   assert.equal(old.body, 'It blends in.');
 
-  // Both renderers use it: a request's page draws the spec as the spec
-  // reader would (paragraph semantics), and the Workshop row's preview
-  // names it.
+  // A request's page draws the spec as the spec reader would (paragraph
+  // semantics). The unfolded board card's comment tail named it too; that
+  // tail went with the card.
   const rows = code.match(/_requestThreadRows\(number\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(rows, /PlatformMarkdown\.render\(str, \{ breaks: false \}\)/);
   assert.match(rows, /githubSpec: spec \? \{ title: spec\.title, markdown: spec\.body, html: renderSpec\(spec\.body\) \} : null,/);
-  const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
-  assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
-  // htmlText escapes the whole line, the title included.
-  assert.match(feed, /spec\.title \? PlatformI18n\.htmlText\('changes:feed\.comment\.specTitled', \{ title: spec\.title \}\) : PlatformI18n\.htmlText\('changes:feed\.comment\.spec'\)/);
-  assert.equal(message('changes:feed.comment.specTitled', { title: 'Fix the banner' }), 'The plan: Fix the banner');
-  assert.equal(message('changes:feed.comment.spec'), 'The plan');
+  assert.ok(!/_feedCommentsHtml/.test(code), 'and the comment tail\'s renderer is gone');
 });
 
 test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {

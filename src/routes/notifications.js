@@ -399,6 +399,21 @@ function stagingMockNotifications() {
     // row of this age is one click away from every screenshot and declared
     // check. An old unread notification is exactly the row that used to read
     // as a four-hundred-day duration.
+    // #7272: a newcomer's first message written on a request. Its first line
+    // says where they wrote ("Wrote on #212"), not "Said hi", and the row
+    // opens that request. A staging clone has no invite redemption and no
+    // second person to write one, so a preview could not show it otherwise.
+    {
+      ...base,
+      id: 990234, kind: 'first_message',
+      createdAt: new Date(now - 6 * 60 * 1000).toISOString(),
+      appId: 900110, appSlug: 'staging-demo-quiet', appName: 'Staging demo quiet app',
+      sourceUsername: 'staging-demo-user',
+      chatMessageId: 990503,
+      messageContent: '[Mock] Why are we waiting for?',
+      threadType: 'issue', threadRef: '212',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #3233: an app allowance change, account-level like the real row (no
     // app). Its copy is built from the "<old>:<new>" detail, so a preview
     // shows the plain-words line instead of "0:2".

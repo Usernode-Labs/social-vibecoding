@@ -1018,7 +1018,9 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
   const rootId = item.kind === 'post' ? item.root.id : item.fold.lastId;
   const open = opened.has(rootId);
   const { shown, hidden } = shownReplies(item, open);
-  // A member always has the reply field under a post; a visitor reads the replies there are.
+  // A member always has the reply field under a post. A visitor reads the
+  // replies there are, and under them finds the same field as a door: it
+  // asks them to sign in, as "Start a post…" does (27 Nov 2026).
   const room = useContext(RoomContext);
   const canReply = !room.visitor && !!viewer;
   const hasBox = item.replyCount > 0 || canReply || replying;
@@ -1103,7 +1105,7 @@ function Thread({ item, feed, slug, channel, viewer, readId, busy, opened, marke
               onSend={(words, ids) => feed.write(words, rootId, ids)}
               upload={(file) => feed.source.upload(file)}
             />
-          ) : null}
+          ) : room.visitor ? <SignInDoor reply /> : null}
         </div>
       ) : null}
     </div>
@@ -1288,11 +1290,30 @@ const RoomContext = createContext<Room>({ slug: '', visitor: false });
 
 /**
  * A visitor's "Start a post…": the box as a member sees it, its far end
- * "Sign in to post", the whole of it asking them to sign in.
+ * "Sign in to post", the whole of it asking them to sign in. With `reply` it
+ * is the reply field under a thread's replies instead, the member's reply
+ * box with the same ending: a thread no longer just stops for a visitor.
  */
-function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
+function SignInDoor({ preview = false, reply = false }: { preview?: boolean; reply?: boolean }): ReactNode {
   const t = useMessages('project');
   const room = useContext(RoomContext);
+  if (reply) {
+    return (
+      <Button
+        type="button"
+        variant="unstyled"
+        size="none"
+        ink="none"
+        className="dh-composer dh-composer-reply dh-sign-in-door dh-reply-door"
+        data-ws-discussion-sign-in-reply=""
+        onClick={() => room.signIn?.()}
+      >
+        <span className="dh-face-blank" aria-hidden="true" />
+        <span className="dh-composer-hint">{t('project:hub.discussion.reply.placeholder')}</span>
+        <span className="dh-sign-in">{t('project:hub.discussion.signInToPost')}</span>
+      </Button>
+    );
+  }
   return (
     <Button
       type="button"

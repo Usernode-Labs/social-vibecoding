@@ -1323,38 +1323,6 @@
     "text": "Couldn't load the feed right now.",
     "description": "Shown in place of a project's board when its items could not be fetched and nothing was loaded before."
   },
-  "feed.comment.earlier_one": {
-    "text": "{{count}} earlier reply",
-    "description": "Line above the newest replies shown under a request's card in the feed, saying how many older replies are not shown. {{count}} is that number."
-  },
-  "feed.comment.earlier_other": {
-    "text": "{{count}} earlier replies",
-    "description": "Line above the newest replies shown under a request's card in the feed, saying how many older replies are not shown. {{count}} is that number."
-  },
-  "feed.comment.unknownAuthor": {
-    "text": "unknown",
-    "description": "Shown in place of the author's name on a reply under a request's card when the reply has no known author. Lower case, as a name would sit there."
-  },
-  "feed.comment.botTag": {
-    "text": "bot",
-    "description": "Small tag after the author's name on a reply under a request's card, marking that an automated account wrote the reply, not a person."
-  },
-  "feed.comment.specTitled": {
-    "text": "The plan: {{title}}",
-    "description": "Line at the end of a reply the Homeroom bot wrote under a request, naming the written plan it attached. {{title}} is that plan's title."
-  },
-  "feed.comment.spec": {
-    "text": "The plan",
-    "description": "Line at the end of a reply the Homeroom bot wrote under a request, saying it attached a written plan that has no title."
-  },
-  "feed.comment.showMore": {
-    "text": "Show more",
-    "description": "Button under a long reply on a request's card in the feed that is cut off after a few lines: shows the whole reply."
-  },
-  "feed.comment.showLess": {
-    "text": "Show less",
-    "description": "Button under a long reply on a request's card in the feed after it was expanded: cuts it back to a few lines."
-  },
   "visuals.fallbackClaim": {
     "text": "Before & after",
     "description": "Stands in for the description of a visible change in the before/after screenshots of a change, when the author gave none. It names the pair of screenshots."

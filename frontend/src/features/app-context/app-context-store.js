@@ -13,7 +13,10 @@
 import { createStore } from '../../lib/plain-store.js';
 
 export const appContextStore = createStore({
-  /** Whether the sheet is presented. `data-open` on the root derives from it. */
+  /**
+   * Whether the sheet is presented. `data-open` on the root derives from it,
+   * and `useSheet` (lib/sheet.ts) presents it while it is up.
+   */
   open: false,
   /**
    * Which of the sheet's two panes is showing (#2718).
@@ -39,10 +42,4 @@ export const appContextStore = createStore({
    * back disc: there is no menu behind it (audit D07). Reset with `view`.
    */
   back: 'menu',
-  /**
-   * Whether the presentation is a KIT sheet (touch) rather than the CSS
-   * slide-over. The kit brings its own backdrop, so the web overlay only
-   * raises when this is false — see lib/sheet-controller.js.
-   */
-  adopted: false,
 });

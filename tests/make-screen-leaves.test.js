@@ -58,7 +58,8 @@ test('"Who can change it?" slides down before it goes, by every way out', () => 
 test('New project falls back and fades before it goes', () => {
   // ✕ and Escape leave; onClose only after the fade.
   assert.match(MAKE, /data-make-close=""\s*onClick=\{leave\}/);
-  assert.match(MAKE, /if \(e\.key === 'Escape'\) leave\(\);/);
+  // Not while a sheet is up over it (lib/sheet.ts), whose Escape it is.
+  assert.match(MAKE, /if \(e\.key === 'Escape' && !e\.defaultPrevented && !openSheetCount\(\)\) leave\(\);/);
   assert.match(MAKE, /const motion = arrived && !leaving \? ARRIVED : ARRIVING;/, 'the form goes back down the way it rose');
   assert.match(MAKE, /root\.style\.transition = `opacity \$\{MAKE_LEAVE_MS\}ms ease-in`;\s*root\.style\.opacity = '0';\s*root\.style\.pointerEvents = 'none';\s*setLeaving\(true\);/);
   assert.match(MAKE, /if \(e\.target === root && e\.propertyName === 'opacity'\) gone\(\);/);

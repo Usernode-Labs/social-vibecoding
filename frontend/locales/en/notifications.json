@@ -1563,6 +1563,18 @@
     "text": "Said hi",
     "description": "First line of a notification to the person who made an invite link: somebody who joined through it wrote their first message. The message is on the line below and their name on the last line."
   },
+  "row.inviteLink.wroteOnRequest": {
+    "text": "Wrote on #{{number}}",
+    "description": "First line of a notification to the person who made an invite link: somebody who joined through it wrote their first message on a request (something people asked a project for). {{number}} is the request's number, kept with its # before it. Their message is on the line below and their name on the last line."
+  },
+  "row.inviteLink.commentedOnChange": {
+    "text": "Commented on a change",
+    "description": "First line of a notification to the person who made an invite link: somebody who joined through it wrote their first message on a change (a proposed change to the project). Their message is on the line below and their name on the last line."
+  },
+  "row.inviteLink.commentedOnDecision": {
+    "text": "Commented on a decision",
+    "description": "First line of a notification to the person who made an invite link: somebody who joined through it wrote their first message on a decision (something the group decides together). Their message is on the line below and their name on the last line."
+  },
   "row.inviteLink.saidHiWithOthers_one": {
     "text": "Said hi, with {{count}} other",
     "description": "First line of a notification to the person who made an invite link: the person named on the last line wrote their first message, and so did {{count}} more people who joined through it."

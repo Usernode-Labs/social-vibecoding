@@ -88,94 +88,15 @@ const GroupChat = {
   replyDraft: null,
   _tap: null,
 
-  // #25: emoji reactions. Long-press (or hover button) opens the reaction
-  // bar; `_pressTimer` arms the long-press, `_longPressed` swallows the
-  // trailing click so it doesn't also quote. `_reactBar` is the lazily
-  // built floating picker.
-  _pressTimer: null,
-  _longPressed: false,
-  // True while a pointer is held down on a message row. Used to gate the
-  // drag-vs-hold decision that toggles native text selection (hold =
-  // react bar + no selection; drag = re-enable selection).
-  _pressActive: false,
-  _reactBar: null,
-  _reactBarDismiss: null,
-  _reactBarOpenedAt: 0,
-  // The bar's two moving parts, mirrored here because they are published
-  // rather than toggled in place: whether the `＋` grid is expanded, and
-  // whether the pointed-at row offers Edit. See
-  // frontend/src/features/group-chat/reaction-bar-store.ts.
-  _reactBarGridOpen: false,
-  _reactBarEditable: false,
+  // #25: emoji reactions. Every row a transcript draws (a person's message,
+  // a notice, a shared plan) carries the shared hover bar and, on a long
+  // press, the shared sheet (features/message-actions/controls.tsx), which
+  // offer what the one rule allows (features/message-actions/rules.ts). The
+  // floating reaction bar this module built, armed by its own long press,
+  // is gone with the rows that needed it.
   // Shell-injected staging iframe token, captured at script load so SPA
   // history rewrites can't lose it before a (re)connect needs it.
   _bootToken: new URLSearchParams(location.search).get('token'),
-  QUICK_REACTIONS: ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'],
-  // Full picker grid, ordered by category (smileys \u2192 gestures \u2192 hearts \u2192
-  // animals \u2192 food \u2192 activities \u2192 objects \u2192 symbols) so related emoji sit
-  // together while scrolling. Rendered flat; the CSS grid handles layout.
-  GRID_REACTIONS: [
-    // Smileys & emotion
-    '\uD83D\uDE00', '\uD83D\uDE01', '\uD83D\uDE02', '\uD83E\uDD23', '\uD83D\uDE0A', '\uD83D\uDE07', '\uD83D\uDE42', '\uD83D\uDE09',
-    '\uD83D\uDE0D', '\uD83E\uDD70', '\uD83D\uDE18', '\uD83D\uDE0B', '\uD83D\uDE1C', '\uD83E\uDD2A', '\uD83D\uDE0E', '\uD83E\uDD13',
-    '\uD83E\uDD73', '\uD83E\uDD29', '\uD83D\uDE0F', '\uD83D\uDE05', '\uD83D\uDE2C', '\uD83D\uDE43', '\uD83D\uDE0C', '\uD83D\uDE34',
-    '\uD83E\uDD24', '\uD83D\uDE2A', '\uD83D\uDE2E', '\uD83D\uDE32', '\uD83D\uDE33', '\uD83E\uDD7A', '\uD83D\uDE22', '\uD83D\uDE2D',
-    '\uD83D\uDE24', '\uD83D\uDE20', '\uD83D\uDE21', '\uD83E\uDD2C', '\uD83E\uDD2F', '\uD83E\uDD75', '\uD83E\uDD76', '\uD83D\uDE31',
-    '\uD83D\uDE28', '\uD83D\uDE30', '\uD83E\uDD17', '\uD83E\uDD14', '\uD83E\uDD2D', '\uD83E\uDD2B', '\uD83D\uDE44', '\uD83D\uDE12',
-    '\uD83D\uDE1E', '\uD83D\uDE14', '\uD83D\uDE1F', '\uD83D\uDE15', '\uD83D\uDE16', '\uD83D\uDE2B', '\uD83D\uDE29', '\uD83E\uDD22',
-    '\uD83E\uDD2E', '\uD83E\uDD27', '\uD83D\uDE37', '\uD83E\uDD12', '\uD83E\uDD20', '\uD83E\uDD11', '\uD83D\uDE08', '\uD83D\uDC80',
-    '\uD83D\uDC7B', '\uD83D\uDC7D', '\uD83E\uDD16', '\uD83D\uDCA9', '\uD83E\uDD21', '\uD83D\uDE3A', '\uD83D\uDE48', '\uD83D\uDE49',
-    '\uD83D\uDE4A', '\uD83D\uDE36', '\uD83D\uDE10', '\uD83E\uDD74',
-    // Gestures & hands
-    '\uD83D\uDC4D', '\uD83D\uDC4E', '\uD83D\uDC4C', '\uD83E\uDD0C', '\u270C\uFE0F', '\uD83E\uDD1E', '\uD83E\uDD1F', '\uD83E\uDD18',
-    '\uD83E\uDD19', '\uD83D\uDC4B', '\uD83D\uDD90\uFE0F', '\u270B', '\uD83D\uDC4A', '\u270A', '\uD83E\uDD1B', '\uD83E\uDD1C',
-    '\uD83D\uDC4F', '\uD83D\uDE4C', '\uD83E\uDD1D', '\uD83D\uDE4F', '\uD83D\uDCAA', '\uD83D\uDD95', '\u261D\uFE0F', '\uD83D\uDC46',
-    '\uD83D\uDC47', '\uD83D\uDC48', '\uD83D\uDC49', '\u270D\uFE0F', '\uD83E\uDD32', '\uD83D\uDC40', '\uD83E\uDDE0', '\uD83D\uDDE3\uFE0F',
-    '\uD83D\uDC81', '\uD83D\uDE45', '\uD83D\uDE46', '\uD83E\uDD37', '\uD83E\uDD26', '\uD83E\uDDCE', '\uD83C\uDFC3', '\uD83D\uDC83',
-    // Hearts
-    '\u2764\uFE0F', '\uD83E\uDDE1', '\uD83D\uDC9B', '\uD83D\uDC9A', '\uD83D\uDC99', '\uD83D\uDC9C', '\uD83D\uDDA4', '\uD83E\uDD0D',
-    '\uD83E\uDD0E', '\uD83D\uDC95', '\uD83D\uDC9E', '\uD83D\uDC93', '\uD83D\uDC97', '\uD83D\uDC96', '\uD83D\uDC98', '\uD83D\uDC9D',
-    '\uD83D\uDC94', '\u2763\uFE0F', '\uD83D\uDC9F', '\uD83D\uDC8C',
-    // Animals & nature
-    '\uD83D\uDC36', '\uD83D\uDC31', '\uD83D\uDC2D', '\uD83D\uDC39', '\uD83D\uDC30', '\uD83E\uDD8A', '\uD83D\uDC3B', '\uD83D\uDC3C',
-    '\uD83D\uDC28', '\uD83D\uDC2F', '\uD83E\uDD81', '\uD83D\uDC2E', '\uD83D\uDC37', '\uD83D\uDC38', '\uD83D\uDC35', '\uD83D\uDC14',
-    '\uD83D\uDC27', '\uD83D\uDC26', '\uD83E\uDD86', '\uD83E\uDD85', '\uD83E\uDD89', '\uD83D\uDC22', '\uD83D\uDC0D', '\uD83D\uDC19',
-    '\uD83E\uDD80', '\uD83D\uDC2C', '\uD83D\uDC33', '\uD83E\uDD88', '\uD83E\uDD8B', '\uD83D\uDC1D', '\uD83D\uDC1E', '\uD83D\uDC0C',
-    '\uD83C\uDF38', '\uD83C\uDF39', '\uD83C\uDF3B', '\uD83C\uDF35', '\uD83C\uDF32', '\uD83C\uDF40', '\uD83C\uDF08', '\u2B50',
-    '\uD83C\uDF1F', '\u2728', '\u26A1', '\u2600\uFE0F', '\uD83C\uDF19', '\u2601\uFE0F', '\uD83C\uDF27\uFE0F', '\u2744\uFE0F',
-    '\uD83C\uDF0A', '\uD83C\uDF0D',
-    // Food & drink
-    '\uD83C\uDF4E', '\uD83C\uDF4C', '\uD83C\uDF49', '\uD83C\uDF47', '\uD83C\uDF53', '\uD83C\uDF52', '\uD83C\uDF51', '\uD83E\uDD6D',
-    '\uD83C\uDF4D', '\uD83E\uDD51', '\uD83C\uDF45', '\uD83E\uDD55', '\uD83C\uDF3D', '\uD83C\uDF5E', '\uD83E\uDDC0', '\uD83E\uDD5A',
-    '\uD83E\uDD53', '\uD83C\uDF54', '\uD83C\uDF5F', '\uD83C\uDF55', '\uD83C\uDF2D', '\uD83C\uDF2E', '\uD83C\uDF2F', '\uD83C\uDF63',
-    '\uD83C\uDF5C', '\uD83C\uDF5D', '\uD83C\uDF7F', '\uD83C\uDF69', '\uD83C\uDF6A', '\uD83C\uDF82', '\uD83C\uDF70', '\uD83E\uDDC1',
-    '\uD83C\uDF6B', '\uD83C\uDF6C', '\uD83C\uDF6D', '\u2615', '\uD83C\uDF75', '\uD83E\uDD64', '\uD83C\uDF7A', '\uD83C\uDF7B',
-    '\uD83E\uDD42', '\uD83C\uDF77', '\uD83C\uDF78', '\uD83E\uDD43',
-    // Activities & sports
-    '\u26BD', '\uD83C\uDFC0', '\uD83C\uDFC8', '\u26BE', '\uD83C\uDFBE', '\uD83C\uDFD0', '\uD83C\uDFB1', '\uD83C\uDFD3',
-    '\uD83C\uDFF8', '\uD83E\uDD4A', '\u26F3', '\uD83C\uDFA3', '\uD83C\uDFBD', '\u26F7\uFE0F', '\uD83C\uDFC2', '\uD83C\uDFC6',
-    '\uD83E\uDD47', '\uD83E\uDD48', '\uD83E\uDD49', '\uD83C\uDFC5', '\uD83C\uDFAE', '\uD83D\uDD79\uFE0F', '\uD83C\uDFB2', '\uD83E\uDDE9',
-    '\u265F\uFE0F', '\uD83C\uDFAF', '\uD83C\uDFB3', '\uD83C\uDFA4', '\uD83C\uDFA7', '\uD83C\uDFB8', '\uD83E\uDD41', '\uD83C\uDFB9',
-    '\uD83C\uDFBA', '\uD83C\uDFBB', '\uD83C\uDFAC', '\uD83C\uDFA8', '\uD83C\uDFAD', '\uD83C\uDFAA', '\uD83C\uDF9F\uFE0F', '\uD83C\uDFB0',
-    // Travel & objects
-    '\uD83D\uDE80', '\u2708\uFE0F', '\uD83D\uDE97', '\uD83D\uDE95', '\uD83D\uDE8C', '\uD83D\uDEB2', '\uD83D\uDEF4', '\uD83C\uDFCD\uFE0F',
-    '\uD83D\uDE82', '\uD83D\uDEA2', '\u26F5', '\uD83D\uDDFA\uFE0F', '\uD83C\uDFE0', '\uD83C\uDFD6\uFE0F', '\uD83C\uDFD4\uFE0F', '\uD83D\uDDFD',
-    '\uD83D\uDCBB', '\uD83D\uDDA5\uFE0F', '\u2328\uFE0F', '\uD83D\uDDB1\uFE0F', '\uD83D\uDCF1', '\uD83D\uDCF7', '\uD83C\uDFA5', '\uD83D\uDCFA',
-    '\uD83D\uDCFB', '\u23F0', '\u231A', '\uD83D\uDD0B', '\uD83D\uDD0C', '\uD83D\uDCA1', '\uD83D\uDD26', '\uD83D\uDD6F\uFE0F',
-    '\uD83D\uDEE0\uFE0F', '\uD83D\uDD27', '\uD83D\uDD28', '\u2699\uFE0F', '\uD83E\uDDF2', '\uD83D\uDD11', '\uD83D\uDD12', '\uD83D\uDD13',
-    '\uD83D\uDCCC', '\uD83D\uDCCE', '\u2702\uFE0F', '\uD83D\uDCCF', '\uD83D\uDCDA', '\uD83D\uDCD6', '\uD83D\uDCDD', '\u270F\uFE0F',
-    '\uD83D\uDCE6', '\uD83C\uDF81', '\uD83C\uDF88', '\uD83C\uDF89', '\uD83C\uDF8A', '\uD83D\uDED2', '\uD83D\uDCB0', '\uD83D\uDCB5',
-    '\uD83D\uDCB3', '\uD83D\uDC8E',
-    // Symbols
-    '\u2705', '\u2611\uFE0F', '\u274C', '\u274E', '\u26A0\uFE0F', '\uD83D\uDEAB', '\u2757', '\u2753',
-    '\u203C\uFE0F', '\u2049\uFE0F', '\uD83D\uDCAF', '\uD83D\uDD25', '\uD83D\uDCA5', '\uD83D\uDCAB', '\uD83D\uDCA2', '\uD83D\uDCA4',
-    '\uD83D\uDCAC', '\uD83D\uDCAD', '\uD83D\uDDE8\uFE0F', '\uD83D\uDD14', '\uD83D\uDD15', '\uD83C\uDFB5', '\uD83C\uDFB6', '\u2795',
-    '\u2796', '\u2797', '\u2716\uFE0F', '\u267E\uFE0F', '\uD83D\uDCB2', '\u00A9\uFE0F', '\u00AE\uFE0F', '\u2122\uFE0F',
-    '\uD83D\uDD34', '\uD83D\uDFE0', '\uD83D\uDFE1', '\uD83D\uDFE2', '\uD83D\uDD35', '\uD83D\uDFE3', '\u26AB', '\u26AA',
-    '\uD83D\uDD3A', '\uD83D\uDD3B', '\uD83D\uDD04', '\uD83D\uDD01', '\u25B6\uFE0F', '\u23F8\uFE0F', '\u23E9', '\u23EA',
-    '\uD83C\uDD97', '\uD83C\uDD92', '\uD83C\uDD95', '\uD83C\uDD93', '\uD83D\uDD1D', '\uD83D\uDD1A', '\uD83D\uDD1C', '\uD83C\uDFC1',
-    '\uD83D\uDEA9', '\uD83C\uDFF3\uFE0F', '\uD83C\uDFF4', '\uD83D\uDC1B',
-  ],
 
   // ── #194: thread-scoped chat state ──────────────────────────────────
   // One WS connection, multiple render targets: the general stream
@@ -428,10 +349,6 @@ const GroupChat = {
     // And where reading stood when it opened (_takeUnreadMark).
     GroupChat._unreadMark = null;
     GroupChat._unreadOpened = false;
-    GroupChat._longPressed = false;
-    GroupChat._pressActive = false;
-    GroupChat._clearPressTimer();
-    GroupChat._closeReactionBar();
     GroupChat.activeThread = keep;
 
     GroupChat._openSocket();
@@ -1373,15 +1290,6 @@ const GroupChat = {
       // row says so quietly; the reason was decided when it was posted
       // (`metadata.homeroomBotSkip` on both loaded and live rows).
       botSkipped: postedVia === 'agent' && !!(meta && meta.homeroomBotSkip),
-      canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
-      // The three header controls, gated exactly as the string template gated
-      // them: edit is your own message and not read-only (#621), react is not
-      // read-only, save needs a signed-in viewer.
-      showEdit: kind === 'message'
-        && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
-        && !GroupChat._readOnly(),
-      showReact: !GroupChat._readOnly(),
-      showBookmark: !!(window.App && App.user),
       quote: q && !deleted ? {
         icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
         username: q.author || (q.source === 'pr' ? (q.prNumber ? PlatformI18n.t('chat:group.quote.pr', { number: q.prNumber }) : PlatformI18n.t('chat:group.quote.prUnnumbered')) : PlatformI18n.t('chat:group.quote.system')),
@@ -2910,71 +2818,27 @@ const GroupChat = {
   // container. Bound once (idempotent) — the same shape the spec card's own
   // delegate had before its button became a React control (see openSharedSpec).
   //
-  // Interaction model (#15 + #25, mobile-first):
+  // Interaction model (#15, mobile-first):
   //   • quick tap         → quote the row (#15)
-  //   • long-press (hold) → open the reaction bar (#25, WhatsApp-style)
-  //   • hover react button→ open the reaction bar (desktop)
-  //   • tap a reaction pill → toggle that emoji for you
   //   • drag / text-select → neither (handled by the move threshold)
+  // A row's reactions, its hover bar and its long-press sheet are the row's
+  // own React controls (features/message-actions/controls.tsx).
   _attachQuoteHandlers(container) {
     if (container._gcQuoteBound) return;
     container._gcQuoteBound = true;
 
-    const ROW_SEL = '.gc-msg, .gc-msg-system, .gc-spec-card';
     // #2390: tap-to-quote also takes the general chat's proposal events.
-    // Only the tap: long-press and the react button stay on ROW_SEL, because
-    // an event carries no reactions (#2366). Its box is an anchor, so a tap
-    // on the box still opens the proposal (the `a, button` rule below) and a
-    // tap anywhere else on the row stages the reply.
-    const QUOTE_SEL = `${ROW_SEL}, .gc-event`;
+    // Its box is an anchor, so a tap on the box still opens the proposal (the
+    // `a, button` rule below) and a tap anywhere else on the row stages the
+    // reply.
+    const QUOTE_SEL = '.gc-msg, .gc-msg-system, .gc-spec-card, .gc-event';
 
+    // Where the press began, so a tap can be told from a drag that selects
+    // text (`_isCleanTap`). A long press is the row's own: the shared sheet
+    // (features/message-actions/action-sheet.tsx), on every kind of row.
     container.addEventListener('pointerdown', (e) => {
       GroupChat._tap = { x: e.clientX, y: e.clientY };
-      GroupChat._longPressed = false;
-      GroupChat._pressActive = false;
-      GroupChat._clearPressTimer();
-      // Don't arm long-press on interactive children (links, buttons,
-      // pills, the quote block) — those have their own click semantics.
-      if (e.target.closest('a, button, .gc-quoted, .gc-ref, .msgx-bar')) return;
-      const row = e.target.closest(ROW_SEL);
-      if (!row || !container.contains(row)) return;
-      // #2387: a person's row answers a long press itself — the shared
-      // message sheet (features/message-actions) — so this module's bar
-      // stands down for it and keeps only the system and spec rows.
-      if (row.classList.contains('gc-msg')) return;
-      // Suppress native text selection while the press is stationary, so a
-      // long-press opens the reaction bar cleanly instead of highlighting
-      // the message text (and popping the iOS selection magnifier). If the
-      // user drags past the threshold (pointermove below) we hand selection
-      // back so a deliberate drag still selects text.
-      GroupChat._pressActive = true;
-      GroupChat._setMsgSelect(container, false);
-      GroupChat._pressTimer = setTimeout(() => {
-        GroupChat._pressTimer = null;
-        GroupChat._longPressed = true;
-        GroupChat._openReactionBar(row);
-      }, 450);
     }, true);
-
-    container.addEventListener('pointermove', (e) => {
-      if (!GroupChat._pressActive || !GroupChat._tap) return;
-      const dist = Math.abs(e.clientX - GroupChat._tap.x) + Math.abs(e.clientY - GroupChat._tap.y);
-      if (dist <= 8) return; // tiny jitter — keep the timer + selection suppressed
-      // Real drag: the user is selecting text (desktop) or scrolling
-      // (touch), not long-pressing. Cancel the reaction timer and re-enable
-      // selection so the drag highlights text.
-      GroupChat._clearPressTimer();
-      GroupChat._setMsgSelect(container, true);
-    }, true);
-
-    const endPress = () => {
-      GroupChat._clearPressTimer();
-      GroupChat._pressActive = false;
-      // Restore the default (selectable) state for the next gesture.
-      GroupChat._setMsgSelect(container, true);
-    };
-    container.addEventListener('pointerup', endPress, true);
-    container.addEventListener('pointercancel', endPress, true);
 
     container.addEventListener('click', (e) => {
       // #2387: the shared bar, its picker and menu, and the thread chip are
@@ -2991,41 +2855,11 @@ const GroupChat = {
       // pill calls `GroupChat.sendReact` from an onClick in
       // features/group-chat/transcript.tsx instead. It is a <button>, so the
       // tap-to-quote tail below already declines it.
-      // #1280: save/unsave button → toggle this message in the viewer's
-      // own saved list. Handled before tap-to-quote (like Edit below) so
-      // the click doesn't also stage a reply.
-      const saveBtn = e.target.closest('.gc-msg-save');
-      if (saveBtn) {
-        const row = saveBtn.closest('[data-msg-id]');
-        const id = row && parseInt(row.dataset.msgId || '', 10);
-        if (id) GroupChat.toggleBookmark(id);
-        return;
-      }
-      // Edit button (own ordinary messages) → swap the row into an inline
-      // editor. Handled before tap-to-quote so the click doesn't also stage
-      // a reply.
-      const editBtn = e.target.closest('.gc-msg-edit');
-      if (editBtn) {
-        const row = editBtn.closest('[data-msg-id]');
-        const id = row && parseInt(row.dataset.msgId || '', 10);
-        if (id) GroupChat._startEdit(id);
-        return;
-      }
       // Clicks inside an open inline editor (textarea, notice span, or any
       // other non-button descendant) belong to the editor — it manages its
       // own behaviour through the listeners attached in _startEdit. Handled
       // before tap-to-quote so the click doesn't also stage a reply.
       if (e.target.closest('.gc-edit')) return;
-      // Hover react button (desktop) → open the bar for this row.
-      const addBtn = e.target.closest('.gc-react-add');
-      if (addBtn) {
-        const row = addBtn.closest(ROW_SEL);
-        if (row) GroupChat._openReactionBar(row);
-        return;
-      }
-      // A long-press already opened the bar — swallow the trailing click
-      // so it doesn't also quote the row.
-      if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
       // #130: PR / issue reference chips reveal the matching row in the
       // activity drawer (GitHub fallback when it isn't there); #4668: a chip
       // with an address is a real link — Ctrl/Cmd/Shift/Alt click and the
@@ -3113,49 +2947,15 @@ const GroupChat = {
     if (href) location.hash = href;
   },
 
-  _clearPressTimer() {
-    if (GroupChat._pressTimer) {
-      clearTimeout(GroupChat._pressTimer);
-      GroupChat._pressTimer = null;
-    }
-  },
-
-  // Toggle native text selection on the messages list. Disabled at the
-  // start of a press so a stationary long-press reacts (instead of
-  // selecting/highlighting text); re-enabled as soon as a drag is detected
-  // so drag-to-select still works.
-  _setMsgSelect(container, enabled) {
-    const c = container || document.getElementById('gc-messages');
-    if (!c) return;
-    const v = enabled ? '' : 'none';
-    c.style.userSelect = v;
-    c.style.webkitUserSelect = v;
-  },
-
-  // ── #25: reaction rendering ─────────────────────────────────────────
+  // ── #25 and #1280: reactions and saving ─────────────────────────────
   //
-  // `_renderReactionPills` and `_renderReactionsHtml` lived here — the pills
-  // and their (possibly empty) container as an HTML string. Both are
-  // features/group-chat/transcript.tsx's `<Reactions>` now, and the empty
-  // container is still always rendered so `.gc-reactions:empty` keeps
-  // collapsing its margin.
-
-  // `_renderReactAddBtn` lived here — the desktop hover affordance that opens
-  // the bar. It is transcript.tsx's `RowActions` now, gated by the same
-  // `showReact` (#621: no reactions read-only) and still `tabindex="-1"` so it
-  // stays out of the tab order; touch devices long-press instead, and CSS
-  // hides it where there is no hover.
-
-  // ── #1280: save (bookmark) a message ────────────────────────────────
-
-  // `_renderBookmarkBtn`, `_bookmarkSvg` and the two Heroicons path constants
-  // lived here. The button is transcript.tsx's `<RowActions>` now, drawing
-  // frontend/@/components/ui/icons.tsx's BookmarkIcon / BookmarkSolidIcon
-  // directly — so the duplicated path data this file used to carry, and the
-  // test that kept the two copies in step, are both gone rather than stale.
-  // What stays is the RULE the button ran on: `showBookmark` in `_messageView`
-  // (a signed-in viewer, and no `_readOnly()` gate — #621, saving writes
-  // nothing to the app) and the optimistic flip in `_paintBookmark` below.
+  // The reaction chips, the bookmark and every other act on a row are drawn
+  // by the row (features/message-actions/reactions.tsx and controls.tsx) and
+  // offered by the one rule (features/message-actions/rules.ts): react and
+  // reply need a reader who may write here (#621), save needs only a
+  // signed-in one, since saving writes nothing to the app. What stays here
+  // are the acts themselves: `sendReact` over the socket, and the optimistic
+  // flip in `_paintBookmark` below.
 
   // Toggle the save state of one message. Optimistic: the button flips
   // immediately (a save is a personal, instantly-reversible act, and a
@@ -3704,7 +3504,6 @@ const GroupChat = {
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify({ type: 'react', messageId, emoji }));
     }
-    GroupChat._closeReactionBar();
   },
 
   // ── message editing ─────────────────────────────────────────────────
@@ -3817,11 +3616,6 @@ const GroupChat = {
     const { title } = GroupChat._stamp(ts);
     return title ? PlatformI18n.t('chat:group.row.editedAt', { when: title }) : PlatformI18n.t('chat:group.row.editedTooltip');
   },
-
-  // `_renderEditBtn` lived here — the desktop hover pencil for your own
-  // message, hidden on touch via CSS because the long-press bar carries Edit
-  // there. It is transcript.tsx's `RowActions` now, gated by the same
-  // `showEdit` (#621: no edits read-only).
 
   // Locate a message (and its containing thread state, if any) by id across
   // the general stream and every cached thread.
@@ -3969,130 +3763,6 @@ const GroupChat = {
     const patch = { bodyHtml: renderMessageBody(content), botHtml: null };
     if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
     gc.patchTranscriptMessage(messageId, patch);
-  },
-
-  // ── #25: reaction bar (WhatsApp-style quick row + curated grid) ──────
-
-  _ensureReactionBar() {
-    if (GroupChat._reactBar) return GroupChat._reactBar;
-    const bar = document.createElement('div');
-    bar.id = 'gc-react-bar';
-    bar.className = 'gc-react-bar hidden';
-    bar.addEventListener('click', (e) => {
-      const em = e.target.closest('.gc-react-bar-emoji');
-      if (em) { GroupChat._reactFromBar(em.dataset.emoji); return; }
-      if (e.target.closest('.gc-react-bar-edit')) {
-        const id = parseInt(bar.dataset.msgId || '', 10);
-        GroupChat._closeReactionBar();
-        if (id) GroupChat._startEdit(id);
-        return;
-      }
-      if (e.target.closest('.gc-react-bar-report')) {
-        const id = parseInt(bar.dataset.msgId || '', 10);
-        GroupChat._closeReactionBar();
-        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: PlatformI18n.t('chat:group.report.selected') });
-        return;
-      }
-      if (e.target.closest('.gc-react-bar-more')) {
-        GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
-        GroupChat._publishReactBar();
-      }
-    });
-    document.body.appendChild(bar);
-    // The HOST stays ours — position:fixed, appended to the body, pointed at a
-    // row and placed by measurement on every open — and its CHILDREN are
-    // features/group-chat/reaction-bar.tsx's, mounted once here. The emoji sets
-    // ride along as props because they never change.
-    window.UsernodeReact?.groupChat?.mountReactionBar?.(bar, {
-      quick: GroupChat.QUICK_REACTIONS,
-      grid: GroupChat.GRID_REACTIONS,
-    });
-    GroupChat._reactBar = bar;
-    return bar;
-  },
-
-  _publishReactBar() {
-    window.UsernodeReact?.groupChat?.publishReactionBar?.({
-      gridOpen: !!GroupChat._reactBarGridOpen,
-      editable: !!GroupChat._reactBarEditable,
-      reportable: !!GroupChat._reactBarReportable,
-      readOnly: GroupChat._readOnly(),
-    });
-  },
-
-  _openReactionBar(row) {
-    if (!App.user) return;
-    const id = row && parseInt(row.dataset.msgId || '', 10);
-    if (!id) return;
-    const bar = GroupChat._ensureReactionBar();
-    bar.dataset.msgId = String(id);
-    // Every open starts collapsed, and Edit is offered only on the viewer's
-    // own ordinary messages. Publishing goes through flushSync
-    // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
-    // before the measurement below decides where the bar fits.
-    GroupChat._reactBarGridOpen = false;
-    GroupChat._reactBarReportable = row.classList.contains('gc-msg') && !row.classList.contains('gc-msg-self');
-    GroupChat._reactBarEditable = !GroupChat._readOnly() && row.classList.contains('gc-msg')
-      && row.classList.contains('gc-msg-self');
-    GroupChat._publishReactBar();
-    bar.classList.remove('hidden');
-    GroupChat._reactBarOpenedAt = Date.now();
-
-    // Position above the row (fall back to below if it would clip the top).
-    const r = row.getBoundingClientRect();
-    const bw = bar.offsetWidth || 280;
-    const bh = bar.offsetHeight || 44;
-    const left = Math.min(Math.max(8, r.left), window.innerWidth - bw - 8);
-    let top = r.top - bh - 6;
-    if (top < 8) top = Math.min(r.bottom + 6, window.innerHeight - bh - 8);
-    bar.style.left = `${left}px`;
-    bar.style.top = `${top}px`;
-
-    if (!GroupChat._reactBarDismiss) {
-      GroupChat._reactBarDismiss = (ev) => {
-        if (ev.type === 'keydown') { if (ev.key === 'Escape') GroupChat._closeReactionBar(); return; }
-        if (ev.type === 'click') {
-          // Ignore the click that opened the bar (long-press release or the
-          // hover button's own click).
-          if (Date.now() - (GroupChat._reactBarOpenedAt || 0) < 350) return;
-          if (GroupChat._reactBar && GroupChat._reactBar.contains(ev.target)) return;
-          GroupChat._closeReactionBar();
-          return;
-        }
-        GroupChat._closeReactionBar(); // scroll
-      };
-    }
-    setTimeout(() => {
-      document.addEventListener('click', GroupChat._reactBarDismiss, true);
-      document.addEventListener('keydown', GroupChat._reactBarDismiss, true);
-      // #363: dismiss on scroll of whichever stream is mounted — the general
-      // chat (#gc-messages) or a topic thread's unified scroller
-      // (#gc-thread-scroll).
-      const msgs = document.getElementById('gc-messages');
-      if (msgs) msgs.addEventListener('scroll', GroupChat._reactBarDismiss, true);
-      const tscroll = document.getElementById('gc-thread-scroll');
-      if (tscroll) tscroll.addEventListener('scroll', GroupChat._reactBarDismiss, true);
-    }, 0);
-  },
-
-  _closeReactionBar() {
-    const bar = GroupChat._reactBar;
-    if (bar) { bar.classList.add('hidden'); bar.removeAttribute('data-msg-id'); }
-    if (GroupChat._reactBarDismiss) {
-      document.removeEventListener('click', GroupChat._reactBarDismiss, true);
-      document.removeEventListener('keydown', GroupChat._reactBarDismiss, true);
-      const msgs = document.getElementById('gc-messages');
-      if (msgs) msgs.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
-      const tscroll = document.getElementById('gc-thread-scroll');
-      if (tscroll) tscroll.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
-    }
-  },
-
-  _reactFromBar(emoji) {
-    const bar = GroupChat._reactBar;
-    const id = bar && parseInt(bar.dataset.msgId || '', 10);
-    if (id && emoji) GroupChat.sendReact(id, emoji);
-    GroupChat._closeReactionBar();
   },
 
   // ── per-message unread dot ──────────────────────────────────────────

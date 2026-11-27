@@ -149,16 +149,16 @@ test('the inline reply preview preserves composer line breaks', () => {
     'the browser must preserve newlines instead of collapsing them to spaces');
   assert.match(html, /dev-feed-msg-text[^>]*>First line\nSecond line<\/div>/,
     'the reply remains plain escaped text with its original newline');
-  // The bubble (round three): the author and the age on the first line,
-  // the text under them, a swatch avatar outside.
-  // #1808 made the age a `<time>` with the full instant on `title`, so the
-  // element changed but the adjacency — author then age, one line — did not.
-  // #1808 made the age a `<time>` carrying the full instant on `title`, so
-  // the element changed but the adjacency — author then age, one line — did
-  // not. The `datetime` match is case-insensitive because React 19 emits the
-  // JSX spelling and HTML attribute names are case-insensitive anyway.
-  assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><time class="dev-feed-msg-time" datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
-  assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
+  // Dedupe step 2: the reply is Messages' own row at the board's size
+  // (messages/message-row.tsx MessageRowView, `compact`): the face outside,
+  // the author and the age on the line over the bubble, the words in it.
+  // #1808 made the age a `<time>` carrying the full instant on `title`. The
+  // `datetime` match is case-insensitive because React 19 emits the JSX
+  // spelling and HTML attribute names are case-insensitive anyway.
+  assert.match(html, /^<article class="messages-message group messages-message-bubble [^"]*messages-message-compact dev-feed-msg">/);
+  assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">bob<\/span><time datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
+  assert.match(html, /<span aria-hidden="true" class="[^"]*" style="background-color:#[0-9a-f]{6}">B</);
+  assert.match(html, /<div class="messages-bubble" dir="auto"><div class="dev-feed-msg-text/);
 });
 
 test('a long reply in the panel shows four lines and a way to see the rest', () => {
@@ -179,18 +179,11 @@ test('a long reply in the panel shows four lines and a way to see the rest', () 
   assert.doesNotMatch(html, /Show more|Show less/);
 });
 
-test('the Workshop staging route requires both the textarea and arrow', () => {
-  const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
-  assert.ok(check, 'a declared check names this change');
-  // The card has to be unfolded for the composer to exist.
-  //
-  // ?ws=all JOINED IT when the lander became three tabs, and #4486 moved it
-  // onto the board with its cards open: By category's rows open the item's
-  // page now rather than unfolding in place, and `?cards=open` is the state
-  // that still draws every card unfolded, the composer under each. The
-  // ?shot=feed-comments deep link fills and scrolls to the first slot.
-  assert.equal(check.path, '/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop');
-  // One message box (27 Nov 2026): Messages' field and its round send.
-  assert.match(check.expectSelector, /\.dev-feed-reply textarea\[aria-label="Reply to this item"\]/);
-  assert.match(check.expectSelector, /~ button\.messages-send:disabled/);
+test('no declared check reaches the reply box through the unfolded board card', () => {
+  // #1584's check read the composer under a board card drawn unfolded by
+  // `?cards=open`. That card is gone; the reply box (this file's subject)
+  // is drawn by the Needs-you review's Talk step, which no address reaches,
+  // so its markup is pinned by the tests above rather than by a check.
+  assert.ok(!dapp.tests.some((entry) => entry.name.includes('#1584')), 'the #1584 check went with the card');
+  assert.ok(!dapp.tests.some((entry) => /cards=open|shot=feed-comments/.test(entry.path || '')));
 });

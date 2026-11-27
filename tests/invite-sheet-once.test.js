@@ -39,18 +39,30 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
-const SHEET_CONTROLLER = read('frontend/src/lib/sheet-controller.js');
 const CONTROLLER = read('frontend/src/features/app-context/app-context-controller.js');
+
+// The standing sheet's name (lib/sheet.ts `createStandingSheet`), the real
+// one. Only its controller half runs here: the hooks are never called.
+const { createStandingSheet } = loadTsx('frontend/src/lib/sheet.ts', {
+  stubs: {
+    react: {},
+    './back-stack': { pushDismissible: () => () => {} },
+    // #6981: the sheet claims the one-open-panel slot. The registry has its
+    // own suite (tests/open-surfaces.test.js); here it only has to exist.
+    './open-surfaces': { claimSurface: () => () => {}, isTopSurface: () => true },
+  },
+  cache: false,
+});
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 // ── the opener ───────────────────────────────────────────────────────────
 
 /**
- * The REAL controller over the REAL sheet chassis, in a vm, with the kit
- * stubbed for touch. The kit stub snapshots the store at the moment it takes
- * the element: that is when the real kit measures the sheet's height, so what
- * the store says then is the pane the sheet goes up at.
+ * The REAL controller over the REAL standing sheet, in a vm. The Sheet
+ * presents the root as its flag goes up (lib/sheet.ts `useSheet`, in the
+ * render the store's flush runs), and the kit measures it there and then, so
+ * the store as it stands when `open` rises is the pane the sheet goes up at.
  */
 function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   const timers = [];
@@ -71,24 +83,17 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
-  const store = makeStoreStub({ open: false, view: 'menu', adopted: false });
+  const store = makeStoreStub({ open: false, view: 'menu', back: 'menu' });
   const improve = makeStoreStub({ slug });
   const presents = [];
-  runModules(sandbox, [['sheet-controller.js', SHEET_CONTROLLER]], {
-    imports: {
-      './kit-surface': {
-        adoptKitSurface: (opts) => {
-          presents.push({ ...store.state });
-          return { kind: opts.kind, contentEl: opts.contentEl, restore() {}, dismiss() { opts.onDismiss(); } };
-        },
-      },
-      './back-stack': { pushDismissible: () => () => {} },
-      // #6981: the sheet claims the one-open-panel slot. The registry has its
-      // own suite (tests/open-surfaces.test.js); here it only has to exist.
-      './open-surfaces': { claimSurface: () => () => {} },
-    },
-    tail: 'window.__make = createSheetController;',
-  });
+  const set = store.set;
+  store.set = (patch) => {
+    const was = store.state.open;
+    set(patch);
+    if (!was && store.state.open) presents.push({ ...store.state });
+  };
+  // The standing sheet looks its root up in the document it runs against.
+  globalThis.document = sandbox.document;
 
   // The read, as invite-data.ts answers it: one promise per opening, which a
   // second ask while it is on its way joins.
@@ -97,7 +102,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   let pending = null;
   runModules(sandbox, [['app-context-controller.js', CONTROLLER]], {
     imports: {
-      '../../lib/sheet-controller.js': { createSheetController: sandbox.__make },
+      '../../lib/sheet': { createStandingSheet },
       '../improve/improve-store.js': { improveStore: improve },
       './app-context-store.js': { appContextStore: store },
       './invite-data': {
@@ -139,10 +144,9 @@ test('Invite reads first, then goes up once, already on the invite pane', async 
   assert.equal(o.presents.length, 1, 'one present');
   assert.equal(o.presents[0].view, 'invite',
     'the kit measures the invite pane, never the menu that used to go up first');
-  assert.equal(o.presents[0].open, true, 'with `open` published before the present');
   assert.deepEqual(
-    { open: o.store.state.open, view: o.store.state.view, adopted: o.store.state.adopted },
-    { open: true, view: 'invite', adopted: true },
+    { open: o.store.state.open, view: o.store.state.view },
+    { open: true, view: 'invite' },
   );
 });
 

@@ -113,6 +113,9 @@ function buildReadyWords(payload, t, sender = asIs) {
 
 const INVITE_NOTICES = {
   first_message: 'email:inviteActivity.firstMessage',
+  first_message_request: 'email:inviteActivity.firstMessageRequest',
+  first_message_change: 'email:inviteActivity.firstMessageChange',
+  first_message_decision: 'email:inviteActivity.firstMessageDecision',
   member_joined: 'email:inviteActivity.joined',
   member_joined_someone: 'email:inviteActivity.joinedSomeone',
 };

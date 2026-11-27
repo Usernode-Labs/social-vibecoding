@@ -74,11 +74,12 @@ test('Homeroom bot\'s row wears its name and its logo, and keeps the raw usernam
     const html = renderToHtml(createElement(MessageRow, { msg: { ...rowBase, username } }));
     assert.match(html, /data-username="(?:homeroom_bot|usernode-bot)"/, 'data-username stays raw');
     assert.match(html, /<img[^>]*src="\/brand\/homeroom-mark\.png"[^>]*data-bot-avatar=""/, `${username}: the Homeroom mark`);
-    assert.match(html, /<span>Homeroom bot<\/span>/, `${username}: named as Messages names it`);
+    // Dedupe step 2: the row is Messages' own, so the bot also wears its AI badge.
+    assert.match(html, /<span dir="auto" class="messages-message-author ">Homeroom bot<\/span><span class="messages-bot-badge">AI<\/span>/, `${username}: named as Messages names it`);
   }
   const person = renderToHtml(createElement(MessageRow, { msg: rowBase }));
-  assert.doesNotMatch(person, /data-bot-avatar|Homeroom bot/);
-  assert.match(person, /<span>evan<\/span>/);
+  assert.doesNotMatch(person, /data-bot-avatar|Homeroom bot|messages-bot-badge/);
+  assert.match(person, /<span dir="auto" class="messages-message-author ">evan<\/span>/);
 });
 
 function appView() {

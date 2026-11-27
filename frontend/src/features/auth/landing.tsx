@@ -1104,6 +1104,15 @@ export function LandingScreen() {
     // its rungs into.
     launchId: 0,
     timers: [] as number[],
+    // WHAT THE APP GROWS OUT OF (27 Nov 2026). A public project's page hands
+    // the opener the control that was pressed, its Open button or the card's
+    // picture (`pressed`, set by the page's `onOpenInside` and taken by the
+    // very next open). `zoomFrom` is the one the open viewer came out of, so
+    // closing it shrinks into the same control. Both are null for an open
+    // nothing was pressed for (the legacy bridge, a shot): the viewer then
+    // slides in and cuts out, as it always did.
+    pressed: null as Element | null,
+    zoomFrom: null as Element | null,
     // A visitor's play of the open app, not yet counted: what calls it off
     // when the app is closed first (../popularity/popularity.ts).
     stopPlay: null as (() => void) | null,
@@ -1272,6 +1281,10 @@ export function LandingScreen() {
 
   const openLandingApp = useCallback(
     async (app: PublicApp) => {
+      // The control this open was pressed from, taken at once so it can
+      // never be read by a later open that nothing was pressed for.
+      const pressed = st.pressed || null;
+      st.pressed = null;
       const accountRequired = app.requires_login !== false;
       const signedIn = hasSession();
       // Guard the actual viewer entry, not only tile presentation: the legacy
@@ -1374,6 +1387,7 @@ export function LandingScreen() {
       // the kit would measure the viewer's destination as the bottom half.
       // `outEl` lets the kit hide the scroller for its synchronous pre-paint
       // measurement, so the zoom targets the true settled rect.
+      st.zoomFrom = pressed && pressed.isConnected ? pressed : null;
       zoomFx(
         () => {
           viewer.classList.remove('hidden');
@@ -1381,11 +1395,13 @@ export function LandingScreen() {
         {
           type: 'zoom-in',
           el: viewer,
-          // There is no tile to grow out of any more, and `fromEl` is a thunk
-          // precisely so it can say so: the kit then takes the `fallback`
-          // below, which is the transition this call already declared for the
-          // case where the tile had scrolled out of view.
-          fromEl: () => null,
+          // THE APP GROWS OUT OF WHAT WAS PRESSED (27 Nov 2026): a project
+          // page's Open button or its card's picture, the way an app opens
+          // from a tile on a phone's home screen. `fromEl` is a thunk so it
+          // can also say there is nothing to grow out of (an open nothing on
+          // this page was pressed for): the kit then takes the `fallback`
+          // below, as it does when the control has scrolled out of view.
+          fromEl: () => st.zoomFrom,
           outEl: scroller,
           fallback: 'push',
           after: () => scroller.classList.add('hidden'),
@@ -1414,6 +1430,8 @@ export function LandingScreen() {
     // App.navigateHome makes leaving the App tab. `after` runs exactly once on
     // every path, so the shrinking overlay keeps showing the app's content
     // until it lands.
+    const zoomFrom = st.zoomFrom;
+    st.zoomFrom = null;
     zoomFx(
       () => {
         scroller.classList.remove('hidden');
@@ -1421,8 +1439,12 @@ export function LandingScreen() {
       {
         type: 'zoom-out',
         el: viewer,
-        // Nothing to shrink back into — see the open path above.
-        fromEl: () => null,
+        // Back into the control it grew out of (see the open path above),
+        // read once the page is showing again: the kit's zoom moves the live
+        // viewer, no snapshot, so the frame is safe in it. Nothing was
+        // pressed, or the control is gone or off screen: the kit lands on
+        // nothing and settles at once, the cut this always was.
+        fromEl: () => (zoomFrom && zoomFrom.isConnected ? zoomFrom : null),
         fallback: 'none',
         after: () => {
           viewer.classList.add('hidden');
@@ -2446,7 +2468,7 @@ export function LandingScreen() {
               signedIn={waitingGuest}
               primaryClass={PRIMARY_PILL}
               onIntent={askFor}
-              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
+              onOpenInside={(app, from) => { st.pressed = from || null; void live.current.openLandingApp(app); }}
               onShare={shareProject}
               onAllCommunities={onBack}
             />

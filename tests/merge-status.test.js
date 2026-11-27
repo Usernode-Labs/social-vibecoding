@@ -114,7 +114,6 @@ test('state 6 — a run older than a minute says how long it has been going (#32
   assert.equal(life.label, 'Checks running · 12 min');
   assert.equal(life.tone, 'neutral');
   assert.equal(life.spinner, true);
-  assert.match(MergeStatus.pillHtml(life), /Checks running · 12 min/);
   assert.equal(MergeStatus.lifecycle({
     status: 'promoted', check_state: 'pending', checks_checked_at: minsAgo(1),
   }).label, 'Checks running · 1 min');
@@ -291,28 +290,17 @@ test('unknown / non-merge status → none (no badge)', () => {
   assert.equal(MergeStatus.lifecycle({ status: 'paused' }).label, '');
 });
 
-test('badgeHtml: renders the label with the tone class + spinner; escapes the label', () => {
-  const merging = MergeStatus.badgeHtml(MergeStatus.lifecycle({ status: 'merging' }));
-  assert.match(merging, /ms-badge-amber/);
-  assert.match(merging, /dc-status-spinner-arc/);
-  assert.match(merging, /Merging…/);
-
-  // 'none' renders nothing.
-  assert.equal(MergeStatus.badgeHtml(MergeStatus.lifecycle({ status: 'paused' })), '');
-});
-
-test('pillHtml: in-vote pill appends the tally; badgeHtml does not', () => {
-  const life = MergeStatus.lifecycle(
-    { status: 'promoted', check_state: 'passing', yes_count: 2 },
-    { majority: 5 }
-  );
-  const pill = MergeStatus.pillHtml(life);
-  assert.match(pill, /ms-pill-violet/);
-  assert.match(pill, /Waiting for approval · 2\/5/);
-  // The text-style badge stays compact (the surfaces that use it show a
-  // separate vote pill), so it must NOT carry the tally.
-  assert.match(MergeStatus.badgeHtml(life), /Waiting for approval/);
-  assert.doesNotMatch(MergeStatus.badgeHtml(life), /2\/5/);
+// badgeHtml / pillHtml drew this descriptor as HTML for surfaces that no
+// longer exist (the proposal feed card, the home strip, the dev session
+// header); nothing called them, so they are gone. The card's `ms` badge
+// (dev-card.tsx) draws the descriptor itself.
+test('the descriptor is data: no HTML drawers are exported', () => {
+  assert.equal(MergeStatus.badgeHtml, undefined);
+  assert.equal(MergeStatus.pillHtml, undefined);
+  const life = MergeStatus.lifecycle({ status: 'merging' });
+  assert.equal(life.tone, 'amber');
+  assert.equal(life.spinner, true);
+  assert.equal(life.label, 'Merging…');
 });
 
 // #695: the per-row votes_required (the governed gate's electorate-based
@@ -359,21 +347,6 @@ test('#695 — advisory is only computed under the invited policy', () => {
     yes_count: 2, votes_required: 3, approval_policy: 'invited',
   });
   assert.equal(stale.votes.advisory, undefined);
-});
-
-test('#695 — pillHtml appends the muted +N advisory suffix to the in-vote tally', () => {
-  const life = MergeStatus.lifecycle({
-    status: 'promoted', check_state: 'passing',
-    yes_count: 3, qualified_yes_count: 1, votes_required: 2,
-    approval_policy: 'invited',
-  });
-  assert.equal(life.key, 'in_vote');
-  const pill = MergeStatus.pillHtml(life);
-  assert.match(pill, /Waiting for approval · 1\/2/);
-  assert.match(pill, /ms-advisory/);
-  assert.match(pill, /\+2</);
-  // The compact text badge (separate vote pill beside it) stays tally-free.
-  assert.doesNotMatch(MergeStatus.badgeHtml(life), /ms-advisory/);
 });
 
 // STATE_BADGE_KEYS and its test are deleted (#2038). The constant was

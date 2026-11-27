@@ -724,12 +724,12 @@
     "description": "Word under the first stop of the path on the Workshop tab's front page, under the standard look (a yellow circle): the requests nobody is building yet and that are not up for a vote. Pressing it opens the board narrowed to them."
   },
   "workshop.front.path.asked.line_one": {
-    "text": "{{count}} waiting",
-    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+    "text": "{{count}} suggestion",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are at the Asked stop (people's suggestions nobody is building yet and that are not up for a vote). Never shown for zero."
   },
   "workshop.front.path.asked.line_other": {
-    "text": "{{count}} waiting",
-    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+    "text": "{{count}} suggestions",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are at the Asked stop (people's suggestions nobody is building yet and that are not up for a vote). Never shown for zero."
   },
   "workshop.front.path.building.word": {
     "text": "Being built",
@@ -2065,7 +2065,7 @@
   },
   "hub.discussion.signInToPost": {
     "text": "Sign in to post",
-    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, as a signed-out visitor sees it: the box asks them to sign in before they can post."
+    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, and of the reply box under a post's replies, as a signed-out visitor sees them: the box asks them to sign in before they can post or reply."
   },
   "hub.discussion.reply.placeholder": {
     "text": "Reply in thread…",
@@ -4726,26 +4726,6 @@
   "kanban.archived.unarchive": {
     "text": "Unarchive",
     "description": "Button on a row of the archived-sessions list: restores that coding session. A verb."
-  },
-  "card.fold.fold": {
-    "text": "Fold the card",
-    "description": "Accessible name of the mark at the top right of an open card: collapses the card back to its one-row form. \"Fold\" is a verb."
-  },
-  "card.fold.new": {
-    "text": "new",
-    "description": "Small lower-case marker after an item's title in a project's lists: the item arrived or changed since the person's last visit."
-  },
-  "card.fold.placing": {
-    "text": "placing…",
-    "description": "Small lower-case marker after an item's title on the Workshop tab while Homeroom is still sorting the item into one of the project's themes."
-  },
-  "card.fold.placingTitle": {
-    "text": "Being placed into a category",
-    "description": "Tooltip on the \"placing…\" marker after an item's title: Homeroom is still sorting the item into a theme."
-  },
-  "card.fold.openCard": {
-    "text": "Open card",
-    "description": "Link button on an unfolded card: goes to that proposal's or request's own page. \"Open\" is a verb."
   },
   "feedThread.reply.placeholder": {
     "text": "Reply…",

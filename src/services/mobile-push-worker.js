@@ -324,6 +324,9 @@ class MobilePushWorker {
               su.username AS source_username,
               su.is_synthetic AS source_is_synthetic,
               cm.content AS message_content,
+              -- #7272: where the message sits, so a first message on a request,
+              -- change or decision is worded (and tap-targeted) as that thread.
+              cm.thread_type AS message_thread_type, cm.thread_ref AS message_thread_ref,
               conversation_message.content AS conversation_message_content,
               conversation_member.status AS conversation_member_status,
               EXISTS (
@@ -583,6 +586,8 @@ class MobilePushWorker {
           sourceUsername: row.source_username,
           sourceIsSynthetic: row.source_is_synthetic === true,
           messageContent: row.conversation_message_content ?? row.message_content,
+          messageThreadType: row.message_thread_type,
+          messageThreadRef: row.message_thread_ref,
           sessionTitle: row.session_title,
           prTitle: row.pr_title,
           branchName: row.branch_name,

@@ -27,7 +27,8 @@ const EMAIL_ID = /['"`]email:[A-Za-z0-9_.-]+['"`]/g;
 
 const ALLOWED_IDS = [
   'buildReady.lead.notWorking', 'buildReady.lead.ready', 'buildReady.subject.notWorking', 'buildReady.subject.ready', 'buildReady.unnamedProject',
-  'inviteActivity.firstMessage', 'inviteActivity.joined', 'inviteActivity.joinedSomeone', 'inviteActivity.joinedUnnamed',
+  'inviteActivity.firstMessage', 'inviteActivity.firstMessageChange', 'inviteActivity.firstMessageDecision',
+  'inviteActivity.firstMessageRequest', 'inviteActivity.joined', 'inviteActivity.joinedSomeone', 'inviteActivity.joinedUnnamed',
 ];
 
 test('templates.js renders the stored templates and writes no markup or words of its own', () => {

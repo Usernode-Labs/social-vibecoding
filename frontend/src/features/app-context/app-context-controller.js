@@ -1,11 +1,10 @@
 /**
  * The app-context sheet's controller (Streamlined Concept) — window.AppContext.
  *
- * The presentation is ../../lib/sheet-controller.js's now — the same chassis
- * Notifications and Messages present through, extracted when they became
- * sheets too. What stays here is the two things that are this sheet's own:
- * it refuses to open without an app in context, and opening it asks the
- * Improve controller to refresh the session lists both surfaces share.
+ * A standing sheet (../../lib/sheet.ts), as Notifications is: this is the name
+ * it is opened and closed by, and ./index.tsx presents it through `useSheet`.
+ * What stays here is this sheet's own: its panes, and opening straight onto
+ * one of them.
  *
  * The DATA half is deliberately absent — the sheet renders from improveStore.
  * The one exception is which PANE is showing, which is presentation and lives
@@ -18,7 +17,7 @@
  * classic-script-reachable controller uses).
  */
 
-import { createSheetController } from '../../lib/sheet-controller.js';
+import { createStandingSheet } from '../../lib/sheet';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { prepareInvite } from './invite-data';
@@ -41,8 +40,8 @@ export const INVITE_WAIT_MS = 300;
 // the gate outliving its reason. Nothing about the sheet needs a target now:
 // the app-scoped section renders only when there is one.
 export const AppContext = Object.assign(
-  createSheetController({
-    elementId: 'apps-switcher-sheet',
+  createStandingSheet({
+    id: 'apps-switcher-sheet',
     store: appContextStore,
   }),
   {
@@ -110,8 +109,8 @@ export const AppContext = Object.assign(
 
 /**
  * Open the sheet on `view` rather than on the menu. The pane is published
- * first, then the sheet: `open()` publishes `open: true` and hands the root to
- * the kit, which measures it there and then (../../lib/sheet-controller.js),
+ * first, then the sheet: `open()` publishes `open: true`, and the kit takes
+ * the root as that renders and measures it there and then (../../lib/sheet.ts),
  * so the pane it measures has to be the one asked for. Were the open refused
  * (no sheet in the document), the pane goes back to the menu, or the next
  * open from the mark would land on it.
@@ -133,18 +132,16 @@ function openAt(view) {
 //
 // The two methods are folded in with Object.assign rather than assigned as
 // properties afterwards, because this file is checked: TypeScript infers this
-// controller's type from what createSheetController returns, and a later
+// controller's type from what createStandingSheet returns, and a later
 // `AppContext.showAbout = …` adds a method the callers cannot see.
 //
 // Closing resets to the menu, so re-opening lands on the pane you asked for
 // and never on the one you left.
 //
-// A SUBSCRIPTION rather than a wrapper around close(), because close() is not
-// the only way this sheet goes away: the kit's own dismissal — a swipe, a tap
-// on its backdrop — resolves through adoptSheet's callback and publishes
-// `open: false` without passing through the controller at all. Watching the
-// flag catches every path, including that one, and there is nothing to keep
-// in step when another is added.
+// A SUBSCRIPTION rather than a wrapper around close(), so that every way the
+// flag goes down (the kit's swipe and backdrop, Back, Escape, a navigation)
+// resets the pane, and there is nothing to keep in step when another way is
+// added.
 let wasOpen = appContextStore.get().open;
 appContextStore.subscribe(() => {
   const { open } = appContextStore.get();
@@ -153,14 +150,11 @@ appContextStore.subscribe(() => {
 });
 
 
+// The sheet is modal over whatever the address bar now names, so ANY
+// client-side navigation dismisses it (found in the shots run: a deep link
+// rendered Activity underneath a still-open sheet). Rows call dismissForNav
+// themselves; browser back/forward and programmatic fragment writes are the
+// Sheet's, which closes a standing sheet on any move away from where it opened.
 if (typeof window !== 'undefined') {
   window.AppContext = AppContext;
-  // The sheet is modal over whatever the address bar now names, so ANY
-  // client-side navigation dismisses it — rows call dismissForNav themselves,
-  // but browser back/forward and programmatic fragment writes arrive through
-  // these events instead (found in the shots run: a deep link rendered
-  // Activity underneath a still-open sheet). Clean pushState navigation uses
-  // popstate on traversal; legacy platform routes still use hashchange.
-  window.addEventListener('popstate', () => AppContext.dismissForNav());
-  window.addEventListener('hashchange', () => AppContext.dismissForNav());
 }

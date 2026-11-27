@@ -3,8 +3,8 @@
  * words its search matches: the Unicode name, plus a few everyday aliases for
  * the ones people reach for (`+1`, `lol`, `tada`, `thanks`).
  *
- * The set and its order are the app chat's grid (public/js/group-chat.js,
- * GRID_REACTIONS), so both surfaces offer the same emoji. No emoji library:
+ * The set and its order were the app chat's old reaction grid, which every
+ * row's picker replaced (#2387). No emoji library:
  * the shell loads no cross-origin assets, and a picker needs names, not the
  * several hundred kilobytes of skin tones and sprite sheets a library brings.
  */

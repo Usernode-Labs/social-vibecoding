@@ -1325,23 +1325,20 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 }
 /* A 6px bridge from the pill to the row, so crossing the gap with the
    pointer keeps the bar open. Mirrored for the below placement. */
-.messages-message-actions::after,
-.gc-msg-actions::after {
+.messages-message-actions::after {
   content: '';
   position: absolute;
   inset-inline: 0;
   top: 100%;
   height: 6px;
 }
-.messages-message-actions.msgx-bar-below::after,
-.gc-msg-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
-.messages-message-actions.msgx-bar-below,
-.gc-msg-actions.msgx-bar-below { top: calc(100% + 4px); }
+.messages-message-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+.messages-message-actions.msgx-bar-below { top: calc(100% + 4px); }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
 /* Audit D13: on somebody else's bubble the bar is a child of its name line
-   (message-row.tsx `barBesideHead`), which is as wide as the name and the
+   (message-row-view.tsx `barPlacement` "head"), which is as wide as the name and the
    time, so it hangs just past the time, centred on that line, beside the
    message it acts on. It already sits beside the message rather than over
    its words, so it keeps its own place and takes neither the bridge nor the
@@ -1350,7 +1347,7 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
 .messages-message-head > .messages-message-actions::after { content: none; }
 /* Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
-   name line, so its bar sits on the bubble (message-row.tsx `barOnBubble`):
+   name line, so its bar sits on the bubble (message-row-view.tsx `barPlacement` "bubble"):
    its bottom edge 2px over the bubble's top, and its trailing edge on the
    bubble's, or its leading edge on the bubble's start when the bubble is
    the narrower, so it never starts before the bubble. MessageActionBar
@@ -1382,25 +1379,6 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
    and accented while the pill is up. */
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* The app chat's rows place the same bar (#2387): on the row's top edge,
-   trailing side, over the name line and revealed on hover and focus-within;
-   a continuation row's pill is raised just clear of its first line, or put
-   below the row where there is no room above (#6697). The row's own actions
-   slot is in the header's flow, so the host takes no width and the bar
-   floats out of it. */
-.gc-msg { position: relative; }
-.gc-msg-bar-host { display: contents; }
-.gc-msg-actions {
-  position: absolute;
-  z-index: 6;
-  /* The same `--msgx-bar-lift` as the Messages row above. */
-  top: calc(-1 * var(--msgx-bar-lift, 16px));
-  inset-inline-end: 16px;
-  display: none;
-}
-.gc-msg:hover .gc-msg-actions,
-.gc-msg:focus-within .gc-msg-actions,
-.gc-msg-actions.msgx-bar-open { display: flex; }
 .gc-msg-deleted-text { color: var(--text-muted); font-size: 15px; font-style: italic; }
 .gc-reply-count {
   display: flex;
@@ -1826,21 +1804,6 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
    component rather than a different state. */
 .messages-reactions { display: flex; flex-wrap: wrap; gap: 6px; }
 .messages-message:not(.messages-message-bubble) .messages-reactions { margin-top: 8px; }
-.messages-reactions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 9999px;
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  font-size: 15px;
-  font-weight: 500;
-  transition: background 150ms;
-}
-.messages-reactions button:hover { background: var(--border); }
-.messages-reactions .messages-reaction-mine { color: var(--accent-wash-ink); background: var(--accent-wash); }
 .messages-edit textarea {
   width: 100%;
   min-height: 56px;
@@ -2102,20 +2065,16 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .messages-format-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .messages-format-btn:hover { background: var(--messages-surface-2); }
 .messages-format-btn:disabled { opacity: .35; }
-/* Request #7164 (phone audit, 25 Nov 2026): ON A PHONE THE BOX STANDS ALONE.
-   Eight desktop buttons stood over a channel's message box at every width.
-   Under 768px the row is folded away until "Formatting" in the "+" menu
-   opens it (composer.tsx sets `data-open`), and it stays open until that
-   row is pressed again; the row wears a check at its end while it is open.
-   From 768px the formatting row is always there and the menu has no such
-   row. */
+/* Request #7164 (phone audit, 25 Nov 2026): THE BOX STANDS ALONE.
+   Eight buttons stood over a channel's message box. The row is folded away
+   until "Formatting" in the "+" menu opens it (composer.tsx sets
+   `data-open`), and it stays open until that row is pressed again; the row
+   wears a check at its end while it is open.
+   27 Nov 2026: at every width, not a phone's alone. The one message box
+   reached topic channels, and the owner asked for the formatting row to be
+   something a person switches on, never there to begin with. */
 .messages-composer-menu .messages-composer-menu-check { margin-inline-start: auto; color: var(--accent); }
-@media (max-width: 767px) {
-  .messages-format-bar:not([data-open]) { display: none; }
-}
-@media (min-width: 768px) {
-  .messages-composer-menu > .messages-composer-menu-format { display: none; }
-}
+.messages-format-bar:not([data-open]) { display: none; }
 /* #6653: the field that asks for a web address sits in the formatting row's
    place, with the row's own sizes: a 32px field and two 32px buttons, above
    the same hairline the row draws. */
@@ -5495,18 +5454,20 @@ html:root #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups
 #auth-landing-screen :is([data-guest-discover], [data-guest-groups]) {
   font-family: var(--site-sans);
 }
-/* DO THIS is a sun pill on an ink outline: the bar's button on every
-   signed-out page. The primitive's classes stay
-   (tests/shell-primitive-adoption.test.js); its fill is repainted. The
-   heroes' own pills are spelled in features/auth/story.tsx. */
+/* The bar's button on every signed-out page is the SECONDARY pill: the
+   panel's white on an ink outline, the hero's white twin (27 Nov 2026). The
+   sun is each page's own main action (Explore apps, Sign up to vote and
+   suggest), so a page shows one sun pill and not two. The primitive's
+   classes stay (tests/shell-primitive-adoption.test.js); its fill is
+   repainted. The heroes' own pills are spelled in features/auth/story.tsx. */
 #auth-landing-screen #landing-header [data-landing-sign-up] {
-  background-color: var(--site-sun);
-  color: var(--site-on-sun);
+  background-color: var(--site-panel);
+  color: var(--site-ink);
   font-family: var(--site-sans);
   box-shadow: inset 0 0 0 1px var(--site-line), 0 2px 0 var(--site-line);
 }
 #auth-landing-screen #landing-header [data-landing-sign-up]:hover {
-  background-color: var(--site-sun-lit);
+  background-color: color-mix(in srgb, var(--site-ink) 6%, var(--site-panel));
 }
 #auth-landing-screen #landing-header [data-landing-sign-in] {
   font-family: var(--site-sans);
@@ -5529,11 +5490,13 @@ html:root #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups
     line-height: 40px;
   }
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-search-open], [data-home-join-kind]) {
+#auth-landing-screen [data-guest-discover] :is([data-guest-search-open], [data-home-join-kind], [data-home-join-sort]) {
   background-color: var(--site-panel);
   color: var(--site-ink);
   box-shadow: inset 0 0 0 1px var(--site-line);
 }
+/* The sort menu is one of the chips (`.wip-sort`): its chevron takes the ink too. */
+#auth-landing-screen [data-guest-discover] .wip-sort { color: var(--site-ink); }
 #auth-landing-screen [data-guest-discover] [data-guest-search-open] {
   box-shadow: inset 0 0 0 1px var(--site-line), 0 2px 0 var(--site-line);
 }
@@ -7979,22 +7942,46 @@ html:root:where([data-motion="reduce"]) .wip-activity-card { transition: none; }
   gap: var(--wip-card-gap);
   padding-bottom: 0.625rem;
 }
-/* Its menu is one of the line's own: a chip's height, shape and type, on the
-   card's colour under a hairline, at the line's end. */
-html:root .wip-filterbar > select {
+/* Its menu is one of the line's own, at the line's end (`.wip-sort`, next). */
+html:root .wip-filterbar > .wip-sort { margin-inline-start: auto; }
+/* The sort menu, wherever it is drawn (the filter line, or a line of its own
+   over a search's results): a chip's height, shape and type, on the card's
+   colour under a hairline, with our own chevron at its end where the
+   browser drew its arrow. It is a <select> still, so the open list is the
+   browser's own; a select takes no ::after, so the chevron is an icon beside
+   it that a press goes through. The signed-out page gives it the site's
+   colours (THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES). */
+.wip-sort {
+  position: relative;
+  display: inline-flex;
   flex: none;
+  color: var(--wip-ink);
+}
+html:root .wip-sort > select {
+  -webkit-appearance: none;
+  appearance: none;
   width: auto;
   height: 2.75rem;
-  margin-inline-start: auto;
   padding-block: 0;
-  padding-inline-start: 1rem;
+  padding-inline: 1.25rem 2.5rem;
   border: 0;
-  border-radius: var(--wip-radius-pill);
+  border-radius: 9999px;
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
-  font-size: var(--wip-title-size);
+  font-size: 0.9375rem;
   font-weight: 500;
-  color: var(--wip-ink);
+  color: inherit;
+  cursor: pointer;
+}
+html:root .wip-sort > select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.wip-sort-mark {
+  position: absolute;
+  inset-inline-end: 1rem;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.5rem;
+  pointer-events: none;
 }
 /* On a phone the menu takes a line of its own, under the choices (phone
    review, 23 Nov 2026): side by side, the menu left the choices about 217px,
@@ -8235,11 +8222,11 @@ html:root .home-row > .home-aside {
 }
 html:root .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
 html:root .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
-/* A pinned project's press area, the search field and the sort menu: inside
-   a card, or a field. */
+/* A pinned project's press area and the search field: inside a card, or a
+   field. (The sort menu is not one of them: it is pressed, so it is a pill,
+   `.wip-sort`.) */
 html:root #app-list > .app-card,
-html:root .wip-search > input,
-html:root #home-join-section select { border-radius: var(--wip-radius-inner); }
+html:root .wip-search > input { border-radius: var(--wip-radius-inner); }
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
@@ -14421,10 +14408,9 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--state-neutral);
   white-space: nowrap;
 }
-/* #405: canonical merge-lifecycle badge/pill (see public/js/merge-status.js).
-   `.ms-badge` is the text-style chip used in the feed card + home strip;
-   `.ms-pill` is the filled pill. Tone classes
-   carry the colour and keep the surfaces consistent. */
+/* #405: canonical merge-lifecycle badge (see public/js/merge-status.js).
+   `.ms-badge` is the text-style chip the card's `ms` badge draws. Tone
+   classes carry the colour and keep the surfaces consistent. */
 .ms-badge {
   display: inline-flex;
   align-items: center;
@@ -14438,25 +14424,6 @@ span.gc-vote-btn-icon { cursor: default; }
 .ms-badge-amber   { color: var(--state-attention); }
 .ms-badge-green   { color: var(--state-ok); }
 .ms-badge-red     { color: var(--state-blocked); }
-.ms-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  border: 1px solid transparent;
-}
-.ms-pill-neutral { color: var(--state-neutral); background: var(--state-neutral-bg); }
-/* #695: muted "+N" advisory suffix inside the in-vote pill —
-   non-approver votes recorded beside the approver-only tally. */
-.ms-advisory { opacity: 0.65; font-weight: 500; }
-.ms-pill-violet  { color: var(--state-progress); background: var(--state-progress-bg); }
-.ms-pill-amber   { color: var(--state-attention); background: var(--state-attention-bg); }
-.ms-pill-green   { color: var(--state-ok); background: var(--state-ok-bg); }
-.ms-pill-red     { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* #361: persistent merge-status badges. Mirror .gc-merging-badge's slot
    treatment. Conflict (and conflict-resolution-failed) reads red; behind
    reads amber-neutral so a merely-stale proposal doesn't alarm. */
@@ -14578,48 +14545,7 @@ span.gc-vote-btn-icon { cursor: default; }
    with a horizontal scrollbar. */
 #gc-messages { overflow-x: hidden; }
 
-.gc-msg {
-  padding: 6px 12px;
-  transition: background 150ms;
-  min-width: 0;
-}
 
-/* Neutral, not the tint tokens. --bg-card and --bg-card-alt are ACCENT and
-   emerald washes: with them, hovering any message and every message you sent
-   read as a highlighted state rather than as ordinary transcript. The deck's
-   group transcript tints neither — a message is identified by its author's
-   name and avatar, which is the whole point of a named-row transcript. */
-/* ONE STEP OFF THE BUBBLE'S OWN SURFACE, and which step that is depends on
-   the mode: `--bg-secondary` IS `--dc-raised` in light mode, so a hovered or
-   tapped row used to be painted the bubble's exact colour and the message box
-   vanished into the highlight — outer row and inner bubble reading as one
-   flat slab (#2464). `--bg-tertiary` is the step the light palette has room
-   for; in dark mode it is the bubble's surface instead, so dark keeps the
-   secondary ground it already had. The highlight belongs to the row, so it
-   has to be a colour the message box is not made of. */
-.gc-msg:hover { background: var(--bg-tertiary); }
-.dark .gc-msg:hover { background: var(--bg-secondary); }
-.gc-msg-self { background: transparent; }
-
-.gc-msg-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-
-.gc-msg-username {
-  /* The author's name is the transcript's primary identifier, so the language
-     gives it reading size and full weight in primary ink — not a 13px
-     semibold caption a line above the words. */
-  font-size: 1.0625rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-/* Your own name keeps the accent — the one place it still marks "mine" now
-   that the row itself is untinted. */
-.gc-msg-username-self { color: var(--accent); }
 
 /* Per-message unread dot: a message this user has an unread mention/
    reply/reaction notification for. Sits at the front of the header;
@@ -14971,16 +14897,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background-color: var(--dc-raised);
   background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
 }
-/* (#2783) A grouped continuation line's clock, in the avatar's column: shown
-   on hover, as Discord does, and always on touch where there is no hover. */
-.gc-msg[data-grouped] .gc-msg-gutter-time { visibility: hidden; }
-.gc-msg[data-grouped]:hover .gc-msg-gutter-time { visibility: visible; }
-@media (hover: none) {
-  .gc-msg[data-grouped] .gc-msg-gutter-time { visibility: visible; }
-}
-/* (#2783) Your own row no longer runs right to left — every row is the same
-   named row now — so the hover react disc stays at the top-right for yours
-   too, and the override that moved it is gone. */
 
 .gc-quote-pr { cursor: pointer; }
 @media (hover: hover) {
@@ -15019,251 +14935,27 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* ── #25: emoji reactions ───────────────────────────────── */
 
-/* Rows need positioning context for the hover react button. */
-.gc-msg, .gc-msg-system, .gc-spec-card { position: relative; }
+/* A notice and a shared plan carry the shared hover bar
+   (features/message-actions/controls.tsx) as a person's row does: placed on
+   the row's top edge and revealed on hover and focus-within, the way the
+   Messages row places it (`.messages-message-actions` above). On a touch
+   screen a long press opens the shared sheet instead. */
+.gc-msg-system, .gc-spec-card { position: relative; }
+.gc-msg-system:hover > .messages-message-actions,
+.gc-msg-system:focus-within > .messages-message-actions,
+.gc-spec-card:hover > .messages-message-actions,
+.gc-spec-card:focus-within > .messages-message-actions { display: flex; }
 
-/* Long-press opens the reaction bar (see _attachQuoteHandlers). Suppress
-   the iOS long-press callout/magnifier so a stationary hold reacts instead
-   of triggering the system text-selection menu. Native text selection
-   itself is toggled in JS — re-enabled the instant a drag is detected — so
-   drag-to-select still works. */
-.gc-msg, .gc-msg-system, .gc-spec-card { -webkit-touch-callout: none; }
-
-/* Hover affordance to open the reaction bar (desktop only — touch uses
-   long-press). Hidden until the row is hovered. */
-.gc-react-add {
-  position: absolute;
-  top: 2px;
-  inset-inline-end: 6px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms;
-  z-index: 2;
-}
-/* On regular messages the button lives inside the header row, so it sits
-   just to the right of the first line (username · time) instead of being
-   pinned to the far right edge of the chat. It's always laid out (reserving
-   its slot so there's no hover reflow) but invisible until the row is
-   hovered. System/spec rows keep the absolute top-right fallback above. */
-.gc-msg-header .gc-react-add {
-  position: static;
-  align-self: center;
-  width: 20px;
-  height: 20px;
-  margin-inline-start: -2px;
-}
-
-/* System / vote lines (e.g. "alice voted yes on PR #12") are centered with
-   no header, so flow the button inline right after the text instead of the
-   absolute top-right fallback. Deliberately NOT setting `display` here so
-   the `@media (hover: none)` display:none rule still hides it on touch. */
-.gc-msg-system > .gc-react-add {
-  position: static;
-  vertical-align: middle;
-  width: 18px;
-  height: 18px;
-  margin-inline-start: 4px;
-}
-
-@media (hover: hover) {
-  .gc-msg:hover .gc-react-add,
-  .gc-msg-system:hover .gc-react-add,
-  .gc-spec-card:hover .gc-react-add { opacity: 0.85; }
-  .gc-react-add:hover { opacity: 1; }
-}
-@media (hover: none) { .gc-react-add { display: none; } }
-
-/* Edit affordance on own ordinary messages — same hover-reveal model as
-   the react button. Lives in the header row next to the timestamp. On touch
-   (no hover) it's hidden; the long-press reaction bar carries Edit there. */
-.gc-msg-edit {
-  align-self: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms;
-}
-@media (hover: hover) {
-  .gc-msg:hover .gc-msg-edit { opacity: 0.85; }
-  .gc-msg-edit:hover { opacity: 1; }
-}
-@media (hover: none) { .gc-msg-edit { display: none; } }
-
-/* #1280: save (bookmark) a message. Sits beside the react/edit buttons and
-   borrows their shape, with two deliberate differences:
-
-   1. It has a RESTING state. The react and edit buttons are invisible until
-      hover because they are pure affordances — nothing about the message
-      changes when you're not using them. A save is state: a saved message
-      has to look saved without being hovered, so `.gc-msg-saved` is fully
-      opaque at all times and the unsaved button keeps a faint resting
-      opacity so it can be found at all.
-   2. It is NOT hidden on touch. The two buttons above hand their action to
-      the long-press reaction bar there; this one has no such fallback, and
-      hiding it would leave phones with no way to save anything.
-
-   The mark inside is an SVG (GroupChat._bookmarkSvg), hollow when off and
-   solid when on, so the PRIMARY state signal is the shape. That is why the
-   chip's background stays constant across both states: a filled violet
-   mark on the ordinary chip reads cleanly in both themes, whereas the
-   accent-pill treatment an emoji needed would put a light-lavender ground
-   under a white mark in dark mode. */
-.gc-msg-save {
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.3;
-  transition: opacity 120ms, color 120ms;
-}
-.gc-msg-save svg { width: 12px; height: 12px; display: block; }
-.gc-msg-save.gc-msg-saved { opacity: 1; color: var(--accent); }
-@media (hover: hover) {
-  .gc-msg:hover .gc-msg-save,
-  .gc-msg-system:hover .gc-msg-save,
-  .gc-spec-card:hover .gc-msg-save { opacity: 0.85; }
-  .gc-msg-save:hover,
-  .gc-msg-save.gc-msg-saved { opacity: 1; }
-}
-
-/* System / vote lines have no header row, so the button flows inline after
-   the text — same treatment the react button gets there. `inline-flex`
-   (rather than the base rule's flex context) keeps it on the text baseline
-   while still centring the mark. */
-.gc-msg-system > .gc-msg-save,
-.gc-spec-card > .gc-msg-save {
-  vertical-align: middle;
-  width: 18px;
-  height: 18px;
-  margin-inline-start: 4px;
-}
-.gc-msg-system > .gc-msg-save svg,
-.gc-spec-card > .gc-msg-save svg { width: 11px; height: 11px; }
-/* A 32px hit area on a touch screen (QA 2026-09-24 Q19). The mark is 18-20px
-   and rides the END of a line, often straight after a vote row's Yes/No pair
-   with only its 4px margin between them — so the slop is lopsided rather than
-   centred: it reaches back no further than that margin and takes its width
-   from the free side after the mark (the react button beside it is hidden on
-   touch, and the reactions start a new line). It cannot sit under the row's
-   content instead: the resting `opacity` makes the button its own stacking
-   context, so a `z-index` on the slop would stay inside it. */
-@media (pointer: coarse) {
-  .gc-msg-save { position: relative; }
-  .gc-msg-save::after {
-    content: "";
-    position: absolute;
-    inset-inline-start: -4px;
-    width: calc(100% + 18px);
-    top: 50%;
-    height: max(100%, 32px);
-    transform: translateY(-50%);
-  }
-}
-
-/* Edit button inside the long-press reaction bar (touch). */
-.gc-react-bar-edit {
-  font-size: 18px;
-  line-height: 1;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px 6px;
-}
-
-/* Reaction pills under a message. */
+/* The reaction chips under a notice or a shared plan. The chip is
+   ../message-actions/reactions.tsx's (@/components/ui/feed's ReactionPill),
+   the one every message row draws; `.gc-reactions` is its container here. */
 .gc-reactions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 3px;
 }
-.gc-reactions:empty { margin-top: 0; }
 .gc-msg-system .gc-reactions { justify-content: center; }
-/* #7163: your own row in a channel is on the right, so what hangs under it
-   (reactions, a thread's chip) hugs the right edge with it. */
-.gc-msg-end .gc-reactions { justify-content: flex-end; }
-
-/* The pill itself is @/components/ui/feed's `ReactionPill` — surface, radius,
-   hover and the "yours" state (`tone="accent"`) all come from the widget
-   language now, so `.gc-react-pill`, `.gc-react-mine`, `.gc-react-emoji` and
-   `.gc-react-count` are gone with the string renderer that emitted them.
-   `.gc-reactions` stays: it is the row's own flex container. */
-
-/* Floating reaction bar (quick row + curated grid). */
-.gc-react-bar {
-  position: fixed;
-  z-index: 1000;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-  padding: 4px 6px;
-}
-.gc-react-bar.hidden { display: none; }
-.gc-react-bar-quick { display: flex; align-items: center; gap: 2px; }
-.gc-react-bar-emoji {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 20px;
-  line-height: 1;
-  padding: 4px;
-  border-radius: 8px;
-  transition: transform 80ms ease, background 80ms;
-}
-.gc-react-bar-emoji:hover { transform: scale(1.25); background: var(--bg-tertiary); }
-.gc-react-bar-more {
-  margin-inline-start: 2px;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 16px;
-  cursor: pointer;
-}
-.gc-react-bar-grid {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 2px;
-  max-width: 296px;
-  /* The full emoji set is long — cap the height and scroll within the bar
-     so opening "more" never pushes the picker off-screen. */
-  max-height: 244px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-}
-.gc-react-bar-grid.hidden { display: none; }
 
 @keyframes dc-spin { to { transform: rotate(360deg); } }
 
@@ -18976,81 +18668,6 @@ body.is-offline [data-offline-disabled] {
   text-overflow: ellipsis;
 }
 
-/* ── The Workshop's unfolded rows are the Activity feed's entries ────
-   The Activity feed retired in favour of the Workshop (the Dev screen's
-   lander, features/dev-board/workshop/workshop.tsx); its entry — the card,
-   the replies under it and the reply box, as one sheet — is what a Workshop
-   row unfolds into, so the rules below moved host (#dev-feed became
-   #dev-workshop) and nothing else.
-   Everything here is scoped to #dev-workshop on purpose. The row renderers
-   (_renderIssueRow, _renderProposalCard, _renderMergedCard, …) are SHARED
-   with the kanban columns, where a bordered tile is exactly right — a
-   column of cards is what a board is. Scoping by ancestor is what lets one
-   renderer draw a tile on the board and a stream row here with no branch
-   in the JS and no second set of markup to keep in step.
-
-   THE ROWS ARE CARDS, like every other row on this screen.
-
-   They were full-bleed: the wrapper cancelled #dev-body's `px-3` so a
-   separator could run edge to edge, and the three rules below stripped the
-   row's border, radius and fill — on the argument that a stack of tiles
-   reads better as a stream. On screen it did not. dev-feed.tsx renders
-   `v.block` (the "Yours" section) OUTSIDE these wrappers, so those rows kept
-   their card face and appeared directly above a de-carded stream: one list,
-   two visual languages, a few pixels apart. The de-carded half also gave up
-   the white surface this language separates figure from ground with, which
-   on the #eaeaea page ground left the rows reading as bare text.
-
-   So the utilities the row already carries — `rounded-2xl bg-white
-   dark:bg-zinc-900 px-3.5 py-3 hover:bg-zinc-50` — now draw it, unopposed.
-
-   ── Each entry is a SHEET ───────────────────────────────────────────────
-   The card, the replies under it and the reply box are one thing, and they
-   read as one thing now: the entry wears the session sheet's plane (the
-   same 50% white frost the Settings and Messages panes lift on) with the
-   card inside it. Before this the bubbles and the box lay directly on the
-   strip, and where one item's thread ended and the next item's card began
-   was the hardest line on the screen to see. 4px between sheets — the
-   sheets carry the separation, the gap only has to admit there are two.
-
-   A LANDED CHANGE is a plain card too. It used to wear an emerald wash and
-   a 3px left edge as the feed's "the stream crossed a line" marker; its bar
-   says "✓ Live" and its edge is green (the card's own `[data-edge="ok"]`,
-   #3873), which is the same fact said once instead of three times. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-entry {
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
-  border-radius: 26px;
-  padding: 10px 10px 12px;
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
-}
-:is(#dev-workshop, #dev-kanban) .dev-feed-entry + .dev-feed-entry {
-  margin-top: 4px;
-}
-/* #1885: THE CARD SITS FLUSH in its sheet. The sheet's padding is for what
-   hangs UNDER the card — the thread, its reply box, "Open on its own page" —
-   and those keep it (their own margins are measured from it). The card itself
-   is pulled out to the sheet's edges, so opening a row no longer drops it into
-   a frosted frame, and it takes the sheet's corners so the two outlines are
-   one. With nothing under it the card is the whole sheet.
-
-   #1884: the sheet is the Board's too now. Its cards carry the thread and the
-   comment tail, and a reply box hanging on a column's background with no
-   container around it is not the same control the Workshop offers — it is a
-   third presentation of it. The `:only-child` rule is what keeps the Board's
-   quiet cards looking untouched: a card with nothing under it still covers
-   every edge of the sheet, so the frosting behind it never shows. What it
-   does pick up is the sheet's 26px corner in place of its own 22px, which is
-   the Workshop's open card exactly — one card, one open state. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
-  width: calc(100% + 20px);
-  margin: -10px -10px 0;
-  border-radius: inherit;
-}
-:is(#dev-workshop, #dev-kanban) .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
-  margin-bottom: -12px;
-}
 /* A reading column. The stream is one column of cards each with a thread
    under it; past ~760px a card's meta line and its bubbles were sentences
    too wide to read in one saccade, and the board strip beside them was
@@ -19071,99 +18688,11 @@ body.is-offline [data-offline-disabled] {
    smaller. One value, both cases. */
 #dev-body:has(> #dev-workshop) { padding-block: 8px var(--ws-gap, 8px); padding-inline: 4px; }
 
-/* ── Inline comments ───────────────────────────────────────────
-   The tail of a thread, indented under the row it belongs to, with no box
-   of its own — the indent and the muted type are the whole treatment. A
-   bordered comment card inside a de-carded row would put the chrome back
-   one level down.
-
-   Scoped to BOTH card hosts (#1884). The comment tail and the reply thread
-   below it used to be the Workshop's alone, so the same card opened from the
-   Board had neither; both surfaces draw them now, from the same fold, and
-   `:is()` takes its specificity from its most specific argument — so these
-   rules land at exactly the weight they had when the id stood alone, and
-   nothing in the cascade below them moves. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-comments:empty { display: none; }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comments {
-  padding-block: 0 0.5rem; padding-inline: 22px 0.75rem;
-}
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: rgb(82 82 91); /* zinc-600 */
-  padding: 0.15rem 0;
-}
-.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-main {
-  flex: 1;
-  min-width: 0;
-}
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-author {
-  font-weight: 500;
-  color: rgb(63 63 70); /* zinc-700 */
-}
-.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment-author { color: rgb(228 228 231); }
-/* The body sits INLINE after the author, like a chat line. Its markdown
-   arrives as block elements, so they are flattened back to inline here —
-   a paragraph per comment would otherwise put the text on its own line and
-   undo the compactness that makes this worth showing inline at all. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-body { display: inline; }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-body > * { display: inline; margin: 0; }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-time {
-  flex-shrink: 0;
-  margin-inline-start: auto;
-  font-size: 0.6875rem;
-  color: rgb(161 161 170); /* zinc-400 */
-}
-.dark :is(#dev-workshop, #dev-kanban) .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-more {
-  font-size: 0.6875rem;
-  color: rgb(161 161 170); /* zinc-400 */
-  padding: 0.15rem 0;
-}
-/* A long comment shows four lines and a "Show more" under them (#2556).
-   -webkit-line-clamp is the only cross-browser way to ellipsise at a line
-   COUNT; the standard `line-clamp` is listed alongside it, the same pair
-   this stylesheet already writes elsewhere.
-
-   The clamp is on a span WRAPPING the author and the body, not on the body:
-   the body renders inline after the name here (see the rule above), so
-   clamping it alone would count its first line from the wrong left edge.
-   The React comment surfaces reach the same four lines through Tailwind's
-   `line-clamp-4`; this one is hand-written because the slot is filled by
-   innerHTML from public/js/app-view.js, which is not React's to reconcile. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  overflow: hidden;
-}
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp.is-expanded {
-  display: block;
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
-  overflow: visible;
-}
-/* The control ships `hidden` and only a measurement reveals it, so the rule
-   that hides it has to be here rather than left to a utility that may or may
-   not win against the flex layout above. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle[hidden] { display: none; }
-:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle {
-  margin-top: 4px;
-  cursor: pointer;
-}
-
 /* ── The Activity feed's inline discussion ─────────────────────────────
-   Indented to the same 22px as #dev-workshop .dev-feed-comments above it, so
-   the GitHub preview and the app's own thread read as one comment area under
-   the row rather than as two separate blocks at different depths. The reply
-   box is the last line of it, at the same indent as the bubbles — the
-   viewer's reply joins the conversation it sits under. On a phone the
-   thread takes the sheet's full width. */
+   Indented 22px under the item it belongs to. The reply box is the last
+   line of it, at the same indent as the bubbles — the viewer's reply joins
+   the conversation it sits under. On a phone the thread takes the sheet's
+   full width. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-thread {
   margin-block: 6px 0; margin-inline: 22px 6px;
   display: flex;
@@ -19172,70 +18701,27 @@ body.is-offline [data-offline-disabled] {
 }
 @media (max-width: 639px) {
   :is(#dev-workshop, #dev-kanban) .dev-feed-thread { margin-inline-start: 0; margin-inline-end: 0; }
-  :is(#dev-workshop, #dev-kanban) .dev-feed-comments { padding-inline-start: 0; padding-inline-end: 0; }
 }
 /* "N earlier replies", first in the thread and aligned with the bubbles
    (22px avatar + 8px gap), so it reads as the top of the conversation. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-earlier { padding-inline-start: 30px; }
-/* One reply, as a bubble — the Messages row at the feed's scale (see
-   card/feed-thread.tsx MessageLine). The bubble is the card's white on the
-   sheet; the viewer's own take the accent tint, as their sent messages do. */
-.dev-feed-msg {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.4;
-}
-.dev-feed-msg-avatar {
-  flex: none;
+/* One reply: Messages' own row at the board's size (card/feed-thread.tsx
+   MessageLine, messages/message-row-view.tsx MessageRowView `compact`): a 22px
+   face, the name and the age above a bubble whose words are 12.5px. The
+   bubble rules are the conversation's own (`.messages-message-bubble`,
+   ONE LOOK below); these only take them down to the card's scale. */
+html:root .messages-message.messages-message-bubble.messages-message-compact { gap: 8px; padding: 0; font-size: 12.5px; line-height: 1.4; }
+html:root .messages-message.messages-message-bubble.messages-message-compact > :is(span[aria-hidden], img):first-child {
+  flex: 0 0 22px;
   width: 22px;
   height: 22px;
-  margin-top: 4px;
-  border-radius: 999px;
-  color: #fff;
+  margin-top: 2px;
   font-size: 10px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
-.dev-feed-msg-bubble {
-  min-width: 0;
-  max-width: 85%;
-  padding: 7px 12px 8px;
-  border-radius: 16px;
-  background: var(--bg-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-.dev-feed-msg-mine .dev-feed-msg-bubble { background: var(--accent-tint); }
-.dev-feed-msg-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 6px;
-  align-items: baseline;
-  min-width: 0;
-  margin-bottom: 1px;
-}
-/* QA 2026-09-24 Q22: the head stays inside its bubble. A GitHub comment's
-   head is a name, a tag and a stamp that can carry a year ("Mar 5, 2024,
-   09:15 AM"), and on a 360px phone the three in one unbreakable row ran past
-   the bubble and widened the page. Now the name ends in an ellipsis before
-   the stamp is pushed out, and past the 6em basis the stamp takes a second
-   line of the head rather than leaving it. */
-.dev-feed-msg-author {
-  flex: 1 1 6em;
-  min-width: 0;
-  max-width: max-content;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
-.dev-feed-msg-text { color: var(--text-primary); }
+html:root .messages-message.messages-message-bubble.messages-message-compact > .messages-bubble-wrap { gap: 2px; }
+html:root .messages-message.messages-message-bubble.messages-message-compact .messages-message-head { min-height: 0; padding-inline: 2px; gap: 0 6px; font-size: 12.5px; line-height: 18px; }
+html:root .messages-message.messages-message-bubble.messages-message-compact .messages-message-head :is(time, time ~ span) { font-size: 11.5px; }
+html:root .messages-message.messages-message-bubble.messages-message-compact .messages-bubble-wrap > .messages-bubble { max-width: 92%; padding: 6px 10px; font-size: 12.5px; line-height: 1.4; }
 /* The reply box is Messages' own (one message box, 27 Nov 2026;
    feed-thread.tsx FeedReplyComposer), drawn inside the card with no chat
    foot's bar round it: a little air over it, and its menus over the card. */
@@ -21038,8 +20524,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-topic-hero-summary { font-size: 16px; }
   .dev-step-vote-bar { flex-basis: 120px; }
 }
-/* The Workshop row's two-line preview names the spec after the sentence. */
-.dev-feed-comment-spec { display: block; margin-top: 2px; font-weight: 600; color: var(--text-primary); }
 #dev-topic-thread #gc-thread-messages {
   margin: 4px 0 0;
   max-width: 900px;
@@ -21074,62 +20558,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
 }
 #dev-topic-thread #gc-thread-messages > .text-xs { text-align: center; color: var(--text-muted); }
-/* A message as a bubble: the swatch avatar outside, the white bubble with
-   the author and the age on its first line, the viewer's own in the accent
-   tint — the Activity feed's row, at reading size. */
-#dev-topic-thread .gc-msg {
-  padding: 0;
-  gap: 8px;
-  align-items: flex-start;
-}
-#dev-topic-thread .gc-msg:hover { background: transparent; }
-#dev-topic-thread .gc-msg > .min-w-0 {
-  flex: 0 1 auto;
-  max-width: 85%;
-  padding: 8px 12px 9px;
-  border-radius: 16px;
-  background: var(--bg-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-#dev-topic-thread .gc-msg-self > .min-w-0 { background: var(--accent-tint); }
-/* A change's Discussion speaks the general chat's language (group-chat.js
-   `language: 'chat'`): the transcript draws the bubbles itself, the
-   viewer's own in the accent bubble, so the topic page's own bubble dressing
-   above stands down there — the row is the Messages screen's row. */
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg { padding: 8px 16px; gap: 12px; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 {
-  flex: 1 1 0%;
-  max-width: 100%;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg-self > .min-w-0 { background: transparent; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg > [aria-hidden="true"] { width: 44px; height: 44px; font-size: 17px; border-radius: 12px; margin-top: 0; }
-/* The editor needs the row's available width, not the bubble's intrinsic
-   text width. Save and Cancel clear data-editing and restore bubble sizing. */
-#dev-topic-thread .gc-msg[data-editing="1"] > .min-w-0 {
-  flex: 1 1 0%;
-  max-width: 100%;
-}
-#dev-topic-thread .gc-msg > .min-w-0 > .flex { gap: 6px; margin-bottom: 2px; }
-#dev-topic-thread .gc-msg > .min-w-0 > .flex > .truncate { font-size: 14px; }
-#dev-topic-thread .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12.5px; }
-#dev-topic-thread .gc-msg > .min-w-0 > .leading-snug { font-size: 15px; }
-#dev-topic-thread .gc-msg > [aria-hidden="true"] { width: 26px; height: 26px; font-size: 11px; border-radius: 999px; margin-top: 6px; }
-/* (#5165) Grouped gutter follows the 26px bubble avatar, so a continuation bubble lines up under the first one. */
-#dev-topic-thread .gc-msg[data-grouped] > .gc-msg-gutter { width: 26px; }
-#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg[data-grouped] > .gc-msg-gutter { width: 44px; }
 #dev-topic-thread .gc-msg-system { padding: 2px 12px; font-size: 12px; }
 #dev-topic-thread .gc-msg-system-repeat { color: var(--text-faint); }
-@media (max-width: 639px) {
-  #dev-topic-thread .gc-msg > .min-w-0 { max-width: 100%; }
-}
 /* ═══════════════════════════════════════════════════════════════════════
    #4453: A REQUEST'S PAGE, drawn as a Messages reply thread
    (group-chat/thread-shell.tsx `RequestShell`). The "‹ Workshop" chip, then
@@ -21442,49 +20872,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: block;
 }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"])::before { content: none; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg { padding: 8px 16px; gap: 12px; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] { padding-top: 1px; padding-bottom: 1px; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 {
-  flex: 1 1 0%;
-  max-width: 100%;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-self > .min-w-0 { background: transparent; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-username-self { color: inherit; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { column-gap: 8px; row-gap: 0; margin-bottom: 0; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; line-height: 1.3; }
-/* (#112, phone review 23 Nov 2026) Homeroom bot's logo is an <img>, not an
-   aria-hidden tile, so it kept its 44px and its words started 8px further in
-   than everyone else's. Every sender's face is the same 36px here. */
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
-  width: 36px;
-  height: 36px;
-  font-size: 13px;
-  border-radius: 12px;
-  margin-top: 0;
-}
-/* (#5165) The grouped row's gutter span keeps Tailwind's w-11 (44px) while
-   this surface draws a 36px avatar, so every line after the first is indented
-   8px. Match the gutter to the avatar so the text lines up under it. */
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] > .gc-msg-gutter { width: 36px; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-time { font-size: inherit; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content {
-  font-size: 17px;
-  line-height: 1.3;
-  color: var(--text-primary);
-}
-/* Messages' own desktop scale: 15 over 13, the words at 15. */
-@media (min-width: 768px) {
-  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 15px; }
-  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 13px; }
-  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug,
-  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content { font-size: 15px; line-height: 1.4; }
-}
 .gc-msg-via { color: var(--text-muted); white-space: nowrap; }
 /* Something that happened: one muted line, its glyph in the avatar column. */
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .dev-request-event,
@@ -21854,9 +21241,8 @@ p.dev-change-issue-pointer {
 
 /* ── The Workshop ──────────────────────────────────────────────────
    features/dev-board/workshop/workshop.tsx. The lander's own chrome:
-   the strips above the themes, the theme cards, the folded rows inside
-   them. An UNFOLDED row is `.dev-feed-entry` and takes the sheet rules
-   above unchanged; what follows is only what surrounds it. Colours come
+   the strips above the themes, the theme cards, the rows inside them.
+   Colours come
    from the same tokens the session sheet and the cards read, so the
    Workshop is the board's language and not a second one. */
 .dev-ws { display: flex; flex-direction: column; gap: 10px; }
@@ -24318,23 +23704,12 @@ button.dev-ws-recent-card {
    the Resume strip go under the scrim with everything else (see "ABOVE THE
    BARS" below).
 
-   KEYED ON `.dev-ws-sheet-modal`, AND NOT ON `.dev-ws-sheet`, WHICH IS A
-   DIFFERENT OBJECT. `.dev-ws-sheet` is the OPEN CARD — the sheet a folded
-   row unfolds into (card/fold.tsx, `.dev-ws-rowwrap-open > .dev-ws-sheet >
-   .gc-vote-item`), and it has carried that name since the Workshop shipped;
-   two declared checks select it that way. #2080 gave the deck's three
-   dialogs the same bare class, so this rule landed on every unfolded card on
-   every Workshop surface: the card left its column or its strip, became a
-   full-viewport `position: fixed` box at `z-index: 30` painting its own fill
-   over the board, and swallowed every click underneath it. That is "the
-   whole board goes opaque and stops responding" on By stage and By category,
-   and "the card opens but the layout is wrong" on Current status — one rule,
-   three screens.
-
-   So the deck's dialogs carry a base class of their own and the bare name
-   stays the fold's. The `.dev-ws-sheet-*` PARTS below (card, handle, head,
-   title, sub, x, body) are the deck's either way — they appear in no folded
-   card — as are the breakpoint rules further down, which were already keyed
+   KEYED ON `.dev-ws-sheet-modal`. The bare `.dev-ws-sheet` was the open
+   board card's class (#2080 once gave the deck's dialogs the same bare
+   class, and this rule landed on every unfolded card); the open card is
+   gone, and the deck's dialogs keep a base class of their own. The
+   `.dev-ws-sheet-*` PARTS below (card, handle, head, title, sub, x, body)
+   are the deck's, as are the breakpoint rules further down, which are keyed
    on the -vote / -ask / -comments modifiers. */
 /* The floor lifts by what the on-screen keyboard took, so the field being
    typed into is above the keys rather than under them.
@@ -26795,7 +26170,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-cnt-fresh b { color: var(--accent); }
 .dev-ws-theme-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-muted); position: relative; }
 .dev-ws-chev { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; transition: transform .18s ease; }
-.dev-ws-theme-open > .dev-ws-theme-head .dev-ws-chev, .dev-ws-row-open > .dev-ws-chev { transform: rotate(90deg); }
+.dev-ws-theme-open > .dev-ws-theme-head .dev-ws-chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .dev-ws-chev { transition: none; } }
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dev-ws-chev { transition: none; }
@@ -26830,90 +26205,23 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-lane-n { font-variant-numeric: tabular-nums; color: var(--text-primary); }
 .dev-ws-lane-title[aria-expanded="true"] > .dev-ws-chev { transform: rotate(90deg); }
 .dev-ws-lane-title > .dev-ws-chev { width: 14px; height: 14px; }
-.dev-ws-rowwrap { margin-bottom: 4px; }
-/* ── The row IS the card, folded ─────────────────────────────
-   It used to be a grey strip on the sheet, which made an unfolded row read
-   as two objects: the strip, and a whole card painted under it repeating the
-   same title, number and author. Same sheet, border and radius as the entry
-   below it now, so opening one GROWS the thing you clicked (#1787). */
-.dev-ws-row {
-  /* A COLUMN, as the card is: the head (glyph + title) on one line and the
-     bar row under it spanning the whole card. It was a single row with the
-     glyph in its own column, which put the bar 30px in. */
-  width: 100%; text-align: start; display: flex; flex-direction: column; align-items: stretch;
-  /* The card's own chrome, value for value (`div:is(.dev-card-dense,
-     .dev-card-topic)` above): r22, 14px sides and top, 12px bottom, the 8px
-     glyph gap, no border, the same soft drop shadow. The row had a hairline
-     border, 9x10 padding, r12 and a 10px gap — four small differences that
-     made the two sizes of one item read as two objects. */
-  padding: 14px 14px 12px; border-radius: 22px; border: 0;
-  background: var(--dc-sheet);
-  color: var(--text-primary); font: inherit; cursor: pointer;
-}
-/* The hover FILL is the card's, applied as the card applies it: the same
-   `hover:bg-zinc-50 dark:hover:bg-zinc-800` utilities, on the row itself
-   (workshop.tsx). Two sizes of one object hovering to two different greys is
-   the same mismatch as two icons or two chip styles, and hard-coding the
-   colour here could not have fixed it — `zinc` is overridden in
-   tailwind.config.js, so a hex copied from the stock palette would be a
-   third grey rather than the card's. Only the border stays here. */
-.dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* -- The press ----------------------------------------------
-   Both sizes toggle on a click, and neither said so while the button was
-   down: the hover fill arrived on entry and nothing changed on press, so
-   closing an open card gave no feedback until it had already closed.
-
-   The exclusion list mirrors the two click guards in card/fold.tsx -- the
-   row ignores a press that started on an anchor or a button, and the open
-   card also ignores the thread, the comment list and the detail sections.
-   :active matches every ancestor of the pressed element, so without the
-   :not(:has(...)) a press on the Vote button would tint the whole card
-   behind it, for a press that toggles nothing. */
-/* The kit's scale-press, opted out of — like the list of opt-outs up at
-   `.members-vis-pill:active`, for a different reason. The
-   kit gives every button an instant scale on press; the row carries
-   role="button" so a keyboard can reach it and the open card is a plain
-   div, so the scale landed on ONE of the two sizes. That is the inset a
-   pressed folded row showed and a pressed open card did not. The two sizes
-   are one object: under press the fill changes and nothing else does, at
-   both. The brightness dim stays, as it does for the pills. */
-.dev-ws-row:active { transform: none; }
-.dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
-.dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
-  a:active, button:active, input:active, textarea:active, select:active,
-  .dev-feed-thread:active, .dev-feed-comments:active
-)) {
-  background: var(--dev-press);
-  /* Instant. The open card carries transition-colors, so the press colour
-     eased in over ~150ms while the row snapped to it -- a quick click was
-     released before the card had finished tinting, which is what made the
-     press read as no feedback and the release read as a flash. The return
-     to hover still eases, because that one is not feedback about a gesture. */
-  transition: none;
-}
 /* -- The press, on touch: held back until the finger settles (#1928) ------
    On a phone a card list is mostly scrolled, not tapped, and every scroll
-   starts as a touch on some card. Both press treatments above engage
-   instantly -- the fill here, and the kit's scale + brightness dim on every
-   role="button" card (the folded row, the session rows) -- so a flick down
-   the board flashed a pressed state on whichever card the finger landed on,
-   for a gesture that opened nothing. iOS lists wait a beat before
-   highlighting, so a touch that becomes a scroll never lights up.
+   starts as a touch on some card. The kit's scale + brightness dim on every
+   role="button" card engages instantly, so a flick down a list flashed a
+   pressed state on whichever card the finger landed on, for a gesture that
+   opened nothing. iOS lists wait a beat before highlighting, so a touch
+   that becomes a scroll never lights up.
 
    Same here: the press still engages with no easing, but after 120ms. A
    scroll clears :active well inside that, so the pending change is
    cancelled and nothing is drawn; a real tap is held longer and tints as
    before. `transition` on the :active rule is the one read on the way IN;
    the way out keeps each element's own easing. Touch only -- a mouse press
-   is never a scroll, so desktop keeps the instant feedback the rule above
-   exists for. Real buttons inside the cards (Vote, Preview) are untouched:
-   they are pressed on purpose. */
+   is never a scroll, so desktop keeps the instant feedback. Real buttons
+   inside the cards (Vote, Preview) are untouched: they are pressed on
+   purpose. */
 @media (hover: none) {
-  .dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
-  .dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
-    a:active, button:active, input:active, textarea:active, select:active,
-    .dev-feed-thread:active, .dev-feed-comments:active
-  )),
   #dev-forum-scroll [role="button"]:active {
     transition: background-color 0s linear 120ms, transform 0s linear 120ms, filter 0s linear 120ms;
   }
@@ -26937,71 +26245,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   }
 }
 .tc-se-card[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
-   tile and no fill, and the same 18px glyph. It used to be a 28px tinted
-   tile, which was the one part of the folded row that did not appear on the
-   card at all — so the two sizes of one item opened on a different mark.
-   The colour that tile was carrying is not lost: it moved to the left edge
-   below, which is where the card carries it. */
-/* The head: the card's `.dev-card-head`, at the row's gap. */
-.dev-ws-row-head { display: flex; align-items: center; gap: 8px; }
-.dev-ws-row-head > .dev-card-icon {
-  /* No margin: the card's glyph sits flush on the padding edge, and a 1px
-     nudge here made the two sizes of one item start on different pixels. */
-  flex-shrink: 0; align-self: flex-start;
-  width: 22px; height: 22px; background: transparent; border-radius: 0;
-}
-.dev-ws-row-head > .dev-card-icon > svg { width: 18px; height: 18px; }
-
-/* ── The row's left edge ──
-   The card's own spine (`div:is(.dev-card-dense, .dev-card-topic)[data-edge]`
-   above), on the row, from the same model field and the same tokens: blue
-   while a vote is open, violet while merging, amber behind main, red on a
-   conflict, green once merged. A folded row and its card now agree on their
-   colour, which is what makes the fold read as a fold. */
-.dev-ws-row {
-  --dev-edge-w: 4px;
-  --dev-edge: transparent;
-  padding-inline-start: calc(14px + var(--dev-edge-w));
-  /* An inset shadow and a 33% mix, exactly as the card draws it: the same
-     4px at the same strength, following the same corner arc, taking no
-     layout, over the same drop shadow. A border here would have been a
-     different mark at a different weight — which is the whole thing this
-     row is trying to stop being. */
-  box-shadow:
-    inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.06);
-}
-.dev-ws-row[data-edge="vote"]      { --dev-edge: var(--accent); }
-.dev-ws-row[data-edge="progress"]  { --dev-edge: var(--state-progress); }
-.dev-ws-row[data-edge="attention"] { --dev-edge: var(--state-attention); }
-.dev-ws-row[data-edge="blocked"]   { --dev-edge: var(--state-blocked); }
-.dev-ws-row[data-edge="ok"]        { --dev-edge: var(--state-ok); }
-.dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
-/* The title takes the head's remaining width, as `.dev-card-title` does
-   on the card. It used to sit in a `.dev-ws-row-main` column with the meta
-   line, which is what held the meta line 30px in: the card puts its meta
-   line at the padding edge, under the glyph, not beside it. */
-.dev-ws-row-head > .dev-ws-row-title { flex: 1; min-width: 0; }
-/* 1.35, the dense card's leading (:is(.dev-card-dense, .dev-card-topic)
-   .dev-card-title above). The row was 1.3, so a two-line title set slightly
-   tighter folded than open — the same words on a different grid. */
-.dev-ws-row-title { font-size: 14px; line-height: 1.35; }
-/* The card's own meta line (dev-card.tsx metaLineNodes), at the card's
-   sizes: 12.5px on 21px lines, wrapping, the number a link, the tags and
-   the linked-issue chips in the card's chip geometry. Keep these in step
-   with `:is(.dev-card-dense, .dev-card-topic) .dev-card-meta` above. */
-/* The card's own tab, by the card's own rule: `:is(.dev-card-dense,
-   .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
-   above sets the meta line 30px in so it starts under the title rather than
-   under the glyph — and only when there IS a glyph. Same 30px, same
-   condition, so a change to one keeps the other. The status row below takes
-   no tab, at either size: it is the full-width line. */
-.dev-ws-row-head:has(> .dev-card-icon) + .dev-ws-row-meta { padding-inline-start: 30px; }
-.dev-ws-row-meta { display: block; font-size: 12.5px; line-height: 21px; color: var(--text-muted); min-width: 0; margin-top: 0; white-space: normal; }
-.dev-ws-row-meta > .dev-badge { height: 19px; font-size: 11.5px; vertical-align: middle; margin-inline-start: 4px; }
-.dev-ws-row-meta > .dev-badge.font-mono { font-size: 11px; }
-.dev-ws-row-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 /* ── The row's last line ─────────────────────────────────────
    The card's status row and facts row in one: a chip of the bar's state,
    the state chips, the message count, and the vote button at the right end
@@ -27031,89 +26274,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    and its words ellipsise inside a whole pill. */
 .dev-ws-row-band > .dev-badge { flex: 0 1 auto; min-width: 0; overflow: hidden; height: 19px; font-size: 11.5px; }
 .dev-ws-row-band > .dev-badge > :not(.dev-badge-label):not(.dev-badge-name) { flex-shrink: 0; }
-/* ── The fold mark ───────────────────────────────────────────
-   Which SIZE the item is at, at the top right of the row and of the card
-   (card/fold.tsx FoldMark). The same two chevrons on both; on the open card
-   they are pushed apart with a bar between them, so the mark stretches when
-   the card does and nothing rotates: a chevron that turns promises a
-   direction (the accordion's down → up, the tree's right → down) and the
-   Vote button's ▾ on this same card already means a menu. Absolutely placed
-   so it takes no width from the row's last line — the Vote button there
-   reaches the right edge, as the card's bar row does — and only the title
-   keeps clear of it. right: 14px puts its right edge over the hamburger's
-   in the band below; top: 15px centres it on the title's first line. */
-.dev-ws-row, .dev-ws-sheet > div:is(.dev-card-dense, .dev-card-topic) { position: relative; }
-.dev-ws-row-title, .dev-ws-sheet .dev-card-title { padding-inline-end: 22px; }
-.dev-fold-mark {
-  position: absolute; top: 15px; inset-inline-end: 14px; width: 16px; height: 16px; display: block;
-  padding: 0; margin: 0; border: 0; background: transparent; color: var(--text-faint); line-height: 0;
-}
-button.dev-fold-mark { cursor: pointer; color: var(--accent); border-radius: 4px; }
-button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dev-fold-mark > svg { width: 16px; height: 16px; display: block; }
-/* The geometry is transforms on the three paths, in the SVG's own units (a
-   CSS px is one user unit on an SVG element): open, the chevrons sit 2
-   units further out and the bar between them is drawn; closed, the bar is
-   scaled to nothing about its middle. Declared as end states, and ALSO as
-   keyframes on the open card, so the stretch plays once when it mounts. */
-.dev-fold-mark path { transform-box: view-box; transform-origin: 12px 12px; }
-.dev-fold-mark .dev-fold-bar { transform: scaleY(0); }
-.dev-fold-mark[data-open="1"] .dev-fold-top { transform: translateY(-2px); animation: dev-fold-top .15s ease both; }
-.dev-fold-mark[data-open="1"] .dev-fold-bottom { transform: translateY(2px); animation: dev-fold-bottom .15s ease both; }
-.dev-fold-mark[data-open="1"] .dev-fold-bar { transform: scaleY(1); animation: dev-fold-bar .15s ease both; }
-@keyframes dev-fold-top { from { transform: translateY(0); } to { transform: translateY(-2px); } }
-@keyframes dev-fold-bottom { from { transform: translateY(0); } to { transform: translateY(2px); } }
-@keyframes dev-fold-bar { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-@media (prefers-reduced-motion: reduce) { .dev-fold-mark path { animation: none; } }
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .dev-fold-mark path { animation: none; }
-
-.dev-ws-new {
-  margin-inline-start: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
-  padding: 1px 5px; border-radius: 6px; vertical-align: middle;
-}
-/* A card the server has themes for but has not placed yet: on its way, not unfit. */
-.dev-ws-placing {
-  margin-inline-start: 6px; font-size: 10px; font-weight: 600; color: var(--text-muted);
-  border: 1px dashed currentColor; padding: 0 5px; border-radius: 6px; vertical-align: middle; opacity: .8;
-}
-/* ── Open: the card, at the size the Board draws it ─────────
-   There is nothing to join here any more. The wrapper renders EITHER the
-   compressed row or this entry, never both, so the entry keeps the ordinary
-   `#dev-workshop .dev-feed-entry` sheet (above) and the dense card inside it
-   keeps every bit of chrome the Board gives it: the 36px icon, the meta line,
-   the full-width status bar, the facts line, the menu.
-
-   #1799 did the opposite — it kept the row as a head and hid the card's head,
-   meta and status band so they would not repeat it. That made the open state a
-   third object belonging to neither size. Those four rules are gone rather
-   than adjusted; the row IS the compressed representation of this card, and
-   the way to show the card is to show the card. */
-/* ── "Open card", and what it opens ────────────────────────
-   The toggle sits in the card's action band, after its own pills and before
-   the hamburger (card/dev-card.tsx's `actionEnd`), on the Workshop and the
-   Board alike; on the Board it is a link to the item's page.
-
-   On the Workshop it reveals the topic screen's own sections — the ledger,
-   the About sheet with its before/after tiles, the transcript — drawn by the
-   same components from the same view model, indented under the card so a
-   reader can see where the item ends. Not the comment threads: the sheet
-   already carries both, above and below this block. */
-.dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
 /* The row's vote button, at the right end of its last line (.dev-ws-row-band). */
 .dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
-/* ── The Board's columns fold their cards too (#1787) ─────────
-   The same row, the same sheet and the same fold (card/fold.tsx), inside a
-   kanban column. The column's own `space-y-2` (4px, see #dev-kanban above)
-   is the rhythm between rows, so the wrapper's 4px is not added to it. The
-   open card is the column's tile as it always was; the sheet around it is
-   transparent here — the Workshop's frosted plane is scoped to #dev-workshop
-   on purpose — and it draws nothing else: the Board's "Open card" is itself
-   the link to the item's page, so the sheet has no line under the card. */
-#dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
-#dev-kanban[data-cards-open] > .dev-kanban-col > .dev-kanban-lead { margin: 0 2px 8px; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
 
 /* Illustration variants share one frame; only visibility changes with theme. */
@@ -33614,11 +32778,6 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   html:root #dev-topic-thread .dev-rail-time { font-size: 0.8125rem; }
   html:root #dev-topic-thread :is(.dev-rail-pile-more, .dev-rail-desc, .dev-rail-note) { font-size: 0.8125rem; }
   html:root #dev-topic-thread .dev-rail-name { font-size: 0.9375rem; }
-  /* The replies, as Messages draws a row: 15 over 13. */
-  html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 0.9375rem; }
-  html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 0.8125rem; }
-  html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug,
-  html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content { font-size: 0.9375rem; line-height: 1.4; }
 }
 
 /* ── THE FACES THE PAGES NAME: Geist for words (--wip-font, --site-sans),
@@ -34706,11 +33865,10 @@ html:root .messages-message.messages-message-bubble.messages-message-saved .mess
 html:root body:has(#messages-screen:not(.hidden)) #platform-header .nav-drawer-title:has(> .nav-drawer-title-page:empty) { margin-top: -10px; }
 
 /* ── A request's replies: the same stream, inside the stream's own card ── */
-/* features/group-chat/transcript.tsx draws a request's (and a change's) replies as `.gc-msg` rows in `.dev-request-
-   stream`, under the "30 replies" line of #gc-thread-messages, the card the page already gives the stream. They take
-   the conversation's sides: theirs on the left (round face, name and time, the words in cream), yours on the right
-   (the time alone, the words in sky tint). Homeroom bot's own rows keep the flat named row, as in Messages: its cards
-   and laid-out answers would not fit a bubble. The page's other cards are the project area's. */
+/* features/group-chat/transcript.tsx draws a request's (and a change's) replies in `.dev-request-stream`, under the
+   "30 replies" line of #gc-thread-messages, the card the page already gives the stream. They are Messages' own rows
+   (messages/message-row-view.tsx MessageRowView) with a conversation's sides, drawn by the bubble rules above: theirs on
+   the left, yours on the right. Homeroom bot's own rows keep the flat named row, as in Messages. */
 html:root #messages-screen .messages-reply-pane .messages-reply-count,
 html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count {
   gap: 10px;
@@ -34724,52 +33882,6 @@ html:root #messages-screen .messages-reply-pane .messages-reply-count::before,
 html:root #messages-screen .messages-reply-pane .messages-reply-count::after,
 html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count::before,
 html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count::after { content: ''; flex: 1 1 0; height: 1px; background: var(--one-line); }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg { gap: 10px; padding: 7px 16px; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] { padding-block: 1px; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
-  width: 32px;
-  height: 32px;
-  border-radius: 9999px;
-  font-size: 14px;
-}
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] > .gc-msg-gutter { width: 32px; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { padding-inline: 4px; column-gap: 8px; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 15px; font-weight: 600; line-height: 20px; color: var(--one-ink); }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12px; line-height: 20px; color: var(--one-ink-2); }
-/* The words in a bubble, theirs cream with its first corner square. */
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) {
-  width: fit-content;
-  max-width: 88%;
-  margin-top: 3px;
-  padding: 8px 12px;
-  border-radius: 16px;
-  border-start-start-radius: 4px;
-  background: var(--one-bubble-in);
-  color: var(--one-ink);
-  font-size: 1rem;
-  line-height: 1.375rem;
-  overflow-wrap: anywhere;
-}
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped]:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) { margin-top: 0; border-radius: 16px; }
-/* Yours: on the right, no face and no name, the time over sky tint. */
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self { flex-direction: row-reverse; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > :is([aria-hidden="true"], [data-bot-avatar], .gc-msg-gutter) { display: none; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 { display: flex; flex-direction: column; align-items: flex-end; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > .flex { justify-content: flex-end; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > .flex > .truncate:has(.gc-msg-username-self) {
-  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
-}
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > :not(.flex) { display: flex; flex-direction: column; align-items: flex-end; max-width: 100%; }
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self .gc-msg-content:not(:empty) {
-  max-width: 82%;
-  border-radius: 16px;
-  border-start-end-radius: 4px;
-  background: var(--one-bubble-out);
-}
-html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self[data-grouped] .gc-msg-content:not(:empty) { border-radius: 16px; }
-@media (min-width: 768px) {
-  html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) { font-size: 0.9375rem; line-height: 1.3125rem; }
-}
 /* ── END ONE LOOK · MESSAGES AND THREADS ── */
 
 /* ── ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
@@ -35716,6 +34828,11 @@ html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in {
   font-weight: 600;
   white-space: nowrap;
 }
+/* A visitor's reply field under a thread's replies: the member's reply box,
+   a smaller blank face at its start and "Sign in to post" at its end. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply.dh-reply-door { margin: 0; padding-inline: 6px; border: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-door > span.dh-face-blank[aria-hidden="true"] { width: 28px; height: 28px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-door > .dh-composer-hint { font-size: 14px; }
 /* Editing your own post or reply in place: the same field, Save and Cancel under it. */
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit > .dh-box {

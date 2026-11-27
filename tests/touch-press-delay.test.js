@@ -13,9 +13,9 @@
 //   - it covers all three properties the press changes — background-color
 //     (our fill), transform and filter (the kit's) — or one of them still
 //     flashes;
-//   - it reaches the folded row, the open card, and every role="button" card
-//     in the board's scroll container (the session rows);
-//   - the instant desktop press rule is still there, untouched.
+//   - it reaches every role="button" card in the board's scroll container
+//     (the session rows). The folded row and the open card it also reached
+//     went with the fold, and with them the instant desktop fill rule.
 //
 // Run with: node --test tests/touch-press-delay.test.js
 
@@ -58,10 +58,10 @@ test('the delay covers the fill, the scale and the dim', () => {
   }
 });
 
-test('it reaches the folded row, the open card and the board\'s role="button" cards', () => {
-  assert.match(pressBlock, /\.dev-ws-row:active:not\(:has\(/);
-  assert.match(pressBlock, /\.dev-ws-rowwrap-open \.gc-vote-item:active:not\(:has\(/);
+test('it reaches the board\'s role="button" cards', () => {
   assert.match(pressBlock, /#dev-forum-scroll \[role="button"\]:active/);
+  // The fold's row and open card are gone, and so are their selectors here.
+  assert.doesNotMatch(pressBlock, /\.dev-ws-row:active|\.dev-ws-rowwrap-open/);
   // The :has() exclusion lists name button:active on purpose; strip them
   // before asking whether a bare `button:active` selector was delayed.
   const selectors = pressBlock.replace(/:not\(:has\([\s\S]*?\)\)/g, '');
@@ -69,9 +69,8 @@ test('it reaches the folded row, the open card and the board\'s role="button" ca
     'real buttons keep their instant press');
 });
 
-test('desktop keeps the instant press', () => {
-  // Outside any media query, the press rule still says `transition: none`.
+test('the fold\'s instant desktop fill went with the fold', () => {
+  // It tinted the folded row and the open card on press; neither exists.
   const outside = CSS.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
-  assert.match(outside,
-    /\.dev-ws-rowwrap-open \.gc-vote-item:active:not\(:has\([\s\S]*?\)\) \{\s*background: var\(--dev-press\);[\s\S]*?transition: none;\s*\}/);
+  assert.doesNotMatch(outside, /\.dev-ws-rowwrap-open \.gc-vote-item:active/);
 });

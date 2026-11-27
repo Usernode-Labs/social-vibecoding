@@ -139,8 +139,11 @@ test('the backdrops stay, transparent — they are the click target', () => {
     assert.match(m[1], /fixed inset-0 z-40/, `#${overlay} still covers the page`);
     assert.doesNotMatch(m[1], /bg-black/,
       `#${overlay} must not paint the dim — #${id} casts it instead`);
+    // The Homeroom menu's and Notifications' taps are the Sheet's scrim rule
+    // now (lib/sheet.ts), spread onto the overlay.
     assert.match(file, new RegExp(`id="${overlay}"[\\s\\S]{0,400}?onClick=\\{close\\}|`
-      + `id="${overlay}"[\\s\\S]{0,400}?onClick=`), 'and still dismisses on click');
+      + `id="${overlay}"[\\s\\S]{0,400}?onClick=|`
+      + `id="${overlay}"[\\s\\S]{0,400}?\\{\\.\\.\\.sheet\\?\\.scrimProps\\}`), 'and still dismisses on click');
   }
 });
 

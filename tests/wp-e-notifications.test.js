@@ -205,3 +205,48 @@ test('opens are counted from the page\'s own reads, once per person, never from 
   assert.match(read('src/services/ws.js'),
     /const hello = postedVia !== 'agent'\s*\? require\('\.\/invite-activity'\)\.noteFirstMessage\(pool, \{/);
 });
+
+// #7272: a first message is counted anywhere in the project, so a question on
+// a request is not a greeting. Where it was written decides the words, in the
+// bell and on a phone; the channel keeps "Said hi".
+test('#7272: a first message says where it was written', () => {
+  const message = 'Why are we waiting for?';
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: message, threadType: 'issue', threadRef: '212' }),
+    { label: 'Wrote on #212', subject: message, by: 'sam' });
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: message, threadType: 'session', threadRef: '31' }),
+    { label: 'Commented on a change', subject: message, by: 'sam' });
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: message, threadType: 'governance', threadRef: '7' }),
+    { label: 'Commented on a decision', subject: message, by: 'sam' });
+  // The channel, a request thread with no usable number, a folded row and the
+  // asked-for-a-change row are as they were.
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: 'Hello everyone!' }),
+    { label: 'Said hi', subject: 'Hello everyone!', by: 'sam' });
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: message, threadType: 'issue', threadRef: 'nope' }),
+    { label: 'Said hi', subject: message, by: 'sam' });
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: '3', sourceUsername: 'sam', messageContent: 'hello!', threadType: 'issue', threadRef: '212' }),
+    { label: 'Said hi, with 2 others', subject: 'hello!', by: 'sam' });
+  assert.deepEqual(
+    bellRow({ kind: 'first_message', detail: null, sourceUsername: 'sam', messageContent: message, threadType: 'issue', threadRef: '212', requestNumber: 212 }),
+    { label: 'Asked for a change', subject: message, by: 'sam' });
+
+  // The phone says the same words.
+  const copy = (extra) => policy.buildNotificationCopy('first_message', { appName: 'Run Club', sourceUsername: 'sam', messageContent: message, ...extra });
+  assert.deepEqual(copy({ messageThreadType: 'issue', messageThreadRef: '212' }),
+    { title: '@sam wrote on #212 in Run Club', body: message });
+  assert.deepEqual(copy({ messageThreadType: 'session', messageThreadRef: '31' }),
+    { title: '@sam commented on a change in Run Club', body: message });
+  assert.deepEqual(copy({ messageThreadType: 'governance', messageThreadRef: '7' }),
+    { title: '@sam commented on a decision in Run Club', body: message });
+  assert.deepEqual(copy({ messageThreadType: 'issue', messageThreadRef: '212', appName: null }),
+    { title: '@sam wrote on #212', body: message });
+  assert.deepEqual(copy({}),
+    { title: '@sam said hi in Run Club', body: message });
+  assert.deepEqual(copy({ messageThreadType: 'issue', messageThreadRef: 'nope' }),
+    { title: '@sam said hi in Run Club', body: message });
+});

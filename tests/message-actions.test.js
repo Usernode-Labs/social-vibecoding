@@ -115,17 +115,23 @@ test('the hover bar keeps its place on an ordinary row and clears a continuation
     assert.ok(at >= 0, `${selector} is in app.css`);
     return css.slice(at, css.indexOf('}', at));
   };
-  for (const selector of ['.gc-msg-actions', '.messages-message-actions']) {
+  // Dedupe step 2: every row draws the one bar in Messages' place
+  // (`.messages-message-actions`); the app chat's own copy of the rules
+  // (`.gc-msg-actions`) went with its row.
+  assert.ok(!css.includes('.gc-msg-actions'), 'no second placement');
+  for (const selector of ['.messages-message-actions']) {
     const body = rule(selector);
     assert.match(body, /top:\s*calc\(-1 \* var\(--msgx-bar-lift,\s*16px\)\)/,
       `${selector} keeps the bar's old place unless a continuation row lifts it`);
     assert.doesNotMatch(body, /bottom:\s*calc\(100%/, `${selector} is not floated clear of the row`);
   }
-  const below = rule('.gc-msg-actions.msgx-bar-below');
+  const below = rule('.messages-message-actions.msgx-bar-below');
   assert.match(below, /top:\s*calc\(100% \+ 4px\)/, 'the below placement sits under the row');
   // The bridge across the gap, and the beside-the-name variant keeping its
   // own place and no bridge.
-  assert.match(rule('.messages-message-actions::after,\n.gc-msg-actions::after'), /height:\s*6px/);
+  assert.match(rule('.messages-message-actions::after'), /height:\s*6px/);
+  // A notice and a shared plan carry the same bar, revealed on their hover.
+  assert.match(css, /\.gc-msg-system:hover > \.messages-message-actions,/);
   assert.match(rule('.messages-message-head > .messages-message-actions::after'), /content:\s*none/);
 
   // barLift: 16px for an ordinary row, and on a continuation row the 40px

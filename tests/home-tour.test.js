@@ -192,13 +192,15 @@ test("a press on the tour never dismisses the menu it is pointing into", () => {
   // popover closes on any click outside it. The tour's card sits outside it,
   // so Next counted as an outside click: the menu shut, the next step (which
   // needs it) fell back to the menu step, and Next on step 4 landed on
-  // step 3. The outside-click listener spares the tour's whole overlay.
+  // step 3. The outside press spares the tour's whole overlay: it is the
+  // Sheet's (lib/sheet.ts `outside`), and the island says what it spares.
   const MENU_SRC = read('frontend/src/features/app-context/index.tsx');
   assert.match(MENU_SRC, /const TOUR_ID = 'home-tour';/);
-  const onDoc = MENU_SRC.slice(MENU_SRC.indexOf('const onDoc = (event: Event) => {'));
-  const body = onDoc.slice(0, onDoc.indexOf('void AppContext.close();'));
+  assert.match(MENU_SRC, /outside: \{ inside: sparedFromOutside \}/);
+  const spared = MENU_SRC.slice(MENU_SRC.indexOf('function sparedFromOutside(target: Element): boolean {'));
+  const body = spared.slice(0, spared.indexOf('\n}\n'));
   assert.match(body, /const tour = document\.getElementById\(TOUR_ID\);/);
-  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
+  assert.match(body, /return !!\(mark\?\.contains\(target\) \|\| tour\?\.contains\(target\) \|\| firstSession\?\.contains\(target\)\);/);
   // And the id it spares is the overlay's root, which holds the card, the
   // shades and every button the tour draws.
   assert.match(OVERLAY_SRC, /ref=\{rootRef\}\s*id="home-tour"/);

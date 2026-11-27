@@ -288,7 +288,10 @@ test('it is a kit modal over the editor, presented the way the editor is', () =>
   // The Sheet (lib/sheet.ts) lifts the card into the kit's modal, flags the
   // root, and brings the card home before React removes it.
   assert.match(DIALOG, /const \{ rootRef, panelRef: cardRef \} = useSheet\(\{\s*kind: 'modal',\s*hugDesignWidth: true,/);
-  assert.match(SHEET_LIB, /home: 'placeholder'/);
+  // The Sheet's default home: a standing sheet (the Homeroom menu,
+  // Notifications) asks for 'body' instead, which this card does not.
+  assert.match(SHEET_LIB, /home = 'placeholder'/);
+  assert.doesNotMatch(DIALOG, /home: 'body'/);
   assert.match(SHEET_LIB, /adoptedOn: rootRef\.current \|\| undefined/);
   // Both kit-written nodes render a constant className.
   assert.match(DIALOG, /const ROOT_CLASS = '[^']*';/);

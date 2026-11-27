@@ -7,10 +7,11 @@
  *
  * ONE PAGE, NO TABS (the hand-off of 11 Nov 2026). Top to bottom:
  *
- *   All communities   the way back to Home.
+ *   All communities   the way back to Home, a white sticker chip.
  *   The project card  its picture (the preview loop, else the featured
  *                     illustration, else its icon), its name and what it
  *                     says it is, and three buttons (./project-card.tsx).
+ *                     Pressing the picture does what the first button does.
  *                     "Open <name>" where the app has a view for somebody
  *                     with no account (./guest-discover.tsx TryLink), else
  *                     "Sign up to open" with a line under it saying it needs
@@ -26,10 +27,10 @@
  *                     exists.
  *   The join card     "Made by the people who play it.", how many changes
  *                     went live this month, and Sign up to vote and suggest.
- *   Up for a vote     compact rows: a small before & after, the title, a
- *                     line of it, the tally and Vote. Two, then "N more up
- *                     for a vote". A row opens the change (GuestChange):
- *                     its before & after with a slider, and Join to vote.
+ *   Up for a vote     compact rows: a small after picture, the title and
+ *                     the tally. Two, then "N more up for a vote". A row
+ *                     opens the change (GuestChange): its before & after
+ *                     with a slider, and Join to vote.
  *   Recently live     the last three changes that went live, each with
  *                     when and who said yes ("Approved by community" when
  *                     more than one person did), and how many more did
@@ -84,6 +85,13 @@ export const LIVE_SHOWN = 3;
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 const SECTION = 'mt-8 md:mt-9';
+/**
+ * The page's way back, a white sticker chip (27 Nov 2026): the surface's
+ * white on the ink outline with the hard edge under it, drawn at 36px and
+ * 44px to a finger (`un-touch-target`). It was a 44px pill in the header's
+ * periwinkle tint, the header's own ink on a page that is not the header.
+ */
+export const BACK_CHIP = 'un-touch-target inline-flex h-9 items-center gap-1 self-start rounded-full bg-[var(--one-surface)] ps-2.5 pe-3.5 text-[14px] font-semibold text-[color:var(--one-ink)] shadow-[inset_0_0_0_1px_var(--one-edge-line),1.5px_1.5px_0_0_var(--one-edge-shade)]';
 const ROW_LINE = 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]';
 /** A list's closing row ("10 more up for a vote"): the plane under the rows. */
 const MORE_ROW = 'flex min-h-[56px] w-full items-center gap-3 bg-zinc-50 px-3.5 py-2 text-start dark:bg-zinc-800/60';
@@ -118,19 +126,19 @@ function TilePicture({ app, color, className }: { app: GuestApp; color: string; 
 }
 
 /**
- * One change up for a vote, as a row: its small before & after, its title
- * and a line of it, the tally and Vote. The row opens the change; Vote asks
- * to sign in for it. On a phone the tally is the row's second line and the
- * row ends in a chevron.
+ * One change up for a vote, as a row: its small after picture, its title,
+ * the tally under it and a chevron. The row opens the change, where Join to
+ * vote is. One form at every width: the rows sit in the side column from
+ * 768px (27 Nov 2026), which is no wider than a phone, so the wide row a
+ * 768 to 1023px window drew (a before & after badge, a line of the summary
+ * and a Vote button) has no window left to show in.
  */
-function VoteRow({ vote, app, color, last, signedIn, onOpen, onIntent }: {
+function VoteRow({ vote, app, color, last, onOpen }: {
   vote: GuestVote;
   app: GuestApp;
   color: string;
   last: boolean;
-  signedIn: boolean;
   onOpen: () => void;
-  onIntent: (i: GuestIntent) => void;
 }) {
   const t = useMessages('auth');
   const title = vote.title || t('auth:guest.project.untitledChange');
@@ -138,36 +146,19 @@ function VoteRow({ vote, app, color, last, signedIn, onOpen, onIntent }: {
   return (
     <div data-guest-vote={vote.id} className={cn('flex items-center gap-2 pe-3.5', last ? '' : ROW_LINE)}>
       <button type="button" data-guest-vote-open="" className="flex min-h-[72px] min-w-0 flex-1 items-center gap-3.5 py-2.5 ps-3.5 text-start" onClick={onOpen}>
-        <span className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-zinc-100 md:h-[70px] md:w-[112px] lg:h-[72px] lg:w-[72px] dark:bg-zinc-800">
+        <span className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800">
           {pic ? (
             <img src={pic} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover object-top" />
           ) : (
             <TilePicture app={app} color={color} className="h-full w-full" />
           )}
-          {vote.pictures?.before ? (
-            <span className="absolute bottom-1 start-1 hidden rounded-full bg-zinc-950/70 px-1.5 py-px text-[10px] font-bold text-white md:inline lg:hidden">
-              {t('auth:guest.project.beforeAfter')}
-            </span>
-          ) : null}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{title}</span>
-          {vote.summary ? <span className="hidden truncate text-[13px] leading-[18px] text-zinc-500 md:block lg:hidden dark:text-zinc-400">{vote.summary}</span> : null}
-          <span className="block text-[13px] leading-[18px] text-zinc-500 md:hidden lg:block dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
+          <span className="block text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
         </span>
-        <span className="hidden shrink-0 text-[13px] text-zinc-500 md:inline lg:hidden dark:text-zinc-400">{t('auth:guest.project.yes', { count: vote.yes })}</span>
-        <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-zinc-500 md:hidden lg:block dark:text-zinc-400" aria-hidden="true" />
+        <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
       </button>
-      {signedIn ? null : (
-        <button
-          type="button"
-          data-guest-vote-btn=""
-          className="hidden h-9 shrink-0 rounded-full bg-violet-100 px-[18px] text-sm font-bold text-violet-700 hover:bg-violet-200 md:inline-flex md:items-center lg:hidden dark:bg-violet-950 dark:text-violet-300 dark:hover:bg-violet-900"
-          onClick={() => onIntent({ kind: 'vote', app, change: title })}
-        >
-          {t('auth:guest.project.vote')}
-        </button>
-      )}
     </div>
   );
 }
@@ -219,7 +210,7 @@ export function GuestChange({ vote, app, signedIn = false, onBack, onIntent }: {
         type="button"
         data-guest-change-back=""
         aria-label={t('auth:guest.project.change.back', { project: app.name })}
-        className="inline-flex h-11 items-center gap-1 self-start rounded-full bg-[color:var(--brand-tint)] px-3.5 text-[15px] font-semibold text-[color:var(--brand-ink)]"
+        className={BACK_CHIP}
         onClick={onBack}
       >
         <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
@@ -306,7 +297,8 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   /** The landing's pill class. The card draws its own buttons now; kept so callers need not change. */
   primaryClass?: string;
   onIntent: (intent: GuestIntent) => void;
-  onOpenInside: (app: GuestApp) => void;
+  /** Open the app in the page's own viewer; `from` is what was pressed (Open, or the card's picture), for the app to grow out of. */
+  onOpenInside: (app: GuestApp, from?: HTMLElement | null) => void;
   onShare: (app: GuestApp) => void;
   /** The All communities chip: back to Home. */
   onAllCommunities?: () => void;
@@ -406,10 +398,21 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   }
 
   const openLabel = t('auth:guest.project.openNamed', { project: app.name });
+  // Whether Open keeps the app inside Homeroom (TryLink): then the picture does too.
+  const openInside = signedIn || preview || app.guest_ready === true;
+  // THE PICTURE DOES WHAT THE FIRST BUTTON SAYS (27 Nov 2026). Open where the
+  // app can be tried: in the page's viewer, growing out of the picture, or
+  // at the app's own address where Open's link goes there. Where the app
+  // needs an account it asks to sign up for it, as "Sign up to open" does.
+  const openFromPicture = (from: HTMLElement) => {
+    if (!canTry) { onIntent({ kind: 'use', app }); return; }
+    if (openInside || app.requires_login === false) { onOpenInside(app, from); return; }
+    if (app.url && typeof window !== 'undefined') window.location.assign(app.url);
+  };
   const actions = (
     <>
       {canTry ? (
-        <TryLink app={app} inside={signedIn || preview || app.guest_ready === true} onOpenInside={onOpenInside} className={CARD_OPEN_BTN}>
+        <TryLink app={app} inside={openInside} onOpenInside={onOpenInside} className={CARD_OPEN_BTN}>
           <span className="truncate">{openLabel}</span>
         </TryLink>
       ) : (
@@ -475,7 +478,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       <button
         type="button"
         data-guest-all-communities=""
-        className="mb-3.5 inline-flex h-11 items-center gap-1 self-start rounded-full bg-[color:var(--brand-tint)] px-3.5 text-[15px] font-semibold text-[color:var(--brand-ink)]"
+        className={cn(BACK_CHIP, 'mb-3.5')}
         onClick={() => onAllCommunities?.()}
       >
         <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
@@ -490,21 +493,25 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         description={app.description}
         actions={actions}
         note={note}
+        onOpenPicture={openFromPicture}
         data-guest-project-band=""
       />
 
-      {/* TWO COLUMNS ON A WIDE WINDOW (f-so2, 26 Nov 2026): from 1024px, as
-          the member's hub, a 340px column of the join card, Up for a vote,
-          Recently live and Top contributors, and the project's Discussion
-          beside it. Narrower, one column: on a phone (f-so3) the
+      {/* TWO COLUMNS FROM 768px (f-so2, 26 Nov 2026; from 1024px until
+          27 Nov): as the member's hub, a side column of the join card, Up
+          for a vote, Recently live and Top contributors, and the project's
+          Discussion beside it. The column is 300px up to 1024px, where the
+          Discussion still gets 416px of a 768px window (more than a phone
+          gives it, and 768px is where it stops being the phone's preview),
+          and 340px from there. Narrower, one column: on a phone (f-so3) the
           Discussion's card comes after Up for a vote, the side column's
           parts placed around it by `order` (the column is `contents`). */}
-      <div data-guest-cols="" className="flex flex-col lg:mt-8 lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start lg:gap-6">
-      <div data-guest-side="" className="contents lg:flex lg:flex-col lg:[&>*:first-child]:mt-0">
+      <div data-guest-cols="" className="flex flex-col md:mt-8 md:grid md:grid-cols-[300px_minmax(0,1fr)] md:items-start md:gap-5 lg:grid-cols-[340px_minmax(0,1fr)] lg:gap-6">
+      <div data-guest-side="" className="contents md:flex md:min-w-0 md:flex-col md:[&>*:first-child]:mt-0">
       {/* Hearts and plays lead the column, above the join card (owner, 27 Nov
           2026): what a visitor reads first is how much it is played and liked. */}
       {heart.state ? (
-        <div data-guest-popularity="" className={cn(SECTION, 'order-1 lg:order-none')}>
+        <div data-guest-popularity="" className={cn(SECTION, 'order-1 md:order-none')}>
           <HeartsPlays
             name={app.name}
             played={playsIt(app)}
@@ -515,8 +522,8 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
           />
         </div>
       ) : null}
-      <section data-guest-made="" className={cn(SECTION, 'order-1 lg:order-none')}>
-        <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5 lg:flex-col lg:items-stretch lg:gap-4')}>
+      <section data-guest-made="" className={cn(SECTION, 'order-1 md:order-none')}>
+        <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:p-5')}>
           <div className="min-w-0 flex-1">
             <h2 className="text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100">
               {playsIt(app) ? t('auth:guest.project.madeByPlayers') : t('auth:guest.project.madeByUsers')}
@@ -534,7 +541,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
               size="none"
               ink="solid"
               data-guest-made-join=""
-              className="h-12 w-full shrink-0 px-6 text-[16px] font-bold md:w-auto md:min-w-[280px] lg:w-full lg:min-w-0"
+              className="h-12 w-full shrink-0 px-6 text-[16px] font-bold"
               onClick={() => onIntent({ kind: 'join', app })}
             >
               {t('auth:guest.project.signUpToVoteSuggest')}
@@ -544,7 +551,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       </section>
 
       {votes.length ? (
-        <section data-guest-votes="" className={cn(SECTION, 'order-2 lg:order-none')}>
+        <section data-guest-votes="" className={cn(SECTION, 'order-2 md:order-none')}>
           <div className="flex items-center justify-between gap-2 px-1 pb-2">
             <SectionHeader className="p-0">{t('auth:guest.project.upForVoteCount', { count: voteCount })}</SectionHeader>
             {!allVotes && votes.length > VOTES_SHOWN ? (
@@ -561,9 +568,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
                 app={app}
                 color={color}
                 last={i === votesShown.length - 1 && !votesMore}
-                signedIn={signedIn}
                 onOpen={() => setOpened(v.id)}
-                onIntent={onIntent}
               />
             ))}
             {votesMore ? (
@@ -585,7 +590,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       ) : null}
 
       {merged.length ? (
-        <section data-guest-live="" className={cn(SECTION, 'order-4 lg:order-none')}>
+        <section data-guest-live="" className={cn(SECTION, 'order-4 md:order-none')}>
           <div className="flex items-center justify-between gap-2 px-1 pb-2">
             <SectionHeader className="p-0">{t('auth:guest.project.recentlyLive')}</SectionHeader>
             {!allLive && merged.length > LIVE_SHOWN ? (
@@ -628,7 +633,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         </section>
       ) : null}
 
-      <div data-guest-side-contributors="" className="order-5 lg:order-none">
+      <div data-guest-side-contributors="" className="order-5 md:order-none">
         <GuestContributors slug={app.slug} initial={initialContributors} className={SECTION} />
       </div>
       </div>
@@ -636,7 +641,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
       {/* The project's Discussion, read only: its posts and their replies,
           and "Start a post…" asking the visitor to sign in
           (./guest-discussion.tsx). A preview on a phone, whole from 768px. */}
-      <div data-guest-talk="" className={cn(SECTION, 'order-3 min-w-0 lg:order-none lg:mt-0')}>
+      <div data-guest-talk="" className={cn(SECTION, 'order-3 min-w-0 md:order-none md:mt-0')}>
         <GuestDiscussion app={app} onSignIn={() => onIntent({ kind: 'chat', app })} />
       </div>
       </div>

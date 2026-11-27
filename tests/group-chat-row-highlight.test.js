@@ -77,24 +77,19 @@ function resolve(value, theme, depth = 0) {
 }
 
 const THEMES = [
-  { name: 'light', map: LIGHT, hover: rule('.gc-msg:hover') },
-  { name: 'dark', map: DARK, hover: rule('.dark .gc-msg:hover') },
+  { name: 'light', map: LIGHT },
+  { name: 'dark', map: DARK },
 ];
 
-test('the row highlight is never the colour the message box is made of', () => {
-  const bubble = decl(rule('.gc-bubble'), 'background');
-  assert.ok(bubble, 'expected .gc-bubble to declare its own surface');
-
-  for (const { name, map, hover } of THEMES) {
-    const fill = decl(hover, 'background');
-    assert.ok(fill, `expected a hover fill for the ${name} transcript row`);
-    assert.notStrictEqual(
-      resolve(fill, map),
-      resolve(bubble, map),
-      `in ${name} mode the hovered row is painted the bubble's own surface, so ` +
-        'the message box disappears into the highlight (#2464)'
-    );
-  }
+test('a chat row paints no hover fill of its own, so nothing can show through a message box', () => {
+  // Dedupe step 2: a person's message in a project's chat is Messages' own
+  // row (frontend/src/features/messages/message-row.tsx MessageRowView), and
+  // a Messages row highlights nothing on hover: its hover bar is what says
+  // the pointer is on it. The `.gc-msg:hover` fill #2464 tuned went with the
+  // primitive's row, so the doubled highlight cannot come back through it.
+  assert.ok(!CSS.includes('\n.gc-msg:hover {'), 'no `.gc-msg:hover` fill');
+  assert.ok(!CSS.includes('\n.dark .gc-msg:hover {'), 'nor its dark twin');
+  assert.ok(!/\n\.messages-message:hover \{/.test(CSS), 'and a Messages row paints none either');
 });
 
 test('the highlight lives on the row, and the row is the outer box', () => {

@@ -146,7 +146,10 @@ test('a row has no thread of a request\'s to offer: a bot row is drawn in a thre
   const row = read('frontend/src/features/messages/message-row.tsx');
   // The chat's own stream drew a request's card with "N updates" under it,
   // and no thread at all for a request's news. Nothing draws that stream.
-  assert.match(row, /const threadRoot = !live \|\| inThread \|\| !threads \? null : message\.threadRootId \|\| message\.id;/);
+  // Dedupe step 2: the one rule (message-actions/rules.ts) answers whether
+  // a thread starts here: never from inside one, nor from a direct chat.
+  assert.match(row, /place: inThread \? 'thread' : kind,/);
+  assert.match(row, /threadable: threadsAllowed\(\{ kind, homeroomBot: botChat \}\),/);
   assert.match(row, /\{message\.thread && !inThread \? \(\s+<ThreadSummaryChip/);
   assert.doesNotMatch(row, /requestPageOf|data-bot-thread-link|row\.botThread/);
   const screen = read('frontend/src/features/messages/index.tsx');

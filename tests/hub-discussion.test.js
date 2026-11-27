@@ -206,6 +206,15 @@ test('the card draws its frame first and reads in effects; no channel, no card',
   // The Button primitive draws it (tests/button-primitive-ratchet.test.js), its classes as they were.
   assert.match(visitor, /<button type="button" data-ws-discussion-sign-in="" class="dh-composer dh-composer-door dh-sign-in-door dh-composer-post">[\s\S]*?Start a post…[\s\S]*?<span class="dh-sign-in">Sign in to post<\/span><\/button>/);
   assert.doesNotMatch(visitor, /<textarea|<form/, 'no box to write in');
+  // Under a thread's replies a visitor finds the member's reply field as a
+  // door of the same kind: its placeholder, "Sign in to post" at its end,
+  // and the whole of it asks them to sign in. A member gets the real box.
+  const src = read(CARD);
+  assert.match(src, /\) : room\.visitor \? <SignInDoor reply \/> : null\}/);
+  assert.match(src, /className="dh-composer dh-composer-reply dh-sign-in-door dh-reply-door"\s+data-ws-discussion-sign-in-reply=""\s+onClick=\{\(\) => room\.signIn\?\.\(\)\}/);
+  assert.match(src, /<span className="dh-composer-hint">\{t\('project:hub\.discussion\.reply\.placeholder'\)\}<\/span>\s+<span className="dh-sign-in">\{t\('project:hub\.discussion\.signInToPost'\)\}<\/span>/);
+  assert.equal(message('project:hub.discussion.reply.placeholder'), 'Reply in thread…');
+  assert.match(read('public/css/app.css'), /\.dh-composer-reply\.dh-reply-door \{ margin: 0; padding-inline: 6px; border: 0; \}/);
 });
 
 test('reactions and replies are the platform\'s own: the hover bar, the long-press sheet, Enter sends', () => {

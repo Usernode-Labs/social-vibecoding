@@ -229,7 +229,9 @@ Two things from the home conversion are worth reading before the next screen:
   (`#gc-mention-menu` / `#gc-ref-menu`), the shared-spec reader
   (`#gc-spec-side-panel`), the thread panel's whole shell
   (`GroupChat.mountThread`), and the long-press reaction bar
-  (`#gc-react-bar`). Three of those are body-level floating hosts and share one
+  (`#gc-react-bar`, since retired: every row now carries the shared bar and
+  long-press sheet of `features/message-actions/controls.tsx`). Three of
+  those are body-level floating hosts and share one
   seam: the module still creates the element, measures it against something on
   screen and owns its `hidden`; React owns only its children, through a portal
   mounted once. All three stores install `setFlush(flushSync)`, because in each

@@ -157,15 +157,15 @@ test('#3977: Approve opens the picker a group\'s vote opens, and reads Approved 
   assert.match(group, /^<button type="button" class="dev-vote-btn" data-vote-btn="open" aria-haspopup="dialog"/);
   assert.match(group, />Vote<svg/);
   // One button, one path: the solo face is the group's button with other
-  // words, so the board, the folded row (fold.tsx) and the change page
-  // (change-head.tsx, its Votes card), which all draw VoteButton, open the picker alike.
+  // words, so the board's row (work-row.tsx) and the change page
+  // (change-head.tsx, its Votes card), which both draw VoteButton, open the picker alike.
   const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function VoteButton('), CARD_SRC.indexOf('export function VotePicker('));
   assert.match(fn, /const approve = !!yes\.approve && yes\.act\?\.fn === 'castVote';/);
   assert.equal((fn.match(/<button\b/g) || []).length, 1, 'no second, one-tap button');
   assert.match(fn, /onClick=\{toggle\}/, 'the press opens the picker (popover on desktop, sheet on touch)');
   assert.doesNotMatch(fn, /send\(yes, null\); \}\}/, 'the one tap is gone');
   assert.match(fn, /approve=\{approve\}/, 'the picker is told it is an approval');
-  for (const file of ['frontend/src/features/dev-board/card/fold.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
+  for (const file of ['frontend/src/features/dev-board/workshop/work-row.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.match(src, /<VoteButton yes=\{[^}]+\} no=\{[^}]+\} \/>/, `${file} draws the same button`);
   }
@@ -255,8 +255,8 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
   // #3977 left B7's item in place: the same castVote No, whose line castVote
   // asked for by its own prompt. With Approve opening the picker, that was
   // two ways to one No, one of them without the box. It is gone; Don't
-  // approve is the picker's No side (the test above), on the board, the
-  // folded row and the change page alike.
+  // approve is the picker's No side (the test above), on the board's row
+  // and the change page alike.
   const AppView = makeAppView();
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   for (const pr of [change(), change({ my_vote: 'yes' }), change({ username: 'someone', user_id: 5 })]) {

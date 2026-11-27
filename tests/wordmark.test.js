@@ -101,7 +101,7 @@ test('className lands verbatim — no merge, no reorder', () => {
 test('the path data is quoted literals, so the icon-set test can read it', () => {
   const quoted = quotedPaths();
   assert.equal(quoted.length, PATH_COUNT,
-    'each path is a single-quoted literal on its own line, as FoldMarkIcon\'s are');
+    'each path is a single-quoted literal on its own line, as the eye icon\'s are');
   const html = render({ title: 'Homeroom' });
   for (const d of quoted) {
     assert.ok(html.includes(`d="${d}"`), `a literal that never renders: ${d.slice(0, 32)}…`);

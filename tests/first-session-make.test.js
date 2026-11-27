@@ -580,6 +580,8 @@ test('a template fills in the description and the name; words of their own let g
     },
     useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
     useCallback(fn) { at++; return fn; },
+    // The sheet is presented by the Sheet (lib/sheet.ts), which memoizes.
+    useMemo(fn) { at++; return fn(); },
     useEffect() { at++; },
     useLayoutEffect() { at++; },
     // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).

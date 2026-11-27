@@ -207,10 +207,6 @@ function voteReasonPost(vote: TranscriptMessage, reason: string): TranscriptMess
     bookmarked: false,
     editedTitle: null,
     flash: false,
-    canEdit: false,
-    showEdit: false,
-    showBookmark: false,
-    showReact: false,
     voteNote: false,
     voteReasonPost: true,
     // #7221: the note above names the change, so this post is not tagged with

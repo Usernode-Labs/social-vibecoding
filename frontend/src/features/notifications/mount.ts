@@ -29,9 +29,9 @@ import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 
 notificationsStore.setFlush(flushSync);
-// The sheet's own flag needs the flush for the reason every sheet's does:
-// `open()` publishes and then hands the element to the kit, which measures
-// the content height once, at present time. See lib/sheet-controller.js.
+// The sheet's own flag needs the flush too: `open()` publishes, and the sheet
+// is presented (lib/sheet.ts `useSheet`) before it returns, so its `onOpen`
+// and a caller's next line find it up.
 notificationsSheetStore.setFlush(flushSync);
 
 export { notificationsStore, notificationsSheetStore, NotificationsSheet };

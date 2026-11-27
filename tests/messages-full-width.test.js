@@ -74,7 +74,7 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
   assert.equal(message('messages:header.actions'), 'Conversation actions');
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{toggleMenu\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
+  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative">\s*<button ref=\{menuBtnRef\} type="button" onClick=\{toggleMenu\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
     'immediately before the ⋯ menu');
   // #3407: #general's way back to its hub leads the row; the toggle does not.
   assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');

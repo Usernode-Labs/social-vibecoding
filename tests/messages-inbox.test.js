@@ -144,8 +144,10 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   assert.match(fn, /id="messages-new"/);
   assert.match(fn, /aria-haspopup=\{touch \? 'dialog' : 'menu'\}/, 'a menu for a pointer, the dialog itself on touch');
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
-  // the button's rect, dismissal on outside click / Escape / scroll / resize.
-  assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
+  // the button's rect, dismissal on outside click / Escape / scroll / resize,
+  // through the Menu (lib/menu.ts), which builds on the same helper.
+  assert.match(fn, /useMenu\(open, \{ trigger: btnRef, panel: popRef, onClose: shut, move: true \}\);/);
+  assert.match(read('frontend/src/lib/menu.ts'), /useAnchoredDismiss\(open, \[trigger, options\.panel\], close, \{/);
   // B8: sized to its rows.
   assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* NEW_CHOICES\.length \+ 2 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');

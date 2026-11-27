@@ -4,8 +4,10 @@
 // answers a swipe and a tap on its backdrop but never Escape: it does not join
 // the kit's modal stack. The island used to skip every key while the menu was
 // adopted, on the belief that the kit owned Escape, so on an iPad or an
-// Android phone with a keyboard Esc did nothing. Now the island closes the
-// adopted sheet itself, unless something above it takes the key.
+// Android phone with a keyboard Esc did nothing. Then the island closed the
+// adopted sheet itself, unless something above it took the key. Now the Sheet
+// does (lib/sheet.ts), for every sheet the kit holds: the menu, Notifications
+// and the rest, through the same helper (lib/kit-escape.ts).
 //
 // Run with: node --test tests/app-menu-escape-kit-sheet.test.js
 
@@ -17,7 +19,9 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
-const { kitSheetTakesEscape } = loadTsx('frontend/src/features/app-context/kit-escape.ts');
+const kit = loadTsx('frontend/src/lib/kit-escape.ts');
+// The helper takes the sheet's panel; these pages find it by the menu's id.
+const kitSheetTakesEscape = (event, doc, id) => kit.kitSheetTakesEscape(event, doc, doc.getElementById(id));
 
 // A page just big enough for the helper: elements in document order, each
 // with a class list and a parent, and the three lookups it makes.
@@ -115,26 +119,31 @@ test('nothing to close when the menu is not in a kit sheet', () => {
 });
 
 test('the menu stands aside for a panel opened above it (#6981)', () => {
-  const ISLAND = read('frontend/src/features/app-context/index.tsx');
-  assert.match(ISLAND, /import \{ isTopSurface \} from '\.\.\/\.\.\/lib\/open-surfaces';/);
-  assert.match(ISLAND,
-    /if \(event\.key === 'Escape' && !isTopSurface\('apps-switcher-sheet'\)\) return;/,
-    'Escape is only the menu’s while the menu is the top surface');
-  // The check comes before both the kit branch and the web branch, so one
-  // press cannot close the menu and the panel above it.
-  const listener = ISLAND.slice(ISLAND.indexOf("if (event.key === 'Escape' && !isTopSurface"));
-  assert.ok(listener.indexOf('isTopSurface') < listener.indexOf('if (AppContext._sheet)'));
-  assert.ok(listener.indexOf('isTopSurface') < listener.indexOf("if (event.key === 'Escape') {"));
+  // The Homeroom menu holds a slot in the one-open-panel list
+  // (lib/open-surfaces.ts), and the Sheet answers Escape for such a sheet
+  // only while it is on top there, before the kit's check, so one press
+  // cannot close the menu and the panel above it.
+  const SHEET = read('frontend/src/lib/sheet.ts');
+  assert.match(SHEET, /import \{ claimSurface, isTopSurface \} from '\.\/open-surfaces';/);
+  assert.match(SHEET, /if \(top\.surface\) \{[\s\S]{0,300}?if \(!isTopSurface\(top\.surface\)\) return;/);
+  const key = SHEET.slice(SHEET.indexOf('function onSheetKey('));
+  assert.ok(key.indexOf('isTopSurface(top.surface)') < key.indexOf('kitSheetTakesEscape('));
+  assert.match(SHEET, /surface: id,/, 'a standing sheet holds the slot under its id');
+  assert.match(read('frontend/src/features/app-context/app-context-controller.js'),
+    /createStandingSheet\(\{\s*id: 'apps-switcher-sheet',/);
 });
 
-test('the island hands Escape on the adopted menu to the helper and closes it', () => {
+test('the Sheet hands Escape on a kit-held sheet to the helper and closes it', () => {
+  const SHEET = read('frontend/src/lib/sheet.ts');
+  assert.match(SHEET, /import \{ kitSheetTakesEscape \} from '\.\/kit-escape';/);
+  assert.match(SHEET,
+    /if \(top\.kitSheet\(\) && !kitSheetTakesEscape\(e, document, top\.panel\(\)\)\) return;\s*if \(!top\.mayEscape\(\)\) return;\s*e\.preventDefault\(\);\s*top\.close\(\);/,
+    'held by the kit: Escape closes it unless a kit surface is above');
+  assert.match(SHEET, /kitSheet: \(\) => !!adoption && kind === 'sheet',/);
+  // The island writes no Escape of its own any more.
   const ISLAND = read('frontend/src/features/app-context/index.tsx');
-  assert.match(ISLAND, /import \{ kitSheetTakesEscape \} from '\.\/kit-escape';/);
-  assert.match(ISLAND,
-    /if \(AppContext\._sheet\) \{\s*if \(kitSheetTakesEscape\(event, document, 'apps-switcher-sheet'\)\) void AppContext\.close\(\);\s*return;\s*\}/,
-    'adopted: Escape closes the kit sheet, every other key stays the kit\'s');
-  // The listener is registered whenever the menu is open, adopted or not.
-  assert.match(ISLAND, /useEffect\(\(\) => \{\s*if \(!open\) return undefined;\s*const sheet = \(\) => document\.getElementById\('apps-switcher-sheet'\);/);
+  assert.doesNotMatch(ISLAND, /'Escape'|kitSheetTakesEscape|_sheet/);
+  assert.equal(fs.existsSync(path.join(root, 'frontend/src/features/app-context/kit-escape.ts')), false);
 
   // And the premise: the kit's sheet really has no Escape of its own, so
   // without this the key would do nothing. presentSheet never joins the

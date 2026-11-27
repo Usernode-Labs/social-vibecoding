@@ -410,20 +410,10 @@ export interface TranscriptMessage {
    * next repaint would have swept away mid-animation.
    */
   flash: boolean;
-  canEdit: boolean;
-  /**
-   * Whether each of the row's three header controls renders. The module
-   * decides — `_readOnly()` and `App.user` are its state, not the
-   * component's — which is the same split every other field here runs under.
-   *
-   * They were MISSING from this type and from the component until the
-   * conversion was checked against a seeded chat: the legacy row emitted an
-   * edit button, a save button and an add-reaction button, and the first
-   * React transcript silently rendered none of the three.
-   */
-  showEdit: boolean;
-  showBookmark: boolean;
-  showReact: boolean;
+  // What the viewer can do with the row (edit, save, react, …) is not on the
+  // model: the row asks the one rule (../message-actions/rules.ts) with the
+  // facts here (`mine`, `kind`, `deleted`, `canThread`, `canAskBot`) and the
+  // module's `_readOnly()`.
   quote: Quote | null;
   reactions: Reaction[];
   /** The files on this message, already resolved to URLs. Empty for most rows. */

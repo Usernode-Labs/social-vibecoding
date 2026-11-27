@@ -138,7 +138,10 @@ test('a step in the Homeroom menu opens it, closes it when the reader moves on, 
   // shuts the menu under the step pointing into it.
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /const FIRST_SESSION_TOUR = '\[data-first-session-tour\]';/);
-  assert.match(ctx, /tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
+  // The menu's outside press is the Sheet's now (lib/sheet.ts `outside`),
+  // and the island names what it spares.
+  assert.match(ctx, /tour\?\.contains\(target\) \|\| firstSession\?\.contains\(target\)\)/);
+  assert.match(ctx, /outside: \{ inside: sparedFromOutside \}/);
 });
 
 // Every selector a step names: what it cuts out, what it draws alongside,

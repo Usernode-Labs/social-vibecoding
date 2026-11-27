@@ -100,7 +100,12 @@ test('B9: the card, and no chip for the room', () => {
   assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /makeRequest: surface === 'main' && msg\.canAskBot \? \(\) => \{ void chat\?\.makeBotRequest\?\.\(id\); \} : null,/);
+  // Dedupe step 2: the one rule offers it (your own message, in a channel,
+  // the view model's `canAskBot`), and the row supplies the act.
+  assert.match(row, /askable: !!msg\.canAskBot,/);
+  assert.match(row, /place: surface === 'main' \? 'channel' : stream \? 'stream' : 'thread',/);
+  assert.match(row, /makeRequest: \(\) => \{ if \(id\) void chat\?\.makeBotRequest\?\.\(id\); \},/);
+  assert.match(read('frontend/src/features/message-actions/rules.ts'), /makeRequest: author\.mine && !!message\.askable && place === 'channel' && writes,/);
   assert.match(read('frontend/src/features/message-actions/message-menu.ts'),
     /if \(spec\.makeRequest\) items\.push\(\{ key: 'ask-bot', label: t\('messages:row\.menu\.makeRequest'\)/);
   assert.equal(message('messages:row.menu.makeRequest'), 'Make this a request');

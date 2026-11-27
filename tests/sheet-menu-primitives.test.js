@@ -20,140 +20,7 @@ const { loadTsx } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-// ── A React small enough to step through ─────────────────────────────────
-
-function createFakeReact() {
-  // The component rendering now; each mounted one keeps its own hooks.
-  let current = null;
-  const changed = (prev, next) =>
-    !prev || !next || prev.length !== next.length || prev.some((v, i) => !Object.is(v, next[i]));
-  const slot = (init) => {
-    const c = current;
-    const i = c.cursor++;
-    if (!(i in c.slots)) c.slots[i] = init();
-    return c.slots[i];
-  };
-  const effectHook = (queue) => (effect, deps) => {
-    const s = slot(() => ({ fresh: true, deps: undefined, cleanup: undefined }));
-    if (!s.fresh && !changed(s.deps, deps)) return;
-    s.fresh = false;
-    s.deps = deps;
-    current[queue].push(() => {
-      if (typeof s.cleanup === 'function') s.cleanup();
-      s.cleanup = effect();
-    });
-  };
-  const React = {
-    useRef: (value) => slot(() => ({ current: value })),
-    useState(initial) {
-      const s = slot(() => {
-        const state = { value: initial };
-        state.set = (next) => { state.value = typeof next === 'function' ? next(state.value) : next; };
-        return state;
-      });
-      return [s.value, s.set];
-    },
-    useMemo(factory, deps) {
-      const s = slot(() => ({ fresh: true, deps: undefined, value: undefined }));
-      if (s.fresh || changed(s.deps, deps)) {
-        s.fresh = false;
-        s.deps = deps;
-        s.value = factory();
-      }
-      return s.value;
-    },
-    useCallback: (fn, deps) => React.useMemo(() => fn, deps),
-    useLayoutEffect: effectHook('layout'),
-    useEffect: effectHook('passive'),
-  };
-  /** Mount `fn` as a component: renders now, with its effects, layout first. */
-  function mount(fn) {
-    const c = { slots: [], cursor: 0, layout: [], passive: [] };
-    const render = () => {
-      current = c;
-      c.cursor = 0;
-      c.layout = [];
-      c.passive = [];
-      try { fn(); } finally { current = null; }
-      for (const run of c.layout) run();
-      for (const run of c.passive) run();
-    };
-    render();
-    return {
-      rerender: render,
-      unmount() { for (const s of c.slots) if (s && typeof s.cleanup === 'function') s.cleanup(); },
-    };
-  }
-  return { React, mount };
-}
-
-// ── Just enough DOM ──────────────────────────────────────────────────────
-
-function createDom() {
-  const listeners = [];
-  const doc = {
-    activeElement: null,
-    body: null,
-    documentElement: null,
-    addEventListener(type, fn, capture) { listeners.push({ type, fn, capture: !!capture }); },
-    removeEventListener(type, fn, capture) {
-      const at = listeners.findIndex((l) => l.type === type && l.fn === fn && l.capture === !!capture);
-      if (at !== -1) listeners.splice(at, 1);
-    },
-    querySelector: () => null,
-  };
-  function node(label, { focusable = false } = {}) {
-    const n = {
-      label,
-      parent: null,
-      kids: [],
-      attrs: {},
-      focusable,
-      isConnected: true,
-      classList: { add() {}, remove() {}, contains: () => false },
-      append(child) { child.parent = n; n.kids.push(child); return child; },
-      contains(other) { for (let x = other; x; x = x.parent) if (x === n) return true; return false; },
-      setAttribute(k, v) { n.attrs[k] = String(v); },
-      getAttribute(k) { return k in n.attrs ? n.attrs[k] : null; },
-      hasAttribute(k) { return k in n.attrs; },
-      removeAttribute(k) { delete n.attrs[k]; },
-      focus() { doc.activeElement = n; },
-      getClientRects: () => [{}],
-      getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
-      closest: () => null,
-      descendants() { return n.kids.flatMap((k) => [k, ...k.descendants()]); },
-      querySelector(sel) {
-        if (sel === '[autofocus]') return n.descendants().find((d) => d.hasAttribute('autofocus')) || null;
-        return null;
-      },
-      querySelectorAll() { return n.descendants().filter((d) => d.focusable); },
-    };
-    return n;
-  }
-  doc.body = node('body');
-  doc.documentElement = node('html');
-  doc.activeElement = doc.body;
-  // Capture listeners first, then bubble, as the document dispatches a key
-  // that started on something inside it.
-  function key(k, { shiftKey = false, prevented = false } = {}) {
-    const event = {
-      key: k,
-      shiftKey,
-      defaultPrevented: prevented,
-      stopped: false,
-      preventDefault() { this.defaultPrevented = true; },
-      stopPropagation() { this.stopped = true; },
-    };
-    for (const phase of [true, false]) {
-      for (const l of listeners.slice()) {
-        if (l.type !== 'keydown' || l.capture !== phase || event.stopped) continue;
-        l.fn(event);
-      }
-    }
-    return event;
-  }
-  return { doc, node, key, listeners };
-}
+const { createFakeReact, createDom } = require('./lib/sheet-harness');
 
 function setup() {
   const dom = createDom();
@@ -315,10 +182,14 @@ test('the caller\'s own scrim closes it on a press that began and ended on it, a
 
 test('the Sheet presents through the dialogs\' kit seam, holds the page, and names the kit\'s shell', () => {
   const src = read('frontend/src/lib/sheet.ts');
-  assert.match(src, /adoptKitSurface\(\{\s*kind,\s*contentEl: panel,\s*adoptedOn: rootRef\.current \|\| undefined,\s*home: 'placeholder',\s*gate: 'kit',/);
+  // The dialogs' seam by default; a standing sheet (the Homeroom menu,
+  // Notifications) asks for the touch gate and a home on <body> instead.
+  assert.match(src, /adoptKitSurface\(\{\s*kind,\s*contentEl: panel,\s*adoptedOn: rootRef\.current \|\| undefined,\s*home,\s*gate,/);
+  assert.match(src, /gate = 'kit', home = 'placeholder',/);
   assert.match(src, /import \{ MODAL_GESTURE_GUARD_MS, nameKitShell \} from '\.\/static-modal';/,
     'the ghost-click window and the shell\'s name are the dialogs\' own');
-  assert.match(src, /const unlock = lockPage\(panel, \{ inert: false \}\);/);
+  assert.match(src, /holdPage = true,/);
+  assert.match(src, /const unlock = holdPage \? lockPage\(panel, \{ inert: false \}\) : null;/);
   assert.match(src, /if \(handle\) handle\.release\(\);/, 'the card comes home before React removes it');
   // The dialogs' route holds the page the same way.
   const staticModal = read('frontend/src/lib/static-modal.ts');
@@ -427,6 +298,9 @@ const SHEET_CALLERS = [
   'frontend/src/features/workshop/community-switcher.tsx',
   'frontend/src/features/mobile-install/install-steps-sheet.tsx',
   'frontend/src/features/notify-ask/get-app-sheet.tsx',
+  // The two standing sheets, since lib/sheet-controller.js folded into the Sheet.
+  'frontend/src/features/app-context/index.tsx',
+  'frontend/src/features/notifications/index.tsx',
 ];
 
 const MENU_CALLERS = [
@@ -436,6 +310,12 @@ const MENU_CALLERS = [
   'frontend/src/features/workshop/community-switcher.tsx',
   'frontend/src/features/detail/detail-card.tsx',
   'frontend/src/features/side-panel/side-panel.tsx',
+  // Messages' "+", a conversation's and a private thread's ⋯, and the blank
+  // thread's "+" wrote their own outside press and Escape (or leant on
+  // menu-keys' and message-actions' halves of it).
+  'frontend/src/features/messages/index.tsx',
+  'frontend/src/features/messages/private-thread-done.tsx',
+  'frontend/src/features/messages/new-thread.tsx',
 ];
 
 test('the sheets are the Sheet\'s, and write no Escape, Back or kit hand-off of their own', () => {
@@ -451,20 +331,22 @@ test('the sheets are the Sheet\'s, and write no Escape, Back or kit hand-off of 
 test('the menus are the Menu\'s', () => {
   for (const file of MENU_CALLERS) {
     const src = read(file);
-    assert.match(src, /useMenu\((true|open|menu), \{/, `${file} hangs its menu through the Menu`);
-    assert.match(src, /\{\.\.\.panelProps\}/, `${file} puts the Menu's keys and mark on its panel`);
+    assert.match(src, /useMenu\((true|open|menu|addOpen), \{/, `${file} hangs its menu through the Menu`);
+    assert.match(src, /\{\.\.\.(panelProps|menuPanelProps|addPanelProps)\}/, `${file} puts the Menu's keys and mark on its panel`);
     assert.doesNotMatch(src, /addEventListener\('pointerdown', (onDown|away), true\)/, `${file} writes no outside press of its own`);
+    assert.doesNotMatch(src, /useMenuKeyboard\(/, `${file} writes no menu keys of its own`);
   }
 });
 
 test('only the shared seams hand a node to the kit by hand', () => {
-  // The two that are left move next: the Homeroom menu and Notifications
-  // (lib/sheet-controller.js), and the developer console's touch sheet.
+  // The Homeroom menu and Notifications moved onto the Sheet, and their
+  // route (lib/sheet-controller.js) is gone. The one left is the developer
+  // console's touch sheet.
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/lib/sheet-controller.js')), false);
   const allowed = new Set([
     'frontend/src/lib/kit-surface.ts',
     'frontend/src/lib/static-modal.ts',
     'frontend/src/lib/sheet.ts',
-    'frontend/src/lib/sheet-controller.js',
     'frontend/src/features/dev-console/store.ts',
   ]);
   const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
