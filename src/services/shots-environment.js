@@ -675,8 +675,15 @@ async function applyChangeSeedsToBefore(config, pair, cloneBySide) {
       let text = '';
       try { text = await readSeedsResult(config, deployed); } catch (_) { text = ''; }
       if (text.startsWith('{')) {
-        let value = null;
-        try { value = validSeedsResult(JSON.parse(text)); } catch (_) { value = null; }
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+        // The runner says its seeds could not run (their error is in its
+        // own log): nothing more will come, so the wait ends here.
+        if (parsed && parsed.version === 1 && parsed.failed === true) {
+          log.warn('shots', 'The before-copy seed runner could not apply the seeds', { runId: pair.runId });
+          return { ran: false, reason: 'failed' };
+        }
+        const value = validSeedsResult(parsed);
         if (value) return value;
         log.warn('shots', 'The before-copy seed runner answered an unreadable result', { runId: pair.runId });
         return { ran: false, reason: 'unreadable' };
