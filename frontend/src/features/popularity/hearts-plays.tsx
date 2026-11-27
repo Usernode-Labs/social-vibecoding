@@ -14,7 +14,9 @@
  *            panel's one button: a tinted circle before it is given, and,
  *            given, a red heart on a quiet circle (a state that is done gets
  *            no fill). Pressing it again takes the heart back. With no
- *            hearts yet the cell says "Be the first".
+ *            hearts yet the cell says "Be the first", in small type that
+ *            may wrap to two lines beside the heart without the card
+ *            growing.
  *
  * The plays cell leads because it is the larger number and nothing in it can
  * be pressed; the heart sits beside its own count.
@@ -39,7 +41,11 @@ const CELL = 'flex min-w-0 flex-1 flex-col items-center gap-1 px-4 pb-3.5 pt-3';
 const CELL_LINE = 'shadow-[inset_1px_0_0_var(--app-sheet-line)]';
 const LABEL = 'text-xs font-semibold leading-4 tracking-[0.02em] text-zinc-500 dark:text-zinc-400';
 const NUMBER = 'text-[26px] font-bold leading-9 tracking-[-0.01em] tabular-nums text-zinc-900 dark:text-zinc-100';
-const FIRST = 'text-[15px] font-semibold leading-9 text-zinc-900 dark:text-zinc-100';
+// The words that stand where the number would. Two lines of them are the
+// heart's height (2 x 1.125rem = its 2.25rem), so where the cell is too
+// narrow for one line they wrap beside the heart and the card keeps its
+// height. They had the number's 2.25rem line, so a wrap doubled the cell.
+const FIRST = 'min-w-0 text-start text-sm font-semibold leading-[1.125rem] text-zinc-900 dark:text-zinc-100';
 const HEART = 'un-touch-target flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-60';
 const HEART_GIVE = 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:hover:bg-rose-900';
 const HEART_GIVEN = 'bg-white text-rose-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-rose-400 dark:hover:bg-zinc-800';
