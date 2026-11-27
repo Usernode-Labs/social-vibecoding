@@ -36973,6 +36973,40 @@ html:root #home-create-tile .home-create-label { color: var(--one-ink); font-wei
   html:root #app-list .app-card-people + .app-card-people::before { content: "\00B7"; content: "\00B7" / ""; margin-inline: 0.3em; }
 }
 
+/* WHILE PINNED PROJECTS LOAD, THE PLACEHOLDER IS THE TILE'S OWN SIZE (27 Nov
+   2026). The tiles above are smaller than the kit's (a phone's rows are 88px,
+   a desktop's 56px with a 48px icon), and the placeholder still drew the
+   kit's: 112px tiles on a phone and 96px rows with a 72px icon on a desktop,
+   two rows of them in a box held for two of today's, so it ran over what was
+   under it and the page moved when the tiles landed. The placeholder's own
+   grid now lies on the grid's rows (two of them, a cell each), and its tile
+   is today's at each width: the padding, the icon and the lines. Between
+   1024px and 1280px with the sidebar folded the kit's row is still today's
+   (STANDARD (WIP), "The shell's own placeholders"). */
+html:root #app-list:not([data-view]) > .animate-pulse {
+  grid-row: span 2;
+  grid-auto-rows: var(--home-cell-h);
+  align-items: start;
+}
+@media (max-width: 639.98px) {
+  /* The grid's padding is the look's 0.75rem on every side and its gap 0.375rem: the two rows' held height. */
+  html:root #app-list:not([data-view]) { min-height: calc(2 * var(--home-cell-h) + 1.875rem); }
+  html:root #app-list:not([data-view]) > .animate-pulse > div { padding: 4px 2px; }
+  html:root #app-list:not([data-view]) > .animate-pulse > div > :last-child { align-items: center; height: 15px; padding-top: 0; }
+}
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  html:root #app-list:not([data-view]) > .animate-pulse > div { height: var(--wip-tile-h-stacked); }
+}
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:root:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list:not([data-view]) > .animate-pulse > div { height: var(--wip-tile-h-stacked); }
+}
+@media (min-width: 1280px) {
+  html:root #app-list:not([data-view]) > .animate-pulse > div { gap: 12px; height: 48px; padding: 0 4px; }
+  html:root #app-list:not([data-view]) > .animate-pulse > div > :first-child { width: 48px; height: 48px; border-radius: 13px; }
+  html:root #app-list:not([data-view]) > .animate-pulse > div > :last-child { gap: 0.375rem; }
+  html:root #app-list:not([data-view]) > .animate-pulse > div > :last-child::after { height: 0.5rem; }
+}
+
 /* ── HOME: Recent activity ───────────────────────────────────── */
 /* A row of cards that scrolls sideways, as today: each the shared card, its
    icon a small white tile, its name on the row's title, its state in the
