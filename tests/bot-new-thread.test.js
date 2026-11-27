@@ -220,7 +220,8 @@ test('the project is chosen from the "Your communities" rows, Any project first'
   assert.match(src, /useSheet\(\{\n\s+kind: 'sheet',/);
   assert.match(src, /className="community-switcher community-switcher-sheet"/);
   assert.match(src, /className="community-switcher community-switcher-menu"/);
-  assert.match(src, /import \{ switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');
+  // And the switcher's own row (the shared ListRow with its inset) and tick.
+  assert.match(src, /import \{ SWITCHER_ROW, SwitcherTick, switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');
   assert.doesNotMatch(src, /id="community-switcher/, 'its own ids, never the switcher\'s');
   assert.doesNotMatch(src, /goToCommunity/, 'picking a project goes nowhere');
 });
@@ -279,8 +280,10 @@ test('files are dropped, pasted or picked in a blank thread, and ride its first 
 test('its box is the conversation composer\'s card, piece for piece', () => {
   const src = read(NEW_THREAD);
   const composer = read('frontend/src/features/messages/composer.tsx');
+  // One message box (27 Nov 2026): the conversation's card also carries
+  // its place's id, so the card's opening is matched up to its class.
   for (const piece of [
-    '<div className="messages-composer-card">',
+    '<div className="messages-composer-card"',
     '<div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? \'\' : undefined}>',
     '<div className="messages-composer-add" ref={addRef}>',
     'className="messages-composer-input"',
@@ -316,7 +319,9 @@ test('a design start says to describe the screen, and Homeroom bot draws it: no 
   assert.match(src, /const drawing = begun\?\.kind === 'design';/);
   // 10 Nov 2026: only while Homeroom bot works on it. Claude Code and ChatGPT draw nothing here.
   assert.match(src, /\{drawing && !own \? <p className="messages-composer-hint" data-bot-new-thread-draws="">\{t\('messages:newThread\.draws'\)\}<\/p> : null\}/);
-  assert.doesNotMatch(src, /startScreenPick|pickScreen|<Button/, 'the screen picker retired');
+  assert.doesNotMatch(src, /startScreenPick|pickScreen/, 'the screen picker retired');
+  // Its Button went with it; the one Button here now is the head's Live preview (26 Nov 2026).
+  assert.deepEqual(src.match(/<Button [^>]*className="[^"]+"/g), ['<Button type="button" variant="unstyled" size="none" ink="none" className="messages-live-start"']);
   assert.throws(() => message('messages:newThread.pickScreen'));
 });
 
@@ -451,4 +456,36 @@ test('a new chat set to a project the person is not in still names it on its chi
   assert.match(thread, /return \(\) => \{ live = false; \};\s+\}, \[project\]\);/);
   const chip = read('frontend/src/features/messages/project-picker.tsx');
   assert.match(chip, /const info = slug \? st\.info\[slug\] \|\| null : null;/, 'the chip reads that store');
+});
+
+test('New chat is a title card and then one card at every width; on a phone the bar says the tab\'s name (26 Nov 2026)', () => {
+  const css = read('public/css/app.css');
+  const thread = read('frontend/src/features/messages/new-thread.tsx');
+  // A phone's drawer: the head is a card of its own, no longer hidden under a bar that named the chat.
+  const phone = 'html:root #ai-screen \\.ai-drawer \\[data-bot-new-thread-pane\\]';
+  assert.doesNotMatch(css, /\.ai-drawer \[data-bot-new-thread-pane\] > \.messages-thread-header \{ display: none; \}/);
+  assert.doesNotMatch(css, /\.ai-drawer \[data-bot-new-thread-pane\] \.messages-starts \{ margin-block: 0 auto;/, 'the starts sit in the middle of their card, as from 768px');
+  assert.match(css, new RegExp(`${phone} \\{\\s+--thread-gutter: 12px;\\s+--thread-card-r: 20px;\\s+display: grid; grid-template-columns: minmax\\(0, 1fr\\); grid-template-rows: auto minmax\\(0, 1fr\\) auto; isolation: isolate;`));
+  assert.match(css, new RegExp(`${phone}::before \\{\\s+content: ""; grid-row: 2 \\/ -1; grid-column: 1; z-index: -1;\\s+margin: 10px var\\(--thread-gutter\\) 0; border-radius: var\\(--thread-card-r\\);\\s+background: var\\(--one-surface\\); box-shadow: inset 0 0 0 1px var\\(--one-hair\\);`));
+  assert.match(css, new RegExp(`${phone} > \\.messages-thread-header \\{\\s+position: relative; inset: auto; grid-row: 1; gap: 12px; min-height: 68px; margin-inline: var\\(--thread-gutter\\); padding: 12px 14px;\\s+border-radius: var\\(--thread-card-r\\); background: var\\(--one-surface\\); box-shadow: inset 0 0 0 1px var\\(--one-hair\\);`));
+  // The card ends over the tab bar: the pane clears it, and the message bar keeps the card's own foot.
+  assert.match(css, new RegExp(`${phone} \\{[^}]*padding: 12px 0 calc\\(max\\(var\\(--platform-tabs-h, 0px\\), var\\(--platform-safe-bottom, 0px\\)\\) \\+ 12px\\);`));
+  assert.match(css, new RegExp(`${phone} > \\.messages-composer \\{ grid-row: 3; margin: 0 var\\(--thread-gutter\\); padding: 0 6px 8px !important; \\}`));
+  assert.match(css, /html:root body:has\(#ai-screen:not\(\.hidden\)\) #platform-header \.nav-drawer-title:has\(> \.nav-drawer-title-page:empty\) \{ margin-top: -10px; \}/, 'the tab\'s name alone on the bar\'s line');
+  // From 768px the head is its own card again, 10px over the card under it.
+  const docked = 'html:root #ai-screen \\.ai-main-pane \\.messages-layout > \\[data-bot-new-thread-docked\\]';
+  assert.doesNotMatch(css, /\[data-bot-new-thread-docked\]::before \{ grid-row: 1 \/ -1; margin-top: 0; \}/);
+  assert.doesNotMatch(css, /border-radius: var\(--thread-card-r\) var\(--thread-card-r\) 0 0; background: none; box-shadow: inset 0 -1px 0 var\(--one-hair\);/);
+  assert.match(css, new RegExp(`${docked}::before \\{ margin-top: 10px; \\}`));
+  assert.match(css, new RegExp(`${docked} > :is\\(\\.messages-thread-scroll, \\.messages-builder-setup\\) \\{ margin-top: 10px; \\}`));
+  // About and With stack when the column has no room for both on a line (27 Nov 2026).
+  assert.match(css, /html:root \[data-bot-new-thread-pane\] \.messages-project-row \{ flex-wrap: wrap; gap: 8px; padding-bottom: 6px; \}/);
+  // The bar says the tab's name beside its back disc; the title card names the chat, name over line.
+  assert.match(thread, /const barTitle = t\('messages:ai\.hero\.name'\);\s+const barSub = '';/);
+  assert.match(thread, /<div className="messages-thread-name">\{setup \? t\('messages:newThread\.builder\.setup\.title', \{ builder: ownName \}\) : t\('messages:newThread\.title'\)\}<\/div>\s+<div className="messages-thread-sub">/);
+  // The bar's back disc is the way out there, so the head has no ✕.
+  assert.match(thread, /\{docked \|\| inBar \? null : \(/);
+  assert.equal(message('messages:newThread.barSub'), 'Only you can see it');
+  assert.match(thread, /: liveInHead \? t\('messages:newThread\.barSub'\) : t\('messages:newThread\.sub'\)\}/, 'the short line where the button shares the card');
+  assert.match(css, /html:root \[data-bot-new-thread-pane\] \.messages-composer-input::placeholder \{ color: var\(--one-ink-3\); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/, 'the box\'s question keeps to one line');
 });

@@ -19,14 +19,18 @@
  * (featured_order), its first row LARGER, signed in or out ("first row of
  * featured larger everywhere"): one fewer than a row of the rest holds,
  * three on a laptop, the whole width on a phone (`useLeadCount`), and the
- * rest of Featured in the grid under it. Featured is the first
- * group of the section, of the chosen kind, and left out while a search is
- * typed (its matches are the grid, featured first). Its heading names the
- * chosen kind ("Featured in Games") so the group reads as that kind's. Then
- * the rest under "More communities" whenever Featured is shown, under All or
+ * rest of Featured in the grid under it. The signed-in pages show at most
+ * FEATURED_MAX of them, so the grid ends on a full row; a featured
+ * community past it is not hidden, it joins the list below (#7229).
+ * Featured is the first group of the section, of the chosen kind, and left
+ * out while a search is typed (its matches are the grid, featured first).
+ * Its heading names the chosen kind ("Featured in Games") so the group reads
+ * as that kind's. Then the rest under "More communities" whenever Featured
+ * is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
- * Popular, Most active or A to Z; most active until somebody picks another),
+ * Popular, Most active, Most played, Most hearts or A to Z; most active
+ * until somebody picks another),
  * so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
@@ -49,13 +53,21 @@ import { CommunityCardSkeleton, LEAD_MAX, useLeadCount } from '../communities/ca
 import { Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
-import { matchesQuery } from './use-home-query';
+import { rankCommunities } from './use-home-query';
 
 /** How many cards a page brings. */
 export const JOIN_PAGE = 8;
 
+/**
+ * How many featured communities the signed-in pages draw (#7229): three
+ * across on a desktop, two on a phone (app.css `.cm-grid`, ONE LOOK), so six
+ * always ends on a full row. A seventh, and any after it, joins the list
+ * under Communities to join rather than sitting alone on an empty row.
+ */
+export const FEATURED_MAX = 6;
+
 /** The sorts the "More communities" control offers, in the order it shows them. */
-export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
+export const JOIN_SORTS = ['new', 'popular', 'trending', 'played', 'hearts', 'name'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
 /** The cards' grid (app.css `.cm-grid`), and the larger first row's. */
@@ -100,7 +112,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
 
   const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
   const kinds = useMemo(() => presentCategories(pool), [pool]);
-  const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  const allFeatured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  // The signed-in pages show at most FEATURED_MAX of them (#7229), so the
+  // grid ends on a full row; what is past it is not dropped: it falls into
+  // the list below, which leaves out only the featured ones actually drawn.
+  const featured = useMemo(() => (wip ? allFeatured.slice(0, FEATURED_MAX) : allFeatured), [allFeatured, wip]);
   // Featured's first row is larger, signed in or out: as many as
   // useLeadCount reads off an empty grid of the rest's kind (`probe`).
   const [probe, setProbe] = useState<HTMLDivElement | null>(null);
@@ -125,9 +141,15 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     // already shows them (#6597). When every community of the kind is
     // featured, nothing is left and the list is empty.
     const lead = new Set(featured.map((a) => a.slug));
-    return (query ? joinOrder(pool, sort) : sortApps(pool, sort).filter((a) => !lead.has(a.slug)))
-      .filter((a) => !kind || a.category === kind)
-      .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
+    // Ranked last, never sorted after: the join order (featured, then the
+    // chosen sort) is what ties keep, and a later sort would undo the lead
+    // (#7021, guest-data.ts says the same).
+    return rankCommunities(
+      (query ? joinOrder(pool, sort) : sortApps(pool, sort).filter((a) => !lead.has(a.slug)))
+        .filter((a) => !kind || a.category === kind),
+      query,
+      { description: true },
+    );
   }, [pool, kind, query, sort, featured]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query, sort]);
   const more = list.length > shown;
@@ -201,17 +223,33 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         </FadeRail>
         {oneLine && list.length > 1 ? sortMenu : null}
         </div>
+      ) : holdFeatured ? (
+        // The filter line's place, held while the directory is read (27 Nov
+        // 2026): the line's own box with a chip's and the menu's shapes in
+        // it, so it is the line's height at every width (two lines under
+        // 480px, as the real one wraps) and the cards under it do not drop
+        // by it when the kinds land.
+        <div className="wip-filterbar animate-pulse" data-loading="" aria-hidden="true">
+          <span className="flex min-w-0 flex-1 gap-2">
+            <span className="h-11 w-16 shrink-0 rounded-full bg-zinc-200/70 dark:bg-zinc-800/70" />
+            <span className="h-11 w-24 shrink-0 rounded-full bg-zinc-200/70 dark:bg-zinc-800/70" />
+          </span>
+          <span className="ms-auto h-11 w-24 shrink-0 rounded-full bg-zinc-200/70 dark:bg-zinc-800/70" />
+        </div>
       ) : null}
       {holdFeatured ? (
         // Standard (WIP) draws Featured as a row of Home's own, above this
-        // list: its place is held while the directory is read, by its larger
-        // first row's cards, so the rows under it do not move when they land.
+        // list: its place is held while the directory is read, by as many
+        // covers as Featured shows at most (FEATURED_MAX: three rows of two
+        // on a phone, two of three from 768px), so the rows under it do not
+        // move when they land. It held one row, and the list under it
+        // dropped by the rest (27 Nov 2026).
         <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
           <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
           {probeGrid}
           <div className={GRID} data-cm-grid="lead" style={leadStyle}>
-            {/* One look: a row of covers, at least two across (app.css). */}
-            {Array.from({ length: Math.max(2, leadCount) }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
+            {/* One look: one grid of covers of one size (app.css). */}
+            {Array.from({ length: FEATURED_MAX }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
           </div>
         </div>
       ) : null}

@@ -233,6 +233,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.body.is_member, false);
       assert.equal(got.body.audience_label, 'Public community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
+      // #7230: each member carries where their picture is (the generated one
+      // without a photo), never the raw avatar id.
+      assert.deepEqual(Object.keys(got.body.members[0]).sort(), ['avatarUrl', 'display_name', 'id', 'source', 'username']);
+      assert.match(got.body.members[0].avatarUrl, /^\/avatars\/g\/[a-f0-9]{20}\.svg$/);
       // #4666: the rule by name too (an app on the two columns' default rule is
       // Group vote), and its creator, for the line said from the reader's side.
       assert.deepEqual(got.body.approval, {
@@ -519,6 +523,19 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(inGeneral.earlier, null, '#general\'s messages here were all written after the marker');
     discussion.resetDiscussionSinceForTest();
 
+    // #7230: a public project's Discussion read gives each author's picture
+    // address, and never the raw avatar id (services/public-discussion.js).
+    const publicDiscussion = require('../src/services/public-discussion');
+    const publicPage = await publicDiscussion.publicPosts(pool, other.id);
+    const authored = publicPage.messages.find((m) => m.username === member.username);
+    assert.ok(authored, 'the member\'s message is on the page');
+    assert.match(authored.avatar_url, /^\/avatars\/g\/[a-f0-9]{20}\.svg$/, 'the generated picture without a photo');
+    assert.equal('avatar_id' in authored, false, 'the address, not the id, goes to the visitor');
+    const publicThreadPage = await publicDiscussion.publicThread(pool, other.id, past.id);
+    assert.ok(publicThreadPage && publicThreadPage.messages.length >= 1);
+    assert.match(publicThreadPage.messages[0].avatar_url, /^\/avatars\/g\//);
+    assert.equal('avatar_id' in publicThreadPage.root, false);
+
     // Part 2, "Most replies" across the room: the posts busiest first, a
     // page at a time, after the fold's last message; a blocked author's
     // posts and replies are not counted for the person who blocked them.
@@ -547,6 +564,13 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       `INSERT INTO users (username, password, is_synthetic) VALUES ('busy_bot', 'x', TRUE) RETURNING id`);
     const { rows: [beep] } = await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, 'beep') RETURNING id`, [other.id, bot.id]);
+    // #7230: a person with a photo is named with its address; the others
+    // get their generated picture, and no raw avatar id reaches the client.
+    const BOSS_AVATAR = 'ab'.repeat(16);
+    await pool.query(
+      `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+       VALUES ($1, $2, 'image/png', 1, $3, 'x')`,
+      [BOSS_AVATAR, boss.id, Buffer.from([0])]);
     const { daily, active_people: activePeople, ...counts } = await communities.activitySummary(pool, other.id);
     await pool.query('DELETE FROM chat_messages WHERE id = $1', [beep.id]);
     assert.deepEqual(counts, { active_week: 3, shipped_month: 1 });
@@ -561,8 +585,11 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     // recently active first (the admin's vote came last, the member's
     // messages first), never the bot, with nothing but their names.
     assert.deepEqual(activePeople.map((p) => p.username), [boss.username, owner.username, member.username]);
-    assert.deepEqual(Object.keys(activePeople[0]).sort(), ['display_name', 'id', 'username']);
+    assert.deepEqual(Object.keys(activePeople[0]).sort(), ['avatarUrl', 'display_name', 'id', 'username']);
     assert.equal(activePeople[0].id, boss.id);
+    assert.equal(activePeople[0].avatarUrl, `/avatars/${BOSS_AVATAR}`, 'the uploaded photo');
+    assert.ok(activePeople.slice(1).every((p) => /^\/avatars\/g\/[a-f0-9]{20}\.svg$/.test(p.avatarUrl)),
+      'and the generated picture for anybody without one');
 
     // TOP CONTRIBUTORS (request 6837), on a project of its own: a change
     // that went live, a vote on a change and a filed request count one
@@ -605,7 +632,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         [people[1].username, 5], [people[0].username, 3],
         [people[6].username, 1], [people[5].username, 1], [people[4].username, 1],
       ], 'the most first, ties by who took part most recently, five at most');
-      assert.deepEqual(Object.keys(top.month[0]).sort(), ['display_name', 'id', 'n', 'username']);
+      assert.deepEqual(Object.keys(top.month[0]).sort(), ['avatarUrl', 'display_name', 'id', 'n', 'username']);
+      assert.match(top.month[0].avatarUrl, /^\/avatars\/g\/[a-f0-9]{20}\.svg$/, 'each contributor carries their picture');
       // A project nobody has taken part in: two empty lists.
       assert.deepEqual(await communities.contributorsSummary(pool, (await app()).id), { month: [], all_time: [] });
     }

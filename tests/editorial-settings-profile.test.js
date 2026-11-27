@@ -100,7 +100,9 @@ test('the editorial serif uses the shipped variable weight', () => {
 
 test('only duplicate Settings profile summary decoration is hidden beside the real editor', () => {
   const hidden = rules().filter((rule) => /display:\s*none|visibility:\s*hidden/.test(rule.body)).map((rule) => rule.selector);
-  assert.deepEqual(hidden, [`${SCOPE} #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head`, `${SCOPE} #settings-profile-card .ui-row-tx`, `${SCOPE} #settings-profile-card > svg`]);
+  // The card is the shared ListRow: its name and handle are the row's text
+  // column (.ui-lrow-tx), and its chevron the row's own (> svg).
+  assert.deepEqual(hidden, [`${SCOPE} #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head`, `${SCOPE} #settings-profile-card .ui-lrow-tx`, `${SCOPE} #settings-profile-card > svg`]);
   assert.match(block(), /@media \(max-width: 1023\.98px\) \{\s*html:root #settings-root:has\(#settings-section-content:not\(\.hidden\)\) > \.settings-frame-head \{ display: none; \}/);
 });
 
@@ -305,4 +307,59 @@ test('recent activity links real changes and leaves out unknown times', () => {
   assert.match(none, /id="profile-recent-activity"/);
   assert.match(none, /profile:recent\.title/);
   assert.match(none, /<ul><li class="profile-recent-empty">messages:ai\.history\.empty<\/li><\/ul>/);
+});
+
+// #7235: Settings stands on Profile's page geometry. The list of pages is
+// Profile's left column, the head starts at the inset your name does, and a
+// card and its heading are the sizes Profile's are. Profile's own rules are
+// the source of each value, so the two pages cannot drift apart.
+test('Settings stands on Profile\'s grid and head', () => {
+  const all = rules();
+  /** The declaration's value, from the last rule of that selector that has it. */
+  function declared(selector, property) {
+    const bodies = all.filter((rule) => members(rule.selector).includes(selector))
+      .map((rule) => rule.body)
+      .filter((body) => new RegExp(`(?:^|;)\\s*${property}:`).test(body));
+    assert.ok(bodies.length > 0, `${selector} declares ${property}`);
+    const match = bodies[bodies.length - 1].match(new RegExp(`(?:^|;)\\s*${property}:\\s*([^;]+);`));
+    return match[1].trim();
+  }
+
+  const profileGrid = 'html:root #profile-root > div:has(> div > #profile-identity-card)';
+  const settingsGrid = 'html:root #settings-root > div:has(> #settings-sidebar-col)';
+  assert.equal(declared(settingsGrid, 'display'), 'grid', 'Settings uses Profile\'s two columns');
+  assert.equal(declared(settingsGrid, 'grid-template-columns'), declared(profileGrid, 'grid-template-columns'),
+    'the left column is Profile\'s width');
+  assert.equal(declared(settingsGrid, 'column-gap'), declared(profileGrid, 'column-gap'),
+    'and the gap beside it is Profile\'s');
+
+  // The head sits at the same inset from the page's edge as Profile's name.
+  assert.equal(declared('html:root body #settings-screen #settings-root:has(> div > #settings-sidebar-col)', 'padding-inline-start'),
+    declared('html:root #profile-screen #profile-root:has(#profile-identity-card)', 'padding-inline-start'),
+    'the page starts where Profile\'s does');
+  assert.equal(declared('html:root #settings-root > .settings-frame-head', 'padding'),
+    declared('html:root #profile-root #profile-identity-card', 'padding'),
+    'and "Settings" is padded as your name on Profile is');
+
+  // A part's card is Profile's size: its inner padding, the gap between two,
+  // and the heading above its form.
+  const card = 'html:root #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden))';
+  assert.equal(declared(card, 'padding'), '1.25rem', 'a part is padded as Profile\'s groups are');
+  assert.equal(declared('html:root #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden):has(> :not(.hidden))', 'margin-top'),
+    '1.5rem', 'two parts are as far apart as Profile\'s groups');
+  const h3Sizes = all.filter((rule) => rule.selector === 'html:root #settings-section-content h3')
+    .map((rule) => (rule.body.match(/(?:^|;)\s*font-size:\s*([^;]+);/) || [])[1])
+    .filter(Boolean);
+  assert.equal(h3Sizes[0], 'var(--ed-head-size)', 'a card\'s heading is Profile\'s heading size');
+  assert.equal(h3Sizes[h3Sizes.length - 1], 'var(--ed-head-size-phone)', 'a phone keeps the smaller heading');
+  assert.match(declared('html:root #settings-section-content h3', 'letter-spacing'), /-0\.035em/, 'and its tracking');
+
+  // The list's group names are serif headings, where they were small capitals.
+  const groupName = 'html:root :is(#settings-nav-desktop, #settings-mobile-menu-host) .ui-cap';
+  assert.equal(declared(groupName, 'font-family'), 'var(--ed-serif)', 'a group\'s name is the serif');
+  assert.equal(declared(groupName, 'font-weight'), '460', 'at the shipped weight');
+  assert.equal(declared(groupName, 'text-transform'), 'none', 'in sentence case');
+  assert.equal(declared(groupName, 'font-size'), '1.125rem', 'a step under a card\'s heading');
+  assert.equal(declared('html:root #settings-mobile-menu-host .ui-cap button', 'text-transform'), 'none',
+    'the phone\'s fold button loses its capitals too');
 });

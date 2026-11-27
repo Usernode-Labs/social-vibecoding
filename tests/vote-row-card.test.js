@@ -7,9 +7,10 @@
 //     bot's "It's up for a vote" post and a vote line carry ONE LINE that
 //     names the change ("Change #6063 · Dark mode") and offers See the
 //     vote, which brings that section's Votes card into view.
-//   * Anywhere else a line about a change is drawn, a small CARD in today's
-//     style: the change's name, where its vote and checks stand in words
-//     ("Needs 1 more yes · All checks passed"), and Preview and Vote.
+//   * Anywhere else a line about a change is drawn, the change page's bar in
+//     a small card: the change's name, where its vote and checks stand in
+//     words ("Needs 1 more yes · All checks passed"), and Preview and the
+//     change page's own Vote (VoteButton), which opens the same picker.
 //   * No Yes, no No, and no Admin merge in any transcript render: Admin
 //     merge is a row of the change's ⋯ menu alone.
 //
@@ -21,7 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
@@ -42,6 +43,27 @@ const facts = (over) => ({
   ...over,
 });
 const voteRow = (over) => ({ ...base, kind: 'vote', voteRef: { sessionId: '9000401', prNumber: '12' }, ...over });
+// A signed-in viewer whose snapshot holds the change: the pair the change's
+// card and page draw, as AppView._cardVoteButtonSpecs makes it. The module is
+// loaded before `window` is there (its load-time listeners want a browser);
+// only the render reads the viewer.
+function viewerRender(entry, name, props, opts) {
+  const mod = loadTsx(entry);
+  return withViewer(() => renderToHtml(createElement(mod[name], props)), opts);
+}
+function withViewer(fn, { readOnly = false, user = { username: 'maya' } } = {}) {
+  const had = Object.prototype.hasOwnProperty.call(global, 'window');
+  const was = global.window;
+  const specs = (pr) => (pr.status !== 'promoted' ? [] : [
+    { key: 'yes', label: 'Yes', cls: 'gc-vote-btn gc-vote-btn-yes', tally: '0', act: { fn: 'castVote', args: [pr.id, 'yes', 3] } },
+    { key: 'no', label: 'No', cls: 'gc-vote-btn gc-vote-btn-no', tally: '0', act: { fn: 'castVote', args: [pr.id, 'no', 3] } },
+  ]);
+  global.window = {
+    App: { user },
+    AppView: { readOnly, voteState: { bySession: { 9000401: { id: 9000401, status: 'promoted' } } }, _cardVoteButtonSpecs: specs },
+  };
+  try { return fn(); } finally { if (had) global.window = was; else delete global.window; }
+}
 const botPost = (over) => ({
   ...base, id: 9, kind: 'message', username: 'homeroom_bot', time: '10:00', timeTitle: 't',
   bodyHtml: '<p>I built this. It’s up for a vote: Dark mode</p>', systemText: '',
@@ -76,30 +98,35 @@ test('the change is named by number and title, as the project writes its numbers
 
 // ── The card ──────────────────────────────────────────────────────────
 
-test('a vote line outside a request page draws the card: the name, the facts, Preview and Vote', () => {
-  const html = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts() }) });
-  assert.match(html, /<div class="gc-vote-card" role="group" aria-label="Vote on this change" data-vote-card="9000401" data-vote-state="promoted">/);
-  assert.match(html, /<div class="gc-vote-card-name">Change #12 · Dark mode<\/div>/);
-  assert.match(html, /<div class="gc-vote-card-facts" data-vote-facts="">Needs 1 more yes · All checks passed<\/div>/);
-  assert.match(html, /<button[^>]*data-vote-preview=""[^>]*>Preview<\/button>/);
-  assert.match(html, /<button[^>]*data-vote-open=""[^>]*>Vote<\/button>/);
-  // The two pills are the shell's: a neutral one and the accent.
-  assert.match(html, /<button[^>]*data-vote-preview=""[^>]*class="[^"]*rounded-full bg-zinc-200[^"]*"/);
-  assert.match(html, /<button[^>]*data-vote-open=""[^>]*class="[^"]*rounded-full bg-violet-600[^"]*"/);
+test('a vote line outside a request page draws the change page\'s bar: the name, the facts, Preview and its Vote', () => {
+  const html = viewerRender(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts() }) });
+  assert.match(html, /<div class="gc-vote-card" role="group" aria-label="Vote on this change" data-vote-card="9000401" data-vote-state="promoted"><div class="dev-thread-foot" data-thread-foot="vote" role="group">/);
+  assert.match(html, /<b class="dev-thread-foot-head">Change #12 · Dark mode<\/b><span class="dev-thread-foot-sub">Needs 1 more yes · All checks passed<\/span>/);
+  assert.match(html, /<div class="dev-thread-foot-acts"><button type="button" class="gc-vote-btn gc-vote-btn-preview" data-vote-preview="">[\s\S]*?Preview<\/button>/);
+  // The Vote is the change page's own, which opens the "Your vote" picker.
+  assert.match(html, /<button type="button" class="dev-vote-btn" data-vote-btn="open" aria-haspopup="dialog"[^>]*>Vote/);
+  assert.doesNotMatch(html, /data-vote-open/, 'no door away to vote');
   // Nothing of the old row.
-  assert.doesNotMatch(html, /Admin merge|gc-vote-btn|data-vote-controls|gc-vote-inline|>Yes<|>No</);
+  assert.doesNotMatch(html, /Admin merge|data-vote-controls|gc-vote-inline|>Yes<|>No</);
+  // Somebody who cannot vote here is sent to the change instead.
+  for (const opts of [{ readOnly: true }, { user: null }]) {
+    const away = viewerRender(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts() }) }, opts);
+    assert.doesNotMatch(away, /data-vote-btn/);
+    assert.match(away, /data-vote-open=""[^>]*>See the vote<\/button>/);
+  }
 });
 
-test('before the snapshot lands, the card names the change from the row and offers Vote alone', () => {
-  const html = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow() });
+test('before the snapshot lands, the card names the change from the row and offers See the vote alone', () => {
+  const html = viewerRender(TRANSCRIPT, 'SystemRow', { msg: voteRow() });
   assert.match(html, /data-vote-card="9000401" data-vote-state="unknown"/);
-  assert.match(html, /<div class="gc-vote-card-name">Change #12<\/div>/, 'the number the row itself carries');
-  assert.doesNotMatch(html, /gc-vote-card-facts/, 'no facts to say');
+  assert.match(html, /<b class="dev-thread-foot-head">Change #12<\/b>/, 'the number the row itself carries');
+  assert.doesNotMatch(html, /dev-thread-foot-sub/, 'no facts to say');
   assert.doesNotMatch(html, /data-vote-preview/, 'no preview to open');
-  assert.match(html, /data-vote-open=""[^>]*>Vote<\/button>/);
+  assert.doesNotMatch(html, /data-vote-btn/, 'no vote until the snapshot says it is open');
+  assert.match(html, /data-vote-open=""[^>]*>See the vote<\/button>/);
   // An old row with only the parsed number, and nothing known of it.
   const bare = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow({ voteRef: { sessionId: '', prNumber: '' } }) });
-  assert.match(bare, /<div class="gc-vote-card-name">A change<\/div>/);
+  assert.match(bare, /<b class="dev-thread-foot-head">A change<\/b>/);
 });
 
 test('#6322: a vote line that names no change draws no card', () => {
@@ -115,7 +142,7 @@ test('#6322: a vote line that names no change draws no card', () => {
 test('a settled change says so, offers See the vote rather than Vote, and no preview', () => {
   const merged = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts({ status: 'merged', preview: null }) }) });
   assert.match(merged, /data-vote-state="merged"/);
-  assert.match(merged, /data-vote-facts="">Merged<\/div>/);
+  assert.match(merged, /<span class="dev-thread-foot-sub">Merged<\/span>/);
   assert.match(merged, /data-vote-open=""[^>]*>See the vote<\/button>/);
   assert.doesNotMatch(merged, /data-vote-preview/);
   const building = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts({ preview: { kind: 'building' } }) }) });
@@ -127,7 +154,7 @@ test('Homeroom bot\'s "up for a vote" post hangs the same card under its words, 
   const html = renderComponent(TRANSCRIPT, 'MessageRow', { msg: botPost({ vote: facts() }), surface: 'thread' });
   assert.match(html, /data-msg-id="9"[^>]*data-vote-session="9000401" data-vote-pr="12"/, 'the pair refreshVoteControls reads');
   assert.match(html, /It’s up for a vote: Dark mode[\s\S]*<div class="gc-vote-card" role="group"/);
-  assert.match(html, /gc-vote-card-name">Change #12 · Dark mode</);
+  assert.match(html, /dev-thread-foot-head">Change #12 · Dark mode</);
   assert.doesNotMatch(html, /Admin merge|data-vote-controls|gc-vote-inline/);
 });
 
@@ -194,8 +221,9 @@ test('Admin merge is a row of the change\'s ⋯ menu alone; no transcript render
   // And the stylesheet draws the card, not the row.
   const css = read('public/css/app.css');
   assert.match(css, /\.gc-vote-card \{[^}]*border-radius: 20px;[^}]*background: var\(--dc-sheet-solid\);[^}]*box-shadow: inset 0 0 0 1px var\(--app-sheet-line\);/);
-  assert.match(css, /\.gc-vote-card-name \{[^}]*font-size: 15px;/);
-  assert.match(css, /\.gc-vote-card-facts \{[^}]*font-size: 13px;/);
+  assert.match(css, /\.gc-vote-card > \.dev-thread-foot, \.gc-vote-card > \.dev-thread-foot\[data-thread-foot-end\] \{ margin: 0; padding: 0; border-top: 0;/);
+  assert.match(css, /\.gc-vote-card \.dev-thread-foot-head \{ font-size: 15px;/);
+  assert.doesNotMatch(css, /\.gc-vote-card-(name|facts|actions) \{/, 'the card\'s own rows are gone');
   assert.doesNotMatch(css, /\.gc-vote-inline \{|\.gc-vote-btn-admin \{|\.gc-vote-voted-box \{/);
 });
 
@@ -213,5 +241,5 @@ test('T2.12: a change not open for votes says its stored row\'s words', () => {
   assert.match(html, /Taking screenshots/);
   assert.doesNotMatch(html, /Needs 1 more yes/);
   // Its button keeps the rule the preview's header shares: Vote until decided.
-  assert.match(html, />Vote</);
+  assert.match(viewerRender(CARD, 'VoteCard', { msg: voteRow({ vote: facts({ work }) }) }), /data-vote-btn="open"[^>]*>Vote/);
 });

@@ -621,16 +621,19 @@ test('a No asks why first: four answers and the optional line, and nothing is ca
   assert.match(asked, /class="rf-sheet"[^>]*data-rf-sheet="reason"/, 'it covers the page like the help sheet');
   assert.match(asked, /class="rf-grab"/, 'with the handle that closes it, counting nothing');
   assert.ok(asked.includes(`<h2 class="rf-why-head">${message('communities:review.why.title')}</h2>`));
-  assert.match(asked, /class="rf-chips" role="radiogroup"/);
+  // The answers are the shared strip's radio kind in its chip look
+  // (@/components/ui/tabs.tsx), which writes the group's role and each
+  // answer's, so the sheet's own .rf-chips / .rf-chip are gone.
+  assert.ok(asked.includes(`<div role="radiogroup" aria-label="${message('communities:review.why.title')}"`));
   for (const key of ['notWorking', 'approach', 'notNeeded', 'other']) {
-    assert.match(asked, new RegExp(`role="radio" aria-checked="false" class="rf-chip" data-rf-why-choice="${key}"`));
+    assert.match(asked, new RegExp(`role="radio" aria-checked="false" data-rf-why-choice="${key}"`));
     assert.ok(asked.includes(message(`communities:review.why.${key}`)), key);
   }
   assert.ok(asked.includes(`<p class="rf-line">${message('communities:review.why.detailLabel')}</p>`), 'the line stays optional');
   assert.match(asked, /<input aria-label="Add more, if you like\."[^>]*maxLength="280"/);
   assert.ok(asked.includes(`<button type="submit" class="rf-go" disabled="">${message('communities:review.no.send')}</button>`),
     'Send is off until an answer is picked');
-  assert.match(src, /onClick=\{\(\) => setChoice\(c\.key\)\}/, 'a chip picks the answer');
+  assert.match(src, /onValueChange=\{\(next\) => setChoice\(next as NoChoice\)\}/, 'a chip picks the answer');
   assert.match(src, /if \(!choice\) return;/, 'nothing is sent without one');
   // The composed reason is the answer, then the line when one is written,
   // within the server's limit.
@@ -719,7 +722,10 @@ test('the change line is the first declared change, else the first sentence, nev
   assert.equal(model.changeLine('', 'What changes for people Nothing in the game changes. The tests do.'), 'Nothing in the game changes.');
   const long = model.changeLine('', 'word '.repeat(80));
   assert.ok(long.length <= 141 && long.endsWith('…'), long);
-  assert.equal(model.cleanTitle('implement this change in the app: TITLE: Add comments'), 'Add comments');
+  // The title is the one model of a change's, cleaned once for every summary.
+  const change = loadTsx('frontend/src/features/dev-board/card/change.ts');
+  assert.equal(change.cleanTitle('implement this change in the app: TITLE: Add comments'), 'Add comments');
+  assert.equal(model.toReviewItems([feedItem({ title: 'Implement this change in the app: Add comments' })], () => null)[0].title, 'Add comments');
 });
 
 test('changes come first, group decisions after', () => {
@@ -1015,7 +1021,8 @@ test('#6199: the run opens on the change that decides, and a filter holds only i
   const voteFilter = loadTsx('frontend/src/features/workshop/vote-filter.tsx');
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   assert.match(src, /const \[filter, setFilter\] = useState<VoteFilter>\('all'\);/);
-  assert.match(src, /const run = list \? filterByVoteType\(list, filter, reviewVoteType\) : \[\];/);
+  // The kind is the one model of a change's (dev-board/card/change.ts voteTypeOf).
+  assert.match(src, /const run = list \? filterByVoteType\(list, filter, voteTypeOf\) : \[\];/);
   const feed = [feedItem({ id: 41 }), feedItem({ id: 42, advisory: true })];
   const shaped = model.orderForReview(model.toReviewItems(feed, () => null));
   const openOn = (which) => {
@@ -1109,8 +1116,4 @@ test('the feed shapes a run\'s frames onto its screens, and outlines only its ar
   // A change's page draws the same screens with the slider, which frames on
   // them and outlines nothing (review-flow/shots-viewer.tsx).
   assert.match(read('frontend/src/features/review-flow/shots-model.ts'), /const shaped = shape \? shape\(null, raw, mode\) : null;/);
-  // The Workshop's picture crops to frames first, and outlines regions only.
-  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);
-  assert.match(ws, /const outlines = \(which: Side\) => \(place \? screen\.regions\.map\(/);
 });

@@ -108,6 +108,73 @@ test('the guest directory: the project named what was typed leads, whatever the 
   assert.deepEqual(shown('sketchbook', 'trending', 'games'), [], 'a kind still narrows');
 });
 
+// #7021: Home's and Communities' community lists rank by the same rule, so a
+// community named what was typed leads the ones that only mention the words.
+test('rankCommunities: a community named what was typed leads, and the rest keep their order', () => {
+  const { rankCommunities } = loadTsx('frontend/src/features/home/use-home-query.ts');
+  const rows = [
+    { slug: 'book', name: 'Book Club', description: 'Our Bee Watch notes from the garden' },
+    { slug: 'log', name: 'Sunday Bee Watch Log', description: null },
+    { slug: 'bee-watch', name: 'Bee Watch', description: 'Count bees in your garden' },
+  ];
+  const withDescription = { description: true };
+  assert.deepEqual(
+    rankCommunities(rows, 'Bee Watch', withDescription).map((r) => r.slug),
+    ['bee-watch', 'book', 'log'],
+    'the exact name leads, a description-only match is still shown, and the rest keep their order',
+  );
+  // "been" is a description-only match for "bee": it is shown, below nothing
+  // in particular because no community is named "bee".
+  const screenRows = [
+    { slug: 'book', name: 'Book Club', description: 'What we have been reading' },
+    { slug: 'beehive', name: 'Beehive Games', description: 'Quick word games' },
+    { slug: 'bee-watch', name: 'Bee Watch', description: 'Count bees in your garden' },
+  ];
+  assert.deepEqual(
+    rankCommunities(screenRows, 'bee', withDescription).map((r) => r.slug),
+    ['book', 'beehive', 'bee-watch'],
+    'a partial query with no exact name keeps the list order, descriptions included',
+  );
+  assert.deepEqual(
+    rankCommunities([screenRows[0], screenRows[1]], 'bee watch', withDescription).map((r) => r.slug),
+    [],
+    'nothing matches, so nothing is shown',
+  );
+  // The name typed exactly leads even when it is last in the list and only a
+  // description match would have found the first row.
+  const named = [{ slug: 'first', name: 'Weekend Plans', description: 'Bee watch on Sunday' }, { slug: 'second', name: 'Bee' }];
+  assert.deepEqual(rankCommunities(named, 'bee', withDescription).map((r) => r.slug), ['second', 'first'],
+    '"Bee" leads the description-only match');
+  assert.deepEqual(rankCommunities(named, 'BEE', withDescription).map((r) => r.slug), ['second', 'first'], 'any case');
+  // Latin accents are set aside, as the app grid already does.
+  const cafe = [{ slug: 'busy', name: 'Cafe' }, { slug: 'mine', name: 'Café' }];
+  assert.deepEqual(rankCommunities(cafe, 'café', {}).map((r) => r.slug), ['mine', 'busy']);
+  assert.deepEqual(rankCommunities(cafe, 'cafe', {}).map((r) => r.slug), ['busy', 'mine']);
+  assert.deepEqual(rankCommunities([{ slug: 'x', name: 'Café Chat' }], 'cafe', {}).map((r) => r.slug), ['x'],
+    '"cafe" still finds "Café Chat"');
+  // A community's slug counts as its name.
+  assert.deepEqual(
+    rankCommunities([{ slug: 'hive', name: 'Garden Club' }, { slug: 'garden', name: 'Bee Hive' }], 'garden').map((r) => r.slug),
+    ['garden', 'hive'],
+    'the slug typed leads',
+  );
+  // Description is a text a match may be found in only when asked for.
+  const described = [{ slug: 'quiet', name: 'Garden', description: 'Our beekeeping notes' }];
+  assert.deepEqual(rankCommunities(described, 'bee').map((r) => r.slug), [], 'without the option, a description is not matched');
+  assert.deepEqual(rankCommunities(described, 'bee', withDescription).map((r) => r.slug), ['quiet']);
+  // An empty query returns the list unchanged, so the unsearched views do not move.
+  assert.deepEqual(rankCommunities(rows, '', withDescription).map((r) => r.slug), ['book', 'log', 'bee-watch']);
+});
+
+test('matchesQuery: a Latin accent is the same letter, and an empty query matches everything', () => {
+  const { matchesQuery } = loadTsx('frontend/src/features/home/use-home-query.ts');
+  assert.equal(matchesQuery('cafe', 'Café'), true);
+  assert.equal(matchesQuery('CAFÉ', 'cafe'), true);
+  assert.equal(matchesQuery('', 'anything'), true);
+  assert.equal(matchesQuery('bee', 'Bee Watch'), true);
+  assert.equal(matchesQuery('bee', 'Book Club'), false);
+});
+
 test('matchesSearch: inside any text, any case, accents aside; an empty query finds everything', () => {
   const { matchesSearch } = loadTsx(RANK);
   assert.equal(matchesSearch('cafe', 'Café Corner'), true, '"cafe" finds Café');

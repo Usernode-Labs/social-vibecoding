@@ -1049,7 +1049,8 @@ test('#6439 an ended vote to close says how it ended and keeps its replies', () 
   };
   const closed = view('closed');
   assert.match(closed, /data-done="true"/, 'the card is drawn as done');
-  assert.doesNotMatch(closed, /data-close-vote=/, 'no Yes or No once it has ended');
+  assert.doesNotMatch(closed, /data-vote-btn=/, 'no Vote once it has ended');
+  assert.match(closed, /<div class="dev-thread-foot" data-thread-foot="close"/, 'the change page\'s bar, saying how it ended');
   assert.match(closed, /Closed by vote\./, 'it says how it ended');
   assert.match(closed, /data-thread-fold="close:40"/, 'its replies are shown under it');
   assert.match(closed, /msgx-thread-line/);
@@ -1059,6 +1060,13 @@ test('#6439 an ended vote to close says how it ended and keeps its replies', () 
   assert.doesNotMatch(closed, /<button[^>]*>Covered by #6438\./, 'and is plain text, not a link back to the old page');
   assert.match(view('kept'), /Kept open\./);
   assert.match(view('elsewhere'), /Ended: the request closed another way\./);
+  // While it is open, the bar carries the change page's one Vote, which
+  // opens the same picker and sends castIssueVote.
+  const open = view(undefined, 'open');
+  assert.match(open, /data-change-gate="close" data-done="false"/);
+  assert.match(open, /<div class="dev-thread-foot" data-thread-foot="close"[\s\S]*class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes" aria-haspopup="dialog"/,
+    'the viewer\'s Yes is the Vote\'s face');
+  assert.doesNotMatch(open, /data-close-vote=/, 'no Yes and No of its own');
 });
 
 // T2.5 (19 Nov 2026): a person's own session on a request dropped the stored

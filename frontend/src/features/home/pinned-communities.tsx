@@ -52,7 +52,7 @@ import {
   homePinsStore, importDevicePins, loadHomePins, loadHomePinsForSession,
   wireHomePins, type HomePin,
 } from './home-pins-store';
-import { matchesQuery, useSettledHomeQuery } from './use-home-query';
+import { rankCommunities, useSettledHomeQuery } from './use-home-query';
 
 export const HEAD_ACTION = 'shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
 const TILE = 'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-center no-underline un-touch-target';
@@ -248,14 +248,15 @@ export function HomeCommunityMatches() {
     return unwire;
   }, []);
 
-  // Pinned first, in their order, then the others you are in.
+  // Pinned first, in their order, then the others you are in, except that a
+  // community named exactly what was typed leads (#7021).
   const matches = useMemo(() => {
     if (!query) return [];
     const on = new Set(state.pins.map((p) => p.slug));
     const joined = state.joined
       .filter((c) => !on.has(c.slug))
       .map((c) => ({ slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null }));
-    return [...state.pins, ...joined].filter((c) => matchesQuery(query, c.name, c.slug));
+    return rankCommunities([...state.pins, ...joined], query);
   }, [state.pins, state.joined, query]);
   // Read after mount only (state.ready), so the prerender and the first
   // client render agree: both draw the section hidden.

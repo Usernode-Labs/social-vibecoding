@@ -830,22 +830,18 @@ test('#4530: answering the bot stages a Reply to its note, or starts the box wit
   assert.deepEqual(opened, [['issue', 5]], 'from the board it opens the request first');
 
   // With no note to reply to, the box starts with the bot's handle, which
-  // counts as speaking to it; words already in the box stay.
-  const input = {
-    value: '', focused: 0, events: [],
-    dispatchEvent(e) { this.events.push(e.type); }, focus() { this.focused += 1; },
-  };
-  sandbox.document.getElementById = (id) => (id === 'gc-thread-input' ? input : null);
-  sandbox.Event = class { constructor(type) { this.type = type; } };
+  // counts as speaking to it; words already in the box stay. One message box
+  // (27 Nov 2026): the thread's box is Messages' own, so the words go in
+  // through it (groupChat.putInChatComposer), which saves its draft and
+  // focuses it, and leaves words already typed alone.
+  const put = [];
+  sandbox.window = sandbox.window || {};
+  sandbox.window.UsernodeReact = { groupChat: { putInChatComposer: (which, text, opts) => { put.push([which, text, opts]); return true; } } };
   sandbox.GroupChat = { replyDraft: null, replyToMessage() { throw new Error('no note to reply to'); } };
   await AppView.answerBotOnRequest(5, 0, 1);
-  assert.equal(input.value, '@homeroom_bot ');
-  assert.deepEqual(input.events, ['input'], 'the composer saves it as its own draft');
-  assert.equal(input.focused, 1);
-  input.value = 'the blue one';
-  await AppView.answerBotOnRequest(5, 0, 1);
-  assert.equal(input.value, 'the blue one');
-  assert.equal(input.focused, 2);
+  assert.equal(JSON.stringify(put), JSON.stringify([['thread', '@homeroom_bot ', { onlyIfEmpty: true }]]));
+  await AppView.answerBotOnRequest(5, 0, 1, 'Go ahead');
+  assert.equal(JSON.stringify(put[1]), JSON.stringify(['thread', '@homeroom_bot Go ahead', { onlyIfEmpty: true }]));
 });
 
 test('#4530: a refused ask says why and reads the request list again', async () => {
@@ -875,4 +871,61 @@ test('B8: a change Homeroom bot built is recognised by its author', () => {
   // #4455: a change's page has no band; asking the bot is a row of its ⋯.
   assert.match(src, /if \(proposal && AppView\._botBuilt\(item\) && !ro\) \{\n\s+rows\.push\(\{\n\s+label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
   assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
+});
+
+// #7236: a plan waiting for its OK is the one wait on Homeroom bot's
+// standing that asks a person to act, so its chip is amber (the tint the app
+// already gives a wait on somebody) rather than the quiet grey. Nothing is
+// running, so it keeps the spinner off; every other wait keeps its colour.
+test('#7236: a plan waiting for its OK is an amber chip; other waits keep their colour', () => {
+  const AppView = makeAppView(ME);
+  const planWords = {
+    stage: { id: 'core:work.why.plan' },
+    stageOthers: { id: 'core:work.whyOthers.plan' },
+  };
+  const planWait = (over) => baseIssue({
+    bot: { since: null, mine: true },
+    standing: {
+      stage: 'waiting_for_you', why: 'plan', line: null, whoseMove: 'requester', mine: true,
+      since: null, words: planWords, ...over,
+    },
+  });
+  const st = AppView._issueWorkState(planWait());
+  assert.equal(st.tone, 'amber', 'the plan wait wears the amber tone');
+  assert.equal(st.spinner, false, 'nothing is running while a plan waits');
+  const chip = AppView._inProgressChipSpec(planWait());
+  assert.match(chip.cls, /bg-amber-500\/10/, 'the chip wears the amber tint');
+  assert.match(chip.cls, /dark:text-amber-300/, 'and its dark-mode partner');
+  assert.match(chip.label, /OK the plan/, 'the words do not change');
+  // Builders reading somebody else's request get the same amber chip in the
+  // wording for everyone but the requester.
+  const theirs = planWait({ mine: false });
+  assert.equal(AppView._issueWorkState(theirs).tone, 'amber');
+  assert.match(AppView._inProgressChipSpec(theirs).label, /plan to be OK/);
+
+  // A question on the same request is not this wait: it stays grey.
+  const asked = AppView._issueWorkState(baseIssue({
+    in_progress: {
+      count: 1, users: ['maya'],
+      sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'paused', busy: false, lastActivityAt: null }],
+    },
+    standing: {
+      stage: 'waiting_for_you', why: 'question', line: null, whoseMove: 'requester', mine: true,
+      since: null,
+      words: { stage: { id: 'core:work.why.question' }, stageOthers: { id: 'core:work.whyOthers.question' } },
+    },
+  }));
+  assert.equal(asked.tone, 'zinc', 'a question keeps the quiet grey');
+  assert.equal(asked.spinner, false);
+
+  // And a bot stage that is genuinely running is not turned amber.
+  const building = AppView._issueWorkState(baseIssue({
+    bot: { since: null, mine: true },
+    standing: {
+      stage: 'building', line: { code: 'building' }, whoseMove: 'bot', mine: true, since: null,
+      words: { stage: { id: 'core:work.stage.buildStarted' }, stageOthers: null },
+    },
+  }));
+  assert.equal(building.tone, 'sky', 'a running build keeps its running tint');
+  assert.equal(building.spinner, true);
 });

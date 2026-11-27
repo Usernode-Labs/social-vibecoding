@@ -1212,12 +1212,12 @@
     {
       "name": "With its cards open the board draws each as the Activity sheet: the card, its thread, the send disc",
       "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread > .dev-feed-reply .messages-composer-card:has(textarea[aria-label=\"Reply to this item\"]) button.messages-send"
     },
     {
       "name": "A board card unfolds into the same sheet the Workshop's does: the comment tail and the reply box under it (#1884)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] ~ .dev-feed-thread > .dev-feed-reply .messages-composer-card:has(textarea[aria-label=\"Reply to this item\"]) button.messages-send"
     },
     {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
@@ -1631,6 +1631,12 @@
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
       "expectText": "Suggest an improvement"
+    },
+    {
+      "name": "The mark's menu over an app leads its list with Start editor, the app's live draft one press away (27 Nov 2026)",
+      "path": "/?demo=1&shot=improve#app/staging-demo-app/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] > #improve-quick-actions + #switcher-nav > #app-menu-editor-card:first-child > button#app-menu-row-editor",
+      "expectText": "Start editor"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
@@ -2497,7 +2503,7 @@
     {
       "name": "An unfolded card has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
+      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread > .dev-feed-reply textarea[aria-label=\"Reply to this item\"] ~ button.messages-send:disabled"
     },
     {
       "name": "A project's Needs you draws the review flow, one change's page at a time",
@@ -4723,10 +4729,10 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"earlier\"] [data-ws-discussion-earlier-reactions] > button[data-emoji=\"❤️\"]"
     },
     {
-      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026)",
+      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026); the side column has the hearts and plays card, its plays and its heart button",
       "path": "/app/staging-guest-page-busy?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols] > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols]:has([data-guest-side] [data-guest-popularity] [data-hearts-plays-used]):has([data-guest-popularity] button[data-heart][aria-pressed=\"false\"]) > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
       "expectText": "Sign in to post",
       "allowConsoleErrors": true
     },

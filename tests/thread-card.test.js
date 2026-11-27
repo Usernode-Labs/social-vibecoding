@@ -621,8 +621,64 @@ test('the foot is a band that runs to the card\'s end when it ends the card, wit
   // The thread page (the brand look's rules, kept for it): the sun pill, white pills beside it, the foot's band.
   const brand = css.slice(css.indexOf('THE THREAD PAGE: a request'), css.indexOf('END OF THE THREAD PAGE.'));
   assert.match(brand, /--thread-foot: color-mix\(in srgb, var\(--bl-sun\) 9%, var\(--bl-card\)\);/);
-  assert.match(brand, /\.dev-thread-foot-acts :is\(\.dev-vote-btn:not\(\.dev-vote-btn-yes\), \.dev-request-primary\),[^{]*\{\s*background: var\(--bl-sun\);\s*color: var\(--bl-on-sun\);\s*box-shadow: var\(--bl-pill-edge\);/);
+  assert.match(brand, /\.dev-thread-foot-acts \.dev-request-primary \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
   assert.match(brand, /\.dev-rail \{ --rail-now-box: var\(--bl-page\); --rail-now-box-line: var\(--app-sheet-line\); --rail-note-plain: transparent; \}/);
+});
+
+test('the Vote button is one paint wherever it is drawn: the bar\'s yellow, and a cast Yes the bar\'s quiet raised pill', () => {
+  const css = read('public/css/app.css');
+  // The tokens are the bar's own values (light, then dark), declared once
+  // for the whole app rather than on the thread page alone.
+  const brand = css.slice(css.indexOf('THE THREAD PAGE: a request'), css.indexOf('END OF THE THREAD PAGE.'));
+  assert.match(brand, /--bl-sun: #ffee6f; --bl-sun-lit: #fff6ac;/, 'the bar\'s light sun and its hover');
+  assert.match(brand, /--bl-pill-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;/);
+  assert.match(css, /html:root\.dark:not\(\[data-app-tone="light"\]\) body #dev-topic-thread \{ --bl-sun: var\(--wip-btn-1-bg, #ffee6f\); --bl-sun-lit: var\(--wip-btn-1-hover, #fff59f\); \}/, 'the bar\'s dark sun and its hover');
+  const tokens = css.match(/\nhtml:root \{\n  --vote-btn-bg:[^}]*\}/);
+  assert.ok(tokens, 'the vote tokens are declared on html:root');
+  assert.match(tokens[0], /--vote-btn-bg: var\(--wip-btn-1-bg\);/);
+  assert.match(tokens[0], /--vote-btn-ink: var\(--wip-btn-1-ink\);/);
+  assert.match(tokens[0], /--vote-btn-hover: #fff6ac;/);
+  assert.match(tokens[0], /--vote-btn-edge: inset 0 0 0 1px var\(--wip-btn-1-line\), 0 2px 0 var\(--wip-btn-1-line\);/);
+  assert.match(tokens[0], /--vote-btn-done-bg: #ffffff;/);
+  assert.match(tokens[0], /--vote-btn-done-edge: inset 0 0 0 1px rgba\(18, 26, 14, 0\.1\), 0 1px 2px rgba\(18, 26, 14, 0\.06\);/);
+  const dark = css.match(/\nhtml:root\.dark:not\(\[data-app-tone="light"\]\) \{\n  --vote-btn-hover:[^}]*\}/);
+  assert.ok(dark, 'and again for dark');
+  assert.match(dark[0], /--vote-btn-hover: var\(--wip-btn-1-hover\);/);
+  assert.match(dark[0], /--vote-btn-edge: 0 0 0 transparent;/);
+  assert.match(dark[0], /--vote-btn-done-bg: #243047;/);
+  // One rule on the button, whatever holds it.
+  const base = css.slice(css.indexOf('\n.dev-vote-btn {'), css.indexOf('\n}', css.indexOf('\n.dev-vote-btn {')));
+  assert.match(base, /background: var\(--vote-btn-bg\);\s*color: var\(--vote-btn-ink\);\s*box-shadow: var\(--vote-btn-edge\);/);
+  assert.match(css, /\n\.dev-vote-btn:hover \{ background: var\(--vote-btn-hover\); \}/);
+  assert.match(css, /\n\.dev-vote-btn-yes, \.dev-vote-btn-yes:hover \{ background: var\(--vote-btn-done-bg\); color: var\(--text-primary\); box-shadow: var\(--vote-btn-done-edge\); \}/);
+  // No and a Yes on an earlier version keep their meanings, and neither is blue.
+  assert.match(css, /\n\.dev-vote-btn-no, \.dev-vote-btn-no:hover \{ background: var\(--state-blocked-bg\); color: var\(--state-blocked\); box-shadow: none; \}/);
+  assert.match(css, /\n\.dev-vote-btn-prior, \.dev-vote-btn-prior:hover \{ background: var\(--state-attention-bg\); color: var\(--state-attention\); box-shadow: none; \}/);
+  // No page paints its own Vote: the only other rule that colours the
+  // button is the failed change's foot, where Vote is not the next step.
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const THREAD = 'html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) ';
+  const painted = [...bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((m) => ({ sel: m[1].trim().replace(/\s+/g, ' '), body: m[2] }))
+    .filter(({ sel, body }) => /\.dev-vote-btn(-(yes|no|prior))?(?![-\w])/.test(sel.replace(/:not\([^()]*\)/g, ''))
+      && /(^|;)\s*background(-color)?:/.test(body))
+    .map(({ sel }) => sel.split(THREAD).join(''));
+  assert.deepEqual(painted, [
+    '.dev-vote-btn',
+    '.dev-vote-btn:hover',
+    '.dev-vote-btn-yes, .dev-vote-btn-yes:hover',
+    '.dev-vote-btn-no, .dev-vote-btn-no:hover',
+    '.dev-vote-btn-prior, .dev-vote-btn-prior:hover',
+    '.dev-thread-foot[data-thread-foot="failed"] .dev-thread-foot-acts .dev-vote-btn',
+  ]);
+  assert.doesNotMatch(bare, /\.dev-vote-btn[^{,]*\{[^}]*var\(--accent/, 'no accent on the button');
+  // The picker it opens wears the bar's look wherever it opens: the board's
+  // own picker block is gone.
+  assert.doesNotMatch(css, /data-vote-look="board"/);
+  // In a channel, See the vote is the card's main action while the vote is
+  // open, so it is the same button; once settled it is a plain pill.
+  const card = read('frontend/src/features/group-chat/vote-card.tsx');
+  assert.match(card, /className=\{settled \? 'gc-vote-btn' : 'dev-vote-btn'\} data-vote-open=""/);
 });
 
 test('a foot with a vote to cast folds into the header once it has gone up behind it, and moves nothing', () => {
@@ -887,4 +943,23 @@ test('a request\'s page with one change: the foot is worded from the REQUEST\'s 
   });
   assert.match(others, new RegExp(`<b class="dev-thread-foot-head">${message('core:work.whyOthers.question')}</b>`));
   assert.doesNotMatch(others, new RegExp(message('core:work.why.question')), 'the requester\'s wording is theirs alone');
+});
+
+test('Read plan draws the reader\'s plan: the HTML document\'s two tabs, with markdown kept as the fallback', () => {
+  const card = read(CARD);
+  const panel = read('frontend/src/features/group-chat/spec-panel.tsx');
+  // The reader's body is exported, so both places draw the same two tabs.
+  assert.match(panel, /export function SpecDocBody\(/);
+  assert.match(card, /import \{ SpecDocBody \} from '\.\.\/\.\.\/group-chat\/spec-panel';/);
+  assert.match(card, /import \{ renderSpecHtml \} from '\.\.\/\.\.\/\.\.\/lib\/spec-html';/);
+  // A plan's HTML document is kept beside its markdown, for a plan posted here and for the bot's GitHub copy.
+  assert.match(card, /html: typeof spec\.content_html === 'string' && spec\.content_html\.trim\(\) \? spec\.content_html : null/);
+  assert.match(card, /read\.kind === 'text' \? \{ markdown: read\.markdown \|\| '', html: read\.html \|\| null \}/);
+  // It is drawn by the reader's own body, under its own key.
+  assert.match(card, /renderSpecHtml\(loaded\.html, \{ key: `step-plan-\$\{key\}` \}\)/);
+  assert.match(card, /<SpecDocBody body=\{\{ kind: 'spec' as const, \.\.\.doc \}\} \/>/);
+  // An old plan still opens as the one markdown document it is, and loading and failure are unchanged.
+  assert.match(card, /if \(loaded\) return <div className="dev-step-doc" data-step-plan="" dangerouslySetInnerHTML=\{inner\} \/>;/);
+  assert.match(card, /markdownHtml\(loaded\?\.markdown \|\| ''\)/);
+  assert.match(card, /t\('project:topic\.card\.layer\.planFailed'\) : t\('project:topic\.card\.layer\.planLoading'\)/);
 });

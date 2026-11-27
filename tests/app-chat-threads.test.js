@@ -251,3 +251,24 @@ test('a deleted row reads as a placeholder that keeps its sender', () => {
   assert.equal(live.deleted, false);
   assert.equal(live.username, 'Deleted user', 'an erased account still reads as somebody');
 });
+
+test('a shaped row carries its author\'s picture, never the raw avatar id (#7230)', () => {
+  const { generatedAvatarUrl } = require('../src/services/avatar-url');
+  const photo = 'ab'.repeat(16);
+  const withPhoto = appChat.shapeRow({
+    id: 6, user_id: 2, avatar_id: photo, username: 'bob', msg_type: 'message', content: 'x', deleted_at: null,
+  });
+  assert.equal(withPhoto.avatar_url, `/avatars/${photo}`);
+  assert.equal('avatar_id' in withPhoto, false, 'the address, not the id, goes on the wire');
+  assert.equal(appChat.shapeRow({
+    id: 7, user_id: 2, avatar_id: null, username: 'bob', msg_type: 'message', content: 'x', deleted_at: null,
+  }).avatar_url, generatedAvatarUrl(2), 'no photo: the generated picture');
+  assert.match(appChat.shapeRow({
+    id: 8, user_id: 2, avatar_id: null, username: 'bob', msg_type: 'message', content: 'x', deleted_at: '2026-01-01',
+  }).avatar_url, /^\/avatars\/g\//, 'a deleted row keeps who wrote it');
+  assert.equal(appChat.shapeRow({
+    id: 9, user_id: null, avatar_id: null, username: null, msg_type: 'message', content: 'x', deleted_at: null,
+  }).avatar_url, null, 'no account, no picture');
+  assert.equal('avatar_url' in appChat.shapeRow({ id: 10, user_id: 2, msg_type: 'message', content: 'x' }), false,
+    'a row that carries no avatar column is left as it was');
+});

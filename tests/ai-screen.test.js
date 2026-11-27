@@ -2074,7 +2074,7 @@ test('the column is held inside the window, and the panel takes its place at its
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeFits \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threadWidthKey\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
     'and the edge is the way the list hides and comes back (#6963)');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
@@ -2105,7 +2105,7 @@ test('a preview beside the thread: both edges drag, each the width of the column
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
   // The thread's edge keeps the three columns' width, bound and preview while
   // they fit, the list shown or put away (24 Nov 2026).
-  assert.match(src, /const threeFits = detailHere && fits === 'three';/);
+  assert.match(src, /const threeFits = previewHere && fits === 'three';/);
   assert.match(src, /const fits = detailLayout\('bot', \{ phone, wide: three \}\);/);
   assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
   assert.match(src, /neighbourMin: listMin \+ Math\.max\(0, roomEnd - endAt\), endAt/,
@@ -2848,7 +2848,10 @@ test('#6838: the list scrolls up and down only; a row never pushes past its band
   // 24 Nov 2026 (the three bands): no chip rail; a row's title truncates (or
   // takes two lines where the list is narrow) and its pill never wraps.
   assert.doesNotMatch(lists, /overflow-x-auto/, 'nothing of the list\'s own scrolls sideways');
-  assert.match(lists, /const PILL = 'inline-flex h-6 shrink-0 items-center whitespace-nowrap /);
+  // The row's word is the one tag now (@/components/ui/state-tag, app.css
+  // `.one-tag`), which never wraps: `white-space: nowrap` on the shared part.
+  assert.match(lists, /<StateTag state="needs" data-ai-row-end="act">/);
+  assert.match(css, /html:root \.one-tag \{[^}]*flex: none;[^}]*white-space: nowrap;/);
   assert.match(lists, /className=\{`ai-row-title block truncate /);
   assert.match(css, /#ai-screen \.ai-lists \.ai-row-title \{\n  display: -webkit-box;\n  -webkit-box-orient: vertical;\n  -webkit-line-clamp: 2;/);
   assert.match(lists, /<KindRail role="group"/, 'Done\'s kind chips ride the shared rail, which scrolls inside itself');
@@ -2949,7 +2952,7 @@ test('the list put away beside a preview (24 Nov 2026): halves where three colum
 test('the list put away: one pane, or beside a preview the thread and the preview in halves, where three columns fit', () => {
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index, /import \{ listLayout, setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
-  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: detailHere, fits, phone \}\);/,
+  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: previewHere, fits, phone \}\);/,
     'one reading of the choice, the column and the window');
   assert.match(index, /setDocked\(docked && snaps && !phone\)/, 'the button is offered wherever the list\'s bar snaps');
   assert.match(index, /data-ai-list-closed=\{oneUp \? '' : undefined\}/);

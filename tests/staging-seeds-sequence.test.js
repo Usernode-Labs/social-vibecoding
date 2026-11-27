@@ -63,7 +63,7 @@ const BOOT_ORDER = [
   'seedStagingBotWrongProject', 'seedStagingBotOutdatedReason', 'seedStagingClosedPrivateThread',
   'seedStagingShortPrivateThread', 'seedStagingBotReportReply', 'seedStagingBotFailureNotes',
   'seedStagingMainChatLastVisit', 'seedStagingFoldedLiveNotifications', 'seedStagingStorageNotices',
-  'seedStagingLiveDraftThread', 'seedStagingLimitRefusals', 'seedStagingDesignThread',
+  'seedStagingLiveDraftThread', 'seedStagingOpenLiveDraft', 'seedStagingLimitRefusals', 'seedStagingDesignThread',
   'seedStagingCapturedPageThread', 'seedStagingArtifactsThread', 'seedStagingBotPlanWaiting',
   'seedStagingBotPlanSettled', 'seedStagingBotFollowUp', 'seedStagingBotOverlap',
   'seedStagingBotOverlapBuilt', 'seedStagingBotTellMeWhen', 'seedStagingBotReplyWaiting',
@@ -98,7 +98,7 @@ const BOOT_ORDER = [
   'seedStagingVoteReasonOnRequest',
   'seedStagingLiveChangePrivateThread', 'seedStagingOlderFirstVersionThread', 'seedStagingFirstVersionBuildingThread',
   'seedStagingRecentThreads', 'seedStagingRenamedChange', 'seedStagingScrollTestThread',
-  'seedStagingGroupInviteNote', 'seedStagingGroupFacesRows', 'seedStagingFollowUpBubbles',
+  'seedStagingGroupInviteNote', 'seedStagingGroupFacesRows', 'seedStagingFollowUpBubbles', 'seedStagingSharedRenamedChange',
   'seedStagingOwnReviewChange', 'seedStagingGroupChatAttachments', 'seedStagingAppFiles',
   'seedStagingComplicatedPlanSpec', 'seedStagingSpecUserShareFixtures', 'seedStagingChatEditFixtures',
   'seedStagingBotChatRequest', 'seedStagingNewProjectOfferThread', 'seedStagingLlmUsage',
@@ -111,7 +111,8 @@ const BOOT_ORDER = [
   'seedStagingTopochain', 'seedStagingInviteChallengeStatuses', 'seedStagingFirstChallenges',
   'seedStagingCountedCredit', 'seedStagingChallengeItems', 'seedStagingProfileCustomization', 'seedStagingProfileProjects',
   'seedStagingBotBuiltDeleteApp', 'seedStagingPhoneFailures', 'seedStagingPlatformMail', 'seedStagingPinnedCommunities',
-  'seedStagingEmojiThreadRequest', 'seedStagingDiscussion', 'seedStagingGuestProjectPage', 'seedStagingGuestDiscussion', 'seedStagingFeedback',
+  'seedStagingEmojiThreadRequest', 'seedStagingDiscussion', 'seedStagingHubContributors',
+  'seedStagingGuestProjectPage', 'seedStagingGuestDiscussion', 'seedStagingHeartsAndPlays', 'seedStagingFeedback',
 ];
 
 test('the extracted list is exactly the boot order main ran, seed for seed', () => {

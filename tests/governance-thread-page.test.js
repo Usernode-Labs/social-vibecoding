@@ -86,8 +86,10 @@ test('each kind says what it does in its own words, with its number in the bar',
     assert.match(head, contentMatch, `${kind}: the root post says what it does`);
     assert.match(head, new RegExp(`data-gov-vote="${r.id}"`), `${kind}: its Votes card`);
     assert.match(head, /data-done="false"/, `${kind}: an open vote offers one`);
-    assert.match(head, /data-close-vote="up"/, `${kind}: with Yes`);
-    assert.match(head, /data-close-vote="down"/, `${kind}: and No`);
+    // The change page's bar and its one Vote, which opens the same picker.
+    assert.match(head, /<div class="dev-thread-foot" data-thread-foot="decision"/, `${kind}: the change page's bar`);
+    assert.match(head, /class="dev-vote-btn" data-vote-btn="open" aria-haspopup="dialog"/, `${kind}: with its Vote`);
+    assert.doesNotMatch(head, /data-close-vote/, `${kind}: and no Yes and No of its own`);
   }
 });
 
@@ -119,7 +121,7 @@ test('a vote that has ended says how, and offers no vote', () => {
     const head = renderComponent(HEAD, 'GovernanceHead', { row: r, view: v });
     assert.match(head, new RegExp(`data-gov-outcome="${outcome}"`), `${outcome}: the card says which ending`);
     assert.match(head, /data-done="true"/, `${outcome}: done`);
-    assert.doesNotMatch(head, /data-close-vote/, `${outcome}: no vote to cast`);
+    assert.doesNotMatch(head, /data-vote-btn/, `${outcome}: no vote to cast`);
     assert.doesNotMatch(head, /Waiting for votes/i, `${outcome}: never says it is waiting after it ended`);
     assert.match(head, line, `${outcome}: the ending in words`);
   }
@@ -127,27 +129,28 @@ test('a vote that has ended says how, and offers no vote', () => {
 
 test('the Votes card shows the tally, the votes needed and the viewer’s own vote', () => {
   const v = view(row({ up_count: 2, votes_required: 3, my_vote: 'up' }));
-  assert.deepEqual(v.votes, { yes: 2, need: 3, mine: 'yes', open: true, outcome: 'open' });
+  assert.deepEqual(v.votes, { yes: 2, no: 0, need: 3, mine: 'yes', open: true, outcome: 'open' });
   const head = renderComponent(HEAD, 'GovernanceHead', { row: row({ up_count: 2, votes_required: 3, my_vote: 'up' }), view: v });
   assert.match(head, /2 of 3 yes/, 'the tally and the votes the rule needs');
-  // #6990: the side already chosen is marked locked for screen readers too.
-  assert.match(head, /aria-pressed="true" aria-disabled="true" data-close-vote="up"/, 'the viewer’s own Yes, locked');
+  // The viewer's own Yes is the Vote's face; #6990: the picker keeps that
+  // side (dev-card.tsx `taken`), so it is never sent again and taken back.
+  assert.match(head, /class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes"/, 'the viewer’s own Yes');
+  assert.match(head, /You said yes\./, 'said in words under the tally');
 });
 
-// #6987: the same "Sending…" state the close vote has, on a decision's own
-// page, from the store castIssueVote publishes.
-test('#6987: a vote on its way reads "Sending…" on that side of the Votes card', () => {
+// #6987: the same "Sending…" state the change page's Vote has, on a
+// decision's own page, from the store castIssueVote publishes.
+test('#6987: a vote on its way reads "Sending…" on the decision\'s Vote', () => {
   const cards = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
   const r = row({});
   cards.voteSendingStore.set({ [`castIssueVote:${r.id}`]: 'yes' });
   try {
-    const head = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards } });
-    assert.match(head, /data-close-vote="up"[^>]*data-sending="true"[^>]*>Sending…<\/button>/, 'Yes says it is on its way');
-    assert.doesNotMatch(head, /data-close-vote="down"[^>]*data-sending="true"/, 'No is untouched');
+    const head = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards, './cards-store': cards } });
+    assert.match(head, /data-vote-btn="open"[^>]*aria-busy="true"[^>]*>Sending…<\/button>/, 'the Vote says it is on its way');
   } finally {
     cards.voteSendingStore.set(() => ({}));
   }
-  const plain = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards } });
+  const plain = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards, './cards-store': cards } });
   assert.doesNotMatch(plain, /Sending…/, 'nothing on its way: Yes and No as before');
 });
 
@@ -167,7 +170,9 @@ test('a reopen vote and a thread move are drawn on the page they are about', () 
 test('#6990: a decision\'s Votes card shows the vote it just saved, then re-reads', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/topic/thread-changes.tsx'), 'utf8');
   assert.match(src, /if \(revision <= 0\) return undefined;/, 'the first vote re-reads (the `if (!sent)` regression)');
-  assert.match(src, /const result = await av\.castIssueVote\(g\.id, side\);[\s\S]*?setApplied\(applyVote\(/,
+  // The Vote sends it (castIssueVote, through the one picker); the card hears
+  // what the server saved from the store castIssueVote publishes.
+  assert.match(src, /useDecisionVoteSaved\(g\.id, \(vote\) => \{[\s\S]*?setApplied\(applyVote\(/,
     'the saved vote is applied before the re-read lands');
   assert.match(src, /const votes = applied \? \{ \.\.\.base, mine: applied\.mine, yes: applied\.yes \} : base;/,
     'the figure, bar and said-yes line read the applied vote');

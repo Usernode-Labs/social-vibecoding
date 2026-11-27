@@ -272,21 +272,20 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
   assert.equal(message('project:card.vote.picker.dontApprove'), 'Don’t approve');
 });
 
-test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
+test('#3977: the Needs you queue\'s row carries the approval, and the one vote picker says Approve', () => {
   // Its row's Yes carries `approve` from `_cardVoteButtonSpecs` (app-view.js
-  // builds the queue; tests/dev-workshop.test.js renders the tab). #5365:
-  // the Yes spec also carries the advisory/uncounted flags the card puts
-  // there, so the feed's item can label a vote that does not decide.
+  // builds the queue). #5365: the Yes spec also carries the advisory/
+  // uncounted flags the card puts there, so a vote that does not decide is
+  // labelled. The picker that says it is the change page's own (VotePicker,
+  // dev-card.tsx); the Needs you reel's inline copy of it is gone.
   assert.match(SRC, /yes: yes \? \{[\s\S]*?\.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.uncounted \? \{ uncounted: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.advisory \? \{ advisory: true \} : \{\}\),[\s\S]*?\} : null,/);
-  const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const { VotePicker } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
   const noop = () => {};
-  const row = (approve) => ({
-    t: 'card', key: 'needs:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    yes: { label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
-    no: { label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } },
-  });
-  const draw = (approve, side = 'yes', noChoice = null) => renderToHtml(createElement(NeedsVoteForm, {
-    row: row(approve), slug: 'plant-pal', side, line: '', noChoice,
+  const yes = (approve) => ({ key: 'yes', label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) });
+  const no = { key: 'no', label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } };
+  const draw = (approve, side = 'yes', noChoice = null) => renderToHtml(createElement(VotePicker, {
+    yes: yes(approve), no, prior: null, side, line: '', noChoice, reasonId: 'vote-7',
+    tally: (a) => a.tally || '', withLine: true, approve,
     onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
   }));
   const solo = draw(true);

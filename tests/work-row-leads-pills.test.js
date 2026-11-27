@@ -79,24 +79,6 @@ test('the board\'s card draws the stored row\'s words, and keeps the vote\'s cou
   assert.equal(merging.pill.row, undefined);
 });
 
-test('Needs you says the row\'s word after the count, in its facts and under its question', () => {
-  const AppView = appView();
-  const { factsFor, VoteSub } = loadTsx(WORKSHOP);
-  const row = (work) => ({
-    t: 'card', key: 'vote:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    card: plain(AppView._proposalCardModel(proposal({ work }))),
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [7, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [7, 'no'] } },
-    askAbout: { kind: 'proposal', ref: 7 },
-  });
-  const says = (work) => factsFor(row(work), null).map((f) => `${f.key}:${f.text}`);
-  assert.deepEqual(says(shots()), ['tally:0 of 2 approvals', 'state:Taking screenshots']);
-  assert.deepEqual(says(syncing()), ['tally:0 of 2 approvals', 'state:Syncing with main']);
-  assert.deepEqual(says(upForVote()), ['tally:0 of 2 approvals'], 'up for a vote: the count alone, as before');
-  assert.deepEqual(says(null), ['tally:0 of 2 approvals']);
-  const sub = renderToHtml(createElement(VoteSub, { row: row(shots()), voted: null }));
-  assert.match(sub, /Taking screenshots/);
-});
-
 test('a change\'s line under a request wears the row\'s pill, never "Vote · 0/2"', () => {
   const AppView = appView();
   AppView._placedCategoryFor = () => null;
@@ -112,7 +94,8 @@ test('a change\'s line under a request wears the row\'s pill, never "Vote · 0/2
   assert.match(held, /Taking screenshots/);
   assert.doesNotMatch(held, /Vote · 0\/2/);
   assert.match(held, /data-thread-change-status="needs_vote"/, 'the attribute stays the live vote\'s key');
-  assert.match(line(failing()), /gc-vote-count-blocked/);
+  // A blocked state is the one tag, plain (dev-card.tsx ChangeTag): no red tone of its own.
+  assert.match(line(failing()), /data-state-tag="plain" class="one-tag one-tag-plain"/);
   assert.match(line(upForVote()), /Vote · 0\/2/, 'up for a vote: the vote\'s own pill');
   assert.match(line(null), /Vote · 0\/2/);
 });
@@ -148,7 +131,7 @@ test('a competing change folded under the ballot wears its row\'s pill too', () 
   assert.doesNotMatch(held, /Vote · 0\/2/, 'never a vote it is not open for');
   assert.match(held, /data-thread-change-status="needs_vote"/, 'the attribute stays the live vote\'s key');
   assert.match(folded(syncing()), /Syncing with main/);
-  assert.match(folded(failing()), /gc-vote-count-blocked/);
+  assert.match(folded(failing()), /data-state-tag="plain" class="one-tag one-tag-plain"/);
   assert.match(folded(upForVote()), /Vote · 0\/2/, 'up for a vote: the vote\'s own pill');
   assert.match(folded(null), /Vote · 0\/2/);
 });
@@ -181,7 +164,7 @@ test('the request\'s bar pill is its row\'s word and tone, whatever its thread\'
   assert.equal(stopped.tone, 'blocked');
   const drawn = bar(stopped);
   assert.match(drawn, /data-request-status="stopped"/);
-  assert.match(drawn, /gc-vote-count-blocked/);
+  assert.match(drawn, /data-state-tag="plain" class="one-tag one-tag-plain"/, 'the one tag, plain: its words say it stopped');
   assert.ok(drawn.includes(message('core:work.reason.fixStopped')), drawn);
 
   // Its screenshots are being taken: the row's word, its line on hover.

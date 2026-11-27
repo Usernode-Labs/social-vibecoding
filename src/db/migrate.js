@@ -300,6 +300,8 @@ const STAGING_SEEDS = Object.freeze([
   stagingSeed('seedStagingStorageNotices', async (pool, config) => { await seedStagingStorageNotices(pool); }),
   // 20 Nov 2026 (live-draft review): a thread with a live draft up for a vote, for G and J's shots.
   stagingSeed('seedStagingLiveDraftThread', async (pool, config) => { await seedStagingLiveDraftThread(pool); }),
+  // 27 Nov 2026 (request 7262): a thread whose draft is not proposed yet, for the preview header's shots.
+  stagingSeed('seedStagingOpenLiveDraft', async (pool, config) => { await seedStagingOpenLiveDraft(pool); }),
   // #6901's shots: while the server is full, Admin → Limits says how many
   // people were turned away, and the bell has a refusal notice. A fresh
   // staging copy has no run of refusals at all, and staging notifies nobody,
@@ -546,6 +548,9 @@ const STAGING_SEEDS = Object.freeze([
   stagingSeed('seedStagingGroupFacesRows', async (pool, config) => { await seedStagingGroupFacesRows(pool); }),
   // Desktop polish 11: a run of follow-up lines from a fake person. The same people.
   stagingSeed('seedStagingFollowUpBubbles', async (pool, config) => { await seedStagingFollowUpBubbles(pool); }),
+  // After seedStagingRenamedChange and #general's people: one of them is sent
+  // that change, so its card in a message shows the name it has everywhere.
+  stagingSeed('seedStagingSharedRenamedChange', async (pool, config) => { await seedStagingSharedRenamedChange(pool, config); }),
   stagingSeed('seedStagingOwnReviewChange', async (pool, config) => { await seedStagingOwnReviewChange(pool, config); }),
   stagingSeed('seedStagingGroupChatAttachments', async (pool, config) => { await seedStagingGroupChatAttachments(pool, config); }),
   stagingSeed('seedStagingAppFiles', async (pool, config) => { await seedStagingAppFiles(pool); }),
@@ -621,12 +626,20 @@ const STAGING_SEEDS = Object.freeze([
   // The hub's Discussion (26 Nov 2026): two fake private projects with
   // posts to draw, one of them folded into "Earlier discussion".
   stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
+  // #7230's shots: the hub's faces, Top contributors and Discussion authors
+  // show profile pictures. The Book Club has people active this week but no
+  // contributions, so its Top contributors card would be missing; two
+  // obviously fake merged changes give it two people to list.
+  stagingSeed('seedStagingHubContributors', async (pool, config) => { await seedStagingHubContributors(pool); }),
   // The signed-out project page's shots (26 Nov 2026): one obviously fake
   // public project busy enough to show who is around, changes approved by
   // several people and by its creator alone, and Top contributors.
   stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
   // Its Discussion, for a visitor to read (posts, replies, a picture).
   stagingSeed('seedStagingGuestDiscussion', async (pool, config) => { await seedStagingGuestDiscussion(pool); }),
+  // Hearts and plays on that project, for its card, its hub and its
+  // signed-out page (services/app-popularity.js).
+  stagingSeed('seedStagingHeartsAndPlays', async (pool, config) => seedStagingHeartsAndPlays(pool)),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2599,6 +2612,27 @@ async function seedStagingDiscussion(pool) {
       const host = await say(club, 'priya', 'I can host on the 14th if we start at 7. Who is in?', 60);
       await react(host, '👍', ['dev', 'ana', 'jo', 'marcus']);
       await react(host, '🎉', ['ana']);
+      // #7232: one post and its reply written in another language, so the
+      // Discussion's translation has something to translate for a reader of
+      // English. Obviously fake, by a fake person, and nothing reads it to
+      // decide anything.
+      const abroad = await say(club, 'jo', 'Selamat pagi semua, buku bulan ini sudah datang. Siapa yang mau ikut baca bareng hari Sabtu?', 130);
+      await say(club, 'ana', 'Aku ikut! Jam sepuluh pagi di perpustakaan ya.', 125, abroad);
+      // ...and their answers, kept as the route keeps them (a digest of the
+      // exact words, answers/user-content-translations), so the translation
+      // shows where no model can be asked (the before & after copies).
+      for (const [content, text] of [
+        ['Staging demo: Selamat pagi semua, buku bulan ini sudah datang. Siapa yang mau ikut baca bareng hari Sabtu?',
+          'Staging demo: Morning everyone, this month\'s book has arrived. Who wants to read it together on Saturday?'],
+        ['Staging demo: Aku ikut! Jam sepuluh pagi di perpustakaan ya.',
+          'Staging demo: Count me in! Ten in the morning at the library, okay?'],
+      ]) {
+        await tx.query(
+          `INSERT INTO user_content_translations (source_digest, language, text, source_language, model)
+           VALUES ($1, 'en', $2, 'id', 'staging-seed')
+           ON CONFLICT (source_digest, language) DO NOTHING`,
+          [crypto.createHash('sha256').update(content).digest('hex'), text]);
+      }
       const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
       await react(chairs, '🙌', ['priya', 'ana']);
       // #2783: `#1` reads as the project's request.
@@ -2718,6 +2752,42 @@ async function seedDiscussionFiles(db, { appId, userId, content, at, files, root
       [f.id, appId, id, userId, f.kind, f.filename, f.contentType, f.data.length, f.data]);
   }
   return id;
+}
+
+// Hearts and plays (services/app-popularity.js): a fresh staging copy has no
+// hearts and no visitor plays, so the busy public project
+// seedStagingGuestProjectPage makes is given some, for its hub's card, its
+// signed-out page and its card on Communities to draw: hearts from fourteen
+// of its own fake members, and three days of visitors' plays. Fake people on
+// a fake project only, and nothing here is read to decide anything.
+// Idempotent: every row is ON CONFLICT DO NOTHING. A no-op outside staging.
+async function seedStagingHeartsAndPlays(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+  const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-guest-page-busy'")).rows[0];
+  if (!app) return seedSkipped('no project staging-guest-page-busy');
+  const members = (await pool.query(
+    `SELECT c.user_id FROM app_collaborators c
+      WHERE c.app_id = $1 AND c.status = 'member' ORDER BY c.user_id LIMIT 14`, [app.id])).rows;
+  if (!members.length) return seedSkipped('staging-guest-page-busy has no members');
+  for (const { user_id: userId } of members) {
+    await pool.query(
+      `INSERT INTO app_hearts (app_id, user_id, created_at)
+       VALUES ($1, $2, NOW() - INTERVAL '2 days') ON CONFLICT DO NOTHING`,
+      [app.id, userId]
+    );
+  }
+  for (const [daysAgo, plays] of [[1, 64], [2, 58], [3, 61]]) {
+    await pool.query(
+      `INSERT INTO app_visitor_plays (app_id, day, plays)
+       VALUES ($1, CURRENT_DATE - $2::int, $3) ON CONFLICT DO NOTHING`,
+      [app.id, daysAgo, plays]
+    );
+  }
+  log.info('db', 'Staging hearts and plays seeded');
+  } catch (err) {
+    log.warn('db', 'Staging hearts and plays seeding failed', { message: err.message });
+  }
 }
 
 // The signed-out project page's Discussion (26 Nov 2026): the busy public
@@ -4175,6 +4245,90 @@ async function seedStagingLiveDraftThread(pool) {
   }
 }
 
+// 27 Nov 2026 (request 7262): the before & after shots show a preview header
+// of a draft still being worked on, before it is proposed: where it stands and
+// Propose, and no Open change until there is a change to open. One is opened
+// by asking Homeroom bot, which staging has no model for, so its rows are
+// stored: a second thread of the shots' member fixture on the same fake
+// project, its working change a paused fixture with no preview and no pull
+// request, and its draft open with two edits. Idempotent through the root
+// message's key and the draft's own row; strictly a no-op outside staging.
+async function seedStagingOpenLiveDraft(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    const app = (await pool.query("SELECT id, slug, name FROM apps WHERE slug = 'staging-demo-recipe-box' LIMIT 1")).rows[0];
+    if (!member || !bot || !app || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const conversationId = (await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    )).rows[0]?.conversation_id;
+    if (!conversationId) return;
+    const key = 'staging-demo-live-draft-open-thread';
+    let rootId = (await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, bot.id, key],
+    )).rows[0]?.id;
+    if (!rootId) {
+      rootId = (await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, NOW() - INTERVAL '22 minutes') RETURNING id`,
+        [conversationId, bot.id, `New thread, about ${app.name}.`,
+          JSON.stringify({ homeroomBot: { kind: 'opened_thread', appSlug: app.slug, appName: app.name } }), key],
+      )).rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: give each recipe a price in the list.', $4, NOW() - INTERVAL '21 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: each recipe row now ends with its price in the same grey as its cooking time.', $4, NOW() - INTERVAL '18 minutes'),
+                ($1, $2, 'Staging demo: and sort them by price.', $4, NOW() - INTERVAL '3 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: the list is sorted by price. Nothing here is proposed yet: Propose in the preview''s header puts these changes up for a vote.', $4, NOW() - INTERVAL '2 minutes')`,
+        [conversationId, member.id, bot.id, rootId],
+      );
+    }
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, title, title_source,
+                                    created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'ask', 'open', 'Staging demo: a price on each recipe', 'person',
+               NOW() - INTERVAL '22 minutes', NOW() - INTERVAL '2 minutes')
+       ON CONFLICT (root_message_id) DO UPDATE SET updated_at = private_threads.updated_at
+       RETURNING id`,
+      [member.id, conversationId, rootId, app.id],
+    )).rows[0];
+    const had = await pool.query('SELECT id FROM live_drafts WHERE root_message_id = $1 AND user_id = $2', [rootId, member.id]);
+    if (had.rows.length) {
+      await pool.query("UPDATE live_drafts SET updated_at = NOW(), live_state = 'live' WHERE id = $1", [had.rows[0].id]);
+      return;
+    }
+    const sha = (c) => c.repeat(40);
+    const change = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, last_activity_at)
+       VALUES ($1, $2, 'paused', FALSE, '{}', $3, 'staging-fixture/live-draft-open', NOW()) RETURNING id`,
+      [app.id, member.id, `Live draft of ${app.name}`],
+    )).rows[0];
+    const draft = (await pool.query(
+      `INSERT INTO live_drafts (app_id, user_id, private_thread_id, root_message_id, session_id, state, base_sha, head_sha,
+                                edits, live_state, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, 2, 'live', NOW() - INTERVAL '22 minutes', NOW())
+       RETURNING id`,
+      [app.id, member.id, thread.id, rootId, change.id, sha('d'), sha('f')],
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO live_draft_edits (draft_id, commit_sha, summary, paths, created_at)
+       VALUES ($1, $2, 'Staging demo: each recipe row ends with its price', ARRAY['public/index.html'], NOW() - INTERVAL '18 minutes'),
+              ($1, $3, 'Staging demo: the list sorted by price', ARRAY['public/index.html'], NOW() - INTERVAL '2 minutes')`,
+      [draft.id, sha('e'), sha('f')],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging open live draft seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -5159,25 +5313,48 @@ async function seedStagingBotReplyWaiting(pool) {
 // #6207/#6210 (3 Nov 2026): a plan of Homeroom bot's waiting for Build it is
 // a ▷ row on the Homeroom bot page that opens its request's page, where the
 // plan is drawn for everyone with its Build it. A fresh staging copy has no
-// such plan, so the before & after shots get one, obviously fake, on the
-// self-hosted Homeroom project, for the shots' member fixture
-// (usernode-capture) as its requester. Its card text is the plan's own
-// (#6220). Nothing here is a signal the bot decides on, and a staging copy
-// never acts on its queue. Idempotent by request number; a no-op outside
-// staging.
+// such plan, so the before & after shots get one, obviously fake, for the
+// shots' member fixture (usernode-capture) as its requester. Its card text is
+// the plan's own (#6220). Nothing here is a signal the bot decides on, and a
+// staging copy never acts on its queue. Idempotent by project, request
+// number and run; a no-op outside staging.
+//
+// #7236: the plan is also what draws the amber "waiting for your OK" chip on
+// a request card, and a card is only on a board whose list a seed's row can
+// reach. Homeroom's own project lists GitHub's issues, never a seeded
+// request, so the plan lives in a project of the member's own with no
+// repository: on staging a project without one lists the requests stored for
+// it (#7172), which is the one board a seeded card appears on. Filed just
+// now, so it heads that list.
 async function seedStagingBotPlanWaiting(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
-    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
-    const appId = apps.rows[0].id;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const userId = people.rows[0].id;
-    const number = 9106;
-    const title = 'Staging demo: a plan waiting for Build it';
+    const slug = 'staging-demo-plan-waiting';
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, icon_emoji)
+       VALUES (900813, 'Staging demo: Bake sale', $1, 'running', 'private', 'private', $2, '🍪')
+       ON CONFLICT DO NOTHING`,
+      [slug, userId],
+    );
+    const app = (await pool.query('SELECT id FROM apps WHERE slug = $1', [slug])).rows[0];
+    if (!app) return seedSkipped('no project staging-demo-plan-waiting');
+    const appId = app.id;
+    // A private project is readable by its members, and a member is a
+    // collaborator row: the creator alone is not one. The row also joins the
+    // member's community by trigger, so the project is one they can open.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`,
+      [appId, userId],
+    );
+    const number = 9122;
+    const title = 'Staging demo: the bake sale poster gets bigger type';
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
-       SELECT $1, $2, $3, 'Staging demo: obviously fake. A plan waits for Build it.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. A plan waits for its OK.', $4, NOW() - INTERVAL '1 hour', NOW()
         WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
       [appId, number, title, userId],
     );
@@ -5189,18 +5366,18 @@ async function seedStagingBotPlanWaiting(pool) {
     const plan = {
       complicated: true,
       questions: [],
-      bullets: ['Staging demo: the sample screen gets a sample banner.'],
+      bullets: ['Staging demo: the poster\'s first line gets the larger type.'],
       card: {
-        summary: 'Staging demo: the sample screen gets a sample banner. Nothing else changes.',
+        summary: 'Staging demo: the poster\'s first line gets the larger type. Nothing else changes.',
         lines: [
-          { n: 1, text: 'Staging demo: a sample banner sits at the top of the sample screen.' },
-          { n: null, text: 'Staging demo: nothing else on the screen moves.' },
+          { n: 1, text: 'Staging demo: "Bake sale" is set in the larger type, as it was last year.' },
+          { n: null, text: 'Staging demo: the prices and the date stay as they are.' },
         ],
       },
     };
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan, awaiting_go_at, created_at)
-       SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
+       SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '50 minutes', NOW() - INTERVAL '55 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live')`,
       [appId, number, JSON.stringify(plan)],
     );
@@ -9271,6 +9448,86 @@ async function seedStagingRenamedChange(pool, config) {
   }
 }
 
+// The one model of a change: a change shared in a message is named as every
+// other screen names it (its pull request's title, else the one chosen before
+// it had one, else its session's name). The share card led with the session's
+// old name. The renamed change above is the case: its correction is in
+// proposed_pr_title, so this shares it in a direct thread between the shots'
+// member fixture and one of #general's fake speakers, where its card shows
+// the name. Obviously fake, idempotent through the direct pair, the message's
+// idempotency key and the card's position; strictly a no-op outside staging.
+// Nothing here is a signal the code reads to decide anything.
+async function seedStagingSharedRenamedChange(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-lin')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const other = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    if (!member || !other || member.id === other.id) {
+      log.warn('db', 'Staging shared renamed change skipped: fixture users missing');
+      return seedSkipped('no user usernode-capture or staging-demo-general-lin');
+    }
+    const { rows: [change] } = await pool.query(
+      `SELECT cs.id, cs.app_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE a.slug = $1 AND cs.branch_name = 'staging-fixture/renamed-change'
+        ORDER BY cs.id ASC LIMIT 1`,
+      [config.selfAppSlug]
+    );
+    if (!change) return seedSkipped('no renamed change');
+    const low = Math.min(member.id, other.id);
+    const high = Math.max(member.id, other.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    const key = 'staging-demo-shared-renamed-change';
+    await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+       VALUES ($1, $2, 'Staging demo: the change I renamed, have a look', $3, NOW() - INTERVAL '2 days')
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, member.id, key]
+    );
+    const { rows: [message] } = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key]
+    );
+    if (!message) return;
+    await pool.query(
+      `INSERT INTO conversation_message_objects (message_id, position, object_type, app_id, object_ref)
+       VALUES ($1, 0, 'code_proposal', $2, $3) ON CONFLICT (message_id, position) DO NOTHING`,
+      [message.id, change.app_id, change.id]
+    );
+  } catch (err) {
+    log.warn('db', 'Staging shared renamed change seeding failed', { message: err.message });
+  }
+}
+
 // Small changes (#admin/small-changes): the watch-only small-change tag only
 // writes rows when a checks run settles, and nothing settles in a staging
 // preview, so the section would only ever show its empty state there. Tag
@@ -9776,6 +10033,35 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// #7230's shots: the hub's Top contributors card, on the Book Club the
+// Discussion seed makes (staging-demo-discussion), as its member sees it. A
+// fresh staging copy has people active this week there but no contributions,
+// so the card is missing. Two obviously fake merged changes, one by each of
+// two seeded people, give it two people to list. Idempotent by branch, a
+// strict no-op outside staging, and a missing project or people is simply
+// nothing to seed.
+async function seedStagingHubContributors(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: [app] } = await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-discussion'");
+    if (!app) return seedSkipped('no staging-demo-discussion');
+    const { rows: people } = await pool.query(
+      `SELECT id FROM users WHERE username IN ('staging-demo-priya', 'staging-demo-dev') ORDER BY username`);
+    if (people.length < 2) return seedSkipped('no staging demo people');
+    for (const [i, person] of people.entries()) {
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at)
+         SELECT $1, $2, $3::varchar(255), 'Staging demo: a shelf for what we are reading',
+                'Staging demo: a shelf for what we are reading', 'merged',
+                NOW() - make_interval(days => $4::int)
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3::varchar(255))`,
+        [app.id, person.id, `staging-fixture/hub-contributor-${i + 1}`, i + 1]);
+    }
+  } catch (err) {
+    log.warn('db', 'Staging hub contributors seed failed', { message: err.message });
   }
 }
 
@@ -18988,6 +19274,8 @@ module.exports = {
   backfillFenceWrappedSpecs,
   // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
   seedStagingLiveDraftThread,
+  // 27 Nov 2026 (request 7262): its shots' thread, before the draft is proposed.
+  seedStagingOpenLiveDraft,
   migrateAppDbsToPerRole,
   markChangesWithoutWorkState,
   seedStagingTranslations,

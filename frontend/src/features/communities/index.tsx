@@ -62,8 +62,8 @@ import {
 import { CommunitiesToJoin, readDirectory } from '../home/communities-to-join';
 import type { GuestApp } from '../guest/guest-data';
 import { SectionHeading } from '../home/panels/ui';
-import { HEAD_ACTION } from '../home/pinned-communities';
-import { matchesQuery } from '../home/use-home-query';
+import { ActionTile, HEAD_ACTION, NeedsTile, PinTile } from '../home/pinned-communities';
+import { matchesQuery, rankCommunities } from '../home/use-home-query';
 import { WipCard, WipCta, WipHeadMore } from '../home/wip-kit';
 import { CommunityPageCard, type CardCommunity } from './card';
 
@@ -158,16 +158,18 @@ export function CommunitiesScreen() {
   // The directory answered and none of the communities to join match the words.
   const noneToJoin = !!directory && !directory.some((a) => !mine.has(a.slug) && matchesQuery(q, a.name, a.slug, a.description));
 
-  const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(q, p.name, p.slug)), [state.pins, q]);
+  // Each group is ranked on its own: a community named what was typed leads
+  // its group (#7021), the way Home's search ranks yours.
+  const pinned = useMemo(() => rankCommunities(state.pins, q), [state.pins, q]);
   const joined = useMemo(() => {
     const on = new Set(state.pins.map((p) => p.slug));
-    return state.joined
+    const rows = state.joined
       .filter((c) => !on.has(c.slug))
       .map((c) => ({
         slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null,
         members: c.member_count,
-      }))
-      .filter((c) => matchesQuery(q, c.name, c.slug));
+      }));
+    return rankCommunities(rows, q);
   }, [state.joined, state.pins, q]);
   /** A joined community as its compact card draws it: its week, once the activity read has it. */
   const joinedCard = (c: (typeof joined)[number]): CardCommunity => {

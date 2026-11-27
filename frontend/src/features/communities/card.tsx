@@ -45,7 +45,8 @@
  */
 import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 
-import { CheckIcon, PlusIcon } from '@/components/ui/icons';
+import { CheckIcon, HeartIcon, PlusIcon } from '@/components/ui/icons';
+import { StateTag } from '@/components/ui/state-tag';
 
 import { bandWash, useIconMainColor } from '../../lib/community-color';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -53,6 +54,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMinWidth } from '../../lib/use-min-width';
 import { capCount } from '../../lib/count-cap';
 import { sizedPicture } from '../apps/app-card.js';
+import { shownCardHearts, shownPlays } from '../popularity/popularity';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
   CORNER, CORNER_PIN, CORNER_UNPIN, MinusGlyph, VOTES, WIGGLE, openHub,
@@ -75,6 +77,14 @@ export interface CardCommunity {
   /** People who took part in the last seven days, and changes that went live in them. */
   activeWeek?: number | null;
   liveWeek?: number | null;
+  /**
+   * How many times its app was played or opened, one per person per day, and
+   * how many accounts gave it a heart (../popularity/popularity.ts). `played`:
+   * the app is a game, so the count is plays; anything else is opened.
+   */
+  plays?: number | null;
+  hearts?: number | null;
+  played?: boolean;
 }
 
 const count = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
@@ -160,24 +170,55 @@ export function CommunityIcon({ community, eager = false, band = false }: { comm
 }
 
 /**
- * This week, in words at every width (phone review S3, 23 Nov 2026: a
- * glyph and a bare number needed a legend): "33 active", a dot, "5 changes
- * live this week" in the link's blue; "6 active this week" alone when
- * nothing went live; nothing at all for a quiet week. A line too long for
- * its card wraps between the two, and the dot is drawn before each part
- * where a wrapped line's first one is cut off (app.css), so no line starts
- * with it.
+ * The line at the card's foot, in words at every width (phone review S3, 23
+ * Nov 2026: a glyph and a bare number needed a legend). This week: "33
+ * active", a dot, "5 changes live this week" in the link's blue; "6 active
+ * this week" alone when nothing went live; nothing at all for a quiet week.
+ *
+ * HEARTS AND PLAYS lead it where a card has them (../popularity/): a red
+ * heart and how many accounts gave one (the one glyph on the line: a heart
+ * beside a number needs no legend, and a screen reader is given the words),
+ * then "6,930 plays", or "opens" for an app that is not a game. The plays
+ * stand where "33 active" stood, so a card says one thing about use, not
+ * two: "58 · 6,930 plays · 5 changes live this week". A count too small to
+ * read as busy says nothing (shownPlays, shownCardHearts), and a card with
+ * no plays to show keeps its active count.
+ *
+ * A line too long for its card wraps between its parts, and the dot is
+ * drawn before each part where a wrapped line's first one is cut off
+ * (app.css), so no line starts with it.
  */
-export function CommunityWeek({ active, live }: { active?: number | null; live?: number | null }) {
+export function CommunityWeek({ active, live, plays, hearts, played = true }: {
+  active?: number | null;
+  live?: number | null;
+  plays?: number | null;
+  hearts?: number | null;
+  played?: boolean;
+}) {
   const t = useMessages('home');
-  const a = count(active);
+  const p = shownPlays(plays);
+  const h = shownCardHearts(hearts);
+  const a = p ? 0 : count(active);
   const l = count(live);
-  if (!a && !l) return null;
+  if (!a && !l && !p && !h) return null;
   const people = a ? t(l ? 'home:communities.activeShort' : 'home:communities.activeWeek', { count: a, formatted: a.toLocaleString() }) : null;
+  const uses = p
+    ? played
+      ? t('home:communities.plays', { count: p, formatted: p.toLocaleString() })
+      : t('home:communities.opens', { count: p, formatted: p.toLocaleString() })
+    : null;
   const changes = l ? t('home:communities.liveThisWeek', { count: l, formatted: l.toLocaleString() }) : null;
   return (
     <span className="cm-card-week" data-cm-week="">
       <span className="cm-week-in">
+        {h ? (
+          <span className="inline-flex items-center gap-1" data-cm-hearts={String(h)}>
+            <HeartIcon className="h-[13px] w-[13px] shrink-0 fill-current text-rose-600 dark:text-rose-400" aria-hidden="true" />
+            <b className="font-semibold text-[color:var(--cm-ink)]" aria-hidden="true">{h.toLocaleString()}</b>
+            <span className="sr-only">{t('home:communities.hearts', { count: h, formatted: h.toLocaleString() })}</span>
+          </span>
+        ) : null}
+        {uses ? <span data-cm-plays={String(p)}>{uses}</span> : null}
         {people ? <span>{people}</span> : null}
         {changes ? <span className="cm-week-live">{changes}</span> : null}
       </span>
@@ -266,7 +307,7 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
           <CardId community={community} name={name} />
         </span>
         {about ? <span className="cm-card-desc" data-cm-desc="" {...aboutAttrs}>{about}</span> : null}
-        <CommunityWeek active={community.activeWeek} live={community.liveWeek} />
+        <CommunityWeek active={community.activeWeek} live={community.liveWeek} plays={community.plays} hearts={community.hearts} played={community.played} />
       </span>
     </>
   );
@@ -320,7 +361,7 @@ export function CommunityPageCard({ community, votes, editing, compact = false, 
   const named = tagged ? (
     <span className="cm-card-name-row">
       <span className="cm-card-name">{name}</span>
-      <span className="one-tag cm-card-votes" data-home-community-votes={String(votes)}>{tc('communities:row.toVote', { count: votes })}</span>
+      <StateTag state="needs" className="cm-card-votes" data-home-community-votes={String(votes)}>{tc('communities:row.toVote', { count: votes })}</StateTag>
     </span>
   ) : undefined;
   const face = (
@@ -418,6 +459,7 @@ export function communityFromDirectory(app: {
   slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null; icon_color?: string | null;
   illustration_url?: string | null; illustration_dark_url?: string | null; member_count?: number;
   description?: string | null; active_users?: number; merged_week?: number;
+  plays?: number; hearts?: number; category?: string | null;
 }): CardCommunity {
   return {
     slug: app.slug,
@@ -431,5 +473,8 @@ export function communityFromDirectory(app: {
     description: app.description,
     activeWeek: app.active_users,
     liveWeek: app.merged_week,
+    plays: app.plays,
+    hearts: app.hearts,
+    played: app.category === 'games',
   };
 }

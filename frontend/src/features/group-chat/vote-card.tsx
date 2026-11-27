@@ -6,25 +6,29 @@
  * a thread's vote lines, there used to be a row of small old-style buttons
  * filled by group-chat.js from AppView's own markup: "0 of 1 approval ·
  * Preview · Yes (0✓) · No (0✓) · Admin merge". It did not say what it was
- * voting on, it repeated what the page already shows better (since one page
- * per thread, a change built for a request has its section on the request's
- * page, with its Votes card, its Tested card and its Preview), and a
- * one-click Admin merge in a chat line was easy to press by mistake. Two
- * forms replace it, both React's end to end:
+ * voting on, and a one-click Admin merge in a chat line was easy to press by
+ * mistake. Two forms replace it, both React's end to end:
  *
  *   * `VoteLine` — on a request's page, where the change's section is drawn
  *     below (../dev-board/topic/thread-changes.tsx): one line that names the
  *     change ("Change #6063 · Dark mode") and offers See the vote, which
- *     brings that section's Votes card into view (./votes-in-view.ts) — the
- *     same door the notifications and the first version's "See the change"
- *     use. No Yes, no No, no Admin merge: the card below has the vote, and
- *     Admin merge stays in the change's ⋯ menu (AppView._proposalMenuItems),
- *     admins only, never inline in a chat line.
+ *     brings that section's bar into view (./votes-in-view.ts). No vote of
+ *     its own: the section below has the change page's bar and its Vote.
  *   * `VoteCard` — anywhere else a line about a change is drawn (a project's
- *     channel, a topic's thread, the change's own Discussion): a small card
- *     in today's style naming the change, where its vote and checks stand in
- *     words ("Needs 1 more yes · All checks passed"), and Preview and Vote,
- *     which open the change's preview and its Votes card.
+ *     channel, a topic's thread, the change's own Discussion): the bar a
+ *     change's page ends with (../dev-board/topic/thread-card.tsx
+ *     ThreadFoot), in a small card. Its headline names the change, its line
+ *     says where the vote and checks stand ("Needs 1 more yes · All checks
+ *     passed"), and its buttons are Preview and the change page's own Vote
+ *     (../dev-board/card/dev-card.tsx VoteButton), which opens the same "Your
+ *     vote" picker there as everywhere and sends `AppView.castVote`. Where
+ *     the viewer has no vote to cast here (signed out, view only, the change
+ *     settled or not in the snapshot yet), See the vote opens the change at
+ *     its vote instead. While the vote is open it is the card's main action
+ *     and wears the Vote button's own paint (.dev-vote-btn, the bar's
+ *     yellow); once the change is settled it is a plain pill, since a done
+ *     thing gets no fill. Admin merge stays in the change's ⋯ menu
+ *     (AppView._proposalMenuItems), admins only, never inline in a chat line.
  *
  * The facts come off the row's model (`msg.vote`, transcript-store.ts
  * VoteView), which group-chat.js resolves from `AppView.voteState` and
@@ -34,10 +38,14 @@
 
 import type { ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { EyeIcon } from '@/components/ui/icons';
 
 import { projectChangesOnGithub } from '../../lib/change-ref';
 import { useMessages } from '../../lib/i18n/react';
+import { checksWords, myVoteWords, voteStanding, type ChangeWords } from '../dev-board/card/change';
+import { VoteButton } from '../dev-board/card/dev-card';
+import type { ActionSpec } from '../dev-board/card/model';
+import { ThreadFoot } from '../dev-board/topic/thread-card';
 import { askVotesInView } from '../dev-board/topic/votes-in-view';
 import type { TranscriptMessage, VoteView } from './transcript-store';
 
@@ -57,31 +65,27 @@ export function changeName(t: T, { number, title }: { number: number | null; tit
  */
 export function voteFacts(t: T, vote: VoteView | null | undefined): string[] {
   if (!vote) return [];
-  if (vote.status === 'merged') return [t('chat:group.voteCard.merged')];
-  if (vote.status === 'merging') return [t('chat:group.voteCard.merging')];
+  // Each fact is a phrase of the one model of a change
+  // (../dev-board/card/change.ts), which the preview's bar says too.
+  const said = (words: ChangeWords | null): string[] => (words ? [t(words.id, words.values)] : []);
+  // Decided: it went live, or is going live, and that is all it says.
+  if (vote.status === 'merged' || vote.status === 'merging') return said(voteStanding(vote));
   // T2.12: not open for votes, by the change's stored row: where it stands
   // in that row's words ("Taking screenshots · Tests passed: only the before
   // and after screenshots are left"), and the viewer's own vote.
   if (vote.work && vote.work.stage) {
-    const said = [t(vote.work.stage.id, vote.work.stage.values), ...(vote.work.line ? [t(vote.work.line.id, vote.work.line.values)] : [])];
-    if (vote.myVote === 'yes') said.push(t('chat:group.voteCard.youVotedYes'));
-    else if (vote.myVote === 'no') said.push(t('chat:group.voteCard.youVotedNo'));
-    return said;
+    return [
+      t(vote.work.stage.id, vote.work.stage.values),
+      ...(vote.work.line ? [t(vote.work.line.id, vote.work.line.values)] : []),
+      ...said(myVoteWords(vote)),
+    ];
   }
-  const facts: string[] = [];
-  const yes = vote.yes ?? 0;
-  const needed = vote.needed ?? 1;
-  if (yes < needed) facts.push(t('chat:group.voteCard.needsMore', { count: needed - yes }));
-  else if (vote.needsOtherMember) facts.push(t('chat:group.voteCard.needsOtherMember'));
-  else facts.push(t('chat:group.voteCard.reached', { yes, needed }));
-  if (vote.myVote === 'yes') facts.push(t('chat:group.voteCard.youVotedYes'));
-  else if (vote.myVote === 'no') facts.push(t('chat:group.voteCard.youVotedNo'));
-  if (vote.checks === 'passing') facts.push(t('chat:group.voteCard.checks.passed'));
-  else if (vote.checks === 'failing') facts.push(t('chat:group.voteCard.checks.failing'));
-  else if (vote.checks === 'pending') facts.push(t('chat:group.voteCard.checks.running'));
-  else if (vote.checks === 'error') facts.push(t('chat:group.voteCard.checks.error'));
-  if (vote.preview?.kind === 'building') facts.push(t('chat:group.voteCard.previewBuilding'));
-  return facts;
+  return [
+    ...said(voteStanding(vote)),
+    ...said(myVoteWords(vote)),
+    ...said(checksWords(vote.checks)),
+    ...(vote.preview?.kind === 'building' ? [t('chat:group.voteCard.previewBuilding')] : []),
+  ];
 }
 
 /** The chat's project, as the module that mounted it knows it (GroupChat.appSlug), else the open app's. */
@@ -130,9 +134,28 @@ export function VoteLine({ sessionId, number, title, live = false }: { sessionId
 }
 
 /**
- * Everywhere else: the small card. Its facts are the row's `vote`; its name
- * is the snapshot's title when there is one, else the number the row itself
- * carries.
+ * The change's Yes and No as the one vote control takes them: the pair its
+ * card and its page draw (`AppView._cardVoteButtonSpecs`, from the change's
+ * row in the vote snapshot, with the approval epoch the server checks). Null
+ * where the viewer has no vote to cast here: signed out, view only, or the
+ * change not up for a vote in the snapshot.
+ */
+export function changeVoteSpecs(sessionId: number | null): { yes: ActionSpec; no: ActionSpec } | null {
+  if (typeof window === 'undefined' || !sessionId) return null;
+  const w = window as any;
+  const av = w.AppView;
+  if (!w.App?.user || !av || av.readOnly || typeof av._cardVoteButtonSpecs !== 'function') return null;
+  const row = av.voteState?.bySession?.[String(sessionId)] || null;
+  const pair: ActionSpec[] = row ? av._cardVoteButtonSpecs(row) || [] : [];
+  const yes = pair.find((a) => a.key === 'yes');
+  const no = pair.find((a) => a.key === 'no');
+  return yes && no ? { yes, no } : null;
+}
+
+/**
+ * Everywhere else: the change page's bar, in a small card. Its headline is
+ * the snapshot's title when there is one, else the number the row itself
+ * carries; its line is the row's `vote`.
  */
 export function VoteCard({ msg }: { msg: TranscriptMessage }): ReactNode {
   const t = useMessages('chat');
@@ -144,6 +167,7 @@ export function VoteCard({ msg }: { msg: TranscriptMessage }): ReactNode {
   const facts = voteFacts(t, vote);
   const settled = !!vote && vote.status !== 'promoted';
   const preview = vote?.preview?.kind === 'live' ? vote.preview.url : null;
+  const specs = vote && !settled ? changeVoteSpecs(sessionId) : null;
   return (
     <div
       className="gc-vote-card"
@@ -152,25 +176,29 @@ export function VoteCard({ msg }: { msg: TranscriptMessage }): ReactNode {
       data-vote-card={sessionId ?? ''}
       data-vote-state={vote ? vote.status : 'unknown'}
     >
-      <div className="gc-vote-card-name">{changeName(t, { number, title: vote?.title ?? null })}</div>
-      {facts.length ? <div className="gc-vote-card-facts" data-vote-facts="">{facts.join(' · ')}</div> : null}
-      <div className="gc-vote-card-actions">
+      <ThreadFoot
+        what="vote"
+        headline={changeName(t, { number, title: vote?.title ?? null })}
+        sub={facts.length ? facts.join(' · ') : null}
+        tone={settled ? 'muted' : null}
+      >
         {preview && sessionId ? (
-          <Button
+          <button
             type="button"
-            variant="pillOnCard"
-            size="sm"
-            ink="neutral"
+            className="gc-vote-btn gc-vote-btn-preview"
             data-vote-preview=""
             onClick={() => (window as any).AppView?.swapToStagingForSession?.(sessionId, preview, { title: vote?.title ?? null, number: number ?? null })}
           >
+            <EyeIcon aria-hidden="true" className="h-4 w-4 shrink-0" />
             {t('chat:group.voteCard.preview')}
-          </Button>
+          </button>
         ) : null}
-        <Button type="button" variant="pillAccent" size="sm" data-vote-open="" onClick={() => openVotes(sessionId, number)}>
-          {settled ? t('chat:group.voteCard.seeVote') : t('chat:group.voteCard.vote')}
-        </Button>
-      </div>
+        {specs ? <VoteButton yes={specs.yes} no={specs.no} /> : (
+          <button type="button" className={settled ? 'gc-vote-btn' : 'dev-vote-btn'} data-vote-open="" onClick={() => openVotes(sessionId, number)}>
+            {t('chat:group.voteCard.seeVote')}
+          </button>
+        )}
+      </ThreadFoot>
     </div>
   );
 }

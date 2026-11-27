@@ -5,6 +5,8 @@
  * people in it. Under the hero (./community-card.tsx: what it is, who it is
  * for and who is around this week), top to bottom:
  *
+ *   HEARTS AND PLAYS, first: how much the app is used and liked, with the
+ *   heart to give one. PopularityCard.
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
  *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
  *   (what happened, and every item; 6 Nov 2026: it took Your work's place
@@ -64,12 +66,14 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, HashIcon, SparklesIcon } from '@/components/ui/icons';
+import { StateTag } from '@/components/ui/state-tag';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
@@ -87,7 +91,7 @@ import { openBotTab } from '../../ai/door';
 import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
-import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { HubFace, reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { swatchFor } from '../../messages/format';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
@@ -96,6 +100,7 @@ import {
   type UpstreamState, type VersionsSummary,
 } from '../../versions/upstream';
 import { dayNumber, getTimeZoneSnapshot, inZone, zonedDay } from '../../../lib/time-zone';
+import { HeartsPlays, useHeart } from '../../popularity/hearts-plays';
 
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
@@ -589,10 +594,10 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
           leading={<IconTile size="xs" className={OWED_TILE}><BallotIcon aria-hidden="true" /></IconTile>}
           titleClassName={TITLE_WITH_PILL}
           title={pillTitle(t('project:hub.needs.upForVote'), (
-            <span className="dev-ws-foryou-pill dev-ws-foryou-pill-light one-tag" data-ws-hub-needs-count="">
+            <StateTag data-ws-hub-needs-count="">
               <span aria-hidden="true">{votes.length}</span>
               <span className="sr-only">{t('project:hub.needs.upForVoteCount', { count: votes.length })}</span>
-            </span>
+            </StateTag>
           ))}
           subtitle={<span data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</span>}
         />
@@ -621,7 +626,7 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
         onClick={onOpen}
         leading={<IconTile size="xs" className={count ? OWED_TILE : undefined}><BallotIcon aria-hidden="true" /></IconTile>}
         titleClassName={TITLE_WITH_PILL}
-        title={pillTitle(t('project:hub.needs.title'), count ? <span className="dev-ws-foryou-pill one-tag one-tag-strong">{t('project:hub.needs.toVote', { count })}</span> : null)}
+        title={pillTitle(t('project:hub.needs.title'), count ? <StateTag state="needs">{t('project:hub.needs.toVote', { count })}</StateTag> : null)}
         subtitle={sub}
       />
       {count && !canPost ? (
@@ -724,9 +729,9 @@ function DiscussionRow({ data, onOpen, outsider = false }: {
           components={[<span className="dev-ws-foryou-handle" />]}
         />
       ), unread > 0 ? (
-        <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-channel-unread={String(unread)}>
+        <StateTag data-ws-channel-unread={String(unread)}>
           {t('project:hub.channel.unread', { count: unread, shown: capCount(unread) })}
-        </span>
+        </StateTag>
       ) : null)}
       subtitle={sub}
     />
@@ -850,9 +855,9 @@ export function TopicsCard({ data, onOpen }: {
                   {topic.name || topic.handle} <span className="dev-ws-foryou-handle">#{topic.handle}</span>
                 </>
               ), unread ? (
-                <span className="dev-ws-foryou-pill one-tag one-tag-grey" data-ws-hub-topic-unread={String(unread)}>
+                <StateTag data-ws-hub-topic-unread={String(unread)}>
                   {t('project:hub.channel.unread', { count: unread, shown: capCount(unread) })}
-                </span>
+                </StateTag>
               ) : null)}
               subtitle={topic.about || undefined}
             />
@@ -875,6 +880,8 @@ export function TopicsCard({ data, onOpen }: {
 
 /** Below this many people over all time the hub has no Top contributors card: no list of one. */
 export const HUB_CONTRIBUTORS_MIN = 2;
+/** This month | All time, in the order the strip draws them. */
+const CONTRIB_SPANS = ['month', 'all'] as const;
 
 /**
  * TOP CONTRIBUTORS (request 6837): the people who took part most in this
@@ -902,15 +909,13 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
     <section className="dev-ws-hub-section" data-ws-hub-contributors={span} aria-labelledby={headId}>
       <div className="dev-ws-hub-sechead">
         <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.contributors.title')}</SectionHeader>
-        {/* ONE LOOK (25 Nov 2026): the shared segmented control, its ink pill sliding to the span picked. */}
-        <div className="dev-ws-contrib-span one-seg" role="group" aria-label={t('project:hub.contributors.span')} style={{ '--one-seg-n': 2, '--one-seg-i': span === 'month' ? 0 : 1 } as CSSProperties}>
-          <button type="button" data-ws-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
-            {t('project:hub.contributors.month')}
-          </button>
-          <button type="button" data-ws-contrib-span="all" aria-pressed={span === 'all'} onClick={() => setPicked('all')}>
-            {t('project:hub.contributors.allTime')}
-          </button>
-        </div>
+        {/* ONE LOOK (25 Nov 2026): the shared strip's segment look (@/components/ui/tabs.tsx), its ink pill sliding to the span picked. */}
+        <Tabs kind="radio" look="segment" values={CONTRIB_SPANS} value={span} onValueChange={(next) => setPicked(next === 'all' ? 'all' : 'month')}>
+          <TabsList className="dev-ws-contrib-span" aria-label={t('project:hub.contributors.span')}>
+            <TabsTrigger value="month" data-ws-contrib-span="month">{t('project:hub.contributors.month')}</TabsTrigger>
+            <TabsTrigger value="all" data-ws-contrib-span="all">{t('project:hub.contributors.allTime')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
       <div className="dev-ws-strip dev-ws-foryou">
         {people.length ? people.map((person) => (
@@ -921,11 +926,7 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
             chevron={false}
             className="dev-ws-foryou-row dev-ws-contrib-row"
             data-ws-contributor={person.username}
-            leading={(
-              <span className="dev-ws-hero-face dev-ws-contrib-face" style={{ background: swatchFor(person.username) }} aria-hidden="true">
-                {(person.username || '?').charAt(0).toUpperCase()}
-              </span>
-            )}
+            leading={<HubFace person={person} className="dev-ws-contrib-face" decorative />}
             title={person.username}
             // ONE LOOK (25 Nov 2026): the count is the row's second line, as every row's is.
             subtitle={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}
@@ -934,6 +935,37 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
           <p className="dev-ws-week-note" data-ws-contrib-none="">{t('project:hub.contributors.emptyMonth')}</p>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * HEARTS AND PLAYS (../../popularity/hearts-plays.tsx): how many times the
+ * project's app was played or opened and how many accounts gave it a heart,
+ * with the heart to give one. Anybody who can see the hub can, a member or
+ * not. It is the one place the hub says a number about the app itself; who
+ * is around stays the hero's faces. The counts are the server's
+ * (GET /api/apps/:slug/community `popularity`); an answer without them, as
+ * the platform's own project's is, draws nothing.
+ */
+export function PopularityCard({ slug, name, data }: { slug: string; name: string; data: CommunityPayload | null }): ReactNode {
+  const counts = data?.popularity || null;
+  const heart = useHeart({
+    slug,
+    initial: counts ? { hearted: counts.hearted, hearts: counts.hearts } : null,
+    signedIn: true,
+  });
+  if (!counts || !heart.state) return null;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-popularity="">
+      <HeartsPlays
+        name={name}
+        played={counts.played}
+        plays={counts.plays}
+        heart={heart.state}
+        busy={heart.busy}
+        onHeart={heart.toggle}
+      />
     </section>
   );
 }

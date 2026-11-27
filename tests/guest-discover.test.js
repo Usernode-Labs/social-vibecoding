@@ -392,6 +392,50 @@ test('an app open for a visitor is no longer pinned from the landing\'s bar; Dis
   assert.match(renderToHtml(createElement(wired.GuestDiscover, discoverProps())), /data-guest-pinned-app="todo-list"/);
 });
 
+test('Featured on the signed-in pages stops at six, a full row, and the seventh joins Communities to join (#7229)', () => {
+  const { CommunitiesToJoin, FEATURED_MAX } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  // Three across on a desktop, two on a phone (app.css `.cm-grid`): six ends
+  // on a full row either way (Drea's request, the seventh card alone).
+  assert.equal(FEATURED_MAX, 6);
+  const many = Array.from({ length: 8 }, (_, i) => ({
+    slug: `f${i + 1}`, name: `Featured ${i + 1}`, description: null, category: null,
+    featured: true, featured_order: i + 1, active_users: 10, open_votes: 0, created_at: ago(200),
+    member_count: 1, merged_count: 0, latest_change: null, contributors: [],
+    guest_ready: false, requires_login: true, url: `https://f${i + 1}.example`,
+  }));
+  const draw = (signedIn) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: many, exclude: new Set(), signedIn, query: '',
+  }));
+  const featuredOf = (html) => [...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]);
+  const cardsOf = (html) => [...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]);
+  const signedInHtml = draw(true);
+  assert.deepEqual(featuredOf(signedInHtml), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'], 'the first six, in the order an admin set');
+  assert.doesNotMatch(signedInHtml, /data-home-join-featured-rest/, 'one grid of covers signed in, nothing left over in it');
+  // Nothing is hidden: the seventh and anything after it is in the list
+  // below, as a plain card, in that list's sort (a tie keeps the order).
+  assert.deepEqual(cardsOf(signedInHtml), ['f7', 'f8']);
+  // While the directory is read, the signed-in pages hold what lands (27 Nov
+  // 2026): as many covers as Featured shows, and the filter line's own box.
+  // It held one row of covers and no line, so the list dropped when they came.
+  const loading = renderToHtml(createElement(CommunitiesToJoin, { apps: null, exclude: new Set(), signedIn: true, query: '' }));
+  const held = loading.slice(loading.indexOf('data-home-join-featured="" data-loading=""'), loading.indexOf('aria-label="Loading apps"'));
+  assert.equal((held.match(/class="cm-card cm-card-skel" data-cm-size="lead"/g) || []).length, FEATURED_MAX);
+  assert.match(loading, /<div class="wip-filterbar animate-pulse" data-loading="" aria-hidden="true">/);
+  assert.ok(loading.indexOf('class="wip-filterbar animate-pulse"') < loading.indexOf('data-home-join-featured=""'), 'where the real line is drawn, before Featured');
+  const guestLoading = renderToHtml(createElement(CommunitiesToJoin, { apps: null, exclude: new Set(), signedIn: false, query: '' }));
+  assert.doesNotMatch(guestLoading, /wip-filterbar|data-home-join-featured/, 'the visitor\'s landing holds neither: it draws neither this way');
+  // The visitor's landing is unchanged: it draws every featured community.
+  assert.deepEqual(featuredOf(draw(false)), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
+  // The Communities page draws this same section signed in (the spec's
+  // second surface), so it takes the same cap.
+  assert.match(
+    read('frontend/src/features/communities/index.tsx'),
+    /<CommunitiesToJoin\s+apps=\{directory\}[\s\S]*?\bsignedIn\b/,
+    'the Communities page mounts Communities to join as a signed-in page',
+  );
+});
+
 // Twenty projects, the even ones (a01, a03, …) open for a visitor.
 const MANY = Array.from({ length: 20 }, (_, i) => ({
   slug: `a${String(i + 1).padStart(2, '0')}`, name: `App ${i + 1}`, active_users: 20 - i, member_count: 0,
@@ -469,7 +513,8 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const src = read(JOIN);
   // The label is drawn whenever something is featured, but under Standard (WIP), which draws Featured apart from this list.
   assert.match(src, /const restLabel = featured\.length > 0 && !wip;/);
-  assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  assert.match(src, /\(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  assert.match(src, /return rankCommunities\(\s+\(query \? joinOrder\(pool, sort\)/, 'the search list is ranked by the shared rule, after the sort (#7021)');
   // The kind chips fade at whichever edge has more chips, the AI page's own
   // rail, and a chosen kind names itself in Featured's heading (#6660).
   assert.match(src, /<FadeRail role="group" aria-label=\{ta\('auth:guest\.categories\.label'\)\}/);
@@ -640,8 +685,8 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sort, 'the rest has a sort menu');
   assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
-  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'name'],
-    'New, Popular, Most active and A to Z, in that order');
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'played', 'hearts', 'name'],
+    'New, Popular, Most active, Most played, Most hearts and A to Z, in that order');
   assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
     'most active until another is picked');
   assert.equal(message('home:join.sort.new'), 'New');
@@ -823,8 +868,9 @@ test('Top contributors on the signed-out page: the hub\'s list and rules, This m
   assert.ok(text(html).includes(message('project:hub.contributors.title')));
   assert.equal([...html.matchAll(/data-guest-contributor="/g)].length, 3);
   assert.ok(text(html).includes(message('project:hub.contributors.count_other', { count: 10 })));
-  assert.match(html, /class="one-seg" role="group"/);
-  assert.match(html, /data-guest-contrib-span="month" aria-pressed="true"/);
+  // The shared strip's radio kind in its segment look (@/components/ui/tabs.tsx).
+  assert.match(html, /<div role="radiogroup" aria-label="[^"]+" class="one-seg" style="--one-seg-n:2;--one-seg-i:0">/);
+  assert.match(html, /aria-checked="true" data-guest-contrib-span="month"/);
   // Nobody this month: it opens on All time.
   assert.match(card({ month: [], all_time: people(4) }), /data-guest-contributors="all"/);
   // A list of one is no list, as on the hub.
@@ -1302,4 +1348,20 @@ test('the list wears the website\'s look signed out only: repainted by its own h
   // The faces it names are the ones the stylesheet already declares.
   assert.match(css, /@font-face \{\s+font-family: 'Young Serif';/);
   assert.match(css, /@font-face \{\s+font-family: 'Geist';/);
+});
+
+test('a search leads with the community named what was typed, the loose matches still under it (#7021)', () => {
+  // The real component: CommunitiesToJoin ranks the list it draws, so a
+  // change that filters without ranking fails here by the order it renders.
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const draw = (query) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: APPS, exclude: new Set(), signedIn: false, query,
+  }));
+  const cardsOf = (html) => [...html.matchAll(/data-guest-card="([^"]+)"/g)].map((m) => m[1]);
+  // "Fresh" is a community's whole name; "Game Corner" only says "fresh every
+  // day" in its sentence, and the sort puts it first.
+  assert.deepEqual(cardsOf(draw('Fresh')), ['fresh-one', 'game-corner'],
+    'the exact name leads the description-only match, which is still shown');
+  assert.deepEqual(cardsOf(draw('fres')), ['game-corner', 'fresh-one'], 'a partial query with no exact name keeps the sort');
 });
