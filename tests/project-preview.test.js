@@ -56,6 +56,46 @@ test('the tags name the project, say what it is, and point at its page and its c
   assert.match(preview.previewTags(APP, ORIGIN, { player: true }), /<meta name="twitter:card" content="player">/);
 });
 
+test('a project with a wide card picture shares that picture, with its real size and kind, on a large card', () => {
+  const ID = 'a'.repeat(32);
+  const withArt = { ...APP, illustration_url: `/app-illustrations/${ID}` };
+  const png = (width, height) => ({ contentType: 'image/png', data: PNG.sync.write(new PNG({ width, height })) });
+  // Only the header is needed: the route reads the file's first bytes.
+  const wide = preview.sharePicture(withArt, { contentType: 'image/png', data: png(1600, 900).data.subarray(0, 64) });
+  assert.deepEqual(wide, { path: `/app-illustrations/${ID}`, width: 1600, height: 900, type: 'image/png' });
+  // Not wide, too small, unreadable, a kind no chat app draws, or no picture: the cover or the icon, as before.
+  assert.equal(preview.sharePicture(withArt, png(1024, 1024)), null, 'a square picture');
+  assert.equal(preview.sharePicture(withArt, png(900, 1600)), null, 'a tall picture');
+  assert.equal(preview.sharePicture(withArt, png(480, 270)), null, 'too small for a large card');
+  assert.equal(preview.sharePicture(withArt, { contentType: 'image/png', data: Buffer.alloc(64) }), null);
+  assert.equal(preview.sharePicture(withArt, { contentType: 'image/svg+xml', data: png(1600, 900).data }), null);
+  assert.equal(preview.sharePicture(withArt, null), null);
+  assert.equal(preview.sharePicture(APP, png(1600, 900)), null);
+  assert.equal(preview.sharePicture({ ...APP, illustration_url: 'https://elsewhere.example/x.png' }, png(1600, 900)), null);
+
+  const tags = preview.previewTags(withArt, ORIGIN, { cover: true, picture: wide });
+  assert.match(tags, new RegExp(`<meta property="og:image" content="https://app\\.example/app-illustrations/${ID}">\n`
+    + '<meta property="og:image:type" content="image/png">\n'
+    + '<meta property="og:image:width" content="1600">\n<meta property="og:image:height" content="900">\n'
+    + '<meta property="og:image:alt" content="Game Corner on Homeroom">'));
+  assert.doesNotMatch(tags, /cover\.png/);
+  assert.match(tags, /<meta name="twitter:card" content="summary_large_image">/);
+  assert.equal(ldData(tags).image, `https://app.example/app-illustrations/${ID}`);
+  // An icon the server cannot draw no longer decides the card: the wide picture does.
+  const jpegIcon = preview.previewTags({ ...withArt, icon_emoji: null, icon_url: '/app-icons/abc' }, ORIGIN,
+    { cover: false, imageSize: { width: 512, height: 512 }, picture: wide });
+  assert.match(jpegIcon, /<meta name="twitter:card" content="summary_large_image">/);
+  assert.match(jpegIcon, /og:image:width" content="1600"/);
+  assert.doesNotMatch(jpegIcon, /app-icons|content="512"/);
+  // A project X can play keeps its player, with the wide picture as its still.
+  const played = preview.previewTags(withArt, ORIGIN, { player: true, picture: wide });
+  assert.match(played, /<meta name="twitter:card" content="player">/);
+  assert.match(played, new RegExp(`<meta name="twitter:image" content="https://app\\.example/app-illustrations/${ID}">`));
+  // The drawn cover says its kind too; an icon's kind is not known here and is not guessed.
+  assert.match(preview.previewTags(APP, ORIGIN), /cover\.png">\n<meta property="og:image:type" content="image\/png">\n<meta property="og:image:width" content="1200">/);
+  assert.doesNotMatch(preview.previewTags({ ...APP, icon_url: '/app-icons/abc' }, ORIGIN, { cover: false }), /og:image:type/);
+});
+
 test('a picture\'s size is read from its first bytes: PNG, JPEG, GIF and WebP', () => {
   const png = new PNG({ width: 48, height: 32 });
   assert.deepEqual(preview.pictureSize(PNG.sync.write(png)), { width: 48, height: 32 });
@@ -252,12 +292,19 @@ test('the cover: the project\'s colour, its icon on a rounded tile in the middle
   assert.equal(preview.swatchFor('game-corner'), swatchFor('game-corner'));
 });
 
-// The routes, against a database that knows one public project.
+// The routes, against a database that knows one public project, and one more with a card picture.
+const PICTURE_ID = 'b'.repeat(32);
 function fakePool() {
   return {
     async query(sql, params = []) {
       const s = String(sql);
-      if (/SELECT 1 FROM apps WHERE slug = \$1/.test(s)) return { rows: params[0] === 'game-corner' ? [{}] : [] };
+      if (/SELECT 1 FROM apps WHERE slug = \$1/.test(s)) return { rows: ['game-corner', 'picture-club'].includes(params[0]) ? [{}] : [] };
+      // A card picture's header: asked for by id, and never the whole file.
+      if (/FROM app_illustrations WHERE id = \$1/.test(s)) {
+        assert.match(s, /substring\(data FROM 1 FOR \$2\) AS head/);
+        const file = PNG.sync.write(new PNG({ width: 1600, height: 900 }));
+        return { rows: params[0] === PICTURE_ID ? [{ content_type: 'image/png', head: file.subarray(0, params[1]) }] : [] };
+      }
       if (/FROM apps a/.test(s) && /last_deploy_at DESC NULLS LAST/.test(s)) {
         const game = {
           id: 7, name: 'Game Corner', slug: 'game-corner', status: 'running', view_visibility: 'public', collab_visibility: 'public',
@@ -272,6 +319,10 @@ function fakePool() {
           last_merged_at: null, created_at: '2026-05-01T00:00:00.000Z',
         };
         if (params[1] == null) return { rows: [game, idle] };
+        // A project whose group chose a wide picture for its card.
+        if (params[1] === 'picture-club') {
+          return { rows: [{ ...game, id: 9, name: 'Picture Club', slug: 'picture-club', illustration_id: PICTURE_ID }] };
+        }
         return params[1] === 'game-corner' ? { rows: [game] } : { rows: [] };
       }
       return { rows: [] };
@@ -321,6 +372,12 @@ test('GET /app/<slug>: a public project\'s page carries its preview; anything el
     const png = PNG.sync.read(Buffer.from(await cover.arrayBuffer()));
     assert.deepEqual([png.width, png.height], [1200, 630]);
     assert.equal((await fetch(`${srv.base}/api/public/apps/secret-thing/cover.png`)).status, 404);
+    // A project with a wide card picture: that picture, its real size, a large card.
+    const club = await (await fetch(`${srv.base}/app/picture-club`, { headers: { accept: 'text/html' } })).text();
+    assert.match(club, new RegExp(`<meta property="og:image" content="http://127\\.0\\.0\\.1:\\d+/app-illustrations/${PICTURE_ID}">`));
+    assert.match(club, /<meta property="og:image:width" content="1600">\n<meta property="og:image:height" content="900">/);
+    assert.match(club, /<meta name="twitter:card" content="summary_large_image">/);
+    assert.doesNotMatch(html, /app-illustrations/, 'a project with no card picture keeps its cover');
   } finally { await srv.close(); }
   const member = await startServer({ user: { id: 1 } });
   try {

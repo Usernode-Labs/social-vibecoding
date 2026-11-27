@@ -53,6 +53,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const ENTRY_TTL_MS = 60 * 1000;
 const ENTRY_MAX = 500;
 const COVER_MAX = 200;
+// How much of a card picture is read to learn its size: its header, never
+// the whole file (up to 1 MB) for every link somebody pastes.
+const PICTURE_HEAD_BYTES = 128 * 1024;
 // The sitemap, rebuilt at most this often: crawlers read it rarely, and the
 // directory query is the landing's own.
 const SITEMAP_TTL_MS = 10 * 60 * 1000;
@@ -123,8 +126,9 @@ function projectPreviewRoutes(config) {
   const covers = new Map();
   let sitemap = null;
 
-  // The public project, its icon's bytes, and whether its cover can be
-  // drawn; null for anything the public directory does not list.
+  // The public project, its icon's bytes, whether its cover can be drawn,
+  // and its own wide card picture when it has one; null for anything the
+  // public directory does not list.
   async function entryFor(slug) {
     const hit = entries.get(slug);
     if (hit && hit.expiresAt > Date.now()) return hit.entry;
@@ -143,7 +147,17 @@ function projectPreviewRoutes(config) {
       // An icon the cover cannot be drawn from is the link's picture itself:
       // its size is read off its bytes, so the link can say it.
       const iconSize = !cover && iconBytes ? preview.pictureSize(iconBytes.data) : null;
-      entry = { app, icon: iconBytes, cover, iconSize };
+      // The picture its group chose for its card (the public directory's
+      // `illustration_url`, which anybody may already fetch): the link's
+      // picture when it is wide. A read that fails leaves the cover.
+      const pictureId = app.illustration_url ? app.illustration_url.split('/').pop() : null;
+      const stored = pictureId
+        ? (await pool.query(
+          'SELECT content_type, substring(data FROM 1 FOR $2) AS head FROM app_illustrations WHERE id = $1',
+          [pictureId, PICTURE_HEAD_BYTES]).catch(() => ({ rows: [] }))).rows[0] || null
+        : null;
+      const picture = stored ? preview.sharePicture(app, { contentType: stored.content_type, data: stored.head }) : null;
+      entry = { app, icon: iconBytes, cover, iconSize, picture };
     }
     if (entries.size >= ENTRY_MAX) entries.clear();
     entries.set(slug, { entry, expiresAt: Date.now() + ENTRY_TTL_MS });
@@ -191,6 +205,7 @@ function projectPreviewRoutes(config) {
       const tags = preview.previewTags(entry.app, requestOrigin(req) || '', {
         cover: entry.cover,
         imageSize: entry.iconSize,
+        picture: entry.picture,
         player: !!embed.embedFor(entry.app, { sign: false }),
       });
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
