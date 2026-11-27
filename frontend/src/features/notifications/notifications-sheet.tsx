@@ -122,6 +122,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import type { SheetResult } from '../../lib/sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 import { matchesNotificationQuery, normalizeNotificationQuery } from './notifications-search.js';
@@ -1699,12 +1700,17 @@ function LoadAtEnd({ active, rows, onReach }: { active: boolean; rows: number; o
   return <div ref={mark} data-notif-load-at-end="" aria-hidden="true" className="h-px" />;
 }
 
-export function NotificationsSheetView() {
-  const { open, adopted, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
-    open: boolean; adopted: boolean;
+export function NotificationsSheetView({ sheet }: {
+  /** Its presentation (./index.tsx `useSheet`); left out where it is only rendered. */
+  sheet?: Pick<SheetResult, 'panelRef' | 'adopted' | 'scrimProps'>;
+} = {}) {
+  const { open, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
+    open: boolean;
     /** The tab a caller outside the sheet asked for (`#6816`: Home's card). */
     tab?: Tab | null;
   };
+  // Held by the kit (a phone): its backdrop dims, and the web overlay stays down.
+  const adopted = !!sheet?.adopted;
 
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
   // drag for its own dismiss gesture, so a pull-down inside one cannot also
@@ -2138,17 +2144,19 @@ export function NotificationsSheetView() {
   return (
     <>
       {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
-          the kit's own backdrop owns it — see lib/sheet-controller.js. */}
+          the kit's own backdrop owns it (lib/sheet.ts). Its tap is the
+          Sheet's scrim rule: a press that began and ended on it. */}
       <div
         id="notifications-sheet-overlay"
         aria-hidden="true"
         {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40"
-        onClick={() => NotificationsSheet.close()}
+        {...sheet?.scrimProps}
       >
       </div>
       <div
         id="notifications-sheet"
+        ref={sheet?.panelRef}
         role="dialog"
         aria-label={t('notifications:sheet.title')}
         aria-hidden={open ? undefined : 'true'}

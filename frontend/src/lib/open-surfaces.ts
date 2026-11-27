@@ -2,7 +2,7 @@
  * One open panel at a time.
  *
  * The shell has four ways to put a panel over the page: the Homeroom menu and
- * Notifications (lib/sheet-controller.js), the dialogs (features/dialogs/
+ * Notifications (lib/sheet.ts, standing sheets), the dialogs (features/dialogs/
  * use-dialog.ts), the "Your feedback" card on the You page, and the welcome
  * tour's overlay. Each one closes itself perfectly well; none of them knew
  * about the others, so opening the bell while the menu was up left both on

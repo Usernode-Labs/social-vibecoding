@@ -154,10 +154,13 @@ test('the Share dialog opens after its host surface is gone', () => {
   // owner, never a bare undefined that `.then` would throw on.
   assert.match(improve, /^ {2}close\(\) \{\n\s+return Improve\._surface\(\)\?\.close\(\) \?\? Promise\.resolve\(\);/m,
     'close() returns the surface owner\'s completion promise');
-  const controller = read('frontend/src/lib/sheet-controller.js');
+  // The owner is a standing sheet (lib/sheet.ts, where lib/sheet-controller.js
+  // folded in): its close waits for the Sheet to report the exit.
+  const controller = read('frontend/src/lib/sheet.ts');
   assert.match(controller, /^ {4}close\(\) \{[\s\S]*?return done;/m,
     'and that owner\'s close resolves after the exit, not a frame after the '
     + 'request');
+  assert.match(controller, /onExited: settle,/);
 });
 
 // ── The screenshot-state deep link + its checks ────────────────────────

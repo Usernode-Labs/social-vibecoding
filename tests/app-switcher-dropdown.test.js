@@ -272,17 +272,25 @@ test('no dim at sm+, and an outside click still lands', () => {
       'no desktop rule repaints the backdrop');
   }
 
-  // Which leaves dismissal to the island: an outside click closes the menu
+  // Which leaves dismissal to the Sheet's outside press (lib/sheet.ts, since
+  // lib/sheet-controller.js folded into it): an outside click closes the menu
   // in the capture phase and still reaches what was clicked, the vote
-  // popover's rule. The mark is spared, because its own click toggles.
-  assert.match(ISLAND, /document\.addEventListener\('click', onDoc, true\)/);
-  assert.match(ISLAND, /sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\)/);
+  // popover's rule (lib/popover-dismiss.ts). The mark is spared, because its
+  // own click toggles.
+  assert.match(ISLAND, /outside: \{ inside: sparedFromOutside \}/);
+  assert.match(ISLAND, /mark\?\.contains\(target\) \|\| tour\?\.contains\(target\)/);
   assert.doesNotMatch(ISLAND, /preventDefault|stopPropagation/,
     'the click is not swallowed');
+  const SHEET_LIB = read('frontend/src/lib/sheet.ts');
+  assert.match(SHEET_LIB, /useAnchoredDismiss\(outside, \[panelRef\], close, \{/);
+  const DISMISS = read('frontend/src/lib/popover-dismiss.ts');
+  assert.match(DISMISS, /document\.addEventListener\('click', onDoc, true\)/);
+  assert.doesNotMatch(DISMISS.slice(DISMISS.indexOf('const onDoc'), DISMISS.indexOf('const onKey')),
+    /preventDefault|stopPropagation/, 'the click is not swallowed');
 
   // Below `sm` the backdrop still catches the dismissing tap.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
-  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?onClick=\{close\}/,
+  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?\{\.\.\.sheet\?\.scrimProps\}/,
     'clicking it closes the sheet');
 });
 

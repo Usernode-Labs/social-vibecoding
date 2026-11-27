@@ -151,10 +151,17 @@ test('Q18: Your communities and the Homeroom menu take focus, rove, and give it 
   assert.match(menu, /back\.focus\(\{ preventScroll: true \}\);/, 'the menu gives focus back');
   const sheet = read('frontend/src/lib/sheet.ts');
   assert.match(sheet, /previousFocus\.focus\?\.\(\{ preventScroll: true \}\);/, 'and so does the sheet');
+  // The Homeroom menu is a standing sheet of the Sheet's (lib/sheet.ts):
+  // the island moves focus to the first row when the mark opened it, and
+  // Escape and the focus going back to the mark that opened it are the
+  // Sheet's, as above.
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /roveMenuFocus\(event, el, SHEET_ROWS\)/);
-  assert.match(ctx, /if \(inside\) visibleMark\(\)\?\.focus\(/, 'to the mark that has a box: the standard header\'s, or the frame bar\'s under a look');
-  assert.match(ctx, /const touring = !!tour && !tour\.classList\.contains\('hidden'\);/,
+  assert.match(ctx, /initialFocus: firstRowFromMark,/);
+  assert.match(ctx, /if \(was && was !== document\.body && was\.id !== MARK_ID\) return null;/,
+    'only when the mark opened it, or nothing had focus');
+  assert.match(ctx, /return !!tour && !tour\.classList\.contains\('hidden'\);/);
+  assert.match(ctx, /if \(window\.PlatformUI\?\.isTouch\?\.\(\) \|\| touring\(\)\) return null;/,
     'the welcome tour drives this menu and keeps its own focus');
 });
 

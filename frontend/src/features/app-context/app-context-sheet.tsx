@@ -116,6 +116,7 @@ import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import type { SheetResult } from '../../lib/sheet';
 
 import {
   ChevronLeftIcon,
@@ -255,7 +256,7 @@ function loadedPlatformShort(): string | null {
  * A row's plain activation: WRITE THE ADDRESS, THEN CLOSE THE MENU (#3071).
  *
  * The menu holds a record in the browser's history while it is open, so the
- * device's Back closes it (../../lib/sheet-controller.js). Closing hands that
+ * device's Back closes it (../../lib/sheet.ts). Closing hands that
  * record back as a NAVIGATING release, which spends it one task later if the
  * page is still standing on it (../../lib/back-stack.ts). Left to the
  * anchor's default action, the navigation was written AFTER this handler
@@ -433,9 +434,14 @@ function MenuRow({
 /** One of Home.menuItemsFor's items for an app (features/home/home.js). */
 type MenuItem = { key: string; run: () => void };
 
-export function AppsSwitcherSheet(): ReactNode {
+export function AppsSwitcherSheet({ sheet }: {
+  /** Its presentation (./index.tsx `useSheet`); left out where it is only rendered. */
+  sheet?: Pick<SheetResult, 'panelRef' | 'adopted' | 'scrimProps'>;
+} = {}): ReactNode {
   const t = useMessages('agent');
-  const { open, adopted, view, back } = useStoreState(appContextStore);
+  const { open, view, back } = useStoreState(appContextStore);
+  // Held by the kit (a phone): its backdrop dims, and the web overlay stays down.
+  const adopted = !!sheet?.adopted;
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
   // three the rows need — the name to label them with, the terminal's gate,
@@ -682,17 +688,19 @@ export function AppsSwitcherSheet(): ReactNode {
   return (
     <>
       {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
-          the kit's own backdrop owns it — see lib/sheet-controller.js. */}
+          the kit's own backdrop owns it (lib/sheet.ts). Its tap is the
+          Sheet's scrim rule: a press that began and ended on it. */}
       <div
         id="apps-switcher-overlay"
         aria-hidden="true"
         {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40"
-        onClick={close}
+        {...sheet?.scrimProps}
       >
       </div>
       <div
         id="apps-switcher-sheet"
+        ref={sheet?.panelRef}
         role="dialog"
         aria-label={t('agent:appContext.sheetLabel')}
         aria-hidden={open ? undefined : 'true'}
