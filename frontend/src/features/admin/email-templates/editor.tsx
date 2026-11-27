@@ -22,9 +22,13 @@ import {
 // Save draft keeps the edit as the email's draft (POST .../draft), which is
 // previewed and test-sent like any version but never sent to anyone, and
 // "Put draft live" makes it the version that goes out (POST .../:id/publish).
-// An email opens on its draft when it has one. The drip's emails have nothing
-// that sends them yet, so they can only be drafts, and the editor says what
-// will send each one.
+// An email opens on its draft when it has one, unless the list asked for its
+// live version (`version`): that one is then edited and saved as ever, and
+// only Save draft is left out, since the draft that waits is not the one on
+// screen. A new template cannot be saved over an email's waiting draft either:
+// that draft is opened from the list. The drip's emails have nothing that
+// sends them yet, so they can only be drafts, and the editor says what will
+// send each one.
 //
 // Saving makes a new version and puts it live (POST /api/admin/email-templates)
 // with `expectedLiveId`, the live version this editor was opened from, so two
@@ -137,6 +141,7 @@ export function TemplateForm({
   openedOn = 'live',
   onSaveDraft,
   onPublish,
+  draftWaiting = null,
 }: {
   payload: TemplatesPayload;
   draft: TemplateDraft;
@@ -163,6 +168,9 @@ export function TemplateForm({
   openedOn?: 'live' | 'draft' | 'new';
   onSaveDraft?: () => void;
   onPublish?: () => void;
+  // Why Save draft is not offered: this email has a draft that is not the
+  // version on screen.
+  draftWaiting?: string | null;
 }) {
   const action = payload.actions.find((a) => a.action === draft.action) || null;
   const drip = !!(action && action.drip);
@@ -223,6 +231,11 @@ export function TemplateForm({
           {drip
             ? 'This is a draft. Nothing sends this email yet, and nobody gets it until the sending is built and it is put live.'
             : `This is a draft. Nobody gets it until you put it live; the live version keeps going out until then.${dirty ? ' Save the draft before putting it live.' : ''}`}
+        </p>
+      ) : null}
+      {draftWaiting ? (
+        <p id="email-template-draft-waiting" className="rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+          {draftWaiting}
         </p>
       ) : null}
       {canWrite ? null : (
@@ -351,10 +364,12 @@ const BLANK = (action: string, layoutFamilyId: number | null): TemplateDraft => 
  * the console left mid-edit. Calls `onSaved` with the saved row, and
  * `onReload` when the admin asks to see someone else's newer version.
  */
-export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onDraftSaved, onReload, restore = null }: {
+export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onDraftSaved, onReload, restore = null, version = 'draft' }: {
   payload: TemplatesPayload;
   action: string;
   isNew: boolean;
+  // 'live' opens the live version of an email that also has a draft.
+  version?: 'draft' | 'live';
   canWrite: boolean;
   onDone: () => void;
   // The saved row, and any translations the save left unusable.
@@ -369,7 +384,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   // edits are measured against the first, and Save expects the second.
   // The draft the editor opened on, when the email has one: an email opens on
   // its draft, which is where unfinished work is.
-  const [openedDraft] = useState<TemplateRow | null>(() => (isNew ? null : draftTemplate(payload, action)));
+  const [openedDraft] = useState<TemplateRow | null>(() => (isNew || version === 'live' ? null : draftTemplate(payload, action)));
   const [opened] = useState<TemplateDraft>(() => {
     if (restore) return restore.opened;
     if (openedDraft) return draftFrom(openedDraft);
@@ -414,8 +429,8 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     const name = now.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
     const language = keptLanguage(now.lang);
     const label = language ? `${name} (${payload.languages.find((l) => l.code === language.locale)?.label || language.locale})` : name;
-    keepDraft({ kind: 'template', action, isNew, label, draft: now.draft, opened, openedLiveId: openedLive.id, language });
-  }, [action, isNew, payload, opened, openedLive]);
+    keepDraft({ kind: 'template', action, isNew, version, label, draft: now.draft, opened, openedLiveId: openedLive.id, language });
+  }, [action, isNew, version, payload, opened, openedLive]);
   const [tab, setTab] = useState<BodyTab>('visual');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
@@ -453,6 +468,14 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     }
   };
 
+  // The email being saved has a draft this editor did not open: its live
+  // version was asked for, or a new template was pointed at it.
+  const otherDraft = openedDraft ? null : draftTemplate(payload, draft.action);
+  const draftWaiting = !otherDraft ? null
+    : isNew
+      ? 'This email already has a draft. Open that draft from the list to change it, or discard it there first.'
+      : `This is the live version. Draft v${otherDraft.version} of this email is waiting too; open it from the list to change it.`;
+
   // Keeps the edit as the email's draft, which nobody is sent. The draft this
   // editor opened on is the one it expects, so another admin's newer draft
   // is a conflict, not overwritten.
@@ -460,8 +483,11 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     if (saving || !canWrite) return;
     setSaving(true);
     setFailure(null);
-    const current = draftTemplate(payload, draft.action);
-    const expectedDraftId = draft.action === action ? (openedDraft ? openedDraft.id : null) : (current ? current.id : null);
+    // Only the draft this editor opened on is continued. Any other email's
+    // draft is left alone: `draftWaiting` keeps Save draft away from it, and
+    // the server refuses one that appeared since.
+    if (draftWaiting) return;
+    const expectedDraftId = openedDraft ? openedDraft.id : null;
     const res = await request('/api/admin/email-templates/draft', 'POST', { ...draft, expectedDraftId });
     setSaving(false);
     if (res.ok && res.data && res.data.template) {
@@ -536,7 +562,8 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     <TemplateForm payload={payload} draft={draft} opened={opened} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
       languagesCard={isNew ? null : languages.card}
       saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
-      dirty={dirty} openedOn={isNew ? 'new' : openedDraft ? 'draft' : 'live'} onSaveDraft={saveDraft} onPublish={publish}
+      dirty={dirty} openedOn={isNew ? 'new' : openedDraft ? 'draft' : 'live'} onSaveDraft={draftWaiting ? undefined : saveDraft} onPublish={publish}
+      draftWaiting={draftWaiting}
       preview={(
         <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab === 'text' ? 'text' : 'html'}
           languages={payload.languages} englishOnly={!!(info && info.englishOnly)} canWrite={canWrite}

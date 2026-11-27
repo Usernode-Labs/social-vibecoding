@@ -15,6 +15,9 @@ import { languagesColumn } from './translations';
 //
 // A draft (saved, never sent) shows beside the live version, or alone for an
 // email nothing sends yet: the drip's, whose row also says what will send it.
+// An email with both offers each to open, so the live version stays readable
+// and editable while a draft waits, and its draft can be discarded. A drip's
+// draft is all there is of it, so it is not offered to discard.
 
 function ArchivedRows({ rows, canWrite, now, onRestore, onDeleteArchived }: {
   rows: TemplateRow[]; canWrite: boolean; now: number;
@@ -59,7 +62,7 @@ function ArchivedRows({ rows, canWrite, now, onRestore, onDeleteArchived }: {
 }
 
 export function TemplateList({
-  payload, canWrite, showArchived, now, onToggleArchived, onNew, onEdit, onDelete, onRestore, onDeleteArchived,
+  payload, canWrite, showArchived, now, onToggleArchived, onNew, onEdit, onDelete, onRestore, onDeleteArchived, onDiscardDraft,
 }: {
   payload: TemplatesPayload;
   canWrite: boolean;
@@ -67,10 +70,12 @@ export function TemplateList({
   now: number;
   onToggleArchived: () => void;
   onNew: () => void;
-  onEdit: (action: string) => void;
+  // `version`: which saved version to open when the email has both.
+  onEdit: (action: string, version?: 'draft' | 'live') => void;
   onDelete: (row: TemplateRow) => void;
   onRestore: (row: TemplateRow) => void;
   onDeleteArchived: (row: TemplateRow) => void;
+  onDiscardDraft?: (row: TemplateRow) => void;
 }) {
   return (
     <div className={`${AdminUI.card} p-4`}>
@@ -147,9 +152,25 @@ export function TemplateList({
                   </td>
                   <td className="px-3 sm:px-6 py-3 align-middle">
                     <div className="flex flex-wrap justify-end gap-2">
-                      <button type="button" className={AdminUI.btn.outlineSm} onClick={() => onEdit(a.action)}>
-                        {canWrite ? 'Edit' : 'View'}
-                      </button>
+                      {live && draft ? (
+                        <>
+                          <button type="button" className={AdminUI.btn.outlineSm} data-email-open="draft" onClick={() => onEdit(a.action, 'draft')}>
+                            {canWrite ? 'Edit draft' : 'View draft'}
+                          </button>
+                          <button type="button" className={AdminUI.btn.outlineSm} data-email-open="live" onClick={() => onEdit(a.action, 'live')}>
+                            {canWrite ? 'Edit live' : 'View live'}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className={AdminUI.btn.outlineSm} onClick={() => onEdit(a.action)}>
+                          {canWrite ? 'Edit' : 'View'}
+                        </button>
+                      )}
+                      {canWrite && draft && !a.drip && onDiscardDraft ? (
+                        <button type="button" className={AdminUI.btn.outlineSm} data-email-discard={draft.id} onClick={() => onDiscardDraft(draft)}>
+                          Discard draft
+                        </button>
+                      ) : null}
                       {canWrite && live ? (
                         <button type="button" className={AdminUI.btn.outlineSm} onClick={() => onDelete(live)}>Delete</button>
                       ) : null}

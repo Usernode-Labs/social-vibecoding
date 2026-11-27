@@ -897,8 +897,14 @@ async function tryLock(client, scope, key) {
 }
 
 // The row if it is the only version, version 1, written by nobody and live.
-const untouched = (rows) => (rows.length === 1 && rows[0].version === 1 && rows[0].created_by == null
-  && rows[0].status === 'live' && rows[0].deleted_at == null ? rows[0] : null);
+// A draft beside it (a staged one from SEEDS.drafts, an admin's, or one that
+// was discarded) is not a version that ever went out, so it is not counted:
+// the live seed is still nobody's edit.
+const untouched = (all) => {
+  const rows = all.filter((row) => row.status !== 'draft');
+  return rows.length === 1 && rows[0].version === 1 && rows[0].created_by == null
+    && rows[0].status === 'live' && rows[0].deleted_at == null ? rows[0] : null;
+};
 
 const sameFields = (row, want, fields) => fields.every((field) => row[field] === want[field]);
 

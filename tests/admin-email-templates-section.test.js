@@ -457,7 +457,7 @@ test('a restored draft saves against the live version it was opened on, so a sav
 
   const editor = read('frontend/src/features/admin/email-templates/editor.tsx');
   assert.match(editor, /if \(restore\) return \{ action: restore\.action, id: restore\.openedLiveId \};/);
-  assert.match(editor, /keepDraft\(\{ kind: 'template', action, isNew, label, draft: now\.draft, opened, openedLiveId: openedLive\.id, language \}\)/);
+  assert.match(editor, /keepDraft\(\{ kind: 'template', action, isNew, version, label, draft: now\.draft, opened, openedLiveId: openedLive\.id, language \}\)/);
   assert.match(editor, /request\('\/api\/admin\/email-templates', 'POST', \{ \.\.\.draft, expectedLiveId \}\)/);
   const layouts = read('frontend/src/features/admin/email-templates/layouts.tsx');
   assert.match(layouts, /useState<number \| null>\(\(\) => \(restore \? restore\.openedLiveId : live \? live\.id : null\)\)/);
@@ -516,6 +516,76 @@ test('a kept draft belongs to the account that left it', () => {
     globalThis.App = prior;
     keepDraft(null);
   }
+});
+
+test('an email with a live version and a draft offers each to open and the draft to discard; a drip\'s draft is not discarded', () => {
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'password_reset' && t.status === 'live');
+  data.templates.push({ ...live, id: 950, version: 2, status: 'draft', name: 'Reset, reworded', locales: [] });
+  // An email nothing sends yet: only a draft.
+  const drip = data.actions.find((a) => a.action === 'drip_welcome');
+  drip.drip = { from: 'Evan', trigger: 'First sign-in.', timing: '1 hour later.', skip: 'Never.', nudge: false };
+  const dripLive = data.templates.find((t) => t.action === 'drip_welcome');
+  dripLive.status = 'draft';
+  const props = {
+    payload: data, showArchived: true, now: Date.parse('2026-11-03T12:00:00Z'),
+    onToggleArchived() {}, onNew() {}, onEdit() {}, onDelete() {}, onRestore() {}, onDeleteArchived() {}, onDiscardDraft() {},
+  };
+  const html = render('TemplateList', { ...props, canWrite: true });
+  const row = (action) => html.slice(html.indexOf(`data-email-action="${action}"`)).split('</tr>')[0];
+  assert.match(row('password_reset'), /data-email-open="draft"[^>]*>Edit draft<[\s\S]*data-email-open="live"[^>]*>Edit live</);
+  assert.match(row('password_reset'), /data-email-discard="950"[^>]*>Discard draft</);
+  assert.ok(!/data-email-version="950"/.test(html), 'a draft is not listed as an earlier version to restore');
+  assert.match(row('otp'), />Edit</, 'an email with one version keeps its one button');
+  assert.ok(!/data-email-open=/.test(row('otp')));
+  assert.ok(!/Discard draft/.test(row('drip_welcome')), 'a drip email is only its draft');
+  const view = render('TemplateList', { ...props, canWrite: false });
+  assert.match(view, />View draft<[\s\S]*>View live</);
+  assert.ok(!/Discard draft/.test(view), 'a view-only admin is offered no write');
+
+  // The live version opened beside a waiting draft: it is the live words, saved
+  // as ever, and Save draft is left out because the draft is not on screen.
+  const { TemplateEditor } = load();
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const editor = (extra) => renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'password_reset', isNew: false, canWrite: true, onDone() {}, onSaved() {}, onDraftSaved() {}, onReload() {}, ...extra,
+  }));
+  const onLive = editor({ version: 'live' });
+  assert.match(onLive, /id="email-template-draft-waiting"[^>]*>This is the live version\. Draft v2 of this email is waiting too/);
+  assert.match(onLive, /id="email-template-save"/);
+  assert.ok(!/id="email-template-save-draft"|id="email-template-publish"|id="email-template-draft-note"/.test(onLive));
+  const onDraft = editor({});
+  assert.match(onDraft, /id="email-template-draft-note"/, 'by default an email opens on its draft');
+  assert.match(onDraft, /id="email-template-save-draft"[\s\S]*id="email-template-publish"/);
+  assert.ok(!/id="email-template-draft-waiting"/.test(onDraft));
+  // A new template pointed at an email that has a draft cannot save over it.
+  const fresh = editor({ isNew: true });
+  assert.match(fresh, /id="email-template-draft-waiting"[^>]*>This email already has a draft\./);
+  assert.ok(!/id="email-template-save-draft"/.test(fresh));
+  assert.match(editor({ action: 'otp', isNew: true }), /id="email-template-save-draft"/, 'an email with no draft can be drafted');
+
+  const editorSrc = read('frontend/src/features/admin/email-templates/editor.tsx');
+  assert.match(editorSrc, /const expectedDraftId = openedDraft \? openedDraft\.id : null;/, 'only the draft that was opened is continued');
+});
+
+test('a layout counts the drafts that wear it, and a refusal that is not a conflict offers no Reload', () => {
+  const data = payload();
+  data.layouts.push({ id: 3, family_id: 3, name: 'Typed note', version: 1, status: 'live', html: '{{content}}', text: '{{content}}', created_by: null, created_at: '2026-11-01T10:00:00Z', deleted_at: null, locales: [] });
+  const live = data.templates.find((t) => t.action === 'password_reset' && t.status === 'live');
+  data.templates.push({ ...live, id: 951, version: 2, status: 'draft', layout_family_id: 3, locales: [] });
+  const layouts = render('LayoutList', {
+    payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
+    onToggleArchived() {}, onNew() {}, onEdit() {}, onDelete() {}, onRestore() {},
+  });
+  assert.match(layouts, /data-email-layout="3"[\s\S]*?Typed note[\s\S]*?Used by 1 email/, 'a draft wears its layout');
+  assert.match(layouts, /data-email-layout="1"[\s\S]*?Used by 28 emails/, 'an email is counted once, by its live version or its draft');
+  const section = read(SECTION);
+  assert.match(section, /const using = layoutWearers\(payload, dialog\.live\.family_id\)\.length;/);
+
+  const { readFailure } = load();
+  const drip = readFailure(409, { code: 'not_sending', error: 'Nothing sends this email yet.' });
+  assert.deepEqual(drip, { kind: 'message', message: 'Nothing sends this email yet.' });
+  assert.equal(readFailure(409, { code: 'conflict', error: 'x' }).kind, 'conflict');
 });
 
 test('Visual is the first body tab and the one both editors open on; the preview shows HTML for it', () => {

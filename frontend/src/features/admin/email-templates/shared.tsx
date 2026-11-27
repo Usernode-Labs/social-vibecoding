@@ -113,6 +113,8 @@ export function readFailure(status: number, data: any): Failure {
   const said = data && typeof data.error === 'string' && data.error ? data.error : '';
   if (status === 0) return { kind: 'message', message: 'Could not reach the platform. Nothing was changed; try again.' };
   if (status === 409 && data && data.code === 'retry') return { kind: 'retry', message: said || RETRY };
+  // Not a newer version to reload: nothing sends this email yet, so it stays a draft.
+  if (status === 409 && data && data.code === 'not_sending') return { kind: 'message', message: said || 'Nothing sends this email yet, so it stays a draft.' };
   if (status === 409) return { kind: 'conflict', message: said || CONFLICT };
   if (status === 400 && data && Array.isArray(data.errors) && data.errors.length) {
     const errors = data.errors
@@ -200,6 +202,17 @@ export function draftTemplate(payload: TemplatesPayload, action: string): Templa
   return payload.templates.find((t) => t.action === action && isDraft(t)) || null;
 }
 
+/**
+ * The emails that wear a layout: each action whose live version or open draft
+ * names it, once. A draft counts, because deleting the layout moves it too.
+ */
+export function layoutWearers(payload: TemplatesPayload, familyId: number): string[] {
+  return payload.actions
+    .filter((a) => [liveTemplate(payload, a.action), draftTemplate(payload, a.action)]
+      .some((t) => !!t && t.layout_family_id === familyId))
+    .map((a) => a.label);
+}
+
 export function liveLayouts(payload: TemplatesPayload): LayoutRow[] {
   return payload.layouts.filter(isLive).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -284,7 +297,8 @@ interface KeptBase {
   language?: { locale: string; draft: any; opened: any } | null;
 }
 export type KeptDraft =
-  | (KeptBase & { kind: 'template'; action: string; isNew: boolean })
+  // `version`: 'live' when the live version was being edited beside a waiting draft.
+  | (KeptBase & { kind: 'template'; action: string; isNew: boolean; version?: 'draft' | 'live' })
   | (KeptBase & { kind: 'layout'; familyId: number | null });
 
 const signedInId = (): number | null => {
