@@ -74,12 +74,22 @@ export type Choice = {
   starter?: string;
 };
 
+/** A front example's drawn mark (./example-mark.tsx). */
+export type ExampleMarkKey = 'tier' | 'game' | 'organizer';
+
 export type Template = {
   key: string;
-  /** On the tile and the story, and the project's tile until its sketch has an emoji. */
+  /**
+   * On the tile and the story where it has no mark, and the project's tile
+   * until its sketch has an emoji.
+   */
   emoji: string;
-  /** Drawn in place of the emoji: the tier list's mini tier chart (./tier-chart.tsx). */
-  chart?: boolean;
+  /**
+   * Drawn in place of the emoji on the tile and the story (./example-mark.tsx):
+   * the tier list's chart, the game's board, the organizer's checklist. The
+   * emoji is still the project's icon.
+   */
+  mark?: ExampleMarkKey;
   /** "A tier list", on the story. A message id. */
   title: string;
   /** What it is for, under the title on the story. A message id. */
@@ -112,7 +122,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'tier',
     emoji: '📊',
-    chart: true,
+    mark: 'tier',
     title: 'onboarding:firstSession.template.tier.title',
     namePlaceholder: 'onboarding:firstSession.make.namePlaceholder',
     line: 'onboarding:firstSession.template.tier.line',
@@ -144,6 +154,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'game',
     emoji: '🎮',
+    mark: 'game',
     title: 'onboarding:firstSession.template.game.title',
     namePlaceholder: 'onboarding:firstSession.template.game.namePlaceholder',
     line: 'onboarding:firstSession.template.game.line',
@@ -161,6 +172,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'organizer',
     emoji: '📋',
+    mark: 'organizer',
     title: 'onboarding:firstSession.template.organizer.title',
     namePlaceholder: 'onboarding:firstSession.template.organizer.namePlaceholder',
     line: 'onboarding:firstSession.template.organizer.line',

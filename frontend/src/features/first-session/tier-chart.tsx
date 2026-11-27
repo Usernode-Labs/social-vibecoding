@@ -1,5 +1,5 @@
 /**
- * The tier list's mark (./examples.ts `chart`), on its tile on "What do you
+ * The tier list's mark (./examples.ts `mark`, ./example-mark.tsx), on its tile on "What do you
  * want to make?" and in the story's list: a tier list in miniature. One
  * column of tier colours, red over orange over yellow with no gap between
  * them, and beside each a row of grey items, two, two and one, a little

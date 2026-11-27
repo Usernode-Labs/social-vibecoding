@@ -171,7 +171,7 @@ import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
 import { descriptionOf, firstChoice, FRONT, MORE, OWN, readyMadeOf, sentence, starterOf, suggestedName, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
 import { MoreSheet } from './more-sheet';
-import { TierChart } from './tier-chart';
+import { ExampleMark } from './example-mark';
 
 export { deviceTimeZone };
 
@@ -965,7 +965,7 @@ export function MakeScreen({
                   onClick={() => pickTemplate(example)}
                   className={`${TILE} ${on ? TILE_ON : TILE_OFF}`}
                 >
-                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{example.chart ? <TierChart /> : example.emoji}</span>
+                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{example.mark ? <ExampleMark mark={example.mark} /> : example.emoji}</span>
                   <span className="text-[15px] font-[650] leading-tight">{t(example.short)}</span>
                 </button>
               );
@@ -984,7 +984,7 @@ export function MakeScreen({
               className={`${TILE} ${fourth ? TILE_ON : TILE_OFF}`}
             >
               <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">
-                {fourth === OWN_IDEA ? '💡' : fourth ? (fourth.chart ? <TierChart /> : fourth.emoji) : (
+                {fourth === OWN_IDEA ? '💡' : fourth ? (fourth.mark ? <ExampleMark mark={fourth.mark} /> : fourth.emoji) : (
                   <span className="grid grid-cols-2 gap-0.5 text-[14px] leading-4">
                     {MORE.slice(0, 4).map((m) => <span key={m.key}>{m.emoji}</span>)}
                   </span>
