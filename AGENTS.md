@@ -648,9 +648,9 @@ between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
-  palette. Twenty-one modules today: `alert`, `button`,
+  palette. Twenty modules today: `alert`, `button`,
   `chat`, `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`,
-  `icons`, `input`, `label`, `page-header`, `password-input`, `progress-ring`,
+  `icons`, `input`, `label`, `password-input`, `progress-ring`,
   `select`, `skeleton`, `switch`, `tabs`, `textarea`, `wordmark`.
   Count them in the directory rather than trusting this line — it has been
   stale before, and a primitive nobody knows exists gets hand-written instead.

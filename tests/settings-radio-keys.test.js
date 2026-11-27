@@ -110,7 +110,6 @@ for (const [file, exportName, trackId, attr, options] of [
 const DRAFT_GROUPS = [
   ['frontend/src/features/who-decides/parts.tsx', "'../../lib/radio-group'", ['keys']],
   ['frontend/src/features/dialogs/who-decides.tsx', "'../../lib/radio-group'", ['seeKeys', 'kindKeys']],
-  ['frontend/src/features/review-flow/vote-sheet.tsx', "'../../lib/radio-group'", ['whyKeys']],
   ['frontend/src/features/dev-board/card/dev-card.tsx', "'../../../lib/radio-group'", ['whyKeys']],
   ['frontend/src/features/messages/bot-make.tsx', "'../../lib/radio-group'", ['audienceKeys']],
   ['frontend/src/features/comment-pin/comment-pin.tsx', "'../../lib/radio-group'", ['targetKeys']],
@@ -127,6 +126,19 @@ for (const [file, from, names] of DRAFT_GROUPS) {
     }
   });
 }
+
+// A No's reasons on the vote sheet are the shared strip's radio kind now
+// (@/components/ui/tabs.tsx), which builds the same keys from its `values`
+// and puts them on the group and each radio: the sheet no longer spells them.
+test('frontend/src/features/review-flow/vote-sheet.tsx: its reasons answer the arrow keys, through the shared strip', () => {
+  const sheet = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(sheet, /<Tabs kind="radio" look="chip" values=\{whyValues\}/);
+  const tabs = read('frontend/@/components/ui/tabs.tsx');
+  assert.ok(tabs.includes("import { radioGroupKeys } from '../../../src/lib/radio-group';"), 'the strip imports the shared keys');
+  assert.ok(tabs.includes("const keys = kind === 'radio' && values ? radioGroupKeys(values, value, onValueChange) : null;"));
+  assert.ok(tabs.includes('if (!event.defaultPrevented) keys?.onKeyDown(event);'), 'the group answers the keys');
+  assert.ok(tabs.includes('tabIndex={context.keys ? context.keys.tabIndex(value) : tabIndex}'), 'each radio gets its roving tabIndex');
+});
 
 test('radioGroupKeys: a key on another control inside the group is not the group\'s', () => {
   const { radioGroupKeys } = loadTsx(LIB);
