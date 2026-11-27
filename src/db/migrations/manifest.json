@@ -630,6 +630,11 @@
       "id": "email-template-drafts",
       "sha256": "e9c1e7ea48697369085ecd238fbacd85e668bdffe5577ae8479e252df61d84ab",
       "schemaSha256": "ee9e4333a3ba33a3d87c62fba4e2146f21c5858ef0088a75461b6ea4baf56989"
+    },
+    {
+      "id": "wasm-previews",
+      "sha256": "da34aaba311d065929894e2ac4b1430fddd5241e26ce01920be4e511ad4602f3",
+      "schemaSha256": "a79395a22e46d320137e79deec03ed621ec2f9648701db493f72c17febca82b0"
     }
   ]
 }

@@ -854,7 +854,9 @@ const DEFAULT_ORPHAN_DB_SWEEP_LIMIT = 200;
 // app_<slug>_staging_s<sessionId>_<tag>, where tag is a 6-hex commit prefix
 // or the literal 'latest' (unpinned builds flow 'latest' into stagingDbName
 // verbatim). Anchored parse; anything else is left alone.
-const STAGING_DB_NAME_RE = /^app_[a-z0-9_]+_staging_s(\d+)_([0-9a-f]{6}|latest)$/;
+// An attempt's Wasm twin (`…_w`, services/wasm-previews.js) is swept with
+// its session like the attempt's own database.
+const STAGING_DB_NAME_RE = /^app_[a-z0-9_]+_staging_s(\d+)_([0-9a-f]{6}(?:_w)?|latest)$/;
 
 function orphanDbSweepIntervalMs() {
   const raw = parseInt(process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS || '', 10);
@@ -914,6 +916,13 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     // their runtimes first, then their databases, which would otherwise be
     // this pass's orphans with a runtime still connected. Never throws.
     await require('./preview-projects').sweep(config, pool);
+    // Wasm modules no serving twin names (services/wasm-runtime.js). Never
+    // throws into this pass.
+    if (require('./wasm-previews').deployOn(config)) {
+      await require('./wasm-runtime').sweepModules(pool).catch((err) => {
+        log.warn('staging-reap', 'Wasm module sweep failed', { err: err.message });
+      });
+    }
 
     const [dbs, live, connected] = await Promise.all([
       pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),

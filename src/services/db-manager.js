@@ -658,7 +658,9 @@ function shotsConnectionLimit() {
 // app_<slug>_staging_s<sessionId>_<tag> — the shape stagingDbName() builds.
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
-const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
+// An attempt's Wasm twin (services/wasm-previews.js twinDb) ends in `_w`:
+// a preview database like its attempt's, on the same server.
+const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}(?:_w)?|latest)$/;
 const SHOTS_CLONE_DB_RE = /^app_[a-z0-9_]+_(?:shots|evidence)_[0-9a-f]{12}_[bh]$/;
 
 function isStagingCloneDb(name) {
@@ -703,6 +705,18 @@ function assertDisposableDb(name, caller) {
 // every disposable database above (a shots run's clones, their frozen
 // source, a staging template and its `_next` build). Only these may be made
 // on, looked for on, or dropped from the preview server.
+// A Wasm twin's owner login gets the password the data service derives from
+// the database's name (services/wasm-previews.js dbPassword) in place of the
+// random one its clone was made with: nothing that runs the twin is ever
+// handed a password. On the server the clone was made on.
+async function setTwinOwnerPassword(dbName, password, { server }) {
+  if (!require('./wasm-previews').isTwinDb(dbName)) throw new Error('setTwinOwnerPassword: not a twin database');
+  if (!/^[0-9a-f]{64}$/.test(String(password))) throw new Error('setTwinOwnerPassword: unexpected password shape');
+  const role = ownerRoleName(dbName);
+  if (!SAFE_IDENT.test(role)) throw new Error('setTwinOwnerPassword: unsafe role name');
+  await adminExecutor(serverKey(server))(`ALTER ROLE ${role} LOGIN PASSWORD '${password}'`);
+}
+
 function isPreviewSideDb(name) {
   return isStagingCloneDb(name) || isDisposableDb(name);
 }
@@ -4058,6 +4072,7 @@ module.exports = {
   createPreviewProjectDatabase,
   dropDatabase,
   cloneDatabase,
+  setTwinOwnerPassword,
   connectionUrl,
   // Per-preview connection ceiling (#1771).
   stagingConnectionLimit,

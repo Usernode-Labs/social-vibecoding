@@ -9,6 +9,11 @@ const fs = require('node:fs');
 const BUILD_ACTION = '.github/actions/build-kubernetes-image';
 const RESOLVER = 'scripts/resolve-kubernetes-image.js';
 const CAPTURE_IGNORE = 'capture/Dockerfile.dockerignore';
+// Wasm previews' images and their Dockerfiles, both built in runtime/wasm.
+const WASM_COMPONENTS = new Map([
+  ['wasm-runner', 'runtime/wasm/Dockerfile.runner'],
+  ['wasm-data', 'runtime/wasm/Dockerfile.data'],
+]);
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const NPM_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -67,9 +72,11 @@ function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = 
   // and fingerprints its context. The release workflow only calls the recipe.
   const recipe = [BUILD_ACTION, RESOLVER].map(file =>
     run('git', ['rev-parse', `${revision}:${file}`], cwd));
+  // The Wasm runner and data service build from runtime/wasm alone
+  // (runtime/wasm/README.md, "Images"), so that tree is their whole input.
   const context = component === 'capture'
     ? captureTree(revision, cwd, run)
-    : run('git', ['rev-parse', `${revision}:worker`], cwd);
+    : run('git', ['rev-parse', `${revision}:${WASM_COMPONENTS.has(component) ? 'runtime/wasm' : 'worker'}`], cwd);
   const inputs = { component, ref, recipe, context };
   if (component === 'worker') inputs.claudeCodeVersion = claudeCodeVersion;
   return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
@@ -111,7 +118,7 @@ function inspectImage(tag, {
 function resolveImage({
   component, owner, revision, ref, forceRebuild = 'none', claudeCodeVersion,
 }, dependencies = {}) {
-  if (!['platform', 'worker', 'capture'].includes(component)) throw new Error('Invalid component');
+  if (!['platform', 'worker', 'capture', ...WASM_COMPONENTS.keys()].includes(component)) throw new Error('Invalid component');
   if (!/^[a-f0-9]{40}$/.test(revision || '')) throw new Error('Invalid source revision');
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(owner || '')) throw new Error('Invalid registry owner');
   if (!ref?.startsWith('refs/heads/')) throw new Error('Image releases require a branch ref');
@@ -141,8 +148,8 @@ if (require.main === module) {
       GITHUB_REF: ref, FORCE_REBUILD: forceRebuild, CLAUDE_CODE_VERSION: claudeCodeVersion } = process.env;
     const result = resolveImage({ component, revision, owner, ref, forceRebuild, claudeCodeVersion });
     if (!result.digest) {
-      result.context = component === 'worker' ? 'worker' : '.';
-      result.dockerfile = {
+      result.context = component === 'worker' ? 'worker' : WASM_COMPONENTS.has(component) ? 'runtime/wasm' : '.';
+      result.dockerfile = WASM_COMPONENTS.get(component) || {
         platform: 'Dockerfile.kubernetes', worker: 'worker/Dockerfile', capture: 'capture/Dockerfile',
       }[component];
     }

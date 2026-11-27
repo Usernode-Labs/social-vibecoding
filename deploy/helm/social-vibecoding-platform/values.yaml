@@ -87,6 +87,15 @@ platform:
   captureImage:
     repository: ghcr.io/replace-me/social-vibecoding-capture
     digest: ""
+  # Wasm previews (runtime/wasm/README.md): the runner and data service
+  # images, pinned by the release like the worker's. Used only with
+  # config.wasmPreviews "on".
+  wasmRunnerImage:
+    repository: ghcr.io/replace-me/social-vibecoding-wasm-runner
+    digest: ""
+  wasmDataImage:
+    repository: ghcr.io/replace-me/social-vibecoding-wasm-data
+    digest: ""
   resources:
     requests:
       cpu: 500m
@@ -247,6 +256,20 @@ config:
   # the shared /usernode-* files stale-while-revalidate. Needs appGate "on" to
   # reach app pages; "off" is the fallback and needs no deploy of any app.
   appOfflineCache: "on"
+  # Wasm previews, a pilot (src/services/wasm-previews.js): "on" lets an
+  # admin switch projects whose proposal previews then also get a Wasm twin,
+  # run on Kata microVM runners the platform creates in the app namespace.
+  # Needs appGate "on", the RuntimeClass named by wasmRuntimeClass on the
+  # nodes labelled for it, the secrets WASM_PASS_KEY, WASM_RUNNER_TOKEN and
+  # WASM_DB_SECRET, and the infra policy that lets the runners reach the data
+  # service. "off" builds no twin; switched projects build as any other.
+  wasmPreviews: "off"
+  wasmRuntimeClass: kata
+  wasmRunnerReplicas: 2
+  # 0: every request to a twin runs in a fresh instance. N: an app's warm
+  # instance serves up to N of its requests and keeps its globals between
+  # them, as its container does.
+  wasmWarm: 0
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
   # Firebase phone authentication flag; enable in the cluster's plaintext values.

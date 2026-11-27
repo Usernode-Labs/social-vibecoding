@@ -1696,6 +1696,228 @@ async function restorePreviewAttempt(config, name, attempt, servingN, claim = 0)
   return await deleteAttemptDeployment(config, name, own) ? 'deleted' : 'superseded';
 }
 
+// ── Wasm previews: the runners and the data service ──────────────────────
+//
+// A switched project's proposals get a Wasm twin beside their Node preview
+// (services/wasm-previews.js, runtime/wasm/README.md). Its backend runs on
+// shared runners, each a Kata microVM (KUBERNETES_WASM_RUNTIME_CLASS), and
+// reaches its database only through the data service. Both live in the app
+// namespace, made here the way the app gate is: by the platform, from images
+// pinned by digest (KUBERNETES_WASM_RUNNER_IMAGE, _DATA_IMAGE), only on a
+// deploy with WASM_PREVIEWS=on.
+//
+//   runners       app.kubernetes.io/managed-by=social-vibecoding-runtime, so
+//                 the app namespace's runtime policy applies to them as to an
+//                 app: the gate and the platform reach them on 3000, they
+//                 reach the platform and the internet. No preview-environment
+//                 label: they never reach a database. One per node, and no
+//                 init container (work in one kills a Kata VM 45 s in).
+//   data service  plain containers beside the preview database, labelled as
+//                 a preview runtime so the preview database admits it; only
+//                 the runners reach it (the infra policy that admits them).
+//
+// The keys come from the platform's own environment and go into one Secret
+// each: the runners get the pass's public half, their token and the identity
+// key; the data service the pass's public half and the database secret.
+const WASM_RUNNER_HEALTH = '/health';
+const WASM_KEYS_SECRET = 'usernode-wasm-keys';
+
+function wasmLabels(name) {
+  return {
+    'app.kubernetes.io/part-of': PART_OF,
+    'app.kubernetes.io/name': name,
+    'app.kubernetes.io/managed-by': 'social-vibecoding-runtime',
+  };
+}
+
+function wasmRunnerManifest({ namespace, cfg, name, platformUrl }) {
+  const selectorLabels = { 'social.usernode.io/runtime-name': name };
+  const health = { httpGet: { path: WASM_RUNNER_HEALTH, port: 'http' } };
+  const fromKeys = (key) => ({ valueFrom: { secretKeyRef: { name: WASM_KEYS_SECRET, key } } });
+  return {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name, namespace, labels: wasmLabels(name) },
+    spec: {
+      replicas: cfg.wasmRunnerReplicas || 2,
+      strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
+      selector: { matchLabels: selectorLabels },
+      template: {
+        metadata: { labels: { ...wasmLabels(name), ...selectorLabels } },
+        spec: {
+          runtimeClassName: cfg.wasmRuntimeClass || 'kata',
+          serviceAccountName: cfg.generatedAppServiceAccount,
+          automountServiceAccountToken: false,
+          securityContext: nodePodSecurityContext(),
+          // One runner per node: losing a node loses half of them, not all.
+          affinity: { podAntiAffinity: { requiredDuringSchedulingIgnoredDuringExecution: [
+            { labelSelector: { matchLabels: selectorLabels }, topologyKey: 'kubernetes.io/hostname' },
+          ] } },
+          containers: [{
+            name: 'runner', image: cfg.wasmRunnerImage, imagePullPolicy: 'IfNotPresent',
+            env: [
+              { name: 'PORT', value: '3000' },
+              { name: 'WASM_MODULE_URL', value: `${String(platformUrl || '').replace(/\/$/, '')}/internal/wasm/modules` },
+              { name: 'WASM_DATA_ADDR', value: `${require('./wasm-previews').DATA_NAME}.${namespace}.svc:3000` },
+              { name: 'WASM_PASS_PUBKEY', ...fromKeys('pass-pubkey') },
+              { name: 'WASM_RUNNER_TOKEN', ...fromKeys('runner-token') },
+              { name: 'USERNODE_JWT_PUBLIC_KEY', ...fromKeys('identity-pubkey') },
+              { name: 'WASM_TEST_HOOKS', value: process.env.WASM_TEST_HOOKS === '1' ? '1' : '0' },
+              { name: 'WASM_WARM', value: String(cfg.wasmWarm || 0) },
+            ],
+            ports: [{ name: 'http', containerPort: 3000 }],
+            startupProbe: { ...health, periodSeconds: 1, failureThreshold: 120 },
+            readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
+            livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
+            // Requests equal limits: the microVM is sized from them.
+            resources: { requests: { cpu: '1', memory: '2Gi' }, limits: { cpu: '1', memory: '2Gi' } },
+            securityContext: containerSecurityContext(),
+          }],
+        },
+      },
+    },
+  };
+}
+
+function wasmDataManifest({ namespace, cfg, name, pgHost, pgPort }) {
+  const selectorLabels = { 'social.usernode.io/runtime-name': name };
+  const fromKeys = (key) => ({ valueFrom: { secretKeyRef: { name: WASM_KEYS_SECRET, key } } });
+  return {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name, namespace, labels: { ...wasmLabels(name), 'social.usernode.io/environment': 'staging' } },
+    spec: {
+      replicas: 2,
+      strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
+      selector: { matchLabels: selectorLabels },
+      template: {
+        metadata: { labels: { ...wasmLabels(name), ...selectorLabels, 'social.usernode.io/environment': 'staging' } },
+        spec: {
+          serviceAccountName: cfg.generatedAppServiceAccount,
+          automountServiceAccountToken: false,
+          securityContext: nodePodSecurityContext(),
+          ...databaseAffinity(cfg, 'staging'),
+          containers: [{
+            name: 'data', image: cfg.wasmDataImage, imagePullPolicy: 'IfNotPresent',
+            env: [
+              { name: 'PORT', value: '3000' },
+              // The address, not a name to look up on every new connection:
+              // the cluster's DNS answers from the other site (35 ms a lookup).
+              { name: 'WASM_PG_HOST', value: String(pgHost || '') },
+              { name: 'WASM_PG_PORT', value: String(pgPort || 5432) },
+              { name: 'CAP', value: '20' }, { name: 'PER_APP', value: '4' }, { name: 'IDLE_MS', value: '5000' },
+              { name: 'WASM_PASS_PUBKEY', ...fromKeys('pass-pubkey') },
+              { name: 'WASM_DB_SECRET', ...fromKeys('db-secret') },
+            ],
+            ports: [{ name: 'data', containerPort: 3000 }],
+            readinessProbe: { tcpSocket: { port: 'data' }, periodSeconds: 2, failureThreshold: 3 },
+            resources: { requests: { cpu: '250m', memory: '128Mi' }, limits: { cpu: '1', memory: '512Mi' } },
+            securityContext: containerSecurityContext(),
+          }],
+        },
+      },
+    },
+  };
+}
+
+// The preview database server's address, from the platform's own
+// STAGING_DB_ADMIN_URL (never its credentials), resolved once here so the
+// data service is handed an address.
+async function previewDatabaseAddress() {
+  const raw = process.env.STAGING_DB_ADMIN_URL || '';
+  if (!raw) throw new Error('STAGING_DB_ADMIN_URL is not set: Wasm twins need the preview database server');
+  const url = new URL(raw);
+  const { address } = await require('dns').promises.lookup(url.hostname);
+  return { host: address, port: Number(url.port) || 5432 };
+}
+
+let wasmBackends = null;
+let wasmBackendsRetryAfter = 0;
+
+/**
+ * The runners and the data service, up and answering: their Services,
+ * Secret and Deployments in the app namespace. Memoised per process with
+ * the gate's cool-off; null when the deploy has Wasm previews off.
+ */
+async function ensureWasmBackends(config, { readyTimeoutMs = 240000, retryAfterMs = 300000 } = {}) {
+  const previews = require('./wasm-previews');
+  if (!previews.deployOn(config)) return null;
+  if (wasmBackends) return wasmBackends;
+  if (Date.now() < wasmBackendsRetryAfter) return null;
+  wasmBackends = (async () => {
+    const cfg = config.kubernetes;
+    if (!cfg.wasmRunnerImage?.includes('@sha256:') || !cfg.wasmDataImage?.includes('@sha256:')) {
+      throw new Error('KUBERNETES_WASM_RUNNER_IMAGE and KUBERNETES_WASM_DATA_IMAGE must be immutable digests');
+    }
+    const platformUrl = process.env.PLATFORM_INTERNAL_URL || '';
+    if (!platformUrl) throw new Error('PLATFORM_INTERNAL_URL is not set; runners have nowhere to fetch modules from');
+    const runnerToken = process.env.WASM_RUNNER_TOKEN || '';
+    if (runnerToken.length < 32) throw new Error('WASM_RUNNER_TOKEN is not set (32 characters at least)');
+    const identityKey = process.env.IFRAME_JWT_PUBLIC_KEY || process.env.USERNODE_JWT_PUBLIC_KEY || '';
+    if (!identityKey) throw new Error('The identity public key is not set; runners cannot check who is signed in');
+    const namespace = cfg.appNamespace;
+    const { core, apps } = getClients();
+    const pg = await previewDatabaseAddress();
+    const stringData = {
+      'pass-pubkey': previews.passPublicKey(),
+      'runner-token': runnerToken,
+      'identity-pubkey': identityKey,
+      'db-secret': (() => { previews.dbPassword('app_x_staging_s1_000000_w'); return process.env.WASM_DB_SECRET; })(),
+    };
+    await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
+      apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+      metadata: { name: WASM_KEYS_SECRET, namespace, labels: wasmLabels(WASM_KEYS_SECRET) },
+      stringData,
+    });
+    for (const name of [previews.RUNNER_NAME, previews.DATA_NAME]) {
+      await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
+        apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: wasmLabels(name) },
+        spec: { selector: { 'social.usernode.io/runtime-name': name }, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
+      });
+    }
+    await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace,
+      wasmDataManifest({ namespace, cfg, name: previews.DATA_NAME, pgHost: pg.host, pgPort: pg.port }));
+    await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace,
+      wasmRunnerManifest({ namespace, cfg, name: previews.RUNNER_NAME, platformUrl }));
+    await waitForDeployment(namespace, previews.DATA_NAME, { timeoutMs: readyTimeoutMs });
+    await waitForDeployment(namespace, previews.RUNNER_NAME, { timeoutMs: readyTimeoutMs });
+    return { runner: previews.RUNNER_NAME, data: previews.DATA_NAME, namespace };
+  })().catch((err) => {
+    wasmBackends = null;
+    wasmBackendsRetryAfter = Date.now() + retryAfterMs;
+    throw err;
+  });
+  return wasmBackends;
+}
+
+/** The runners' in-cluster origin, for the platform's own calls (build, setup). */
+function wasmRunnerOrigin(config) {
+  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  return `http://${require('./wasm-previews').RUNNER_NAME}.${namespace}.svc:3000`;
+}
+
+/**
+ * The twin's Ingress: its own host (`<slug>--s<id>--wasm`), the platform's
+ * asset paths, and everything else through the app gate, which names the
+ * runners for it (edge-gate.js). Its name is the twin's runtime name.
+ */
+async function applyTwinIngress(config, { app, sessionId, name, hostname }) {
+  const cfg = config.kubernetes;
+  if (appGateMode(config) !== 'on') throw new Error('A Wasm twin is reached only through the app gate (APP_GATE=on)');
+  const namespace = cfg.appNamespace;
+  const { networking } = getClients();
+  const resourceLabels = {
+    ...labels({ appId: app.id, sessionId, environment: 'staging' }),
+    'social.usernode.io/runtime-name': name,
+    'social.usernode.io/wasm-twin': 'true',
+  };
+  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+    appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend: true, gateBackend: APP_GATE_NAME }));
+}
+
+async function deleteTwinIngress(config, name) {
+  const { networking } = getClients();
+  await deleteIfPresent(networking, 'deleteNamespacedIngress', name, config.kubernetes.appNamespace);
+}
+
 // ── A preview asleep (#6157) ─────────────────────────────────────────────
 //
 // A preview nobody has used for a while sleeps (services/preview-sleep.js):
@@ -4351,6 +4573,8 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
+  ensureWasmBackends, wasmRunnerOrigin, applyTwinIngress, deleteTwinIngress,
+  _wasmManifestsForTest: { wasmRunnerManifest, wasmDataManifest },
   batchWorkPlacement, waitForBatchPool,
   reconcileAppResourceProfiles,
   readProductionForSleep, scaleProductionForSleep, appGateActivity,

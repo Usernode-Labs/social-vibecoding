@@ -699,6 +699,17 @@ function load() {
         ? 'always' : 'serving',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
+      // Wasm previews (services/wasm-previews.js, runtime/wasm/README.md):
+      // the runner and data service images, by digest like the worker's,
+      // the RuntimeClass the runners' microVMs use, and how many runners.
+      wasmRunnerImage: process.env.KUBERNETES_WASM_RUNNER_IMAGE || '',
+      wasmDataImage: process.env.KUBERNETES_WASM_DATA_IMAGE || '',
+      wasmRuntimeClass: process.env.KUBERNETES_WASM_RUNTIME_CLASS || 'kata',
+      wasmRunnerReplicas: Math.max(1, parseInt(process.env.KUBERNETES_WASM_RUNNER_REPLICAS || '2', 10) || 2),
+      // 0: a fresh instance per request. N: an app's warm instance serves up
+      // to N of its requests, keeping its globals between them as its
+      // container does (runtime/wasm/README.md, "Warm instances").
+      wasmWarm: Math.max(0, parseInt(process.env.KUBERNETES_WASM_WARM || '0', 10) || 0),
       // The dedicated node pool check Jobs prefer, as the pool nodes' label
       // `key=value` (for example `usernodelabs.org/node-pool=cpu-heavy`).
       // Empty spreads checks over every node (services/kubernetes.js,

@@ -95,6 +95,14 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     const fence = kubernetes().attemptFence(c?.labels?.[kubernetes().PREVIEW_ATTEMPT_ANNOTATION]);
     return fence?.attempt === input.n;
   };
+  // A switched project's attempt databases with their Wasm twins' (each
+  // attempt's twin is its database's name with `_w`, services/wasm-previews.js):
+  // what a retirement drops. Any other project's list as it is.
+  const withTwins = async (appId: number | null, dbs: string[]) => {
+    const previews = legacy('services/wasm-previews');
+    if (appId == null || !await previews.enabledFor(config, pool, appId)) return dbs;
+    return dbs.flatMap((db) => { const twin = previews.twinDb(db); return twin ? [db, twin] : [db]; });
+  };
   // An attempt's early unit suite, running or finished: its Jobs go.
   const dropUnitEarly = async (sessionId: number, n: number) => {
     if (config.workerRuntime !== 'kubernetes') return;
@@ -130,7 +138,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       await kubernetes().restorePreviewAttempt(config, runtimeName(input.appId, input.sessionId), input.n,
         input.serving?.n ?? null, input.claim ?? 0).catch(() => null);
     }
-    if (!await serves(input).catch(() => true)) await dbManager().dropDatabase(input.db).catch(() => {});
+    if (!await serves(input).catch(() => true)) {
+      for (const db of await withTwins(input.appId, [input.db])) await dbManager().dropDatabase(db).catch(() => {});
+    }
   };
 
   return {
@@ -178,6 +188,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           return {
             ok: true, db, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
             containerId: built.containerId ?? null, imageRef: built.imageRef ?? null, buildRef: built.buildRef ?? null,
+            // The Wasm twin, when the project has one and it came up.
+            ...(built.twin ? { twin: built.twin } : {}),
             // The build's step times, for the trace of the checks run that
             // follows (the server log was their only record).
             timings: built.timings ?? null,
@@ -429,7 +441,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         // Never what serves: a cancelled attempt whose deploy could not be
         // given back still has the live pods on its database and Secret.
         if (await serves(input)) throw new Error(`Attempt ${input.n} still serves the preview; not retired`);
-        for (const db of (Array.isArray(input.dbs) ? input.dbs : [input.db])) await dbManager().dropDatabase(db, { strict: true });
+        for (const db of await withTwins(input.appId, Array.isArray(input.dbs) ? input.dbs : [input.db])) {
+          await dbManager().dropDatabase(db, { strict: true });
+        }
         if (runtimeMode() === 'kubernetes') {
           const k = kubernetes();
           await k.deleteSecret(config, k.attemptSecretName(runtimeName(input.appId, input.sessionId), input.n));
@@ -473,7 +487,12 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         // (services/preview-projects.js): before the preview's own
         // databases, and a project that will not go fails the item.
         await legacy('services/preview-projects').retireForSession(config, pool, input.sessionId);
-        const dbs = attempts.flatMap((a: { db: string; dbs?: string[] }) => a.dbs ?? [a.db]);
+        const dbs = await withTwins(input.appId, attempts.flatMap((a: { db: string; dbs?: string[] }) => a.dbs ?? [a.db]));
+        // The Wasm twin's route, wherever Wasm previews run (a project
+        // switched off since keeps none either).
+        if (legacy('services/wasm-previews').deployOn(config)) {
+          await legacy('services/wasm-runtime').removeTwin(config, { appId: input.appId, sessionId: input.sessionId });
+        }
         for (const db of dbs) await dbManager().dropDatabase(db, { strict: true });
         const left = name ? await k.previewResourcesPresent(config, name, secrets) : [];
         for (const db of dbs) if (await dbManager().databaseExists(db, { strict: true })) left.push(db);
@@ -489,8 +508,13 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       maxAttempts: 5,
       leaseMs: 120000,
       async run({ input }): Promise<Json> {
-        for (const db of input.dbs || []) await dbManager().dropDatabase(db, { strict: true });
-        return { dropped: input.dbs || [] };
+        const previews = legacy('services/wasm-previews');
+        const dbs = (input.dbs || []).flatMap((db: string) => {
+          const twin = previews.deployOn(config) ? previews.twinDb(db) : null;
+          return twin ? [db, twin] : [db];
+        });
+        for (const db of dbs) await dbManager().dropDatabase(db, { strict: true });
+        return { dropped: dbs };
       },
     },
   };

@@ -1,0 +1,16 @@
+# The Wasm preview runtime: the runner (runs app modules), the data service
+# (their only way to the database) and the code both use (passes, frames).
+[workspace]
+resolver = "2"
+members = ["common", "runner", "dsvc"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "UNLICENSED"
+publish = false
+
+[profile.release]
+debug = false
+lto = "thin"
+codegen-units = 4

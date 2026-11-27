@@ -88,6 +88,8 @@ const appGroupRoutes = require('./src/routes/app-groups');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+// Wasm previews: the runners fetch modules here (runtime/wasm/README.md).
+const wasmInternalRoutes = require('./src/routes/wasm-internal');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const appStockRoutes = require('./src/routes/app-stock');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -612,6 +614,7 @@ app.use(anthropicProxyRoutes(config));
 // proxy; mounted before authMiddleware because callers are app
 // containers, not browser sessions.
 app.use(appLlmProxyRoutes(config));
+app.use(wasmInternalRoutes(config));
 
 // Dapp → platform stock photo search (#7042, the first part of #6457). App
 // containers call /api/app-stock/v1/search with their per-app token plus
