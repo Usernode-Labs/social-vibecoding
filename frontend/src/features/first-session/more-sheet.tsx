@@ -24,7 +24,7 @@ import { CheckIcon, XIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useSheet } from '../../lib/sheet';
 import { MORE, type Template } from './examples';
-import { TierChart } from './tier-chart';
+import { ExampleMark } from './example-mark';
 
 /** Its own idea row's key: the make screen's Your own idea (./make.tsx OWN_IDEA). */
 const IDEA = 'idea';
@@ -32,7 +32,7 @@ const IDEA = 'idea';
 function Glyph({ template }: { template: Template | null }) {
   return (
     <span className="app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[22px]" aria-hidden="true">
-      {template ? (template.chart ? <TierChart /> : template.emoji) : '💡'}
+      {template ? (template.mark ? <ExampleMark mark={template.mark} /> : template.emoji) : '💡'}
     </span>
   );
 }

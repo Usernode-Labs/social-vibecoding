@@ -32,7 +32,8 @@
 
 // The three examples are the make screen's front three (Evan, 8 Oct 2026,
 // #4354; examples.ts FRONT since 15 Oct): the same three here and there, the
-// tier list drawn as one.
+// tier list drawn as one, and since #4403 the game and the organizer drawn
+// beside it (../first-session/example-mark.tsx).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -44,7 +45,7 @@ import { noteSignUpFrom } from './sign-up-from';
 import { reducedMotion } from '../../lib/reduced-motion';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
-import { TierChart } from '../first-session/tier-chart';
+import { ExampleMark } from '../first-session/example-mark';
 
 // The foot's links: Sign in inside the email line, and Look around first.
 const STORY_LINK = 'font-semibold text-violet-700 dark:text-violet-400 hover:underline un-touch-target';
@@ -451,7 +452,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
             {FRONT.slice(0, s.count).map((e) => (
               <li key={e.key} className={`flex items-center gap-3 px-3.5 ${s.row} [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]`}>
-                <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.chart ? <TierChart /> : e.emoji}</span>
+                <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.mark ? <ExampleMark mark={e.mark} /> : e.emoji}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100"><Message id={e.title} /></span>
                   <span className="block text-[13px] text-zinc-500 dark:text-zinc-400"><Message id={e.line} /></span>

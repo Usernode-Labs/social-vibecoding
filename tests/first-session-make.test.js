@@ -174,8 +174,9 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // under it; the waves pill that followed is gone (#5376, Evan, 17 Oct 2026).
 test('the story: label, headline, "For example" and the three examples, then one Continue and the email line', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
-  // Each row: its emoji (the tier list draws a chart, no text), title and line.
-  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
+  // Each row: its title and line. A drawn mark is no text (#4403: all three
+  // front examples are drawn), and an emoji would be.
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.mark ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -274,6 +275,31 @@ test('the front three on the story and the make screen, the rest behind Somethin
   for (const t of FRONT) assert.ok(story.includes(`>${message(t.title)}<`) && story.includes(`>${message(t.line)}<`), t.key);
   for (const t of MORE) assert.ok(!story.includes(`>${message(t.title)}<`), `${t.key} is not on the story`);
   assert.match(story, /data-tier-chart=""/);
+  // #4403: the game and the organizer are drawn beside it, in the chart's
+  // style, so no emoji stands next to a drawing; the emoji stays the
+  // project's own icon. Nothing behind Something else is drawn.
+  assert.match(story, /data-game-mark=""/);
+  assert.match(story, /data-organizer-mark=""/);
+  assert.ok(!story.includes('🎮') && !story.includes('📋'));
+  assert.deepEqual(FRONT.map((t) => [t.mark, t.emoji]), [['tier', '📊'], ['game', '🎮'], ['organizer', '📋']]);
+  assert.ok(MORE.every((t) => !t.mark));
+  // The same size as the chart (29 by 30), its greys, and its tier colours
+  // only: no colour of their own.
+  const { GameBoard, Checklist } = loadTsx(`${DIR}/example-mark.tsx`);
+  const chartHtml = renderToHtml(createElement(loadTsx(`${DIR}/tier-chart.tsx`).TierChart));
+  const tierColours = new Set(chartHtml.match(/#[0-9a-f]{6}/g));
+  for (const Mark of [GameBoard, Checklist]) {
+    const mark = renderToHtml(createElement(Mark));
+    assert.match(mark, /^<span data-[a-z]+-mark="" class="[^"]*\bh-\[30px\] w-\[29px\][^"]*" aria-hidden="true">/);
+    assert.match(mark, /bg-zinc-300 dark:bg-zinc-600/);
+    for (const hex of mark.match(/#[0-9a-f]{6}/g) || []) assert.ok(tierColours.has(hex), `${hex} is a tier colour`);
+  }
+  // Every screen that draws a template's glyph asks for its mark.
+  for (const file of [`${DIR}/make.tsx`, `${DIR}/more-sheet.tsx`, 'frontend/src/features/auth/story.tsx']) {
+    const source = read(file);
+    assert.match(source, /\.mark \? <ExampleMark mark=\{\w+\.mark\} \/> : \w+\.emoji/, file);
+    assert.doesNotMatch(source, /TierChart|\.chart\b/, file);
+  }
 });
 
 test('"Make it" makes a private community through the dialog\'s own route', () => {
