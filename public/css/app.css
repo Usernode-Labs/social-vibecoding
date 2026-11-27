@@ -25492,6 +25492,13 @@ button.dev-ws-recent-card {
   display: grid; place-items: center;
   color: #fff; font-size: 11.5px; font-weight: 700;
   box-shadow: 0 0 0 2px var(--home-ground, var(--bg-primary));
+  /* #7230: the person's picture covers the initial inside the same circle.
+     The ring is a box-shadow, so overflow does not clip it. */
+  position: relative; overflow: hidden;
+}
+.dev-ws-hero-face-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: inherit; object-fit: cover;
 }
 .dev-ws-hero-face:last-child { margin-inline-end: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }

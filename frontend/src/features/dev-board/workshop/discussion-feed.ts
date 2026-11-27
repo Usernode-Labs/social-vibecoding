@@ -414,7 +414,7 @@ export function fromAppRow(row: unknown, me: string | null, fileBase: string | n
   const thread = (m.thread || null) as Json | null;
   return {
     id,
-    who: { id: num(m.user_id), username: str(m.username) || 'someone' },
+    who: { id: num(m.user_id), username: str(m.username) || 'someone', avatarUrl: str(m.avatar_url) || null },
     content: str(m.content),
     at: str(m.created_at),
     deleted: !!m.deleted,
@@ -529,6 +529,7 @@ export function liveFromAppFrame(frame: unknown, me: string | null, fileBase: st
         id: f.id,
         user_id: f.userId,
         username: f.username,
+        avatar_url: f.avatarUrl,
         content: f.content,
         msg_type: f.msgType || 'message',
         metadata: f.metadata,

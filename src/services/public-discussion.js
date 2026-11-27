@@ -13,6 +13,8 @@
 // and the reply threads under it), never a topic's channel or a change's
 // thread, and leaves out what moderation hid.
 
+const { avatarUrlFor } = require('./avatar-url');
+
 /** Posts in one page, newest last. */
 const POSTS_PER_PAGE = 30;
 /** The newest replies sent with each post. */
@@ -57,10 +59,14 @@ function publicMetadata(metadata) {
 
 function shapeRow(row, reactions, thread) {
   const deleted = !!row.deleted;
+  const hasAvatar = Object.prototype.hasOwnProperty.call(row, 'avatar_id');
   return {
     id: Number(row.id),
     user_id: row.user_id == null ? null : Number(row.user_id),
     username: row.username || null,
+    // The author's picture (#7230), kept on a deleted row: the visitor still
+    // sees who wrote it. Null when no account is known.
+    ...(hasAvatar ? { avatar_url: row.user_id == null ? null : avatarUrlFor(row.avatar_id, row.user_id) } : {}),
     content: deleted ? '' : String(row.content || ''),
     msg_type: row.msg_type,
     metadata: deleted ? {} : publicMetadata(row.metadata),
@@ -73,7 +79,7 @@ function shapeRow(row, reactions, thread) {
   };
 }
 
-const ROW_COLUMNS = `m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
+const ROW_COLUMNS = `m.id, m.user_id, u.username, av.id AS avatar_id, m.content, m.msg_type, m.metadata,
   m.thread_type, m.thread_ref, m.created_at, (m.deleted_at IS NOT NULL) AS deleted`;
 
 async function reactionsFor(pool, ids) {
@@ -105,6 +111,7 @@ async function publicPosts(pool, appId, { before = null } = {}) {
   const { rows: posts } = await pool.query(
     `SELECT ${ROW_COLUMNS}
        FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN user_avatars av ON av.user_id = u.id
       WHERE m.app_id = $1
         AND m.thread_type IS NULL
         AND m.msg_type IN ${POST_KINDS}
@@ -133,6 +140,7 @@ async function publicPosts(pool, appId, { before = null } = {}) {
       `SELECT * FROM (
          SELECT ${ROW_COLUMNS}, ROW_NUMBER() OVER (PARTITION BY m.thread_ref ORDER BY m.id DESC) AS rn
            FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+            LEFT JOIN user_avatars av ON av.user_id = u.id
           WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = ANY($2::int[])
             AND m.msg_type = 'message' AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
        ) x WHERE x.rn <= $3
@@ -157,6 +165,7 @@ async function publicThread(pool, appId, rootId) {
   const { rows: roots } = await pool.query(
     `SELECT ${ROW_COLUMNS}
        FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN user_avatars av ON av.user_id = u.id
       WHERE m.id = $1 AND m.app_id = $2 AND m.thread_type IS NULL
         AND m.msg_type IN ${POST_KINDS} AND m.moderation_hidden_at IS NULL`,
     [id, appId]
@@ -166,6 +175,7 @@ async function publicThread(pool, appId, rootId) {
     `SELECT * FROM (
        SELECT ${ROW_COLUMNS}
          FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+          LEFT JOIN user_avatars av ON av.user_id = u.id
         WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2
           AND m.msg_type = 'message' AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
         ORDER BY m.id DESC

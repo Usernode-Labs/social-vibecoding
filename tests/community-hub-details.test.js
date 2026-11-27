@@ -73,6 +73,15 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   const few = active({ active_week: 2, active_people: five.slice(0, 2) });
   assert.match(few, />2 active this week<\/span><span class="dev-ws-hero-active-names" data-ws-active-names="">evan, talha<\/span>/, 'everyone named: no "and 0 more"');
   assert.doesNotMatch(few, /dev-ws-hero-face-more/);
+  // #7230: a person's profile picture fills the same face; somebody with no
+  // account keeps the coloured initial.
+  const pictured = active({ active_week: 2, active_people: [
+    { id: 9, username: 'drea', avatarUrl: '/avatars/0123456789abcdef0123456789abcdef' },
+    { id: 10, username: 'snait', avatarUrl: null },
+  ] });
+  assert.match(pictured, /<span class="dev-ws-hero-face"[^>]*>D<img src="\/avatars\/0123456789abcdef0123456789abcdef" alt="" loading="lazy" decoding="async" class="dev-ws-hero-face-img"\/><\/span>/,
+    'the picture covers the initial');
+  assert.match(pictured, /<span class="dev-ws-hero-face"[^>]*title="@snait">S<\/span>/, 'no picture, the letter');
   assert.equal(active({ active_week: 0, active_people: [] }), '', 'a quiet week says nothing');
   assert.match(active({ active_week: 3 }), /^<div class="dev-ws-hero-active"[^>]*><span class="dev-ws-hero-active-words"><span[^>]*>3 active this week<\/span><\/span><\/div>$/,
     'an older server without the names: the count alone');

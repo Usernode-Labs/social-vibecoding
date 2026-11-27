@@ -54,6 +54,18 @@ test('it opens on This month: a face, a name and a count in words for each perso
   assert.doesNotMatch(html, /<svg|<ol|#1|1st/);
 });
 
+test('a contributor with a picture shows it in their face; without one, the letter (#7230)', () => {
+  const html = card({
+    month: [{ ...person(1, 'drea', 6), avatarUrl: '/avatars/aaaa' }, person(2, 'snait', 3)],
+    all_time: [{ ...person(1, 'drea', 9), avatarUrl: '/avatars/aaaa' }, person(2, 'snait', 3)],
+  });
+  const drea = html.slice(html.indexOf('data-ws-contributor="drea"'), html.indexOf('data-ws-contributor="snait"'));
+  assert.match(drea, /class="dev-ws-hero-face dev-ws-contrib-face"[^>]*>D<img src="\/avatars\/aaaa"[^>]*class="dev-ws-hero-face-img"/);
+  const snait = html.slice(html.indexOf('data-ws-contributor="snait"'));
+  assert.match(snait, />S</);
+  assert.doesNotMatch(snait, /dev-ws-hero-face-img/, 'no picture, no img: the coloured initial stays');
+});
+
 test('with nobody yet this month it opens on All time', () => {
   const html = card({ month: [], all_time: [person(2, 'evan', 40), person(1, 'snait', 30)] });
   assert.match(html, /data-ws-hub-contributors="all"/);

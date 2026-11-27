@@ -250,7 +250,7 @@
     {
       "source": "src/routes/chat.js",
       "kind": "structural-template",
-      "fingerprint": "8fa09856905a3850d87a",
+      "fingerprint": "077933f1d8260a79280b",
       "count": 1,
       "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at, m.mo"
     },

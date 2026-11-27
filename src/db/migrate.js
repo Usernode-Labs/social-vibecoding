@@ -621,6 +621,11 @@ const STAGING_SEEDS = Object.freeze([
   // The hub's Discussion (26 Nov 2026): two fake private projects with
   // posts to draw, one of them folded into "Earlier discussion".
   stagingSeed('seedStagingDiscussion', async (pool, config) => { await seedStagingDiscussion(pool); }),
+  // #7230's shots: the hub's faces, Top contributors and Discussion authors
+  // show profile pictures. The Book Club has people active this week but no
+  // contributions, so its Top contributors card would be missing; two
+  // obviously fake merged changes give it two people to list.
+  stagingSeed('seedStagingHubContributors', async (pool, config) => { await seedStagingHubContributors(pool); }),
   // The signed-out project page's shots (26 Nov 2026): one obviously fake
   // public project busy enough to show who is around, changes approved by
   // several people and by its creator alone, and Top contributors.
@@ -9797,6 +9802,35 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// #7230's shots: the hub's Top contributors card, on the Book Club the
+// Discussion seed makes (staging-demo-discussion), as its member sees it. A
+// fresh staging copy has people active this week there but no contributions,
+// so the card is missing. Two obviously fake merged changes, one by each of
+// two seeded people, give it two people to list. Idempotent by branch, a
+// strict no-op outside staging, and a missing project or people is simply
+// nothing to seed.
+async function seedStagingHubContributors(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: [app] } = await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-discussion'");
+    if (!app) return seedSkipped('no staging-demo-discussion');
+    const { rows: people } = await pool.query(
+      `SELECT id FROM users WHERE username IN ('staging-demo-priya', 'staging-demo-dev') ORDER BY username`);
+    if (people.length < 2) return seedSkipped('no staging demo people');
+    for (const [i, person] of people.entries()) {
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at)
+         SELECT $1, $2, $3::varchar(255), 'Staging demo: a shelf for what we are reading',
+                'Staging demo: a shelf for what we are reading', 'merged',
+                NOW() - make_interval(days => $4::int)
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3::varchar(255))`,
+        [app.id, person.id, `staging-fixture/hub-contributor-${i + 1}`, i + 1]);
+    }
+  } catch (err) {
+    log.warn('db', 'Staging hub contributors seed failed', { message: err.message });
   }
 }
 

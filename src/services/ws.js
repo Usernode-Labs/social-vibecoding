@@ -12,6 +12,7 @@ const appAccess = require('./app-access');
 const communities = require('./communities');
 const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
+const { avatarUrlFor } = require('./avatar-url');
 const groupChannelNotify = require('./group-channel-notify');
 const threads = require('./threads');
 const wsBus = require('./ws-bus');
@@ -1139,10 +1140,11 @@ function refuseChat(client, msg, code, message = null) {
 // the partial unique index is, so a key replayed elsewhere never matches.
 async function findClientKeyMessage(pool, client, clientKey) {
   const { rows } = await pool.query(
-    `SELECT id, user_id, content, msg_type, metadata, thread_type, thread_ref,
-            posted_via, created_at
-       FROM chat_messages
-      WHERE app_id = $1 AND user_id = $2 AND client_key = $3
+    `SELECT m.id, m.user_id, av.id AS avatar_id, m.content, m.msg_type, m.metadata,
+            m.thread_type, m.thread_ref, m.posted_via, m.created_at
+       FROM chat_messages m
+       LEFT JOIN user_avatars av ON av.user_id = m.user_id
+      WHERE m.app_id = $1 AND m.user_id = $2 AND m.client_key = $3
       LIMIT 1`,
     [client.appId, client.user.id, clientKey]
   );
@@ -1162,6 +1164,8 @@ function duplicateChatOutMsg(row, client, clientKey) {
     id: Number(row.id),
     userId: Number(row.user_id),
     username: client.user.username,
+    // #7230: the sender's picture, so a retried send looks like the first.
+    avatarUrl: avatarUrlFor(row.avatar_id, row.user_id),
     content: row.content,
     msgType: row.msg_type || 'message',
     ...(metadata ? { metadata } : {}),
@@ -1568,11 +1572,15 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
+      // #7230: the sender's picture, so a post that arrives live carries it
+      // straight away, as the stored row will on the next read.
+      const { rows: senderRows } = await pool.query('SELECT id AS avatar_id FROM user_avatars WHERE user_id = $1', [client.user.id]);
       const outMsg = {
         type: 'chat',
         id: rows[0].id,
         userId: client.user.id,
         username: client.user.username,
+        avatarUrl: avatarUrlFor(senderRows[0]?.avatar_id, client.user.id),
         content,
         msgType: 'message',
         ...(metadata ? { metadata } : {}),
