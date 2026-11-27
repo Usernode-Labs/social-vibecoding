@@ -268,46 +268,42 @@ function hints(html) {
     });
 }
 
-const SHOWN = { '../../lib/mount-on-reveal': { useMountedOnReveal: () => true } };
+/** The sign-in sheet, open at the step one of the sign-in addresses opens it on. */
+function sheetAt(step) {
+  const { SignInSheet } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
+  return renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Sign in', from: 'signin', onClose() {}, primaryClass: 'pill',
+    route: { route: 'login', step, email: null, codeSent: false, token: null, code: null, resetSent: false, notice: null },
+  }));
+}
 
-test('sign-in: the password form, every code step and both recovery paths say what Return does and do it', () => {
-  const { LoginScreen } = loadTsx('frontend/src/features/auth/login.tsx', { stubs: SHOWN });
-  assert.deepEqual(hints(renderToHtml(createElement(LoginScreen))), [
-    ['login-username', 'next'],
-    ['login-password', 'go'],
-    ['otp-email', 'send'],
-    ['otp-code', 'go'],
-    ['recovery-new-password', 'next'],
-    ['recovery-confirm-password', 'go'],
+test('sign-in: the sheet\'s password, reset-link and new-password steps say what Return does and do it', () => {
+  // The sheet is the one sign-in (the full-page sign-in screen is gone). Its
+  // steps are forms, and Return walks each one's fields (returnWalks) until
+  // the last, which says "go" (or "send") and submits.
+  const html = (step) => hints(sheetAt(step));
+  assert.deepEqual(html('password'), [
+    ['sign-in-sheet-identifier', 'next'],
+    ['sign-in-sheet-current-password', 'go'],
   ]);
-  const src = read('frontend/src/features/auth/login.tsx');
-  assert.match(src, /import \{ returnKeyHandler \} from '\.\.\/\.\.\/lib\/return-to-next';/);
-  // Real forms submit themselves from the last field…
-  assert.match(src, /id="login-form"[\s\S]{0,120}onSubmit=\{onLoginSubmit\}\s+onKeyDown=\{returnKeyHandler\(\)\}/);
-  assert.match(src, /void onResetConfirm\(\);\s+\}\}\s+onKeyDown=\{returnKeyHandler\(\)\}/);
-  // …and the steps that are not forms run their own button's action.
-  assert.match(src, /id="otp-step-email"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ if \(!cooldownLeft\) void otpRequestCode\(\); \} \}\)/);
-  assert.match(src, /id="otp-step-code"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ void onOtpVerify\(\); \} \}\)/);
-  assert.match(src, /id="otp-step-password"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ void onOtpSetPassword\(\); \} \}\)/);
-  assert.match(src, /id="recovery-wallet"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ void onWalletReset\(\); \} \}\)/);
-  assert.match(src, /id="recovery-email"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ if \(busy !== 'btn-email-reset'\) void onEmailReset\(\); \} \}\)/);
-  // The fields drawn only on demand say it too.
-  // The set-password step asks for the username alone (#4891: no password),
-  // so its Return runs the step's button.
-  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="go"/);
-  assert.match(src, /id="recovery-email-input"[\s\S]{0,120}enterKeyHint="send"/);
-  assert.match(src, /id="reset-new-password"[\s\S]{0,80}enterKeyHint="next"/);
-  assert.match(src, /id="reset-confirm-password"[\s\S]{0,80}enterKeyHint="go"/);
+  assert.deepEqual(html('email'), [['sign-in-sheet-email', 'go']]);
+  assert.deepEqual(html('forgot'), [['sign-in-sheet-reset-email', 'send']]);
+  assert.deepEqual(html('reset'), [
+    ['sign-in-sheet-new-password', 'next'],
+    ['sign-in-sheet-confirm-password', 'go'],
+  ]);
+  const src = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  assert.match(src, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void signInWithPassword\(\); \}\}/);
+  assert.match(src, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void sendResetLink\(\); \}\}/);
+  assert.match(src, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void chooseNewPassword\(\); \}\}/);
 });
 
 test('register: code, username, password, then Register', () => {
-  const mod = loadTsx('frontend/src/features/auth/register.tsx', { stubs: SHOWN });
-  const Screen = Object.values(mod).find((v) => typeof v === 'function' && /Register/.test(v.name));
-  assert.deepEqual(hints(renderToHtml(createElement(Screen))), [
-    ['reg-code', 'next'], ['reg-username', 'next'], ['reg-password', 'go'],
+  assert.deepEqual(hints(sheetAt('register')), [
+    ['sign-in-sheet-reg-code', 'next'], ['sign-in-sheet-reg-username', 'next'], ['sign-in-sheet-reg-password', 'go'],
   ]);
-  assert.match(read('frontend/src/features/auth/register.tsx'),
-    /<form id="register-form" className="space-y-4" onSubmit=\{onSubmit\} onKeyDown=\{returnKeyHandler\(\)\}>/);
+  assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'),
+    /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void registerAccount\(\); \}\}/);
 });
 
 test('Change password: current, new, confirm, and confirm presses whichever submit is showing', () => {

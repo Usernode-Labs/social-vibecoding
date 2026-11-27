@@ -1,16 +1,11 @@
-// Content pins for the email password-reset UI (login screen recovery
-// flow + the #reset-password/<token> magic-link route).
+// The email password reset, in the sign-in sheet: "Forgot password?" (and
+// #login/forgot) emails a link, and the link (#reset-password/<token>) opens
+// the sheet's new-password step over the landing. The full-page sign-in
+// screen that held both views is gone; the sheet is the one sign-in.
 //
-// The shell's markup was frozen against a whole-document fixture when this
-// was written (#1078 narrowed that to the id/script baselines), so — like
-// every post-fixture feature — the reset UI is NOT part of the prerendered
-// document. It used to be built at runtime by public/js/auth-screens.js;
-// since #1080 chunk C the login screen is a React component and the same two
-// blocks are mounted on demand instead (`resetUi` state). Same contract,
-// same reason: the id baseline records what the hand-written shell shipped.
-// These are source pins in the style of tests/landing-directory.test.js:
-// they hold that contract in place so a refactor that silently drops a
-// piece fails loudly here.
+// Source pins for what effects do (they do not run under
+// renderToStaticMarkup), and the exchanges themselves run against a fake
+// fetch.
 //
 // Run with: node --test tests/password-reset-ui.test.js
 
@@ -20,187 +15,194 @@ const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { loadTsx } = require('./lib/render-tsx');
+
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-// The login screen (and with it both reset views) is React now; the router
-// that dispatches to it is still the legacy module until the last chunk.
-const LOGIN_TSX = 'frontend/src/features/auth/login.tsx';
+const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
+const ROUTES = 'frontend/src/features/auth/sign-in-routes.ts';
+const TOKEN = 'a'.repeat(64);
+
+/** Run `fn` with these globals in place, and put the old ones back after. */
+async function withGlobals(globals, fn) {
+  const prior = {};
+  for (const key of Object.keys(globals)) {
+    prior[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { value: globals[key], configurable: true, writable: true });
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const key of Object.keys(globals)) {
+      if (prior[key]) Object.defineProperty(globalThis, key, prior[key]);
+      else delete globalThis[key];
+    }
+  }
+}
+
+/** A fetch that answers from `routes` (url → [status, body]) and records every call. */
+function fakeFetch(routes) {
+  const calls = [];
+  const fn = async (url, init = {}) => {
+    calls.push({ url, init });
+    const answer = typeof routes === 'function' ? routes(url, init) : routes[url];
+    if (answer instanceof Error) throw answer;
+    const [status, body] = answer || [404, {}];
+    return { ok: status < 400, status, headers: { get: () => null }, json: async () => body };
+  };
+  fn.calls = calls;
+  return fn;
+}
 
 // ─── the magic-link route ──────────────────────────────────────────
 
-test('reset-password is a login-screen route with a dispatcher and depth', () => {
+test('#reset-password/<token> is the landing, with the sheet open at its new-password step', () => {
   const js = read('public/js/auth-screens.js');
-  assert.match(js, /'reset-password':\s*'auth-login-screen'/,
-    'route renders on the login screen, like signup');
-  assert.match(js, /_resetOnShow/, 'show() dispatches to a reset handler');
-  // …and the converted screen supplies that handler.
-  assert.match(read(LOGIN_TSX), /_resetOnShow: \(token\?: string\) => live\.current\.resetOnShow\(token\)/,
-    'the React screen patches the dispatcher target onto AuthScreens');
+  assert.match(js, /'reset-password': 'auth-landing-screen'/, 'the route is the landing\'s');
+  assert.match(js, /const SIGN_IN_ROUTES = \['login', 'signup', 'register', 'reset-password'\];/);
+  assert.match(js, /AuthScreens\._signInRoute = signIn \? \{ route, seg: seg \|\| null \} : null;\s+AuthScreens\._landingOnShow\(\);/,
+    'show() keeps the route and its token for the landing');
+  const { sheetOpening } = loadTsx(ROUTES);
+  const opening = sheetOpening('reset-password', TOKEN, null);
+  assert.equal(opening.step, 'reset');
+  assert.equal(opening.token, TOKEN);
 });
 
 test('the emailed link format matches the route the front end registers', () => {
   const mail = read('src/services/mail/index.js');
-  // Segment style (like #more/<token>) — routeFromHash splits on '/'.
+  // Segment style (like #more/<token>): routeFromHash splits on '/'.
   assert.match(mail, /#reset-password\/\$\{token\}/);
 });
 
-// ─── recovery screen: the email-request form ───────────────────────
+// ─── asking for the link ───────────────────────────────────────────
 
-test('recovery screen builds an email form that posts to the request endpoint', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /recovery-email-input/, 'email input exists');
-  assert.match(tsx, /\/api\/auth\/password-reset\/request/);
-});
-
-test('the request result copy is anti-enumeration (same message either way)', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const SENT_MSG =\n\s*'auth:login\.emailReset\.sent';/);
-  assert.match(message('auth:login.emailReset.sent'), /If that address matches an account/i,
+test('the reset step asks for a link, and says the same whether or not the address matched', () => {
+  const sheet = read(SHEET);
+  assert.match(sheet, /fetch\('\/api\/auth\/password-reset\/request'/);
+  assert.match(sheet, /id="sign-in-sheet-reset-email"/);
+  assert.match(message('auth:signInSheet.forgot.sent'), /If that address matches an account/i,
     'success copy must not confirm the account exists');
 });
 
-test('the admin fallback is separated and its copy is spaced correctly (#1158)', () => {
-  const tsx = read(LOGIN_TSX);
-  // The divider marks the admin route as the final alternative below the
-  // email flow.
-  assert.match(tsx, /id="recovery-admin"[\s\S]{0,1200}?<hr /,
-    'a divider opens the admin fallback block');
-  // JSX drops a line-ending space, so the separators before the inline
-  // elements must live inside string expressions — the shipped copy rendered
-  // "atemporary" / "fromSettings" without them.
-  // The sentence is one catalog message now, so the separators live in it.
-  assert.match(tsx, /<RichMessage id="auth:login\.recovery\.askAdmin" components=\{\[/);
-  const askAdmin = message('auth:login.recovery.askAdmin');
-  assert.match(askAdmin, /Ask a Homeroom platform admin to issue you a <0>temporary password<\/0>/,
-    'explicit space before the "temporary password" span');
-  assert.match(askAdmin, /<\/0>\. Once you're back in, set a password you choose from <1>Settings → Change password<\/1>\.$/,
-    'explicit space before the Settings → Change password link');
+test('the way back for an address never confirmed is the support team, said once a link went (#1158, #2969)', () => {
+  const support = message('auth:signInSheet.forgot.support');
+  assert.match(support, /temporary password/);
+  assert.match(support, /support@usernodelabs\.org/);
+  assert.match(read(SHEET), /\{resetSent \? \(\s+<p data-sign-in-sheet-reset-support=""/);
 });
 
-test('the recovery view is URL-reachable for captures (#1158)', () => {
-  // The screenshot-state deep link: login.tsx opens the forgot-password view
-  // on ?shot=password-recovery, and app.js boots the anonymous shell for it
-  // so the capture session cannot strip #login to the home feed.
-  assert.match(read(LOGIN_TSX), /shot === 'password-recovery'/,
-    'login screen handles the shot param');
+test('#login/forgot opens the reset step, and so do the capture states (#1158, QA Q16)', () => {
+  const { sheetOpening } = loadTsx(ROUTES);
+  assert.equal(sheetOpening('login', 'forgot', null).step, 'forgot', 'the address of its own');
+  assert.equal(sheetOpening('login', null, 'password-recovery').step, 'forgot');
+  const sent = sheetOpening('login', null, 'password-recovery-sent');
+  assert.equal(sent.step, 'forgot');
+  assert.equal(sent.resetSent, true, 'the sent state is painted, with nothing sent');
+  assert.match(read(SHEET), /setResetSent\(route\?\.resetSent === true\);/);
   assert.match(read('public/js/app.js'), /shot !== 'password-recovery'/,
     'the shot boots the anonymous shell like ?shot=anon');
 });
 
-test('QA Q16: "Forgot password?" is its own history entry, so Back returns to Sign in', () => {
-  // It swapped the card's view on the same #login entry, so Back from it had
-  // no Sign in to land on and went straight on to the marketing landing.
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const RECOVERY_ROUTE = 'login\/forgot';/);
-  assert.match(tsx, /id="forgot-password-link"\s*href=\{`#\$\{RECOVERY_ROUTE\}`\}/,
-    'the link names the address, so a modified click opens it too');
-  assert.match(tsx,
-    /history\.pushState\(\{ \[RECOVERY_ENTRY\]: true \}, '', `#\$\{RECOVERY_ROUTE\}`\);[\s\S]{0,160}showRecovery\(\);/,
-    'a plain click pushes the entry and shows the view without a router round trip');
-  // Loaded, reloaded or traversed to, the router hands the segment over…
-  assert.match(tsx, /if \(!openSignup && seg === 'forgot'\) showRecovery\(\);/);
-  assert.match(read('public/js/auth-screens.js'),
-    /if \(route === 'login'\) AuthScreens\._loginOnShow\(false, seg\);/);
-  // …and "Back to login" undoes the entry the card pushed rather than
-  // stacking a #login on top of it.
-  assert.match(tsx, /id="btn-recovery-back"[\s\S]{0,240}onClick=\{leaveRecovery\}/);
-  assert.match(tsx, /state\[RECOVERY_ENTRY\] && typeof history\.back === 'function'\) \{\s*history\.back\(\);/);
+// ─── choosing the new password ─────────────────────────────────────
+
+test('the new password goes to the confirm endpoint with the token, checked first', async () => {
+  const { confirmPasswordReset } = loadTsx(ROUTES);
+  const ok = fakeFetch({ '/api/auth/password-reset/confirm': [200, { ok: true }] });
+  await withGlobals({ fetch: ok }, async () => {
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'correct horse', 'correct horse'), { ok: true });
+  });
+  assert.deepEqual(ok.calls.map((c) => [c.url, c.init.method]), [['/api/auth/password-reset/confirm', 'POST']]);
+  assert.deepEqual(JSON.parse(ok.calls[0].init.body), { token: TOKEN, newPassword: 'correct horse' });
+
+  // Refused without a round trip: a link that cannot be one, a short
+  // password, two that differ.
+  const none = fakeFetch({});
+  await withGlobals({ fetch: none }, async () => {
+    assert.deepEqual(await confirmPasswordReset('not-a-token', 'correct horse', 'correct horse'), { ok: false, error: message('auth:signInSheet.reset.expired') });
+    assert.deepEqual(await confirmPasswordReset(null, 'correct horse', 'correct horse'), { ok: false, error: message('auth:signInSheet.reset.expired') });
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'short', 'short'), { ok: false, error: message('auth:signInSheet.reset.passwordTooShort') });
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'correct horse', 'correct house'), { ok: false, error: message('auth:signInSheet.reset.passwordMismatch') });
+  });
+  assert.equal(none.calls.length, 0);
+
+  // A used or expired link is the generic message; anything else the server's words.
+  const used = fakeFetch({ '/api/auth/password-reset/confirm': [401, { error: 'Invalid token' }] });
+  await withGlobals({ fetch: used }, async () => {
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'correct horse', 'correct horse'), { ok: false, error: message('auth:signInSheet.reset.expired') });
+  });
+  const weak = fakeFetch({ '/api/auth/password-reset/confirm': [400, { error: 'Password too common' }] });
+  await withGlobals({ fetch: weak }, async () => {
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'password1', 'password1'), { ok: false, error: 'Password too common' });
+  });
+  const offline = fakeFetch(() => new Error('offline'));
+  await withGlobals({ fetch: offline }, async () => {
+    assert.deepEqual(await confirmPasswordReset(TOKEN, 'correct horse', 'correct horse'), { ok: false, error: message('auth:signInSheet.networkError') });
+  });
 });
 
-test('the stale "no email on file" claim is rewritten once the email path exists', () => {
-  const tsx = read(LOGIN_TSX);
-  // The frozen markup's lead still carries the pre-email copy; the screen
-  // must swap it so the admin path reads as the fallback, not the rule.
-  assert.match(tsx, /recovery-admin/, 'admin fallback block is still used');
-  assert.match(tsx, /'auth:login\.recovery\.unconfirmedWarning'/);
-  assert.match(tsx, /'auth:login\.recovery\.askSupport'/);
-  assert.match(message('auth:login.recovery.unconfirmedWarning'), /If you did not confirm your email account, you will not receive the reset email\./,
-    'fallback copy explains the unconfirmed-email gap (#2969)');
-  assert.match(message('auth:login.recovery.askSupport'), /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
-    'fallback copy points to support instead of a platform admin (#2969)');
-  assert.match(tsx, /ADMIN_LEAD_WITH_EMAIL/,
-    'the swap is tied to the same flag that mounts the email form');
+test('the new-password step is a form, so Return and its button take the same path', () => {
+  const sheet = read(SHEET);
+  const start = sheet.indexOf("{step === 'reset' ? (\n          <form");
+  assert.ok(start > 0, 'the step is a form');
+  const form = sheet.slice(start, sheet.indexOf('</form>', start));
+  assert.match(form, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void chooseNewPassword\(\); \}\}/);
+  assert.match(form, /<Button type="submit"/, 'drawn with the Button primitive (tests/button-primitive-ratchet.test.js)');
+  assert.match(form, /id="sign-in-sheet-new-password"[^>]*autoComplete="new-password"/);
+  assert.match(form, /id="sign-in-sheet-confirm-password"[^>]*autoComplete="new-password"/);
 });
 
-// ─── the confirm view ──────────────────────────────────────────────
-
-test('the reset view posts token + new password to the confirm endpoint', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /\/api\/auth\/password-reset\/confirm/);
-  assert.match(tsx, /reset-new-password/, 'new-password input exists');
-  assert.match(tsx, /reset-confirm-password/, 'confirm input exists');
+test('a saved password clears the fields, takes the spent link off the address, and asks for a fresh sign-in', () => {
+  const sheet = read(SHEET);
+  const start = sheet.indexOf('const chooseNewPassword = useCallback');
+  const handler = sheet.slice(start, sheet.indexOf('const registerAccount = useCallback', start));
+  assert.match(handler, /newPasswordField\.current\.value = ''/);
+  assert.match(handler, /confirmPasswordField\.current\.value = ''/);
+  assert.match(handler, /leaveResetAddress\(\);\s+setStep\('password'\);\s+setPasswordChanged\(true\);/);
+  assert.doesNotMatch(handler, /finish\(/,
+    'resetting still requires a fresh sign-in, matching the server contract');
+  // The spent token is replaced, not left behind a pushed entry.
+  const leave = sheet.slice(sheet.indexOf('function leaveResetAddress()'), sheet.indexOf('export function SignInSheet('));
+  assert.match(leave, /if \(!\/\^#reset-password\(\?:\\\/\|\$\)\/\.test\(location\.hash\)\) return;/);
+  assert.match(leave, /history\.replaceState\(null, '', screens\?\.deepLinkUrl\?\.\('#login'\) \|\| '\/#login'\);/);
+  // Leaving the step without saving takes the link off the address too.
+  assert.match(sheet, /data-sign-in-sheet-reset-back="" [^>]*onClick=\{\(\) => \{ leaveResetAddress\(\); toStep\('password'\); \}\}/);
 });
 
-test('the reset view is a form, so Enter and its submit button take the same path', () => {
-  const tsx = read(LOGIN_TSX);
-  const start = tsx.indexOf('<form\n              id="reset-password-view"');
-  const form = tsx.slice(start, tsx.indexOf('</form>', start));
-  assert.ok(start > 0, 'the reset view is a form');
-  assert.match(form, /onSubmit=\{\(e\) => \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?void onResetConfirm\(\)/);
-  assert.match(form, /id="btn-reset-confirm"[\s\S]{0,120}?type="submit"/);
-  assert.doesNotMatch(form, /onClick=\{onResetConfirm\}/,
-    'one submit seam prevents button and Enter behavior from drifting');
-});
-
-test('a successful reset clears secrets, replaces history and opens login without auto-login', () => {
-  const tsx = read(LOGIN_TSX);
-  const start = tsx.indexOf('const onResetConfirm =');
-  const handler = tsx.slice(start, tsx.indexOf('// ── The invite link', start));
-  for (const field of ['resetNewPassword', 'resetConfirmPassword', 'password']) {
-    assert.match(handler, new RegExp(`${field}\\.current\\.value = ''`), `${field} is cleared`);
-  }
-  assert.match(handler, /st\.resetToken = null/);
-  assert.match(handler, /history\.replaceState\(null, '', screens\?\.deepLinkUrl\?\.\('#login'\) \|\| '\/#login'\)/,
-    'the spent token is replaced, not left behind a pushed login entry');
-  assert.match(handler, /screens\.show\('login'\)/,
-    'the legacy router state and React sub-view move together');
-  assert.match(handler, /setPasswordResetComplete\(true\)/);
-  assert.match(handler, /requestAnimationFrame\(\(\) => username\.current\?\.focus\(\)\)/);
-  assert.doesNotMatch(handler, /finishLogin\(/,
-    'resetting still requires a fresh login, matching the server contract');
-});
-
-test('the login destination carries a durable accessible success notice', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
-  assert.match(tsx, /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
-    'success uses the established green auth treatment, not the error red');
-  assert.match(tsx, /\{t\(RESET_COMPLETE_TITLE\)\}[\s\S]{0,80}?\{t\(RESET_COMPLETE_MSG\)\}/);
-  assert.match(tsx, /const RESET_COMPLETE_TITLE = 'auth:login\.resetDone\.title';/);
-  assert.match(message('auth:login.resetDone.title'), /Password changed/);
-  assert.match(message('auth:login.resetDone.body'), /signed out everywhere/);
-  assert.match(tsx, /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
-    'an ordinary later visit does not retain the one-time result');
+test('the password step then carries a durable, accessible notice', () => {
+  const sheet = read(SHEET);
+  assert.match(sheet, /<div role="status" aria-live="polite" data-sign-in-sheet-reset-done="" className=\{DONE_NOTE\}>/);
+  assert.match(sheet, /\{t\('auth:signInSheet\.passwordChanged\.title'\)\}[\s\S]{0,120}?\{t\('auth:signInSheet\.passwordChanged\.body'\)\}/);
+  assert.equal(message('auth:signInSheet.passwordChanged.title'), 'Password changed');
+  assert.match(message('auth:signInSheet.passwordChanged.body'), /signed out everywhere/);
+  // Moving to any other step drops the one-time result.
+  assert.match(sheet, /setResetSent\(false\); setPasswordChanged\(false\);/);
 });
 
 test('the completed state is directly checkable without consuming a reset token', () => {
+  const { sheetOpening } = loadTsx(ROUTES);
+  const done = sheetOpening('login', null, 'password-reset-complete');
+  assert.equal(done.step, 'password');
+  assert.equal(done.notice, 'password-changed');
   const manifest = JSON.parse(read('dapp.json'));
   const check = manifest.tests.find((item) => String(item.name || '').includes('completed password reset'));
   assert.ok(check, 'the final success state has a declared browser check');
   assert.equal(check.path, '/?shot=password-reset-complete#login');
-  assert.match(check.expectSelector, /#login-form:not\(\.hidden\)/,
-    'the capture asserts the visible destination; the lazy reset form need not mount for a display-only shot');
-  assert.match(check.expectSelector, /#login-reset-success/);
+  assert.match(check.expectSelector, /\[data-sign-in-sheet="password"\]/);
+  assert.match(check.expectSelector, /\[data-sign-in-sheet-reset-done\]/);
   assert.match(read('public/js/app.js'), /shot !== 'password-reset-complete'/,
-    'the signed-in capture user is held on the anonymous auth screen');
+    'the signed-in capture user is held on the anonymous screens');
 });
 
-test('a refused token gets the generic expired-link message with a way back', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const EXPIRED_MSG =\n\s*'auth:login\.reset\.expired';/);
-  assert.match(message('auth:login.reset.expired'), /invalid or has expired/i);
-  assert.match(message('auth:login.reset.expired'), /request a new/i, 'points the user back at requesting a fresh link');
+test('a link that cannot be one says so as the step opens, with a way back', () => {
+  const sheet = read(SHEET);
+  assert.match(sheet, /\(route\?\.step === 'reset' && !RESET_TOKEN_RE\.test\(route\.token \|\| ''\) \? translate\('auth:signInSheet\.reset\.expired'\) : null\)/);
+  assert.match(message('auth:signInSheet.reset.expired'), /invalid or has expired/i);
+  assert.match(message('auth:signInSheet.reset.expired'), /Forgot password\?/, 'points the person back at asking for a fresh link');
+  assert.equal(message('auth:signInSheet.reset.back'), 'Sign in');
 });
 
-// ─── frozen-markup contract ────────────────────────────────────────
-
-test('the prerendered document carries no reset-password markup', () => {
-  // The real artifact the id baseline covers. Both blocks must arrive from
-  // a state change in the browser, never from the shipped HTML.
+test('the prerendered document carries none of it', () => {
   const html = read('public/index.html');
-  assert.doesNotMatch(html, /reset-password-view|recovery-email-input/,
-    'reset UI must be mounted on demand (markup parity contract, step 1)');
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const \[resetUi, setResetUi\] = useState\(false\)/,
-    'the gate starts closed, so the prerender pass renders neither block');
+  assert.doesNotMatch(html, /sign-in-sheet-new-password|sign-in-sheet-reset-email|reset-password-view/,
+    'the sheet is drawn once it opens, never in the shipped HTML');
 });

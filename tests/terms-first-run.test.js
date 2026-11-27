@@ -166,9 +166,10 @@ test('the sign-in screens say continuing is agreeing, linking the current terms 
   assert.match(shared, /const privacy = options\?\.privacy_link \|\| null;/);
   assert.match(shared, /<a href=\{privacy\} target="_blank" rel="noopener noreferrer" className=\{linkClass\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{recaptchaInUse \? RECAPTCHA_LINE : null\} \/>/);
-  assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
-    /\{t\('auth:login\.submit'\)\}\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
-  assert.equal(message('auth:login.submit'), 'Sign in');
+  // The activation-code step makes an account, so it says them too (its foot,
+  // like every step but the password and reset ones, ./sign-in-sheet.tsx stepSaysTerms).
+  assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'),
+    /return step !== 'password' && step !== 'forgot' && step !== 'reset';/);
   assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
   assert.match(read('src', 'routes', 'public-api.js'), /privacy_link: privacyNoticeUrl\(config\),/);
 });

@@ -95,7 +95,7 @@ test('the landing opens the sheet as it shows, titled for the link, and Close le
   assert.match(landing, /title=\{deepLinkTitle\(gate\.place, gateProject,/);
   assert.match(landing, /returnTo=\{deepLinkReturnTo\(gate\.target\)\}/);
   assert.match(landing, /onClose=\{closeGate\}/);
-  assert.match(landing, /open=\{!gate && !intent && \(sheet === 'start' \|\| sheet === 'signin'\)\}/,
+  assert.match(landing, /open=\{!gate && !intent && !routeSheet && \(sheet === 'start' \|\| sheet === 'signin'\)\}/,
     'the story\'s own sheet stays down under it, and under a project page\'s own sheet');
   assert.match(landing, /const linkedApp = linkedSlug && apps \? apps\.find\(\(a\) => a\.slug === linkedSlug\) \?\? null : null;/,
     'a public project\'s name, from the directory the screen loads anyway');

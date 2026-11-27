@@ -366,7 +366,7 @@ test('a bare #waitlist opens Continue, keeping an old link\'s ref (#5261)', () =
   assert.match(screens, /if \(ref && \/\^\[a-z0-9\]\{10\}\$\/\.test\(ref\)\) sessionStorage\.setItem\('usernode:waitlist-ref', ref\);/);
   // The landing takes the flag on show and opens the story's sheet.
   const tsx = read(LANDING_TSX);
-  assert.match(tsx, /if \(takeStartSheet\(\) && !link\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
+  assert.match(tsx, /if \(takeStartSheet\(\) && !link && !signInRoute\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
   // AppBar mirroring for the Flutter WebView, same as the landing header.
   assert.match(read(WAITLIST_TSX), /document\.title = translate\('auth:waitlist\.documentTitle'\)/);
   assert.match(tsx, /id="landing-waitlist-link"/);

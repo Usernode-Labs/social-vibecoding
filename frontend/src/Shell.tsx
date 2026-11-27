@@ -68,8 +68,6 @@ import { AdminScreen } from './features/admin';
 import { AppViewIsland } from './features/app-frame';
 import { ProfileScreen } from './features/profile';
 import { LandingScreen } from './features/auth/landing';
-import { LoginScreen } from './features/auth/login';
-import { RegisterScreen } from './features/auth/register';
 import { WaitingScreen } from './features/auth/waiting';
 import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
@@ -349,13 +347,12 @@ export function Shell() {
       */}
       <Island name="LandingScreen"><LandingScreen /></Island>
       {/*
-          Login screen — features/auth/login.tsx (#1080 chunk C). Also hosts
-          the #signup email-code sub-view, the forgot-password recovery
-          sub-view, and the #reset-password/<token> redeem view.
+          Signing in is the landing's sign-in sheet (features/auth/
+          sign-in-sheet.tsx). The full-page sign-in and register screens are
+          gone: #login, #signup, #login/forgot, #reset-password/<token> and
+          #register open the sheet over the landing at their step
+          (features/auth/sign-in-routes.ts).
       */}
-      <Island name="LoginScreen"><LoginScreen /></Island>
-      {/* Register screen (activation-code flow) — features/auth/register.tsx */}
-      <Island name="RegisterScreen"><RegisterScreen /></Island>
       {/*
           Waiting-room screen — features/auth/waiting.tsx (#1080 chunk C).
           The platform-access gate: an authed session without

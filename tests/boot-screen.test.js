@@ -116,10 +116,12 @@ test('signed out, the anonymous shell outranks the route', () => {
   // 'waiting' with no session is nobody's queue: the router sends it to
   // landing, so this does too.
   assert.equal(f('#waiting', '/', false), 'auth-landing-screen');
-  // The auth screens themselves resolve to themselves.
-  assert.equal(f('#login', '/', false), 'auth-login-screen');
-  assert.equal(f('#signup', '/', false), 'auth-login-screen');
-  assert.equal(f('#register/CODE', '/', false), 'auth-register-screen');
+  // The sign-in addresses are the landing, with its sign-in sheet open at
+  // their step: the full-page sign-in and register screens are gone.
+  assert.equal(f('#login', '/', false), 'auth-landing-screen');
+  assert.equal(f('#signup', '/', false), 'auth-landing-screen');
+  assert.equal(f('#register/CODE', '/', false), 'auth-landing-screen');
+  assert.equal(f('#reset-password/abc', '/', false), 'auth-landing-screen');
   // A bare #waitlist opens Continue on the landing (#5261); check your
   // status is the waitlist screen.
   assert.equal(f('#waitlist', '/', false), 'auth-landing-screen');

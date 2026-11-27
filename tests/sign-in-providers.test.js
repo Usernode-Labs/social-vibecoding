@@ -568,7 +568,7 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
   assert.deepEqual(landing.nativeSignInProvidersFrom(null, ['signInWithApple']), []);
   const src = read('frontend/src/features/auth/landing.tsx');
   assert.match(src, /const providers = nativeSignIn \? nativeProviders : webProviders;/);
-  assert.equal((src.match(/native=\{nativeSignIn\}/g) || []).length, 4, 'all four sheets: the invite\'s, the story\'s, a shared link\'s (#5264) and a public project page\'s (features/guest)');
+  assert.equal((src.match(/native=\{nativeSignIn\}/g) || []).length, 5, 'all five sheets: the invite\'s, the story\'s, a shared link\'s (#5264), a public project page\'s (features/guest) and a sign-in address\'s (#login, #signup, …)');
 
   // The sheet's native path: start, the app's sheet with the nonce, the token back.
   const sheet = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');

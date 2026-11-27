@@ -52,9 +52,10 @@ test('the step an invite\'s Join opens on: the phone on a touch screen, the emai
 test('the step is decided as the sheet opens, from the screen it is on then', () => {
   const src = read(SHEET);
   const opened = src.slice(src.indexOf('// A fresh start each time it opens'), src.indexOf('// The step\'s first field'));
-  assert.match(opened, /useEffect\(\(\) => \{\s+if \(!open\) return;\s+const opening = opensOn\(\{ \.\.\.firstStepRef\.current, touch: touchScreen\(\) \}\);\s+setOpenedOn\(opening\);\s+setSignIn\(false\);\s+setStep\(resume === 'username' \? 'username' : opening\);/);
+  // A sign-in address (`route`, ./sign-in-routes.ts) opens at its own step instead.
+  assert.match(opened, /useEffect\(\(\) => \{\s+if \(!open\) return;\s+const opening = opensOn\(\{ \.\.\.firstStepRef\.current, touch: touchScreen\(\) \}\);\s+setOpenedOn\(opening\);\s+setSignIn\(false\);\s+setStep\(resume === 'username' \? 'username' : route \? route\.step : opening\);/);
   // The first render keeps the step it always had: the prerender has no screen to ask.
-  assert.match(src, /const \[step, setStep\] = useState<Step>\(firstStep\);/);
+  assert.match(src, /const \[step, setStep\] = useState<Step>\(route \? route\.step : firstStep\);/);
   assert.match(src, /const \[openedOn, setOpenedOn\] = useState<OpeningStep \| null>\(null\);/);
   // touchScreen() is read in that effect and in mayFocusByCodeNow, never while rendering.
   const body = src.slice(src.indexOf('export function SignInSheet('));

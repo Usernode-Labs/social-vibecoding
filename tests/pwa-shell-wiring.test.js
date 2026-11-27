@@ -353,19 +353,21 @@ test('offline affordances only gate the anonymous auth screens (#1021)', () => {
   const html = readPublic('index.html');
   assert.equal(html.match(/data-offline-disabled/g), null,
     'data-offline-disabled in the prerendered document — the auth interiors mount on reveal');
-  // Both places an offline visitor can land carry an explanation.
-  for (const id of ['auth-landing-screen', 'auth-login-screen']) {
-    assert.ok(interiorHtmlFor(id).includes('class="offline-only'),
-      `the ${id} interior should explain the offline state`);
-  }
+  // Where an offline visitor lands carries an explanation: the landing, and
+  // the sign-in sheet over it (the one sign-in), whose note is drawn while
+  // the shell's probe says offline.
+  assert.ok(interiorHtmlFor('auth-landing-screen').includes('class="offline-only'),
+    'the auth-landing-screen interior should explain the offline state');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8'),
+    /const OFFLINE_NOTE = `offline-only /, 'the sign-in sheet should explain the offline state');
   // data-offline-disabled greys a control out AND blocks its clicks, so a
   // stray one in the authed shell would silently break a working feature
   // for anyone whose probe is briefly failing. Keep them confined to the
   // auth overlays, whose actions genuinely cannot work offline.
   for (const { id } of MOUNT_ON_REVEAL) {
-    if (id === 'auth-landing-screen' || id === 'auth-login-screen') continue;
+    if (id === 'auth-landing-screen') continue;
     assert.equal(interiorHtmlFor(id).match(/data-offline-disabled/g), null,
-      `data-offline-disabled in ${id}, outside the two screens that gate on it`);
+      `data-offline-disabled in ${id}, outside the screen that gates on it`);
   }
 });
 

@@ -31,8 +31,7 @@ export function mediaQuery(win: Window, query: string): MediaQueryList {
 }
 
 const AUTH_PAGES = [
-  'auth-login-screen', 'auth-register-screen', 'auth-waiting-screen',
-  'auth-waitlist-screen', 'auth-more-screen', 'auth-landing-screen',
+  'auth-waiting-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-landing-screen',
 ];
 const PAGES = ['home-screen', 'leaderboard-screen', 'profile-screen', 'settings-screen'];
 

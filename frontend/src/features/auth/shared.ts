@@ -18,16 +18,20 @@
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { t, errorText } from '../../lib/i18n/runtime';
 
-/** The route names `AuthScreens.show()` accepts, and their screen roots. */
+/**
+ * The route names `AuthScreens.show()` accepts, and their screen roots. The
+ * sign-in addresses are the landing's: it opens the sign-in sheet at their
+ * step (./sign-in-routes.ts).
+ */
 export const AUTH_SCREEN_IDS: Record<string, string> = {
   landing: 'auth-landing-screen',
-  login: 'auth-login-screen',
-  signup: 'auth-login-screen', // sub-view of the login screen
-  register: 'auth-register-screen',
+  login: 'auth-landing-screen',
+  signup: 'auth-landing-screen',
+  register: 'auth-landing-screen',
   waiting: 'auth-waiting-screen',
   waitlist: 'auth-waitlist-screen',
   more: 'auth-more-screen',
-  'reset-password': 'auth-login-screen',
+  'reset-password': 'auth-landing-screen',
 };
 
 /**
@@ -39,13 +43,14 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * "Choose your username" step says the same thing in its own sentence.
  */
 // The words are catalog entries now, one for each place they are said:
-// auth:register.usernameRule and .passwordRule, auth:login.signup.usernameRule,
-// auth:signInSheet.usernamePlaceholder and .providerUsernamePlaceholder.
+// auth:signInSheet.register.usernameRule and .passwordRule (the activation
+// code's step), auth:signInSheet.usernamePlaceholder and
+// .providerUsernamePlaceholder.
 
 /**
  * Said next to every field where a new account types its handle (#3575):
- * the register form, the email sign-up's set-password step, and the
- * first-run "Choose your username" gate. The requester's own sentence, in
+ * the sign-in sheet's activation-code step and the first-run "Choose your
+ * username" gate. The requester's own sentence, in
  * the platform's sentence case. Its own line under the field rather than a
  * clause of the rule above, because the rule's line is swapped whole for
  * the server's refusal and this has to stay put while the person fixes the
@@ -53,7 +58,7 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * spells the same words; tests/username-first-choice.test.js holds the two
  * copies together.
  */
-// Catalog entries: auth:register.usernamePublic and auth:login.signup.usernamePublic.
+// Catalog entry: auth:signInSheet.register.usernamePublic.
 
 /**
  * The attributes every username field carries, so a phone does not
@@ -167,7 +172,7 @@ interface LegacyWindow {
   // that has just signed in goes straight on to its first session.
   CommunitiesFirstRun?: { firstSessionNow?(user: unknown): boolean };
   // The native bridge (usernode-native). Absent in a regular browser, which is
-  // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
+  // the NORMAL state for the wallet's way in (./sign-in-routes.ts probeWallet).
   usernode?: {
     isNative?: boolean;
     getBridgeDiagnostics?(): unknown;
@@ -548,10 +553,9 @@ export type PasswordSignIn =
 
 /**
  * The password exchange, `POST /api/auth/login` with a username or an email
- * and the password: the sign-in screen's form (./login.tsx) and the sign-in
- * sheet's password step (./sign-in-sheet.tsx) both send it through here, so
- * they cannot disagree about the route, the session-mint boundary or what a
- * refusal says. The caller checks `blockedOffline` first and calls
+ * and the password: the sign-in sheet's password step (./sign-in-sheet.tsx)
+ * sends it through here, so the route, the session-mint boundary and what a
+ * refusal says are stated once. The caller checks `blockedOffline` first and calls
  * finishLogin after, as it does for every other exchange.
  */
 export async function passwordSignIn(username: string, password: string): Promise<PasswordSignIn> {
@@ -613,7 +617,7 @@ export function takeReleaseLink(): ReleaseLink | null {
   return { route: link.route, token, signIn };
 }
 
-/** Hand the link on, for the sign-in screen to take when the story is switched off. */
+/** Hand the link on, for the #signup sheet to take when the story is switched off. */
 export function keepReleaseLink(link: ReleaseLink): void {
   const host = legacy().AuthScreens;
   if (host) host._releaseLink = link;

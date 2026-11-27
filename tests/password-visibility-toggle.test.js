@@ -39,9 +39,11 @@ const ADMIN_DB_EXPORT = read('frontend/src/features/admin/admin-db-export.tsx');
 
 // The screens that hold a password field, and how many each holds.
 const SHELL_FIELDS = {
-  // The email sign-up's set-password step lost its two in #4891.
-  'frontend/src/features/auth/login.tsx': 5,
-  'frontend/src/features/auth/register.tsx': 1,
+  // The sign-in sheet, the one sign-in: the password step, the reset link's
+  // two, the app wallet's reset two, and the activation code's one. The
+  // email sign-up's account step lost its two in #4891, and the password
+  // step's second drawing, under a look, went with the looks in #7209.
+  'frontend/src/features/auth/sign-in-sheet.tsx': 6,
   'frontend/src/features/settings/sections/password.tsx': 3,
   'frontend/src/features/settings/sections/username.tsx': 1,
   // The API-key field is `type="password"` too, and a viewer who cannot read
@@ -130,24 +132,45 @@ test('no password field is spelled by hand any more', () => {
   }
 });
 
+/** The sign-in sheet open at one of the steps an address opens it on. */
+function sheetAt(step) {
+  const { SignInSheet } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
+  return renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Sign in', from: 'signin', onClose() {}, primaryClass: 'pill',
+    route: { route: 'login', step, email: null, codeSent: false, token: null, code: null, resetSent: false, notice: null },
+  }));
+}
+
 test('every rendered password field carries a toggle', () => {
-  for (const id of ['auth-login-screen', 'auth-register-screen', 'settings-screen']) {
-    const html = interiorHtmlFor(id);
+  const rendered = [
+    ['settings-screen', interiorHtmlFor('settings-screen')],
+    ['the sheet\'s password step', sheetAt('password')],
+    ['the sheet\'s new-password step', sheetAt('reset')],
+    ['the sheet\'s activation-code step', sheetAt('register')],
+  ];
+  for (const [label, html] of rendered) {
     const fields = passwordInputs(html);
-    assert.ok(fields.length > 0, `${id} renders no password field at all`);
+    assert.ok(fields.length > 0, `${label} renders no password field at all`);
     assert.equal(toggles(html).length, fields.length,
-      `${id}: one toggle per password field`);
+      `${label}: one toggle per password field`);
   }
 });
 
-test('the login screen\'s fields are all masked on arrival', () => {
-  // Three of the five render on mount; #reset-password-view's two are built
-  // only when the emailed link is being redeemed. The email sign-up's
-  // set-password step asks for no password since #4891.
-  const html = interiorHtmlFor('auth-login-screen');
-  assert.equal(passwordInputs(html).length, 3);
-  for (const id of ['login-password', 'recovery-new-password', 'recovery-confirm-password']) {
-    assert.match(html, new RegExp(`<input id="${id}"[^>]*type="password"`), id);
+test('the sign-in sheet\'s password fields are all masked on arrival', () => {
+  // The password step's one, the reset link's two and the activation code's
+  // one, each on the step an address opens. The email sign-up's account step
+  // asks for no password since #4891.
+  const ids = {
+    password: ['sign-in-sheet-current-password'],
+    reset: ['sign-in-sheet-new-password', 'sign-in-sheet-confirm-password'],
+    register: ['sign-in-sheet-reg-password'],
+  };
+  for (const [step, fields] of Object.entries(ids)) {
+    const html = sheetAt(step);
+    assert.equal(passwordInputs(html).length, fields.length, step);
+    for (const id of fields) {
+      assert.match(html, new RegExp(`<input[^>]*id="${id}"[^>]*type="password"|<input[^>]*type="password"[^>]*id="${id}"`), id);
+    }
   }
 });
 

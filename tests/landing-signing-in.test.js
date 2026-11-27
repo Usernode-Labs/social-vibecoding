@@ -62,7 +62,7 @@ test('the sheet says when the moment starts and ends, and stays down under the s
   assert.match(src, /: up \? 'translate-y-0 md:-translate-x-1\/2 md:-translate-y-1\/2' : 'translate-y-full md:-translate-x-1\/2 md:-translate-y-1\/2';/);
   assert.match(src, /bg-black\/40 transition-opacity duration-200 motion-reduce:transition-none \$\{up \? 'opacity-100' : 'opacity-0'\}/);
   // Nothing else opens the sheet held: the default is the sheet as it was.
-  assert.match(src, /onSigningIn, held = false, linkUsed = false, onAccount,\s+beforeFinish,/);
+  assert.match(src, /onSigningIn, held = false, linkUsed = false, onAccount,\s+route = null, beforeFinish,/);
   // The sheet's own words for the step stay, for a spend that runs long.
   assert.match(src, /step === 'link' \? t\('auth:signInSheet\.link\.title'\)/);
 });

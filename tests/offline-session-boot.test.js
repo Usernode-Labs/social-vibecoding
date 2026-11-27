@@ -37,7 +37,7 @@ const AUTH = read('js/auth-screens.js');
 const FRONTEND = (rel) =>
   fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', rel), 'utf8');
 const AUTH_SHARED = FRONTEND('features/auth/shared.ts');
-const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx']
+const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/sign-in-sheet.tsx']
   .map(FRONTEND).join('\n');
 const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
 // Moved into the React bundle with #settings-screen (#1081 chunk D).
@@ -559,21 +559,21 @@ test('offline-disabled controls are both greyed and click-proof', () => {
   assert.match(rule.slice(0, 300), /pointer-events:\s*none/);
 });
 
-test('the login screen explains the offline state and gates its controls', () => {
-  // The login screen's interior mounts on first reveal; this is what it mounts.
-  const screen = interiorHtmlFor('auth-login-screen');
-  const copy = decodeEntities(screen);
-  assert.match(screen, /class="offline-only/);
-  assert.match(copy, /You're offline/);
-  assert.match(screen, /data-offline-retry/);
-  // Every control that performs a credential exchange.
-  for (const id of ['btn-wallet-sign-in', 'btn-otp-request', 'btn-otp-verify',
-    'btn-otp-set-password', 'btn-otp-resend']) {
-    const tag = screen.slice(screen.indexOf(`id="${id}"`));
-    assert.match(tag.slice(0, 160), /data-offline-disabled/, `${id} is not gated`);
-  }
-  // ...and the password form's own submit.
-  assert.match(screen, /<button type="submit" data-offline-disabled/);
+test('the sign-in sheet explains the offline state at the top of every step', () => {
+  // The sheet is the one sign-in (the full-page sign-in screen is gone). Its
+  // note is drawn while the shell's probe says offline, so it is read from
+  // the source: `.offline-only` first, the "Try again" the shell wires, and
+  // the probe and its event as what draws it.
+  const sheet = FRONTEND('features/auth/sign-in-sheet.tsx');
+  assert.match(sheet, /const OFFLINE_NOTE = `offline-only mt-3 \$\{alertVariants\(\{ variant: 'notice', density: 'compact' \}\)\}`;/);
+  assert.match(sheet, /\{offline \? \(\s+<div data-sign-in-sheet-offline="" className=\{OFFLINE_NOTE\}>/);
+  assert.match(sheet, /data-offline-retry=""/);
+  assert.match(sheet, /legacy\(\)\.Offline\?\.isOffline\(\)/);
+  assert.match(sheet, /window\.addEventListener\('usernode:offline-change', onChange\);/);
+  assert.equal(message('auth:signInSheet.offline.title'), "You're offline");
+  assert.match(message('auth:signInSheet.offline.body'), /^Signing in needs a connection\./);
+  // Back online, the "you're offline" error goes and a real refusal stays.
+  assert.match(sheet, /if \(!now\) setError\(\(current\) => \(current && current === offlineSignInText\(\) \? null : current\)\);/);
 });
 
 test('the landing screen explains the offline state too', () => {

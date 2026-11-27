@@ -120,12 +120,6 @@
       ],
       "why": "Provider names passed as {{provider}}; an HTTP header name."
     },
-    "frontend/src/features/auth/login.tsx": {
-      "texts": [
-        "Retry-After"
-      ],
-      "why": "HTTP header name."
-    },
     "frontend/src/features/auth/landing.tsx": {
       "texts": [
         "${…}=; Max-Age=0; path=/"

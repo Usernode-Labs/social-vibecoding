@@ -155,23 +155,22 @@ test('the landing takes the link on show: Sign in opens at once, a new account\'
   // Evan, 12 Oct 2026: a new account's link puts "Signing you in…" up at
   // once while it is checked (tests/release-link-straight-flow.test.js); no
   // sheet opens for it. An existing account's opens Sign in.
-  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  assert.match(onShow, /const link = signInRoute \? null : takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
   assert.doesNotMatch(onShow, /spendReleaseLink/);
   // The one Continue it opens is an old #waitlist link's (#5261), and never
   // over a release link.
   assert.equal((onShow.match(/setSheet\('start'\)/g) || []).length, 1);
-  assert.match(onShow, /if \(takeStartSheet\(\) && !link\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
+  assert.match(onShow, /if \(takeStartSheet\(\) && !link && !signInRoute\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
   assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
   // Get started's sheet carries the token; Sign in's never does. The
   // one-time sign-in too, unless the landing already found it used.
   assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}/);
   assert.match(src, /releaseSignIn=\{sheet === 'start' && !releaseUsed \? release\?\.signIn \?\? null : null\}/);
-  // The story switched off: the sign-in screen, as the link always opened,
-  // with the token handed on for it.
-  // Nothing was spent on load for it, and "Signing you in…" goes too.
+  // The story switched off: #signup, whose sheet takes the token handed on
+  // for it. Nothing was spent on load for it, and "Signing you in…" goes too.
   assert.match(src, /if \(!release \|\| waitlistPayload\?\.story_landing !== false\) return;\s+if \(release\.token\) keepReleaseLink\(release\);\s+setRelease\(null\);\s+setSheet\(null\);\s+setHolding\(false\);\s+location\.hash = `#\$\{release\.route\}`;/);
-  assert.match(read('frontend/src/features/auth/login.tsx'),
-    /const t = new URLSearchParams\(location\.search\)\.get\('t'\) \|\| takeReleaseLink\(\)\?\.token \|\| null;/);
+  assert.match(onShow, /const routeLink = signInRoute\?\.route === 'signup' && !signInRoute\.seg \? takeReleaseLink\(\) : null;/);
+  assert.match(onShow, /releaseToken: signInRoute\.route === 'signup' && !signInRoute\.seg \? releaseTokenFromQuery\(\) \|\| routeLink\?\.token \|\| null : null,/);
 });
 
 test('the link is taken once, and only a well-formed one', async () => {
@@ -287,7 +286,7 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   // link it spent when it closes, and the story keeps the link when the
   // sheet closes; the server takes the same link again while the account
   // it started is not set up (tests/release-link-postgres.test.js).
-  assert.match(src, /if \(!open\) \{ setShown\(false\); setLeaving\(false\); setClosing\(false\); releaseSeen\.current = null; return undefined; \}/);
+  assert.match(src, /if \(!open\) \{ setShown\(false\); setLeaving\(false\); setClosing\(false\); releaseSeen\.current = null; routeSeen\.current = null; return undefined; \}/);
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const closeSheet = useCallback\(\(\) => \{ setSheet\(null\); setResume\(null\); \}, \[\]\);/);
   assert.doesNotMatch(landing, /setRelease\(null\); \}, \[\]\)/);
@@ -408,7 +407,7 @@ test('the sheet fills in the token\'s address and sends the code once per tab, t
   const src = read(SHEET);
   assert.match(src, /void releaseArrival\(releaseToken\)\.then\(arrive\);/);
   assert.match(src, /function arrive\(arrival: ReleaseArrival \| null\) \{[\s\S]{0,400}void requestCode\(arrival\.address\);/);
-  assert.match(src, /import \{ inviteEmailFromToken, readAutoSend, writeAutoSend \} from '\.\/login';/);
+  assert.match(src, /import \{[^}]*\binviteEmailFromToken,[^}]*\breadAutoSend,[^}]*\bwriteAutoSend,[^}]*\} from '\.\/sign-in-routes';/);
   assert.match(src, /fetch\('\/api\/auth\/otp\/request',/);
 });
 
@@ -444,20 +443,15 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
   });
   assert.equal(unsent.calls.length, 0);
 
-  // Both the screen and the sheet send it through here, and neither has a
-  // copy of its own.
-  const login = read('frontend/src/features/auth/login.tsx');
+  // The sheet sends it through here, and has no copy of its own.
   const sheet = read(SHEET);
-  assert.match(login, /const result = await passwordSignIn\(username\.current\?\.value\.trim\(\) \|\| '', password\.current\?\.value \|\| ''\);/);
   assert.match(sheet, /const result = await passwordSignIn\(\s+\(identifierField\.current\?\.value \|\| ''\)\.trim\(\),\s+currentPasswordField\.current\?\.value \|\| '',\s+\);/);
-  for (const [name, src] of [['login.tsx', login], ['sign-in-sheet.tsx', sheet]]) {
-    assert.doesNotMatch(src, /['`]\/api\/auth\/login['`]/, `${name} sends no login of its own`);
-  }
+  assert.doesNotMatch(sheet, /['`]\/api\/auth\/login['`]/, 'sign-in-sheet.tsx sends no login of its own');
 });
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password opens the reset in the sheet', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'forgot' \| 'phone' \| 'phone-code' \| 'link';/);
+  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'forgot' \| 'phone' \| 'phone-code' \| 'link' \| 'reset' \| 'register';/);
   assert.match(src, /data-sign-in-sheet-method-password=""[^\n]*toStep\('password'\)/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
   assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
@@ -614,7 +608,7 @@ test('the reset step asks the sign-in screen\'s reset, and says the same whether
   // The sheet's step: its field, its button, the same wording as the screen's, and the way back.
   const src = read(SHEET);
   assert.match(src, /<input ref=\{resetField\} id="sign-in-sheet-reset-email" type="email" autoComplete="email"/);
-  assert.equal(message('auth:signInSheet.forgot.sent'), message('auth:login.emailReset.sent'));
+  assert.match(message('auth:signInSheet.forgot.sent'), /^If that address matches an account, a reset link is on its way\./);
 });
 
 test('the reset has one way back, a way in with a code, and the support note only once a link went (#5259)', () => {

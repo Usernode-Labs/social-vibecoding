@@ -158,12 +158,12 @@ test('each mount-on-reveal root ships EMPTY in the prerendered document', () => 
 test('a screen renders its interior only when its root is marked mounted', () => {
   // Rendered without a mark: the empty root the document ships — which is
   // also what the first client render produces, so hydration matches.
-  const bare = renderComponent('frontend/src/features/auth/register.tsx', 'RegisterScreen', {});
-  assert.equal(childrenOf(bare, 'auth-register-screen').trim(), '');
+  const bare = renderComponent('frontend/src/features/auth/waitlist.tsx', 'WaitlistScreen', {});
+  assert.equal(childrenOf(bare, 'auth-waitlist-screen').trim(), '');
   // And with one: the interior, as the reveal mounts it.
-  loadTsx('frontend/src/lib/mount-on-reveal.ts').markMounted('auth-register-screen');
-  const mounted = renderComponent('frontend/src/features/auth/register.tsx', 'RegisterScreen', {});
-  assert.match(childrenOf(mounted, 'auth-register-screen'), /data-auth-back/);
+  loadTsx('frontend/src/lib/mount-on-reveal.ts').markMounted('auth-waitlist-screen');
+  const mounted = renderComponent('frontend/src/features/auth/waitlist.tsx', 'WaitlistScreen', {});
+  assert.match(childrenOf(mounted, 'auth-waitlist-screen'), /data-auth-back/);
 });
 
 test('the prerendered document is a fraction of what it was', () => {

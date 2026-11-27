@@ -3791,8 +3791,6 @@ html[data-browser-scroller="profile-screen"] #profile-screen,
 html[data-browser-scroller="settings-screen"] #settings-screen,
 html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll,
 html[data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll,
-html[data-browser-scroller="auth-login-screen"] #auth-login-screen,
-html[data-browser-scroller="auth-register-screen"] #auth-register-screen,
 html[data-browser-scroller="auth-waiting-screen"] #auth-waiting-screen,
 html[data-browser-scroller="auth-waitlist-screen"] #auth-waitlist-screen,
 html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
@@ -3802,8 +3800,7 @@ html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
   overflow-y: visible;
 }
 html[data-browser-scroller^="auth-"] body :is(
-  #auth-landing-screen, #auth-login-screen, #auth-register-screen,
-  #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
+  #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
 ):not(.hidden) {
   position: relative;
   inset: auto;
@@ -3832,13 +3829,6 @@ html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
    tucked under the toolbar there. */
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story-compact] {
   padding-bottom: 0;
-}
-/* The same toolbar under the sign-in screen's foot (#4593): with the story
-   switched off, the release mail's "Create my account" lands on #signup,
-   and its steps (the account step's button, the line pinned at the foot)
-   ran on under Safari's toolbar the way the story's foot did. */
-html.un-ios[data-browser-scroller="auth-login-screen"] #auth-login-screen > .min-h-full {
-  padding-bottom: max(0px, calc(100lvh - 100svh));
 }
 /* THE INVITE PAGE'S LAST LINE IS AT THE FOOT OF ITS SCROLLER (#4049). Paged
    by the document in a phone browser, the landing's scroller is
@@ -4603,9 +4593,7 @@ html[data-browser-scroller] #landing-header {
   background: transparent;
   clip-path: inset(0);
 }
-html[data-browser-scroller^="auth-"] :is(
-  #auth-login-screen, #auth-register-screen, #auth-waiting-screen
-) > .min-h-full {
+html[data-browser-scroller^="auth-"] #auth-waiting-screen > .min-h-full {
   min-height: calc(100dvh - var(--browser-banner-h));
 }
 /* These screens are already below the strips in document flow. The bounded
@@ -4893,7 +4881,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #fffeea;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -4931,7 +4919,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on the cream is a faint cool
@@ -4972,7 +4960,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4986,7 +4974,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -5043,7 +5031,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -5355,7 +5343,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -5365,8 +5353,6 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    paints — inherited from the body's rule, which is on because this root
    is showing — in both modes. */
 #auth-landing-screen,
-#auth-login-screen,
-#auth-register-screen,
 #auth-waiting-screen,
 #auth-waitlist-screen,
 #auth-more-screen {
@@ -19331,8 +19317,6 @@ body.is-offline.has-install-strip {
    step with the strip's own height, per the safe-area tokens at the top
    of this file. */
 body.has-install-strip #auth-landing-screen,
-body.has-install-strip #auth-login-screen,
-body.has-install-strip #auth-register-screen,
 body.has-install-strip #auth-waiting-screen,
 body.has-install-strip #auth-waitlist-screen,
 body.has-install-strip #auth-more-screen {
@@ -19340,8 +19324,6 @@ body.has-install-strip #auth-more-screen {
 }
 
 body.is-offline.has-install-strip #auth-landing-screen,
-body.is-offline.has-install-strip #auth-login-screen,
-body.is-offline.has-install-strip #auth-register-screen,
 body.is-offline.has-install-strip #auth-waiting-screen,
 body.is-offline.has-install-strip #auth-waitlist-screen,
 body.is-offline.has-install-strip #auth-more-screen {
