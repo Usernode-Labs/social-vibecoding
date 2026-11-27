@@ -179,18 +179,11 @@ test('a long reply in the panel shows four lines and a way to see the rest', () 
   assert.doesNotMatch(html, /Show more|Show less/);
 });
 
-test('the Workshop staging route requires both the textarea and arrow', () => {
-  const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
-  assert.ok(check, 'a declared check names this change');
-  // The card has to be unfolded for the composer to exist.
-  //
-  // ?ws=all JOINED IT when the lander became three tabs, and #4486 moved it
-  // onto the board with its cards open: By category's rows open the item's
-  // page now rather than unfolding in place, and `?cards=open` is the state
-  // that still draws every card unfolded, the composer under each. The
-  // ?shot=feed-comments deep link fills and scrolls to the first slot.
-  assert.equal(check.path, '/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop');
-  // One message box (27 Nov 2026): Messages' field and its round send.
-  assert.match(check.expectSelector, /\.dev-feed-reply textarea\[aria-label="Reply to this item"\]/);
-  assert.match(check.expectSelector, /~ button\.messages-send:disabled/);
+test('no declared check reaches the reply box through the unfolded board card', () => {
+  // #1584's check read the composer under a board card drawn unfolded by
+  // `?cards=open`. That card is gone; the reply box (this file's subject)
+  // is drawn by the Needs-you review's Talk step, which no address reaches,
+  // so its markup is pinned by the tests above rather than by a check.
+  assert.ok(!dapp.tests.some((entry) => entry.name.includes('#1584')), 'the #1584 check went with the card');
+  assert.ok(!dapp.tests.some((entry) => /cards=open|shot=feed-comments/.test(entry.path || '')));
 });

@@ -1179,8 +1179,9 @@ test('an issue page keeps the card and the sections under it', () => {
 
 test('the band is the card’s alone now; the change page draws none (#4455)', () => {
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
-  assert.match(card, /export function ActionBand\(\{ actions, menuKey, preview, lead, actionEnd, dense \}/);
-  assert.match(card, /<ActionBand\n\s+actions=\{bandActions\}\n\s+menuKey=\{m\.rail\.menuKey \|\| ''\}\n\s+preview=\{m\.actionPreview \|\| m\.rail\.preview \|\| null\}\n\s+actionEnd=\{actionEnd\}\n\s+dense=\{dense\}\n\s+\/>/, 'DevCard draws its band through it');
+  // `actionEnd` went with the unfolded board card, the only caller that filled it.
+  assert.match(card, /export function ActionBand\(\{ actions, menuKey, preview, lead, dense \}/);
+  assert.match(card, /<ActionBand\n\s+actions=\{bandActions\}\n\s+menuKey=\{m\.rail\.menuKey \|\| ''\}\n\s+preview=\{m\.actionPreview \|\| m\.rail\.preview \|\| null\}\n\s+dense=\{dense\}\n\s+\/>/, 'DevCard draws its band through it');
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx') + read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(tsx, /<ActionBand|ChangeHero|dev-topic-hero-actions/);
 });

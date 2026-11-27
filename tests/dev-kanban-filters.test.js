@@ -231,7 +231,7 @@ test('selecting either sort immediately republishes the visible column in Worksh
     a._getViewMode = () => mode;
     a._getWorkshopGroup = () => 'stage';
     a._workshopView = () => ({});
-    for (const fn of ['_wireFeedComments', '_fillKudosHosts', '_refreshAiAvailability',
+    for (const fn of ['_fillKudosHosts', '_refreshAiAvailability',
       '_startMergeCountdownTimer', '_reanchorCardMenu']) a[fn] = () => {};
     const published = [];
     a._reactDevBoard = () => ({

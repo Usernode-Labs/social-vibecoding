@@ -4,11 +4,9 @@
  *
  * ── What this replaces, and what it does not ───────────────────────────
  *
- * The feed already previewed comments, but only on ISSUE rows and only from
- * GitHub — `AppView._fillFeedComments` fetched the issue's GitHub thread and
- * wrote the last two into `.dev-feed-comments` by innerHTML. That preview is
- * untouched and still renders above this: it is the conversation happening on
- * the repository, and it is read-only here because it is read-only to us.
+ * The feed used to preview an issue's GitHub comments above this, read-only
+ * (`AppView._fillFeedComments`); that preview went with the unfolded board
+ * card that drew it.
  *
  * This is the other conversation — the app's own thread for that item, the one
  * the topic page mounts under the card (`GroupChat.mountThread`). It is the
@@ -46,7 +44,7 @@ import {
   type FeedThreadMessage,
 } from './feed-thread-store';
 
-/** Two, matching the GitHub preview's FEED_COMMENT_PREVIEW above it. */
+/** How many recent replies show under the item. */
 const PREVIEW = 2;
 
 /** Fetch a few more than are shown, so "N earlier" is right without a count query. */

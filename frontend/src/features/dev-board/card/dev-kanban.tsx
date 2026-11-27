@@ -41,10 +41,6 @@
  * `onOpen`) and as the page on a phone; nothing unfolds in place any more.
  * Waiting for approval keeps its Newest / Vote priority order, at the top of
  * its card, and Done says what is live at the top of its own.
- *
- * `?cards=open` still draws every card unfolded, as the board was before its
- * columns folded (#1787): the state the declared checks that read a card's
- * anatomy run in. That is the fold's open sheet (./fold.tsx), unchanged.
  */
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
@@ -291,16 +287,15 @@ function ColumnRows({ rows, slug, openKey, onOpen }: {
 }
 
 function Column(
-  { col, active, loading, deferred, slug, canPost, unfolded, openKey, onOpen }:
+  { col, active, loading, deferred, slug, openKey, onOpen }:
   {
     col: KanbanColView; active: boolean; loading: boolean; deferred: boolean;
-    slug: string; canPost: boolean; unfolded: boolean;
+    slug: string;
     openKey: string | null;
     onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   },
 ): ReactNode {
   const t = useMessages('project');
-  const hostRef = useRef<HTMLDivElement>(null);
   const hasReviewSort = col.key === 'inreview' && !!col.reviewSort;
   const sortLabel = col.reviewSort === 'priority' ? t('project:kanban.sort.priority') : t('project:kanban.sort.newest');
   const nextSort = col.reviewSort === 'priority' ? 'newest' : 'priority';
@@ -309,23 +304,6 @@ function Column(
     : col.status?.tone === 'progress'
       ? 'text-violet-700 dark:text-violet-300'
       : 'text-zinc-500 dark:text-zinc-400';
-  // `?cards=open` draws every card at full size, and a merged card's kudos
-  // slot is a legacy-filled host (`_fillKudosHosts`, run by app-view.js
-  // after every publish) — re-run here so a column that mounts between
-  // publishes is whole on its first frame. A LAYOUT effect, so the pill is
-  // in its band before paint rather than popping in a frame later.
-  //
-  // The unfolded card's GitHub-comment slot is the same kind of host and is
-  // filled the same way (#1884, `_wireFeedComments`) — wired from the BOARD,
-  // not from this column: that filler keeps ONE observer and replaces it on
-  // every call, so four columns wiring their own would leave only the last
-  // one watched.
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (!host || !unfolded) return;
-    callAppView('_fillKudosHosts', host);
-    callAppView('_wireFeedComments', host.closest('#dev-kanban') || host);
-  }, [unfolded]);
   let cards: ReactNode;
   // Below 640px this column is `display:none` unless it is the active one
   // (see .dev-kanban-col in app.css), so building its rows is work whose
@@ -342,26 +320,6 @@ function Column(
     cards = <CardSkeleton n={2} label={t('project:kanban.column.loading', { column: col.title })} />;
   } else if (col.empty) {
     cards = <div className="dev-kanban-empty">{col.empty}</div>;
-  } else if (unfolded) {
-    cards = (
-      <div className="space-y-2">
-        {col.rows.map((row: ListRow) => (
-          <ListRowView
-            key={row.key}
-            row={row}
-            fold={{
-              slug,
-              canPost,
-              open: true,
-              onToggle: () => {},
-              // "Open card" rides in the action band: a column is too
-              // narrow for the facts-line seat (fold.tsx).
-              detail: 'actions',
-            }}
-          />
-        ))}
-      </div>
-    );
   } else {
     cards = <ColumnRows rows={col.rows} slug={slug} openKey={openKey} onOpen={onOpen} />;
   }
@@ -390,26 +348,17 @@ function Column(
   const footer = !deferred && col.footer ? <div className="dev-kanban-foot"><FooterView f={col.footer} /></div> : null;
   return (
     <div
-      ref={hostRef}
       id={`dev-kanban-col-${col.key}`}
       data-kanban-col={col.key}
       className={`dev-kanban-col${active ? ' dev-kanban-col-active' : ''}`}
       role="tabpanel"
       aria-labelledby={`dev-kanban-tab-${col.key}`}
     >
-      {unfolded ? (
-        <>
-          {lead}
-          {cards}
-          {footer}
-        </>
-      ) : (
-        <div className="dev-kanban-card">
-          {lead}
-          {cards}
-          {footer}
-        </div>
-      )}
+      <div className="dev-kanban-card">
+        {lead}
+        {cards}
+        {footer}
+      </div>
     </div>
   );
 }
@@ -432,7 +381,6 @@ export function DevKanban({ openKey = null, onOpen }: {
       ref={boardRef}
       id="dev-kanban"
       data-kanban-active={v.activeTab}
-      data-cards-open={v.unfolded ? '' : undefined}
       onScroll={(e) => syncStrip(e.currentTarget)}
     >
       {v.cols.map((col) => (
@@ -443,8 +391,6 @@ export function DevKanban({ openKey = null, onOpen }: {
           loading={!!v.loading}
           deferred={narrow && col.key !== v.activeTab}
           slug={v.slug || ''}
-          canPost={!!v.canPost}
-          unfolded={!!v.unfolded}
           openKey={openKey}
           onOpen={onOpen}
         />

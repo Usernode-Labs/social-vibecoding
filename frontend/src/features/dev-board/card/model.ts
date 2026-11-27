@@ -472,19 +472,6 @@ export interface DividerSpec {
  * One row of a card column — the feed's pinned-sessions block and the
  * kanban In-progress column share the shape.
  */
-/**
- * The app's own discussion thread for a feed row, addressed the way
- * `GroupChat.mountThread` addresses it — see ./feed-thread.tsx.
- *
- * Separate from `commentsFor`, which names an issue's GITHUB thread and is
- * read-only. A row can carry both: the GitHub conversation above, the app's
- * own (with the reply box) below.
- */
-export interface FeedThreadRef {
-  type: 'issue' | 'session' | 'governance';
-  ref: number;
-}
-
 /** One small tag on a Workshop row: what is happening on the item. */
 /**
  * How far a check run is (#4499): drawn as a thin bar inside the checks
@@ -575,8 +562,6 @@ export type ListRow =
     t: 'card';
     key: string;
     card: DevCardModel;
-    commentsFor?: number | null;
-    thread?: FeedThreadRef | null;
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
     /**
@@ -1122,15 +1107,8 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
-  /** The app, for the open card's page link ("Open page ›", #1886). */
+  /** The app, for each row's link to its item's page. */
   slug?: string;
-  canPost?: boolean;
-  /**
-   * `?cards=open`: every card drawn unfolded — the board as it was before its
-   * columns folded, and the state the declared checks that read a card's
-   * anatomy run in.
-   */
-  unfolded?: boolean;
   /**
    * True until the board's first fetch lands. Every column draws placeholder
    * cards, and its count draws as a bar rather than `· 0` — an empty board

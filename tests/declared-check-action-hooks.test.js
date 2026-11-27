@@ -15,10 +15,11 @@
 // only hook — with it. `data-act` puts the answer the model already carries
 // (`ActionSpec.act.fn`) back in the markup, and both checks select on that.
 //
-// This file is the local half of that contract: it reads the real dapp.json
-// entries, renders the real card models, and asserts the selector each check
-// declares actually resolves. A rename on either side fails here rather than
-// on the platform, where the same failure costs a build and a vote.
+// This file was the local half of that contract. Both checks read the full
+// board card, which only `?cards=open` still drew; that card is gone and the
+// two checks with it (the board's row and its ☰ offer neither pill). What
+// stays pinned here is the card model's `data-act`, which the card still
+// renders wherever it is drawn.
 //
 // Run with: node --test tests/declared-check-action-hooks.test.js
 
@@ -87,12 +88,13 @@ test('the two declared checks select on data-act, not on an inline onclick', () 
       `"${t.name}" still matches an inline handler the conversion removed`
     );
   }
-  assert.match(declaredCheck('markIssueInProgress').expectSelector, /\[data-act="markIssueInProgress"\]/);
-  assert.match(declaredCheck('_setSessionShared').expectSelector, /\[data-act="_setSessionShared"\]/);
+  // The two checks that read these pills off the full board card went with it.
+  for (const fn of ['markIssueInProgress', '_setSessionShared']) {
+    assert.ok(!(DAPP.tests || []).some((t) => (t.expectSelector || '').includes(fn)), `no check reaches ${fn}`);
+  }
 });
 
 test('an unclaimed issue card offers "Claim it" in the action band', () => {
-  const check = declaredCheck('markIssueInProgress');
   const html = issueCardHtml(makeAppView(), {
     number: 12, title: 'Cards are cramped on mobile', user_id: 7, username: 'someone',
     created_at: '2026-08-21T00:00:00Z', labels: [],
@@ -100,8 +102,7 @@ test('an unclaimed issue card offers "Claim it" in the action band', () => {
 
   const band = actionBand(html);
   assert.match(band, /data-act="markIssueInProgress"/, 'the claim pill is on the card FACE');
-  assert.match(band, /Claim it/, `and carries the check's expectText: ${check.expectText}`);
-  assert.equal(check.expectText, 'Claim it');
+  assert.match(band, /Claim it/);
 });
 
 test('the claim pill flips to a release pill once the claim is yours', () => {

@@ -4727,26 +4727,6 @@
     "text": "Unarchive",
     "description": "Button on a row of the archived-sessions list: restores that coding session. A verb."
   },
-  "card.fold.fold": {
-    "text": "Fold the card",
-    "description": "Accessible name of the mark at the top right of an open card: collapses the card back to its one-row form. \"Fold\" is a verb."
-  },
-  "card.fold.new": {
-    "text": "new",
-    "description": "Small lower-case marker after an item's title in a project's lists: the item arrived or changed since the person's last visit."
-  },
-  "card.fold.placing": {
-    "text": "placing…",
-    "description": "Small lower-case marker after an item's title on the Workshop tab while Homeroom is still sorting the item into one of the project's themes."
-  },
-  "card.fold.placingTitle": {
-    "text": "Being placed into a category",
-    "description": "Tooltip on the \"placing…\" marker after an item's title: Homeroom is still sorting the item into a theme."
-  },
-  "card.fold.openCard": {
-    "text": "Open card",
-    "description": "Link button on an unfolded card: goes to that proposal's or request's own page. \"Open\" is a verb."
-  },
   "feedThread.reply.placeholder": {
     "text": "Reply…",
     "description": "Placeholder of the reply box under an open card: the person writes a reply in that proposal's or request's discussion thread. A verb."

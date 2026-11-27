@@ -9,8 +9,9 @@
 // `MergeStatus.lifecycle(p, opts)` maps the raw fields the API already
 // returns (status, check_state, merge_conflict_state, behind_main, and —
 // when available — the vote tally) onto ONE canonical state, with a fixed
-// precedence so the highest-signal stage always wins. `badgeHtml` / `pillHtml`
-// render that state consistently everywhere.
+// precedence so the highest-signal stage always wins. The callers draw that
+// descriptor (the card's `ms` badge, dev-card.tsx), so it reads the same
+// everywhere.
 //
 // Loaded as a plain <script> before app-view.js
 // (window.MergeStatus); also exported via module.exports so the derivation
@@ -199,14 +200,8 @@
     return num(p.other_member_yes_count) < 1;
   }
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-
   // Build a lifecycle descriptor. `tone` ∈ {neutral, violet, amber, green, red}
-  // maps to the .ms-badge-* / .ms-pill-* colour classes in app.css. `spinner`
+  // maps to the .ms-badge-* colour classes in app.css. `spinner`
   // requests the rotating arc glyph for in-flight stages. `extra` carries
   // optional `glyph`, `title` (tooltip) and `votes` ({yes, majority, reached}).
   function descriptor(key, label, tone, spinner, extra) {
@@ -588,55 +583,12 @@
     return descriptor('none', '', 'neutral', false, {});
   }
 
-  function spinnerHtml() {
-    return '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>';
-  }
-
-  function inner(life, includeVotes) {
-    var label = life.label;
-    var advisory = '';
-    if (includeVotes && life.key === 'in_vote' && life.votes) {
-      label = t('session:merge.pill.statusWithTally', { status: life.label, yes: life.votes.yes, required: life.votes.majority });
-      // #695: muted "+N" for advisory (non-approver) votes on
-      // invited-approver apps — recorded, but not in the headline tally.
-      if (life.votes.advisory > 0) {
-        advisory = ' <span class="ms-advisory" title="'
-          + PlatformI18n.htmlText('session:merge.pill.advisoryVotes', { count: life.votes.advisory })
-          + '">+'
-          + life.votes.advisory + '</span>';
-      }
-    }
-    return (life.spinner ? spinnerHtml() : '')
-      + (life.glyph ? esc(life.glyph) + ' ' : '')
-      + esc(label) + advisory;
-  }
-
-  // Text-style badge (colour only) — for the proposal feed card's state slot
-  // and the home strip, where a separate vote pill already shows the tally.
-  function badgeHtml(life) {
-    if (!life || !life.label) return '';
-    var title = life.title ? ' title="' + esc(life.title) + '"' : '';
-    return '<span class="ms-badge ms-badge-' + (life.tone || 'neutral') + '"' + title + '>'
-      + inner(life, false) + '</span>';
-  }
-
-  // Filled pill — for the dev session header, which has no vote pill of its
-  // own, so the in-vote tally rides along in the label.
-  function pillHtml(life) {
-    if (!life || !life.label) return '';
-    var title = life.title ? ' title="' + esc(life.title) + '"' : '';
-    return '<span class="ms-pill ms-pill-' + (life.tone || 'neutral') + '"' + title + '>'
-      + inner(life, true) + '</span>';
-  }
-
   // STATE_BADGE_KEYS used to live here — "keys whose canonical badge belongs
   // in the feed card's state slot". No renderer ever read it; only two test
   // files did. #2026 moved that decision into AppView.statusTagSpecs anyway,
   // so it is deleted rather than kept in step with a card it does not drive.
   var MergeStatus = {
     lifecycle: lifecycle,
-    badgeHtml: badgeHtml,
-    pillHtml: pillHtml,
     explicitApprovalCopy: explicitApprovalCopy,
     awaitingOtherMember: awaitingOtherMember,
     checksWillRetry: checksWillRetry,

@@ -627,8 +627,10 @@ test('every check #5280 and #5317 marked still gets what its mark gave it', () =
   // #5289: the six checks on `?shot=notifications-messages#app/…/dev` moved
   // to the Messages screen with the agent rows they check (`/?demo=1#messages`,
   // no boot parameter), so they are switched to like any other address now.
+  // 17 since the full-size board card went (27 Nov 2026): its checklist
+  // check reads proposal 9000093's steps here now, in the load these share.
   const at = tests.filter((t) => boot.includes(t.path));
-  assert.equal(at.length, 16);
+  assert.equal(at.length, 17);
   for (const t of at) {
     assert.equal(t.coldLoad, true, t.path);
     assert.equal(cohortsOf(groupOf(t)).length, 1, `${t.path} is its group's load`);

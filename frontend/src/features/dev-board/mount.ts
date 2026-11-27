@@ -325,7 +325,7 @@ export const devBoardBridge: DevBoardBridge = {
   // #dev-body); the module mounts once per host occupancy and PUBLISHES on
   // every repaint. The stores flush synchronously (below) because the
   // repaint paths read the fresh DOM on their next lines — `Kudos.attach`,
-  // `_wireFeedComments`, `_initKanbanDrag`, `_reanchorCardMenu`.
+  // `_initKanbanDrag`, `_reanchorCardMenu`.
   mountWorkshop(host) {
     mountLegacyPortal(host, createElement(DevWorkshop));
   },
