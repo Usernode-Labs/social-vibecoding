@@ -4717,10 +4717,10 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"earlier\"] [data-ws-discussion-earlier-reactions] > button[data-emoji=\"❤️\"]"
     },
     {
-      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026)",
+      "name": "Signed out, a public project's page is two columns from 768px: its Discussion beside the rest, read only, its posts with their pictures, Start a post… and the reply field under a post's replies asking the visitor to sign in; the way back is a sticker chip and the card's picture opens the app (f-so2, 26 and 27 Nov 2026)",
       "path": "/app/staging-guest-page-busy?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols] > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"]:has(> .un-touch-target[data-guest-all-communities]):has([data-project-preview-open]) [data-guest-cols] > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img):has(.dh-reply + [data-ws-discussion-sign-in-reply]:last-child) button[data-ws-discussion-sign-in] .dh-sign-in",
       "expectText": "Sign in to post",
       "allowConsoleErrors": true
     },

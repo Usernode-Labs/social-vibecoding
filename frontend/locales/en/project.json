@@ -2065,7 +2065,7 @@
   },
   "hub.discussion.signInToPost": {
     "text": "Sign in to post",
-    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, as a signed-out visitor sees it: the box asks them to sign in before they can post."
+    "description": "At the far end of the \"Start a post…\" box on a public project's Discussion, and of the reply box under a post's replies, as a signed-out visitor sees them: the box asks them to sign in before they can post or reply."
   },
   "hub.discussion.reply.placeholder": {
     "text": "Reply in thread…",

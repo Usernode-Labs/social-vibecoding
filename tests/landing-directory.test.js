@@ -480,12 +480,21 @@ test('landing app open/close use the kit zoom with the flex-sibling outEl', () =
   const tsx = read(LANDING_TSX);
   assert.match(tsx, /type: 'zoom-in'/);
   assert.match(tsx, /type: 'zoom-out'/);
-  // `fromEl` used to resolve the tapped tile. There is no tile now, and it is
-  // a THUNK precisely so it can say so: both call sites answer null and the
-  // kit takes the `fallback` each of them already declared for the case where
-  // the tile had scrolled out of view.
-  assert.equal((tsx.match(/fromEl: \(\) => null/g) || []).length, 2,
-    'both zooms degrade to their declared fallback rather than a missing tile');
+  // THE APP GROWS OUT OF WHAT WAS PRESSED (27 Nov 2026): a public project's
+  // page hands the opener its Open button or its card's picture, and closing
+  // shrinks the viewer into the same control. `fromEl` is a THUNK so it can
+  // also say there is nothing to grow out of (the legacy bridge, a shot):
+  // the kit then takes the `fallback` each call declares, the slide in and
+  // the cut out this always was.
+  assert.match(tsx, /onOpenInside=\{\(app, from\) => \{ st\.pressed = from \|\| null; void live\.current\.openLandingApp\(app\); \}\}/);
+  // Taken by the very next open, before anything can return early.
+  assert.match(tsx, /async \(app: PublicApp\) => \{\s+(?:\/\/[^\n]*\n\s+)*const pressed = st\.pressed \|\| null;\s+st\.pressed = null;/);
+  assert.match(tsx, /st\.zoomFrom = pressed && pressed\.isConnected \? pressed : null;\s+zoomFx\(/);
+  assert.match(tsx, /type: 'zoom-in',\s+el: viewer,[\s\S]*?fromEl: \(\) => st\.zoomFrom,\s+outEl: scroller,\s+fallback: 'push',/);
+  assert.match(tsx, /const zoomFrom = st\.zoomFrom;\s+st\.zoomFrom = null;\s+zoomFx\(/);
+  assert.match(tsx, /type: 'zoom-out',\s+el: viewer,[\s\S]*?fromEl: \(\) => \(zoomFrom && zoomFrom\.isConnected \? zoomFrom : null\),\s+fallback: 'none',/);
+  // Discover's own tiles hand nothing over: they open as they did.
+  assert.match(tsx, /signedIn=\{waitingGuest\}\s+onOpenInside=\{\(app\) => \{ void live\.current\.openLandingApp\(app\); \}\}\s+onRetry=/);
   assert.doesNotMatch(tsx, /#landing-apps \.app-card\[data-slug=/,
     'nothing resolves a landing tile any more — the grid is retired');
   // #764: two visible flex:1 siblings split the height 50/50, so the kit's

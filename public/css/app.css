@@ -5508,18 +5508,20 @@ html:root #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups
 #auth-landing-screen :is([data-guest-discover], [data-guest-groups]) {
   font-family: var(--site-sans);
 }
-/* DO THIS is a sun pill on an ink outline: the bar's button on every
-   signed-out page. The primitive's classes stay
-   (tests/shell-primitive-adoption.test.js); its fill is repainted. The
-   heroes' own pills are spelled in features/auth/story.tsx. */
+/* The bar's button on every signed-out page is the SECONDARY pill: the
+   panel's white on an ink outline, the hero's white twin (27 Nov 2026). The
+   sun is each page's own main action (Explore apps, Sign up to vote and
+   suggest), so a page shows one sun pill and not two. The primitive's
+   classes stay (tests/shell-primitive-adoption.test.js); its fill is
+   repainted. The heroes' own pills are spelled in features/auth/story.tsx. */
 #auth-landing-screen #landing-header [data-landing-sign-up] {
-  background-color: var(--site-sun);
-  color: var(--site-on-sun);
+  background-color: var(--site-panel);
+  color: var(--site-ink);
   font-family: var(--site-sans);
   box-shadow: inset 0 0 0 1px var(--site-line), 0 2px 0 var(--site-line);
 }
 #auth-landing-screen #landing-header [data-landing-sign-up]:hover {
-  background-color: var(--site-sun-lit);
+  background-color: color-mix(in srgb, var(--site-ink) 6%, var(--site-panel));
 }
 #auth-landing-screen #landing-header [data-landing-sign-in] {
   font-family: var(--site-sans);
@@ -35795,6 +35797,11 @@ html:root :is(#dev-workshop, [data-discussion-host]) .dh-sign-in {
   font-weight: 600;
   white-space: nowrap;
 }
+/* A visitor's reply field under a thread's replies: the member's reply box,
+   a smaller blank face at its start and "Sign in to post" at its end. */
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-composer-reply.dh-reply-door { margin: 0; padding-inline: 6px; border: 0; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-door > span.dh-face-blank[aria-hidden="true"] { width: 28px; height: 28px; }
+html:root :is(#dev-workshop, [data-discussion-host]) .dh-reply-door > .dh-composer-hint { font-size: 14px; }
 /* Editing your own post or reply in place: the same field, Save and Cancel under it. */
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 html:root :is(#dev-workshop, [data-discussion-host]) .dh-edit > .dh-box {

@@ -76,8 +76,8 @@ const SITE_LINK = 'font-semibold text-[color:var(--site-ink)] underline decorati
 const WINDOW_DOT = 'h-2 w-2 rounded-full border border-[color:var(--site-line)] md:h-2.5 md:w-2.5';
 
 // The short story's two buttons, the Button primitive's site kinds: a sun
-// pill on an ink outline (primary), as the bar's button is, and its plain
-// white twin beside it (secondary), which is a link here, so it takes the
+// pill on an ink outline (primary), and its plain white twin beside it
+// (secondary, as the bar's button is), which is a link here, so it takes the
 // same classes from buttonVariants.
 export const HERO_TAP = 'no-underline un-touch-target';
 export const HERO_SECONDARY = cn(buttonVariants({ layout: 'site', variant: 'siteSecondary', size: 'site', ink: 'site' }), HERO_TAP);
@@ -97,8 +97,17 @@ function exploreApps(event: { currentTarget: HTMLElement }): void {
 // The short story's headline. On a phone it leads the page, the welcome label
 // being a wide screen's; under a greeted address (`welcomeEmail`) the label
 // shows on a phone too, so the headline keeps its room above there as well.
-const HERO_HEADLINE_TYPE = `${SITE_DISPLAY} text-[31px] leading-[35px] tracking-[-0.03em] text-[color:var(--site-ink)] md:text-[50px] md:leading-[54px] xl:text-[60px] xl:leading-[64px]`;
-const HERO_HEADLINE = `${HERO_HEADLINE_TYPE} md:mt-4`;
+//
+// A SHORTER HERO ON A COMPUTER (Evan, 27 Nov 2026): at 1280 by 800 the sky
+// band was 640px tall and the list of communities started 108px from the
+// bottom of the window. From lg the hero gives the height back: no "Welcome
+// to Homeroom" label (the wordmark is directly above it, as on a phone), the
+// headline at 54px from xl where it was 60, less room over the words and
+// under the buttons, and the two pictures and "This month" a size smaller.
+// The band is about 480px there and the first row of communities reaches the
+// window. A phone and a tablet keep the hero they had.
+const HERO_HEADLINE_TYPE = `${SITE_DISPLAY} text-[31px] leading-[35px] tracking-[-0.03em] text-[color:var(--site-ink)] md:text-[50px] md:leading-[54px] xl:text-[54px] xl:leading-[58px]`;
+const HERO_HEADLINE = `${HERO_HEADLINE_TYPE} md:mt-4 lg:mt-0`;
 const HERO_HEADLINE_AFTER = `mt-2 ${HERO_HEADLINE_TYPE}`;
 
 // THE STORY SHRINKS TO FIT ITS SCREEN (Evan, 10 Oct 2026, iPhone Safari): on
@@ -303,8 +312,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
     // TWO BUTTONS, NEITHER AN ACCOUNT: Explore apps scrolls to the list under
     // the hero, and the white one is the door to the page about private
     // communities (../guest/guest-communities.tsx), a different promise from
-    // the one this hero makes. The bar's filled button is still the one way
-    // to make an account (landing.tsx).
+    // the one this hero makes. The bar's button is still the one way to make
+    // an account (landing.tsx), in white: the sun is this hero's Explore apps.
     //
     // THE PICTURES are for the eye only: the communities page beside the
     // words from lg, and from md the people on the window's bottom edge with
@@ -315,7 +324,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
     //
     // ON A PHONE the apps should start near the first screen: no "Welcome to
     // Homeroom" (the wordmark is directly above), no pictures, and the two
-    // figures as one line.
+    // figures as one line. ON A COMPUTER the same aim, from lg: see the note
+    // over HERO_HEADLINE_TYPE.
     const figures = month ? [
       { id: 'auth:guest.hero.month.changes', count: month.changes },
       { id: 'auth:guest.hero.month.contributors', count: month.contributors },
@@ -327,8 +337,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             page on the right; the people sit on the window's bottom edge and
             "This month" is a yellow window on the sky beside them. */}
         <div data-landing-story-window="" className="border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:grid lg:grid-cols-[minmax(0,9fr)_minmax(0,11fr)] lg:items-center">
-          <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-20 lg:ps-6 lg:pe-0 lg:pt-14 lg:pb-20">
-            <div className={welcomeEmail ? SITE_LABEL : `${SITE_LABEL} hidden md:block`}>{t('auth:story.welcome')}</div>
+          <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-20 lg:ps-6 lg:pe-0 lg:pt-7 lg:pb-[72px]">
+            <div className={welcomeEmail ? SITE_LABEL : `${SITE_LABEL} hidden md:block lg:hidden`}>{t('auth:story.welcome')}</div>
             {welcomeEmail ? (
               <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-[color:var(--site-muted)] [overflow-wrap:anywhere]">{welcomeEmail}</div>
             ) : null}
@@ -358,14 +368,14 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
               </a>
             </div>
           </div>
-          <div className="hidden min-w-0 py-7 ps-6 pe-8 lg:block xl:pe-10" aria-hidden="true">
+          <div className="hidden min-w-0 py-4 ps-6 pe-8 lg:block xl:pe-10" aria-hidden="true">
             <img
               src="/brand/landing-communities.webp"
               alt=""
               width={1060}
               height={656}
               draggable={false}
-              className="mx-auto h-auto w-full max-w-[640px]"
+              className="mx-auto h-auto w-full max-w-[500px]"
             />
           </div>
         </div>
@@ -379,12 +389,12 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
               width={572}
               height={410}
               draggable={false}
-              className="h-auto w-[280px] max-w-full shrink-0 lg:w-[380px]"
+              className="h-auto w-[280px] max-w-full shrink-0"
             />
           </div>
           <div className="flex min-w-0 justify-center px-6 pt-20 lg:pt-10">
             {month ? (
-              <div data-landing-story-month="" className="w-full max-w-[460px] border border-[color:var(--site-on-sun)] bg-[var(--site-sun)] text-[color:var(--site-on-sun)]">
+              <div data-landing-story-month="" className="w-full max-w-[460px] lg:max-w-[400px] border border-[color:var(--site-on-sun)] bg-[var(--site-sun)] text-[color:var(--site-on-sun)]">
                 <div className="flex h-8 items-center gap-2.5 border-b border-[color:var(--site-on-sun)] px-3 text-[13px] leading-[18px] font-semibold uppercase tracking-[0.04em]">
                   <span className="flex gap-1.5" aria-hidden="true">
                     <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#e8452e]" />

@@ -131,7 +131,10 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   // viewer (the pinned-app tiles); the project page asks the same question.
   assert.match(read(DISCOVER), /<TryLink app=\{app\} className="flex min-w-0 flex-col items-center gap-1\.5 no-underline" onOpenInside=\{open\} inside=\{signedIn\}>/);
   assert.match(read(PROJECT), /const canTry = signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\);/);
-  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{signedIn \|\| preview \|\| app\.guest_ready === true\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  assert.match(read(PROJECT), /const openInside = signedIn \|\| preview \|\| app\.guest_ready === true;/);
+  assert.match(read(PROJECT), /\{canTry \? \(\s+<TryLink app=\{app\} inside=\{openInside\} onOpenInside=\{onOpenInside\} className=\{CARD_OPEN_BTN\}>/);
+  // The opener is handed the link that was pressed, for the app to grow out of.
+  assert.match(read(DISCOVER), /e\.preventDefault\(\);\s+onOpenInside\(app, e\.currentTarget\);/);
   // Rendered as a visitor with no account: an app with a guest's view keeps
   // Open; one without keeps Sign up to open.
   const guestReady = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[0]));
@@ -650,7 +653,7 @@ test('the card grows into its project\'s page and back: a view transition with o
   // card's picture is its target (./project-card.tsx, on the guest page).
   const card = read('frontend/src/features/guest/project-card.tsx');
   assert.match(card, /data-project-preview="" data-guest-hero=\{hero \? '' : undefined\}/);
-  assert.match(card, /<ProjectPreview app=\{app\} cover=\{cover\} hero=\{place === 'guest'\} \/>/);
+  assert.match(card, /<ProjectPreview app=\{app\} cover=\{cover\} hero=\{place === 'guest'\} onOpen=\{onOpenPicture\} \/>/);
   assert.match(read(PROJECT), /<ProjectCard\s+place="guest"[\s\S]*?data-guest-project-band=""/);
   assert.match(read(LANDING), /morph\(projectHero\(slug\), \(\) => \{ location\.hash = to; \}, \(\) => cardCover\(slug\)\);/);
   assert.match(read('public/css/app.css'), /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;/);
@@ -732,6 +735,15 @@ test('a project page: All communities, the project card in its colour with Open 
   const html = renderComponent(PROJECT, 'GuestProject', projectProps(APPS[0]));
   assert.match(html, /data-guest-project="game-corner"/);
   assert.match(html, /<button type="button" data-guest-all-communities=""[^>]*><svg[^>]*>[\s\S]*?<\/svg>All communities<\/button>/);
+  // The way back is a white sticker chip: the surface's white on the ink
+  // outline with the hard edge, drawn at 36px and 44px to a finger. Not the
+  // header's periwinkle tint, which is the header's own ink.
+  assert.match(html, /data-guest-all-communities="" class="un-touch-target inline-flex h-9 items-center gap-1 self-start rounded-full bg-\[var\(--one-surface\)\] [^"]*shadow-\[inset_0_0_0_1px_var\(--one-edge-line\),1\.5px_1\.5px_0_0_var\(--one-edge-shade\)\] mb-3\.5"/);
+  assert.doesNotMatch(read(PROJECT), /--brand-tint|--brand-ink/);
+  // Pressing the card's picture opens the app, as the first button does: one
+  // layer over the picture, for a pointer or a finger only (the Open button
+  // beside it is the same action with a name).
+  assert.match(html, /<div data-project-preview="" data-guest-hero=""[^>]*>[\s\S]*?<button type="button" tabindex="-1" aria-hidden="true" data-project-preview-open="" class="absolute inset-0 h-full w-full cursor-pointer rounded-2xl hover:bg-white\/10"><\/button><\/div>/);
   assert.match(html, /<section data-project-card="guest" data-guest-project-band=""/);
   assert.match(html, /<h1 data-project-card-name=""[^>]*>Game Corner<\/h1>/);
   assert.match(html, /<p data-project-card-description=""[^>]*>Classic games, fresh every day\.<\/p>/);
@@ -795,12 +807,19 @@ test('a project page reads its overview: counts from the minimums in the card, n
   assert.equal([...html.matchAll(/<div data-guest-vote="/g)].length, 2);
   assert.match(html, /data-guest-votes-all=""[^>]*>See all 13</);
   assert.match(html, /<button type="button" data-guest-votes-more=""[^>]*>[\s\S]*?11 more up for a vote/);
-  // A row: its small picture with Before · After when it has both, its
-  // title and line, its tally and Vote; the row opens the change.
+  // A row: its small after picture, its title, the tally under it and a
+  // chevron; the row opens the change, where Join to vote is. One form at
+  // every width, the side column's: the rows sit in that column from 768px,
+  // so the wide row (a Before · After badge, a line of the summary and a
+  // Vote button, drawn from 768 to 1023px) has no window left.
   assert.match(html, /<div data-guest-vote="1"[^>]*><button type="button" data-guest-vote-open=""/);
-  assert.match(html, new RegExp(`src="${pic(101)}"[\\s\\S]*?${message('auth:guest.project.beforeAfter')}`));
+  assert.match(html, new RegExp(`<span class="relative h-\\[72px\\] w-\\[72px\\] shrink-0 [^"]*"><img src="${pic(101)}"`));
   assert.ok(words.includes(message('auth:guest.project.yes_other', { count: 11 })));
-  assert.match(html, /data-guest-vote-btn=""[^>]*>Vote</);
+  assert.doesNotMatch(html, /data-guest-vote-btn|Before · After|What change 1 does\./);
+  // Two columns from 768px: a 300px side column beside the Discussion, 340px from 1024px.
+  assert.match(html, /<div data-guest-cols="" class="flex flex-col md:mt-8 md:grid md:grid-cols-\[300px_minmax\(0,1fr\)\] md:items-start md:gap-5 lg:grid-cols-\[340px_minmax\(0,1fr\)\] lg:gap-6"><div data-guest-side="" class="contents md:flex md:min-w-0 md:flex-col /);
+  assert.match(html, /<div data-guest-talk="" class="[^"]*order-3 min-w-0 md:order-none md:mt-0">/);
+  assert.doesNotMatch(read(PROJECT), /lg:order-none|lg:hidden|md:flex-row/);
   // Recently live: three rows and how many more went live this month, each
   // saying who said yes, in words that name nobody: the community for two
   // or more people, its creator alone, nothing when no yes was counted.
@@ -933,7 +952,15 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   assert.match(read('public/fonts/source-serif-4/LICENSE.txt'), /SIL Open Font License/, 'the OFL travels with the font');
   // "Welcome to Homeroom" is a wide screen's: on a phone the wordmark is
   // directly above the headline.
-  assert.match(html, /<div class="[^"]* hidden md:block">Welcome to Homeroom<\/div><h1 /);
+  assert.match(html, /<div class="[^"]* hidden md:block lg:hidden">Welcome to Homeroom<\/div><h1 /);
+  // A SHORTER HERO ON A COMPUTER (27 Nov 2026): from lg the label goes too,
+  // the headline is 54px from xl, there is less room over the words and
+  // under the buttons, and both pictures and "This month" are a size smaller.
+  assert.match(html, /<div class="flex min-w-0 flex-col items-center [^"]* lg:pt-7 lg:pb-\[72px\]">/);
+  assert.match(html, /<h1 class="[^"]*md:text-\[50px\] md:leading-\[54px\] xl:text-\[54px\] xl:leading-\[58px\] md:mt-4 lg:mt-0">/);
+  assert.match(html, /<div class="hidden min-w-0 py-4 ps-6 pe-8 lg:block xl:pe-10" aria-hidden="true"><img src="\/brand\/landing-communities\.webp"[^>]*class="mx-auto h-auto w-full max-w-\[500px\]"/);
+  assert.match(html, /<img src="\/brand\/landing-people\.webp"[^>]*class="h-auto w-\[280px\] max-w-full shrink-0"/);
+  assert.match(read(STORY), /data-landing-story-month="" className="w-full max-w-\[460px\] lg:max-w-\[400px\] border/);
   // TWO THINGS TO PRESS, and neither makes an account (the bar's one button
   // does): Explore apps brings the list under the hero to the top, and the
   // other is the door to the page about private communities.
@@ -1335,8 +1362,11 @@ test('the list wears the website\'s look signed out only: repainted by its own h
   assert.match(block, /#auth-landing-screen \[data-guest-discover\] \{\s+--cm-bg: var\(--site-panel\);\s+--cm-radius: 14px;\s+--cm-edge: 0 2px 0 var\(--site-line\);/);
   assert.match(block, /#auth-landing-screen \[data-guest-discover\] \.cm-card \{\s+border: 1px solid var\(--site-line\);/);
   assert.match(block, /\[data-guest-card-link\] \{\s+font-family: var\(--site-serif\);/);
-  // The bar's button is a sun pill with ink words on every signed-out page.
-  assert.match(block, /#auth-landing-screen #landing-header \[data-landing-sign-up\] \{\s+background-color: var\(--site-sun\);\s+color: var\(--site-on-sun\);/);
+  // The bar's button is the secondary pill on every signed-out page: the
+  // panel's white with ink words on the ink outline. The sun is the page's
+  // own main action, so the bar does not show a second one.
+  assert.match(block, /#auth-landing-screen #landing-header \[data-landing-sign-up\] \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+font-family: var\(--site-sans\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\), 0 2px 0 var\(--site-line\);/);
+  assert.doesNotMatch(block, /#landing-header \[data-landing-sign-up\][^{]*\{[^}]*--site-sun/);
   // The hooks it paints by are the components' own, and the shared
   // components carry no class of the look.
   const discover = read(DISCOVER);
