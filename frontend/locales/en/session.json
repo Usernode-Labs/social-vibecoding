@@ -387,18 +387,6 @@
     "text": "Draft",
     "description": "Status badge on a change that is still being built and has not been put up for a vote. A noun."
   },
-  "merge.pill.statusWithTally": {
-    "text": "{{status}} · {{yes}}/{{required}}",
-    "description": "Status pill in the header of a change that is up for a vote. {{status}} is the whole status phrase, already translated (\"Waiting for approval\"); {{yes}} is the number of Yes votes so far and {{required}} the number needed, shown as a fraction."
-  },
-  "merge.pill.advisoryVotes_one": {
-    "text": "{{count}} advisory vote from non-approvers. They don’t count toward merging",
-    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally, on an app where only invited approvers' votes count. {{count}} is the number of Yes votes cast by people who are not approvers. No full stop at the end."
-  },
-  "merge.pill.advisoryVotes_other": {
-    "text": "{{count}} advisory votes from non-approvers. They don’t count toward merging",
-    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally, on an app where only invited approvers' votes count. {{count}} is the number of Yes votes cast by people who are not approvers. No full stop at the end."
-  },
   "venue.usernodeOpenrouter.label": {
     "text": "Homeroom · OpenRouter",
     "description": "Name of one place a change can be built: Homeroom's own servers, using AI models through the OpenRouter service. Homeroom and OpenRouter are product names; keep the middle dot."

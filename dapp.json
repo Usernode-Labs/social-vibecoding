@@ -837,17 +837,17 @@
     },
     {
       "name": "Dev board: session cards carry the live working spinner (#1038)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
     },
     {
       "name": "The platform's own Workshop is a plain Workshop panel, with no close button (#2799)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) #back-btn.hidden #back-icon-close.hidden"
     },
     {
       "name": "An app's Workshop is the platform surface the header frosts over (#2806)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "body:has(#app-view:not(.hidden)[data-app-surface=\"platform\"] #dev-body) #platform-header"
     },
     {
@@ -1086,32 +1086,6 @@
       "expectSelector": "#home-challenges-section [data-wip-challenges]:not(:has(h3)):not(:has(.wip-poster[data-state=done])) > .wip-posters > .wip-poster"
     },
     {
-      "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
-      "expectText": "Work on this with Homeroom bot"
-    },
-    {
-      "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item > .flex-1 > .dev-card-head > span[class*=\"rounded-lg\"] + .dev-card-head-main"
-    },
-    {
-      "name": "Dev board: a card's meta line is the first row under the head, tabbed in under the title by CSS rather than nested in the indent",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta"
-    },
-    {
-      "name": "Dev board: the bar row and the action band span the card's full width; the meta line and the facts row are tabbed in",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-card-badges, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .gc-card-actions"
-    },
-    {
-      "name": "Dev board: a card renders its head, meta line, status row and action band in order; the facts row rides between only when there are facts",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
-    },
-    {
       "name": "#4455: a change’s page is a Messages thread: the Workshop chip and one header pill (18 Nov 2026: the project's tile first, \"Change #N\", the project and its category, the ⋯ disc, then the panel-only open-as-page and close discs; the header draws no arrow), the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .dev-thread-bar-tile + * .messages-thread-sub):has(#gc-thread-bar [data-card-menu] + [data-thread-exits] [data-thread-exit=\"close\"]) [data-change-root=\"9000043\"][data-thread-card=\"change\"]:has(.dev-thread-kicker[data-thread-kicker=\"change\"]):has(.dev-thread-foot[data-thread-foot] .dev-thread-foot-head) [data-step-layer=\"gates\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
@@ -1142,16 +1116,16 @@
       "expectText": "Request #900003"
     },
     {
-      "name": "Dev board, round three: the vote is one button beside the state bar; \"Still yes?\" (#1688); no kudos slot (#5249)",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):not(:has([data-kudos-host],.dev-thanks-pill)) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "name": "Dev board, round three: the vote is one button beside the state bar, on the row; \"Still yes?\" (#1688); no kudos slot (#5249)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):not(:has([data-kudos-host],.dev-thanks-pill)) .dev-ws-wrow .dev-ws-row-band > .dev-ws-row-state + .dev-ws-row-trailing > .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
     {
       "id": "dev-board.proposal-preview",
-      "name": "Dev board: Preview is a labelled pill at the band's right end, just before the hamburger that closes it",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:not(.gc-vote-btn-icon) + .dev-card-menu-btn[data-card-menu]:last-child, #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:not(.gc-vote-btn-icon)",
+      "name": "Dev board: a change whose preview is ready says Preview on its row",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .dev-ws-wrow[data-proposal-row] .dev-ws-wrow-status > .dev-ws-tag[title=\"Preview ready\"] > .sr-only",
       "expectText": "Preview",
       "visual": true,
       "impact": [
@@ -1171,79 +1145,10 @@
       "expectSelector": "#dev-kanban .dev-kanban-col > .dev-kanban-card > .dev-ws-wlist > .dev-ws-wrow.dev-ws-brow:not(:has(.dev-fold-mark)) > .dev-ws-wrow-menu > button.dev-card-menu-btn[data-card-menu]"
     },
     {
-      "name": "Dev board: the open card's fold mark is the same glyph stretched open, and the button that folds the card",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item .dev-card-head > button.dev-fold-mark[data-open=\"1\"][aria-expanded=\"true\"][aria-label] > svg > path.dev-fold-bar"
-    },
-    {
-      "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item.dev-card-dense[data-edge] > .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main"
-    },
-    {
-      "name": "Dev board: the card's facts are a row of their own under the status row, tabbed in with the meta line",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status ~ .dev-card-badges.dev-card-facts > .dev-badge"
-    },
-    {
-      "name": "A blocked proposal keeps a vote bar rather than a block label",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-status > .dev-status-pill-block",
+      "name": "A blocked proposal keeps its vote bar, and says why in a tag on its row",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000050\"]:has(.dev-ws-row-band > .dev-ws-row-state + .dev-ws-row-trailing .dev-vote-btn) .dev-ws-wrow-status > .dev-ws-tag[data-tone=\"bad\"]",
       "expectText": "Checks failing"
-    },
-    {
-      "name": "...and says why in tags on the meta line above it",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-meta > [data-status-tag=\"checks_failing\"]",
-      "expectText": "Checks failing"
-    },
-    {
-      "name": "Dev board, round three: a second action pill can fold into the menu (one-line band)",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
-      "expectText": "Claim it"
-    },
-    {
-      "name": "With its cards open the board draws each as the Activity sheet: the card, its thread, the send disc",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
-    },
-    {
-      "name": "A board card unfolds into the same sheet the Workshop's does: the comment tail and the reply box under it (#1884)",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
-    },
-    {
-      "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"
-    },
-    {
-      "name": "Dev board: an issue's tags ride its meta line beside the number; the status band keeps only states (#1139)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row=\"900001\"] .dev-card-head + .dev-card-meta > button.attr-chip.dev-badge[data-attr-field=\"priority\"] ~ button.attr-chip.dev-badge[data-attr-field=\"assignee\"]"
-    },
-    {
-      "name": "Dev board: a card title wraps in full, as the folded row's does, with no clamp and no tooltip standing in for it",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-head-main > .dev-card-title:not(.dev-card-title-clamp):not([title])"
-    },
-    {
-      "name": "Dev board: Closes-#N rides the meta line as a tag, beside the number; the status row keeps the bar and the vote",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item .dev-card-meta > .dev-badge[data-issue-chip]"
-    },
-    {
-      "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[data-act=\"markIssueInProgress\"]",
-      "expectText": "Claim it"
-    },
-    {
-      "name": "Dev board: the Underway column names the exact state — a paused session says \"Paused\", not \"In progress\" (#1112)",
-      "path": "/?demo=1&view=kanban&col=inprogress&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inprogress [data-issue-row=\"900014\"] .dev-card-facts .dev-badge[data-work-state=\"paused\"]",
-      "expectText": "Paused"
     },
     {
       "name": "Dev board: an issue whose proposal is up for a vote is still ON the board (#1251)",
@@ -1257,11 +1162,6 @@
       "expectText": "opens up for someone else"
     },
     {
-      "name": "Dev board: your own session card offers its visibility toggle as a pill",
-      "path": "/?demo=1&view=kanban&col=inprogress&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] .gc-card-actions .gc-vote-btn[data-act=\"_setSessionShared\"]"
-    },
-    {
       "name": "Dev board: Underway leads with your private sessions, tagged Only you with a lock, and keeps its dividers (#4486)",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-kanban-card:has(.dev-col-divider-label) > .dev-ws-wlist:first-child > .dev-ws-wrow[data-session-chip]:first-child .dev-ws-tag:first-child > svg",
@@ -1269,46 +1169,36 @@
     },
     {
       "name": "Dev board: every ⋯ menu row leads with an aligned icon",
-      "path": "/?demo=1&view=kanban&shot=card-menu&cards=open#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu .dev-card-menu-item .dev-card-menu-icon[aria-hidden=\"true\"] + .dev-card-menu-label"
     },
     {
       "name": "Dev board: a session card’s menu opens (and survives the board’s own repaints)",
-      "path": "/?demo=1&view=kanban&col=inprogress&shot=card-menu&cards=open#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&col=inprogress&shot=card-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] [data-card-menu][aria-expanded=\"true\"]"
     },
     {
       "name": "Dev board: the ⋯ menu’s assignee row OPENS the assignee picker (it used to do nothing on desktop)",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee&cards=open#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=proposal:9000043&row=assignee#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover #attr-assignee-input",
       "expectText": "Assigned person"
     },
     {
-      "name": "Assignee picker: the viewer’s own pick renders as a re-clickable toggle — deselect by clicking again (#1187)",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#attr-popover .attr-opt[data-attr-opt-mine=\"1\"][title]"
-    },
-    {
-      "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
-      "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority&cards=open#app/usernode-2d5619/board",
+      "name": "Dev board: the same ⋯ row mechanism opens the priority picker",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&row=priority#app/usernode-2d5619/board",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
       "expectText": "Priority"
     },
     {
       "name": "Dev board: every ⋯ menu row declares its meaning, so a picker row is addressable",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&cards=open#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"assignee\"]"
     },
     {
       "name": "Issue cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&cards=open#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
       "expectText": "Share to…"
-    },
-    {
-      "name": "Dev board: attribute chips keep the small label inside the 20px box",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
     },
     {
       "name": "#4453: everything that is not the next step is behind the request sheet's ⋯ disc (priority, category and assignee, the author's edits, the claim), and the card's chips are gone (B10c, #2427)",
@@ -1317,7 +1207,7 @@
     },
     {
       "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
-      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/board",
       "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open your thread with Homeroom bot about this change\"], .dev-card-menu [data-menu-idx][title^=\"Open your thread with Homeroom bot about this change\"]",
       "expectText": "Explore in a coding agent"
     },
@@ -1329,7 +1219,7 @@
     },
     {
       "name": "Proposal cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
-      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
       "expectText": "Share to…"
     },
@@ -1593,19 +1483,8 @@
       "expectText": "1 of 2 app slots used"
     },
     {
-      "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "Work on this with Homeroom bot",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"workOnIssueWithBot\"][data-fold=\"1\"] ~ [data-card-menu]"
-    },
-    {
-      "name": "Session/proposal cards render reverse #N issue chips",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-issue-chip]"
-    },
-    {
       "name": "Board cards name the auto-drafted category they were placed in (#1933)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "#dev-kanban [data-issue-row=\"900001\"] [data-attr-chip][data-attr-field=\"category\"][data-attr-target-type=\"issue\"][data-attr-target-ref=\"900001\"]",
       "expectText": "[Mock] Appearance & theming"
     },
@@ -1640,18 +1519,18 @@
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Staging demo perf"
     },
     {
       "name": "A draft PR is linked on its owner's Underway card (#2866)",
-      "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990103\"]",
       "expectText": "View PR on GitHub"
     },
     {
       "name": "A shared Underway card exposes its draft PR link (#2866)",
-      "path": "/?demo=1&shot=card-menu&card=session:990002&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=session:990002#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990002\"]",
       "expectText": "View PR on GitHub"
     },
@@ -2203,16 +2082,9 @@
       "expectText": "Set aside in"
     },
     {
-      "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc",
-      "expectText": "Closing issue #900011"
-    },
-    {
-      "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100075'] .gc-checks-running-badge",
-      "expectText": "Close pending, will retry automatically"
+      "name": "A passed close proposal whose window elapsed says it is closing, on its disabled Vote (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-kanban [data-gov-row='9100074'] .dev-vote-btn[disabled][title^=\"Closing issue #900011\"]"
     },
     {
       "name": "A vote to close opens the request's page, not the old governance view (#6439)",
@@ -2221,9 +2093,9 @@
       "expectText": "Request #900011"
     },
     {
-      "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "name": "An illustration proposal's page previews the proposed image beside the current one (#2086)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
+      "expectSelector": "#gc-thread-head [data-gov-root='9100077'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
       "expectText": "Proposed"
     },
     {
@@ -2246,7 +2118,7 @@
     },
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "[data-gov-row='9100072'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
@@ -2387,9 +2259,9 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
-      "name": "Done keeps task attributes, a live change's ✓ Live is green (#3873), and a Closed issue opens in Homeroom (#2423)",
-      "path": "/?demo=1&view=kanban&col=done&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"]):has([data-proposal-row=\"9100027\"][data-edge=\"ok\"] .gc-vote-count-ok)",
+      "name": "Done keeps task attributes, a live change's ✓ Live is green (#3873), and a change names the request it closed (#2423)",
+      "path": "/?demo=1&view=kanban&col=done#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"][data-ws-for=\"900006\"] .dev-ws-wrow-status > .dev-ws-row-state-ok.dev-ws-wrow-live)",
       "expectText": "Closed #900006"
     },
     {
@@ -2485,13 +2357,8 @@
     },
     {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
-      "path": "/?demo=1&cards=open&q=viewport#app/usernode-2d5619/board",
+      "path": "/?demo=1&q=viewport#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-issue-row=\"900003\"]"
-    },
-    {
-      "name": "An unfolded card has an auto-growing reply box and send arrow (#1584)",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "A project's Needs you draws the review flow, one change's page at a time",
@@ -2578,11 +2445,6 @@
       "expectText": "goes live when its checks pass"
     },
     {
-      "name": "Kanban cards show the assignee initial-avatar",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": ".attr-avatar"
-    },
-    {
       "name": "The Filters dialog offers the category select (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#board-filters-modal #board-filters-category"
@@ -2593,21 +2455,10 @@
       "expectText": "Staging demo shared session"
     },
     {
-      "name": "Shared Underway card shows a direct PR link before review (#2866)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-shared-session-row=\"990002\"] .dev-card-meta a[href=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990002\"]",
-      "expectText": "PR#990002"
-    },
-    {
       "name": "Own private sessions say Only you, with the line the divider carried as their tooltip (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Only you",
       "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is public.\"]"
-    },
-    {
-      "name": "Shared session cards show the owner subtitle",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "is working on this"
     },
     {
       "name": "Homeroom bot's Done is the whole past: History's finished work runs on under this week's, with no month headings and, once opened (#homeroom-bot/history opens it), the kind chips for Me › Your work's old tabs",
@@ -2623,7 +2474,7 @@
     },
     {
       "name": "Visible own session offers its public discussion from the ⋯ menu",
-      "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/board",
       "expectText": "Open public discussion",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"Open the public discussion on this session\"]"
     },
@@ -3591,11 +3442,6 @@
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
     {
-      "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "closed by vote"
-    },
-    {
       "name": "Legacy #topochain/leaderboard lands on the Leaderboard screen's Topochain tab",
       "path": "/#topochain/leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
@@ -3719,7 +3565,7 @@
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
-      "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/board",
       "expectText": "Retry preview",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"Try building this proposal's staging preview again\"]"
     },
@@ -4213,31 +4059,6 @@
       "expectSelector": "#notifications-sheet:not(:has([data-group-toggle]))"
     },
     {
-      "name": "An unfolded card is a card on a sheet",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-feed-entry > .gc-vote-item"
-    },
-    {
-      "name": "An unfolded issue card shows recent comments with relative ages (#1585)",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
-    },
-    {
-      "id": "dev-board.long-comment-show-more",
-      "name": "A long comment in a card's recent comments shows four lines and a Show more (#2556)",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-clamp + button.dev-feed-comment-toggle:not([hidden])",
-      "expectText": "Show more",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/dev-board/comment-clamp.tsx",
-        "frontend/src/features/dev-board/issue-comments.tsx",
-        "frontend/src/features/dev-board/card/feed-thread.tsx",
-        "public/css/app.css",
-        "public/js/app-view.js"
-      ]
-    },
-    {
       "name": "#4453: a request's replies are one stream in the order they were written: a GitHub comment between two Homeroom messages, in the same row, with \"on GitHub\" after its time",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
       "expectSelector": "#gc-thread-messages .dev-request-stream > .gc-msg[data-msg-id=\"9902011\"]:first-child + .gc-msg-github[data-username=\"staging-tester\"] .gc-msg-time[title] + .gc-msg-via",
@@ -4380,16 +4201,6 @@
       "expectText": "Nothing posted yet"
     },
     {
-      "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"
-    },
-    {
-      "name": "#1808: a board card's age is its own element, so the exact instant is one hover away",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item .dev-card-meta span[title]"
-    },
-    {
       "name": "#1808: a conversation row's age carries both the machine instant and the unelided one",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen .messages-conversation-row .ui-lrow-mt > time[title][datetime]"
@@ -4453,45 +4264,45 @@
       "expectText": "replies"
     },
     {
-      "name": "#2038: an approved proposal being brought up to date says so on the card",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"integrating\"]",
+      "name": "#2038: an approved proposal being brought up to date says so on its row",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000082\"] .dev-ws-wrow-status > .dev-ws-tag[data-tone=\"run\"] > .dc-status-spinner-arc",
       "expectText": "Bringing up to date"
     },
     {
-      "name": "#2221: a refused merge names the next action, not the actor who refused",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"merge_conflict\"]",
+      "name": "#2221: a refused merge names the next action on its row, not the actor who refused",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000083\"] .dev-ws-wrow-status > .dev-ws-tag[data-tone=\"bad\"]",
       "expectText": "Needs author to sync with main"
     },
     {
-      "name": "#2038: automatic conflict resolution says nobody has to act",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"resolving\"]",
+      "name": "#2038: automatic conflict resolution says nobody has to act, on its row",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000003\"] .dev-ws-wrow-status > .dev-ws-tag[data-tone=\"run\"] > .dc-status-spinner-arc",
       "expectText": "Resolving conflicts automatically"
     },
     {
-      "name": "#2061: a locked app's admin-approval requirement is on the card at last",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban [data-proposal-row=\"9000092\"] [data-req-headline]",
+      "name": "#2061: a locked app's admin-approval requirement heads the change's steps",
+      "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000092",
+      "expectSelector": ".dev-details-card .dev-topic-steps .dev-steps-headline",
       "expectText": "Waiting on an admin"
     },
     {
-      "name": "#6643: a change held for an admin says so on its card, with the reason",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban [data-proposal-row=\"9000097\"] [data-release-hold]",
+      "name": "#6643: a change held for an admin says so in its steps, with the reason",
+      "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000097",
+      "expectSelector": ".dev-details-card .dev-topic-steps .dev-step-waiting[data-req-gate] .dev-step-line",
       "expectText": "It lets the app send tokens."
     },
     {
       "name": "#2061: an automatic step says nobody has to act",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
+      "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000091",
+      "expectSelector": ".dev-details-card .dev-topic-steps .dev-steps-headline",
       "expectText": "Nothing needs you"
     },
     {
-      "name": "#2061: the checklist lists the steps after the one it is stuck on",
-      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban [data-proposal-row=\"9000093\"] [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
+      "name": "#2061: the steps list the ones after the step a change is stuck on",
+      "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
+      "expectSelector": ".dev-details-card .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] ~ [data-req-gate][data-req-state=\"pending\"]"
     },
     {
       "name": "#2219: the app-permission prompt names the app and what it is asking for",

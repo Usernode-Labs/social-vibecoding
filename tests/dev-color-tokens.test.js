@@ -155,12 +155,9 @@ test('the canonical MergeStatus tones route through the tokens', () => {
   ]) {
     assert.match(CSS, new RegExp(`\\.${cls} *\\{[^}]*var\\(--state-${tone}\\)`), cls);
   }
-  for (const [cls, tone] of [
-    ['ms-pill-neutral', 'neutral'], ['ms-pill-violet', 'progress'],
-    ['ms-pill-amber', 'attention'], ['ms-pill-green', 'ok'], ['ms-pill-red', 'blocked'],
-  ]) {
-    assert.match(CSS, new RegExp(`\\.${cls} *\\{[^}]*var\\(--state-${tone}\\)`), cls);
-  }
+  // The filled `.ms-pill-*` tones went with MergeStatus.pillHtml, which
+  // nothing called.
+  assert.doesNotMatch(CSS, /\.ms-pill/);
 });
 
 test('the composite pill has a class for every tone it can emit', () => {

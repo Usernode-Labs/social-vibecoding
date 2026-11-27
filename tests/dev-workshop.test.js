@@ -322,18 +322,22 @@ test('another app\'s themes never group this app\'s cards', () => {
   assert.equal(v.themes[0].name, 'Everything on the board');
 });
 
-test('a row carries the thread and the GitHub slot the Activity entry carried', () => {
+test('a row carries no conversation: the unfolded card that drew one is gone', () => {
+  // The rows carried the item's thread and its GitHub comment slot for the
+  // sheet a row unfolded into (#1884). Rows open the item's page now, where
+  // the conversation is, so neither rides on a row.
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12', 'session:34'] }]);
   const v = AppView._workshopView();
   const t = v.themes[0];
   const issue = t.lanes.find((l) => l.key === 'open').rows[0];
-  assert.equal(issue.commentsFor, 12);
-  assert.deepEqual(plain(issue.thread), { type: 'issue', ref: 12 });
+  assert.equal(issue.commentsFor, undefined);
+  assert.equal(issue.thread, undefined);
   const proposal = t.lanes.find((l) => l.key === 'review').rows[0];
-  assert.deepEqual(plain(proposal.thread), { type: 'session', ref: 34 });
-  assert.equal(proposal.commentsFor, undefined, 'only an issue has a repository conversation');
+  assert.equal(proposal.thread, undefined);
+  assert.equal(AppView._attachRowConversation, undefined);
+  assert.equal(AppView._feedThreadRef, undefined);
 });
 
 test('the lane cap counts what it hides, for "Open on Board"', () => {
@@ -359,9 +363,6 @@ test('the vote strip pins what is owed to the viewer, whatever the filters say',
   let v = AppView._workshopView();
   assert.equal(v.votes.count, 1);
   assert.deepEqual(plain(v.votes.rows.map((r) => r.key)), ['vote:proposal:34']);
-  // #1902: the row carries its thread, so the open card draws a reply box —
-  // the same shape the "mine" lane's rows have.
-  assert.deepEqual(plain(v.votes.rows[0].thread), { type: 'session', ref: 34 });
   // Voted → not owed.
   AppView._proposals[0].my_vote = 'yes';
   v = AppView._workshopView();
@@ -473,13 +474,15 @@ test('the discussion row leads with what it is, not with the last thing said', (
     'and with nothing said yet the standing description takes the preview line');
 });
 
-test('the capture deep link names the first issue row to unfold', () => {
+test('the comment-slot capture deep link is gone: no shot unfolds a row', () => {
+  // `?shot=feed-comments` opened a theme AND unfolded its first issue row,
+  // for the unfolded card's comment tail; that card is gone.
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['session:34', 'issue:12'] }]);
   assert.equal(AppView._workshopView().autoExpand, null);
   AppView._workshopShot = 'feed-comments';
-  assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 't', key: 'issue:12' });
+  assert.equal(AppView._workshopView().autoExpand, null);
 });
 
 test('every return path states `loading`, because the store merges', () => {
@@ -1367,39 +1370,6 @@ test('a lane row\'s last line carries the card\'s state, in the tone the pill al
   assert.ok(!/\.dev-ws-row-open \.dev-ws-row-band \{ display: none/.test(CSS));
 });
 
-test('an open row IS the Board\'s card, not a headless copy under a row', () => {
-  const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
-
-  // #1799 kept the compressed row as a head and hid the card's head, meta and
-  // status band so they would not repeat it — which made the open state a
-  // third object belonging to neither size. Those rules are GONE, and the card
-  // keeps every bit of chrome the Board gives it.
-  assert.ok(!/\.dev-ws-rowwrap-open[^{]*\.dev-card-head/.test(CSS), 'the head is drawn');
-  assert.ok(!/\.dev-ws-rowwrap-open[^{]*\.dev-card-meta/.test(CSS), 'the meta line is drawn');
-  assert.ok(!/\.dev-ws-rowwrap-open[^{]*\.dev-card-status/.test(CSS), 'the status band is drawn');
-  assert.ok(!/dev-ws-rowwrap-open > \.dev-feed-entry > div:is\(\.dev-card-dense\)/.test(CSS),
-    'and the card is not de-chromed');
-
-  // The wrapper renders ONE of the two, never both.
-  const wrap = FOLD.slice(FOLD.indexOf('function CardRowView'));
-  assert.match(wrap, /\{open \? \(/);
-  assert.match(wrap, /<UnfoldedRow row=\{row\}/);
-  assert.match(wrap, /<FoldedRow row=\{row\}/);
-  assert.ok(wrap.indexOf('<UnfoldedRow') < wrap.indexOf('<FoldedRow'), 'open first, folded in the else');
-
-  // Clicking the open card closes it. The delegated #dev-body handler is
-  // bound BELOW the portal's React root, so a synthetic stopPropagation here
-  // would arrive after it had navigated; the hooks used to come off the open
-  // card's model for that reason. The handler now stands aside for any click
-  // inside a fold wrapper instead, so the model keeps the hooks the checks
-  // select on, at BOTH sizes, and the Board's columns can fold the same way.
-  assert.match(APP_VIEW_SRC, /if \(AppView\._inFoldWrapper\(e\)\) return;/);
-  assert.ok(!/function withoutOpenHooks/.test(FOLD) && !/withoutOpenHooks/.test(WORKSHOP), 'nothing strips them any more');
-  assert.match(FOLD, /\{\.\.\.itemHooks\(c\)\}/, 'the folded row carries the item\u2019s hooks too');
-  assert.ok(!/onCollapse/.test(FOLD), 'and there is no Collapse control');
-});
-
 test('a theme head counts its people AND how much is still open in it', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -1583,62 +1553,6 @@ test('the Workshop renders its strips, its themes and their rows', () => {
   assert.match(html, /aria-pressed="true">By people</, 'the default order is by people');
 });
 
-test('a folded row wears the card\u2019s own edge, number and glyph, and no chevron', () => {
-  const AppView = makeAppView();
-  seed(AppView);
-  // A pull request on GitHub, so its number is a link out (a change kept in
-  // Homeroom draws it as text: the row already opens its page).
-  AppView._proposals[0].pr_url = 'https://github.com/x/y/pull/41';
-  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'session:34'] }]);
-  AppView._workshopShot = 'themes';
-  const page = categoryPaneHtml(AppView, 'all');
-  // The fold lives on where it is still drawn, the hub's Your work (#4486:
-  // By category and the board draw the Workshop's row); its rows drawn here
-  // through the same fold, folded.
-  const { ListRowView } = loadTsx('tests/fixtures/dev-card-api.ts');
-  const html = AppView._workshopView().themes.flatMap((t) => t.lanes.flatMap((l) => l.rows))
-    .filter((r) => r.t === 'card')
-    .map((row) => renderToHtml(createElement(ListRowView, {
-      row, fold: { slug: 'demo-app', canPost: true, open: false, onToggle: () => {} },
-    }))).join('');
-
-  // The EDGE, from the card's own edgeFor: an issue with no state wears its
-  // type's amber, a proposal wears its BAR's tone. The row used to carry that
-  // colour as a tinted icon tile the card does not have, so one item opened
-  // on a different mark at each size.
-  //
-  // This proposal is mid-checks and used to wear `neutral`, because the bar
-  // said "Checks starting…". The bar is the vote now, so the edge follows the
-  // vote — which is the edge doing its job, not a regression: the colour down
-  // the side of a row answers the same question the bar does.
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="vote"[^>]*data-ws-row="proposal:34"/);
-  assert.match(CSS, /\.dev-ws-row\[data-edge="vote"\]\s+\{ --dev-edge: var\(--accent\); \}/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
-    'drawn as the card draws it: an inset shadow at the same width, not a border');
-
-  // The NUMBER: the card's own meta line, node for node (metaLineNodes), so
-  // the row's number is the same link the card's is, "PR#41" and "#12" alike.
-  // (The row used to re-derive it and matched only "#41", so every proposal
-  // row was missing the thing people cite it by.)
-  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*" target="_blank" rel="noopener" class="font-mono[^"]*"[^>]*>PR#41<\/a>/);
-  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*" target="_blank" rel="noopener" class="font-mono[^"]*"[^>]*>#12<\/a>/, 'and an issue is unchanged');
-  assert.match(FOLD, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/, 'one builder for both sizes');
-  assert.match(FOLD, /closest\('a, button'\)\) return;/, 'a click on the link is the link\'s, not the row\'s');
-
-  // The GLYPH. Same 22px box, no tile, same 18px mark as the card's.
-  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
-  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
-
-  // And no chevron: it promises a destination the row does not have.
-  const rows = html.split('data-ws-row="').slice(1);
-  assert.ok(rows.length, 'there are folded rows to check');
-  for (const r of rows) {
-    assert.ok(!r.slice(0, r.indexOf('</div>')).includes('dev-ws-chev'), 'a folded row draws no chevron');
-  }
-  assert.match(page, /dev-ws-theme-foot[\s\S]*?dev-ws-chev/, 'a theme header still does');
-});
-
 test('the card\u2019s facts line keeps its chips instead of flattening them', () => {
   // "Closes #1575 · @alice · design" was drawn as muted text with a dot
   // between, so the two facts most worth not skipping on a proposal card
@@ -1656,53 +1570,6 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
   assert.match(CSS, /\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-inline-start: 30px; \}/);
   assert.ok(!/max-height: 60px;/.test(CSS));
   assert.ok(!/dev-card-band-break|dev-card-status-end/.test(CSS));
-});
-
-test('Open card goes to the item\u2019s page, from the Workshop as from the Board', () => {
-  // This used to assert the opposite: "Open card" built the topic screen's
-  // sections from `_workshopCardBody` and opened them in place, and the pill
-  // only became the link on a second tap ("Open page \u203a", #1886). #1884
-  // round two retires that. One word meant an in-place open on the Workshop
-  // and a navigation on the Board, and which one you got depended on the
-  // screen you had reached the same card from — the last thing about the
-  // card the two surfaces still disagreed on.
-  //
-  // What that costs is reading the ledger and the transcript without leaving
-  // the lander. What it buys is that the label means one thing. The sections
-  // are unchanged and still drawn by topic-head.tsx; the page is where they
-  // live, and the pill goes there.
-  const AppView = makeAppView();
-  seed(AppView);
-  assert.equal(typeof AppView._workshopCardBody, 'undefined',
-    'the in-place builder is retired, not left with no caller');
-
-  const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
-  assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
-  assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
-  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>/,
-    'one anchor, one label');
-  assert.equal(message('project:card.fold.openCard'), 'Open card');
-  assert.ok(!/TopicBodySections|readAppView|useState/.test(unfolded),
-    'nothing left that built or held an in-place body');
-  assert.equal(AppView._devTopic, null, 'and reading the source navigated nothing');
-});
-
-test('the open card collapses on a click at the card, not at what it opened', () => {
-  // The wrapper's click closes the row. With a thread and a comment list open
-  // under the card there is a lot of prose to land on, and collapsing the
-  // item because somebody selected a word in it loses their place — so the
-  // two regions below the card are excluded alongside the controls.
-  // `details` is the merge-requirements checklist (#2128): a disclosure the
-  // reader taps open, not a place to fold from. (There were three regions
-  // until #1884 round two sent "Open card" to the item's page on both
-  // surfaces; the ledger is on that page now, not under the card.)
-  const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
-  for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form', 'details',
-    '\\[data-attr-chip\\]', '\\[data-issue-chip\\]',
-    '\\.dev-feed-thread', '\\.dev-feed-comments']) {
-    assert.match(view, new RegExp(sel), `the guard excludes ${sel}`);
-  }
-  assert.match(view, /el\.closest\(/, 'and it is a closest() test, not a target equality one');
 });
 
 
@@ -1930,27 +1797,9 @@ test('#1887: a card about your own session opens the CARD, and nothing on it lea
   const row = { t: 'card', key: 'my-session:51', card: AppView._mySessionCardModel({ ...mine }) };
   assert.equal(row.card.attrs['data-session-chip'], '51', 'the card carries the hook the checks name it by');
 
-  // THE OPEN CARD, where a fold still draws one (the fold's own rule, which
-  // a list that unfolds rows in place gets): its pill in the action band,
-  // and nothing under the sheet.
-  const { ListRowView } = loadTsx('tests/fixtures/dev-card-api.ts');
-  const open = renderToHtml(createElement(ListRowView, {
-    row: plain(row), fold: { slug: 'demo-app', canPost: true, open: true, onToggle: () => {} },
-  }));
-  assert.match(open, /^<div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
-    'the open card, hook intact');
-  // The change's page is the pill's, not a line under the sheet (#1886) —
-  // and since #1884 round two the pill IS that link on its first tap, here
-  // as on the Board, rather than opening the sections in place and becoming
-  // the link on a second.
-  assert.match(open, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/,
-    'the open card carries the pill, and it is the page link');
-  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
-  assert.ok(!open.includes('Open page ›'), 'and no second step to reach one');
-  assert.ok(!open.includes('dev-ws-sheet-actions'), 'no line under the sheet');
-  assert.ok(!open.includes('data-ws-open-session'), 'no session link');
-  assert.ok(!open.includes('/dev/sessions/51'), 'and nothing on the card leads to the retired dev chat');
-  assert.ok(!/\.dev-ws-sheet-(actions|sep)\b/.test(CSS), 'nor does the stylesheet keep a rule for that line');
+  // The open card this used to draw (the fold's sheet, its "Open card" pill
+  // the page link) went with the fold; a row opens the change's page itself.
+  assert.ok(!/\.dev-ws-sheet-(actions|sep)\b/.test(CSS), 'no line under a sheet in the stylesheet either');
 
   // The helpers, from the bundle: the card's page is the change's, and the
   // session helper is gone with the link it built.
@@ -1966,13 +1815,12 @@ test('#1887: a card about your own session opens the CARD, and nothing on it lea
   assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
     'no card hook navigates to the session any more');
 
-  // On the Board the open card's "Open card" is the change's page as well,
-  // and there is no line under the card: that page carries the workspace.
-  const board = makeAppView({ location: { search: '?cards=open', hash: '', href: 'http://localhost/?cards=open' } });
+  // On the Board the row links the change's page, and nothing leads to the
+  // retired dev chat.
+  const board = makeAppView();
   seed(board);
   board._mySessions = [{ ...mine }];
   const bh = kanbanHtml(board);
-  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
   assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
 
   // 5 Nov 2026: the declared check that read the hub's Your work leading
@@ -1982,15 +1830,17 @@ test('#1887: a card about your own session opens the CARD, and nothing on it lea
   assert.ok(!/'mine-session'/.test(APP_VIEW_SRC), 'and so is its shot');
 });
 
-test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
+test('the facts-line seat and its inline-actions path are gone, and so is the band seat Open card took', () => {
   // `statusLead` put a caller's control at the right end of the facts line
   // and moved the card's own pills up beside it. Nothing passed one once the
   // Workshop's open card took the band seat, and with the facts as a row of
-  // their own there is no line for it to end. One seat, one drawing.
+  // their own there is no line for it to end. The band seat (`actionEnd`)
+  // went with the open card that filled it.
   assert.ok(!CARD_TSX.includes('statusLead'));
   assert.ok(!CARD_TSX.includes('inlineActions'));
   assert.ok(!CARD_TSX.includes('dev-card-status-end'));
-  assert.match(FOLD, /export type DetailPlacement = 'actions' \| false;/);
+  assert.ok(!/actionEnd|headEnd/.test(CARD_TSX));
+  assert.ok(!/DetailPlacement/.test(FOLD));
 });
 
 test('the status row and the facts row are two elements, not one band with a break in it', () => {
@@ -2009,8 +1859,8 @@ test('one hover for both sizes, and a facts line that is not clipped', () => {
   // so two sizes of one object hovered to two different greys. Hard-coding
   // the colour in app.css could not have fixed it: `zinc` is overridden in
   // tailwind.config.js, so a hex from the stock palette would be a THIRD
-  // grey. The row wears the card's own utilities instead.
-  assert.match(FOLD, /className=\{`dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800/);
+  // grey. The row wore the card's own utilities instead, and went with the
+  // fold; app.css keeps no hover fill of its own for it.
   assert.ok(!/\.dev-ws-row:hover \{[^}]*background:/.test(CSS), 'app.css no longer sets the fill');
   assert.ok(!/\.dev-ws-row:hover \{/.test(CSS), 'and no hover rule of its own at all: the fill utility is the whole hover, as it is on the card');
 
@@ -2098,11 +1948,8 @@ test('the footnote says what is actually happening to the grouping', () => {
   // The name is preceded by the theme's glyph now (#1787); the pin is still
   // on the COPY, which is what these four states are about.
   assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
-  // The row's marker: the pseudo-theme is folded on a plain paint, so the
-  // marker is pinned at the source, on the folded row.
-  assert.match(FOLD, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>\{t\('project:card\.fold\.placing'\)\}<\/span> : null\}/);
-  assert.equal(message('project:card.fold.placing'), 'placing…');
-  assert.match(CSS, /\.dev-ws-placing \{/);
+  // The row's "placing…" marker was the folded row's, and went with it.
+  assert.ok(!/\.dev-ws-placing \{/.test(CSS));
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
@@ -2233,104 +2080,13 @@ function AppView_pollTotal() {
   return m[1].split(',').map((x) => parseInt(x.trim(), 10)).reduce((a, b) => a + b, 0);
 }
 
-test('an unfolded row is the Activity entry: the sheet, the card, the slot, the thread', () => {
-  // The component unfolds from state, so pin the markup at the source: the
-  // entry wrapper and its three children, in the order the feed drew them.
-  const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/, 'the same card builder');
-  // Minus the rail chevron: inside a fold a click on the card folds it, so the
-  // Board's "this opens" mark would promise a destination the card no longer
-  // has. Everything else on the model is the Board's, untouched.
-  assert.match(unfolded, /const card: DevCardModel = \{ \.\.\.row\.card, rail: \{ \.\.\.row\.card\.rail, chevron: false \} \};/);
-  assert.match(unfolded, /className="dev-feed-comments" data-comments-for=\{String\(row\.commentsFor\)\}/,
-    'the GitHub slot, rendered empty for _fillFeedComments');
-  assert.match(unfolded, /<FeedThread slug=\{slug\} type=\{row\.thread\.type\} refId=\{row\.thread\.ref\} canPost=\{canPost\} \/>/,
-    'the app thread with its reply box');
-  assert.ok(unfolded.indexOf('<DevCard') < unfolded.indexOf('dev-feed-comments')
-    && unfolded.indexOf('dev-feed-comments') < unfolded.indexOf('<FeedThread'), 'in the feed\'s order');
-  // And the module's fillers are re-run when the set of unfolded rows changes.
-  assert.match(WORKSHOP, /callAppView\('_wireFeedComments', host\)/);
-  assert.match(WORKSHOP, /callAppView\('_fillKudosHosts', host\)/);
-});
-
-test('the open sheet is a DIRECT child of the wrapper, the way the check selects it', () => {
-  // The declared check reads
-  //
-  //   #dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry
-  //     > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread ...
-  //
-  // and the two `>` in it are the whole point of this test. Hanging the
-  // close-on-click handler on a plain <div> wrapped around the sheet is a
-  // one-line change that renders identically, reviews as harmless and breaks
-  // that selector — it did, on the first submission of #1787's third round.
-  // The source-text test above cannot see it, because the extra element is in
-  // CardRowView and not in UnfoldedRow. So resolve the spine against the real
-  // markup instead: nothing may sit between the wrapper, the sheet and the
-  // card.
-  // #4486: the checks read it on the board with its cards open, which is
-  // where a card is drawn unfolded now (By category unfolds nothing).
-  const AppView = makeAppView();
-  seed(AppView);
-  AppView._getWorkshopGroup = () => 'stage';
-  AppView._cardsOpen = () => true;
-  AppView._workshopShot = 'feed-comments';
-
-  const els = tokenize(workshopHtml(AppView, 'all')).filter((t) => t.kind === 'open');
-  const classOf = (t) => {
-    const a = (t.attrs || []).find((x) => x.name.toLowerCase() === 'class');
-    return a ? String(a.value).split(/\s+/) : [];
-  };
-  const attr = (t, n) => (t.attrs || []).some((x) => x.name.toLowerCase() === n);
-
-  const i = els.findIndex((t) => classOf(t).includes('dev-ws-rowwrap-open'));
-  assert.ok(i >= 0, 'the capture deep link opens a row');
-
-  const sheet = els[i + 1];
-  assert.ok(classOf(sheet).includes('dev-feed-entry'),
-    'the sheet is the wrapper\'s first child, with no element between them');
-
-  const card = els[i + 2];
-  assert.ok(classOf(card).includes('dev-card-dense'),
-    'and the Board\'s dense card is the sheet\'s first child');
-  assert.ok(attr(card, 'data-edge'), 'still carrying its state edge');
-
-  // The fold is the other half: while a row is open its compressed form is
-  // not drawn at all, so nothing can match `.dev-ws-rowwrap-open .dev-ws-row`.
-  const inside = els.slice(i + 1).findIndex((t) => classOf(t).includes('dev-ws-rowwrap'));
-  const end = inside === -1 ? els.length : i + 1 + inside;
-  assert.ok(!els.slice(i, end).some((t) => classOf(t).includes('dev-ws-row')),
-    'the compressed row is gone while the card is up');
-});
-
-test('the Workshop\'s inline comments clamp a long one at four lines (#2556)', () => {
-  const AppView = makeAppView();
-  const long = AppView._feedCommentsHtml([
-    { author: 'alice', body: 'short one', createdAt: at(1) },
-    { author: 'bob', body: 'word '.repeat(400), createdAt: at(1) },
-  ]);
-  // The clamp wraps the author AND the body, because the body renders inline
-  // after the name on this surface — see the rule in app.css.
-  assert.equal((long.match(/class="dev-feed-comment-clamp"/g) || []).length, 2,
-    'every comment in the tail is clamped, long or short');
-  assert.match(long, /<span class="dev-feed-comment-clamp">\s*<span class="dev-feed-comment-author">alice/);
-  // The control ships hidden: only `_clampFeedComments` has a laid-out box,
-  // and a comment that fits in four lines never gets one at all.
-  assert.equal((long.match(/class="dev-feed-comment-toggle [^"]+" aria-expanded="false" hidden>Show more<\/button>/g) || []).length, 2);
-  // The age still lands outside the clamp, where the #1585 check looks.
-  assert.match(long, /<\/span>\s*<span class="dev-feed-comment-time"/);
-});
-
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
   const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => /^\s*(\.dark\s+)?#dev-feed\b/.test(l));
   assert.deepEqual(rules, [], 'no rule is scoped to the retired #dev-feed');
-  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
-  // #1884: the thread and the comment tail are scoped to BOTH card hosts now,
-  // so the same card opened on the Board reads the same as on the Workshop.
-  // `:is()` takes its specificity from its most specific argument, so the rule
-  // still weighs what it did when the id stood alone.
+  // The entry sheet and the comment tail went with the unfolded card; the
+  // reply thread's rules stay, for the Needs-you review that draws it.
+  assert.ok(!/\.dev-feed-entry \{/.test(CSS) && !/\.dev-feed-comments/.test(CSS));
   assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-thread \{/);
-  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-comments:empty \{ display: none; \}/);
   // The bottom is `--ws-gap` now, not 12px: it is the same air the sticky rail
   // rests on, so the gap under the bar is identical whether the lander fills
   // the scroller (rail at its bottom edge, padding decides) or overflows it
@@ -2338,7 +2094,6 @@ test('the sheet CSS moved host with the entry, and the Workshop has its own', ()
   // depending on the tab. The sides are unchanged.
   assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding-block: 8px var\(--ws-gap, 8px\); padding-inline: 4px; \}/);
   assert.match(CSS, /\.dev-ws-theme-head \{/);
-  assert.match(CSS, /\.dev-ws-row \{/);
 });
 
 // ── modes, routes, the strip, the checks ─────────────────────────────

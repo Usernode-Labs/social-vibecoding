@@ -10,7 +10,7 @@
 //     status bar and Vote across the row, and ☰ carrying the card's own menu
 //     key; Done leads its tags with the short "✓ Live" bar instead;
 //   * the row keeps the item's hooks, and opens the item's page;
-//   * `?cards=open` still draws every card unfolded;
+//   * `?cards=open`, which drew every card unfolded, is gone;
 //   * a private session on a request folds into that request's row, and one
 //     on no request is its own row at the top of Underway, tagged "Only you";
 //   * the column heads are one stage strip: steps with icon, count and arrow,
@@ -195,24 +195,26 @@ test('the row’s parts: its source', () => {
   assert.match(ROW, /\{menuKey \? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey=\{menuKey\} \/><\/span> : null\}/);
   // The delegated card-open handler stands aside for a click in a row: the
   // row's own link opens the page, beside the board on a wide window.
-  assert.match(APP_VIEW_SRC, /n\.classList\.contains\('dev-ws-rowwrap'\) \|\| n\.classList\.contains\('dev-ws-wrow'\)/);
+  assert.match(APP_VIEW_SRC, /n\.classList && n\.classList\.contains\('dev-ws-wrow'\)/);
   const AppView = makeAppView();
   const row = { classList: { contains: (c) => c === 'dev-ws-wrow' } };
   const leaf = { closest: () => null };
   assert.equal(AppView._inFoldWrapper({ target: leaf, composedPath: () => [leaf, row] }), true);
 });
 
-test('?cards=open still draws every card unfolded, the board as it was', () => {
+test('?cards=open is gone: the board draws its rows whatever the address says', () => {
+  // It drew every card unfolded, the board as it was before #1787, for the
+  // declared checks that read a card's inner parts; nobody using the app
+  // could reach it, and those checks read the rows now.
   const AppView = makeAppView({ search: '?cards=open&demo=1' });
   const view = AppView._kanbanView();
-  assert.equal(view.unfolded, true);
+  assert.ok(!('unfolded' in view));
   const cards = view.cols.reduce((n, c) => n + c.rows.filter((r) => r.t === 'card').length, 0);
   const html = kanbanHtml(AppView);
-  assert.equal(count(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"/g), cards, 'every card open');
-  assert.equal(count(html, /class="gc-vote-item [^"]*dev-card-dense"/g), cards);
-  assert.ok(!html.includes('dev-ws-brow'), 'and no row drawn beside them');
-  assert.match(html, /<div id="dev-kanban" data-kanban-active="issues" data-cards-open="">/);
-  assert.match(KANBAN, /\} else if \(unfolded\) \{\s*cards = \(\s*<div className="space-y-2">/);
+  assert.equal(count(html, /class="dev-ws-wrow dev-ws-brow"/g), cards, 'one row per card');
+  assert.ok(!html.includes('gc-vote-item'), 'and no card face');
+  assert.match(html, /<div id="dev-kanban" data-kanban-active="issues">/);
+  assert.ok(!/unfolded|cards=open/.test(KANBAN), 'the column has no unfolded branch');
 });
 
 test('a private session on a request folds into that request’s row; one on no request leads Underway, tagged Only you', () => {

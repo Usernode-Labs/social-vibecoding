@@ -1,62 +1,14 @@
 import * as React from 'react';
-import { cva, type VariantProps } from 'class-variance-authority';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 import { useMessages } from '../../../src/lib/i18n/react';
 
 /**
- * The conversation widgets: the day separator, the bubble, the named message
- * row, a thread's reply summary, and what marks the unread: the "New" line,
- * the banner that counts them and the jump to the latest.
- *
- * ── Two message shapes, because the deck has two conversations ────────
- *
- * A chat between two ("Your new idea") is a BUBBLE transcript: your turns are
- * accent-filled and right-aligned, the other side's are neutral and
- * left-aligned, with no names because there are only two participants and
- * one of them is you. The group chat ("Recipe App · 2 members") is a NAMED ROW transcript:
- * square avatar, bold name, time, flat text, no bubble — because with n
- * participants the name is the disambiguator and bubbles would waste the
- * width the text needs.
- *
- * Both live here rather than in one over-parameterised component: they share
- * the screen and the vocabulary, but not a single class.
+ * The conversation widgets: the named message row, a thread's reply
+ * summary, and what marks the unread: the "New" line, the banner that
+ * counts them and the jump to the latest.
  */
-
-export function DaySeparator({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn('py-3 text-center text-[0.9375rem] text-zinc-500 dark:text-zinc-500', className)}
-      {...props}
-    />
-  );
-}
-
-const bubble = cva('max-w-[78%] rounded-[1.25rem] px-4 py-2.5 text-[1.0625rem] leading-snug', {
-  variants: {
-    from: {
-      // `me` is the accent; `them` is a neutral surface that still reads as a
-      // bubble on the grey page ground, which is why it is white and not
-      // zinc-100 (that IS the ground — the bubble would disappear).
-      me: 'bg-violet-600 text-white',
-      them: 'bg-white text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
-    },
-  },
-  defaultVariants: { from: 'them' },
-});
-
-export interface MessageBubbleProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof bubble> {}
-
-export function MessageBubble({ className, from, ...props }: MessageBubbleProps) {
-  return (
-    <div className={cn('flex px-4 py-1', from === 'me' ? 'justify-end' : 'justify-start')}>
-      <div className={cn(bubble({ from }), className)} {...props} />
-    </div>
-  );
-}
 
 /**
  * One message in a named transcript. `children` is the body, so a caller can

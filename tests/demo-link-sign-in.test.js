@@ -46,10 +46,10 @@ function harness({ search = '', withApp = true } = {}) {
 }
 
 test('a fragment target keeps the demo link\'s whole query', () => {
-  const auth = harness({ search: '?demo=1&cards=open' });
-  assert.equal(auth.deepLinkUrl('#app/x/board'), '/?demo=1&cards=open#app/x/board');
-  assert.equal(auth.deepLinkUrl(''), '/?demo=1&cards=open', 'the demo Home keeps it too');
-  assert.equal(auth.deepLinkUrl('#login'), '/?demo=1&cards=open#login', 'and so does the password reset\'s Sign in');
+  const auth = harness({ search: '?demo=1&col=done' });
+  assert.equal(auth.deepLinkUrl('#app/x/board'), '/?demo=1&col=done#app/x/board');
+  assert.equal(auth.deepLinkUrl(''), '/?demo=1&col=done', 'the demo Home keeps it too');
+  assert.equal(auth.deepLinkUrl('#login'), '/?demo=1&col=done#login', 'and so does the password reset\'s Sign in');
 });
 
 test('a link without a query lands as it did', () => {

@@ -55,7 +55,7 @@ import * as React from 'react';
  * public/brand/README.md records that, and why the illustration beside it
  * ships as a file while this ships as source.
  *
- * They are named literals for the same reason FoldMarkIcon's are:
+ * They are named literals for the same reason the eye icon's are:
  * tests/shell-icon-set.test.js reads a module's path data as its quoted
  * literals, and that test is what proves no path in the shipped document
  * drifted by a character. This file is the SECOND and last home it reads;

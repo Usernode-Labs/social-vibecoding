@@ -209,12 +209,14 @@ test('a live card wears the green pill and the green edge; one going live stays 
   assert.match(going, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="neutral"/);
   assert.match(going, /gc-vote-count-neutral[^"]*"[^>]*><span class="gc-vote-count-label">Going live…<\/span>/);
 
+  // The declared check reads the board's Done row, where people see it: the
+  // full card that drew this pill on the board (`?cards=open`) is gone.
   const DAPP = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const check = DAPP.tests.find((t) => /#3873/.test(t.name || ''));
-  assert.ok(check, 'a declared check pins the green Live card');
+  assert.ok(check, 'a declared check pins the green Live row');
   assert.match(check.path, /[?&]demo=1[&#][\s\S]*col=done/);
   assert.ok(check.expectSelector.includes(
-    ':has([data-proposal-row="9100027"][data-edge="ok"] .gc-vote-count-ok)'));
+    ':has([data-proposal-row="9100027"][data-ws-for="900006"] .dev-ws-wrow-status > .dev-ws-row-state-ok.dev-ws-wrow-live)'));
 });
 
 test('the Done summary reports a child app’s latest delivery outcome', () => {
@@ -987,17 +989,16 @@ test('the declared checks still describe the row the tags are actually on', () =
   const fs2 = require('node:fs');
   const path2 = require('node:path');
   const dapp = JSON.parse(fs2.readFileSync(path2.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  // The blocked-proposal pair read the full board card (`?cards=open`), which
+  // is gone; it is one check on the board's row now: the row keeps its vote
+  // band, and says why in a tag.
   const mine = dapp.tests.filter((t) => /9000050/.test(t.expectSelector || ''));
-  assert.equal(mine.length, 2, 'the blocked-proposal pair');
-  const bar = mine.find((t) => /dev-status-pill-block/.test(t.expectSelector));
-  const tags = mine.find((t) => /data-status-tag/.test(t.expectSelector));
-  assert.ok(bar && tags);
-  assert.match(bar.expectSelector, /\.dev-card-status > \.dev-status-pill-block/,
-    'the bar check reads the status row');
-  assert.match(tags.expectSelector, /\.dev-card-meta > \[data-status-tag="[a-z_-]+"\]/,
-    'the tags check reads the META line, and names the tag it wants');
-  assert.ok(!/dev-card-facts/.test(tags.expectSelector),
-    'and not the facts row they used to be on');
+  assert.equal(mine.length, 1, 'one check on the blocked proposal\'s row');
+  assert.match(mine[0].expectSelector, /\[data-proposal-row="9000050"\]:has\(\.dev-ws-row-band > \.dev-ws-row-state/,
+    'the row keeps its vote band');
+  assert.match(mine[0].expectSelector, /\.dev-ws-wrow-status > \.dev-ws-tag\[data-tone="bad"\]/,
+    'and says why in a tag');
+  assert.equal(mine[0].expectText, 'Checks failing');
   // NAMED, not positional. `.dev-card-meta > .dev-badge` matched — but its
   // first hit on the detail head is an unset attr placeholder ("Set
   // priority"), which renders before the status tags there and would have

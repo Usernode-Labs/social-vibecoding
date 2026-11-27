@@ -27,14 +27,9 @@
  * and the fold between them are ../card/fold.tsx's, shared with the Board's
  * columns, which fold their cards the same way now.
  *
- * Two slots inside an unfolded row stay legacy-FILLED, rendered here once,
- * empty, with constant classNames — the same seam the feed had:
- *
- * - `.dev-feed-comments[data-comments-for]` — `AppView._wireFeedComments`
- *   fills each when its entry scrolls into view. Rows unfold AFTER the
- *   publish, so the component re-wires the host from an effect (a call by
- *   name, like the footer buttons make).
- * - `[data-kudos-host]` inside merged cards — `_fillKudosHosts` + Kudos.
+ * One slot stays legacy-FILLED, rendered once, empty, with a constant
+ * className: `[data-kudos-host]` inside merged cards — `_fillKudosHosts` +
+ * Kudos, re-run from an effect (a call by name, like the footer buttons make).
  *
  * Both sizes carry the item's `data-issue-row` / `data-proposal-row` hooks,
  * and the delegated `#dev-body` handler stands aside for clicks inside a
@@ -78,7 +73,6 @@ import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { callAppView } from '../card/fold';
-import { FeedThread } from '../card/feed-thread';
 import type { DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { useWorkshopGroup } from './group-mode-store';
@@ -1851,19 +1845,16 @@ export function DevWorkshop(): ReactNode {
     if (key) setOpenRows((cur) => ({ ...cur, [theme]: key }));
   }, [autoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The two legacy fillers, re-run whenever the set of unfolded entries
-  // changes — see the header. `_wireFeedComments` replaces its observer, so
-  // calling it again is idempotent; `_fillKudosHosts` skips filled hosts.
-  // A layout effect, so a merged card's kudos pill is in its band on the
-  // card's first frame rather than popping in after it (dev-kanban.tsx has
-  // the same note).
+  // The legacy filler, re-run whenever the set of open entries changes —
+  // see the header. `_fillKudosHosts` skips filled hosts. A layout effect,
+  // so a merged card's kudos pill is in its band on the card's first frame
+  // rather than popping in after it.
   // A week's presses are part of it (#3524): each one mounts rows the
   // fillers have not seen, so the count, not only which weeks, goes in.
   const openSig = Object.values(openRows).join('|');
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    callAppView('_wireFeedComments', host);
     callAppView('_fillKudosHosts', host);
   }, [openSig, v]);
 

@@ -140,7 +140,7 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   const KIT = 'un-touch-target';
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-link ${KIT}"`), 'How voting works');
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-btn ${KIT}"`), 'the ? beside it');
-  has('frontend/src/features/dev-board/card/fold.tsx', new RegExp(`className="dev-fold-mark ${KIT}" data-open="1"`), 'Fold the card');
+  // "Fold the card" (the open card's fold mark) went with the unfolded board card.
   // "Show past week" went with the walk: the weeks head the since list now,
   // and Show an earlier week below them steps back a week (#3524 renamed it
   // from "Show older").

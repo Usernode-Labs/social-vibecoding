@@ -18,9 +18,6 @@
  *   `Kudos.renderButton`'s markup into it after every publish and
  *   `Kudos.attach`/`_refreshButton`/`_renderPopover` keep writing inside.
  *   React never looks in — the controller-host seam AGENTS.md documents.
- * - **The feed's inline-comments slot.** `.dev-feed-comments` ships empty
- *   and `AppView._fillFeedComments` innerHTMLs it when the row scrolls
- *   into view.
  * - **The ⋯ trigger's `aria-expanded`.** `_openCardMenu` sets and removes
  *   it at open/close. React renders the attribute never, so a reconcile
  *   cannot stomp it.
@@ -1612,16 +1609,14 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
 }
 
 /**
- * The action band: every pill the card has, then the caller's `actionEnd`
- * control, then Preview, then the hamburger closing the band. The band's
+ * The action band: every pill the card has, then Preview, then the
+ * hamburger closing the band. The band's
  * measurement (useFoldedActions) shows as many pills as fit its one line
  * and folds the rest, from the end, into the menu behind the hamburger;
  * the controls after the pills are fixed children it folds around, and so
  * is `lead` — the change page's Vote button, which opens the band.
  *
- * The old cap of three text pills is gone: the line is the cap now. That
- * is the seat both surfaces use for "Open card" (card/fold.tsx), so an
- * open card on the Board and on the Workshop is one drawing — and the
+ * The old cap of three text pills is gone: the line is the cap now. The
  * change page's hero (topic/topic-head.tsx) is the same band again, under
  * a Needs-you title instead of a card's.
  *
@@ -1629,13 +1624,12 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
  * pills moved up beside it, existed for a round and had no caller left;
  * the band is the one seat now.)
  */
-export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }: {
+export function ActionBand({ actions, menuKey, preview, lead, dense }: {
   actions: ActionSpec[];
   menuKey: string;
   preview: PreviewSpec | null;
   /** A fixed control before the pills; it never folds. */
   lead?: ReactNode;
-  actionEnd?: ReactNode;
   /** The dense (board) band holds its row open even with nothing in it. */
   dense: boolean;
 }): ReactNode {
@@ -1643,7 +1637,7 @@ export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
   const bandPrimary = actions;
   const menuTrigger = menuKey ? <MenuTrigger menuKey={menuKey} /> : null;
-  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
+  const hasActions = bandPrimary.length > 0 || !!menuTrigger || !!bandPreview;
   const folded = useFoldedActions(bandPrimary, menuKey || '', !!bandPreview);
   if (!hasActions && !lead) return dense ? <div className="gc-card-actions"></div> : null;
   // `folded.n` counts the pills that can fold (useFoldedActions' foldSpecs:
@@ -1664,7 +1658,6 @@ export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }
             hidden={folds && foldIndex >= foldable - folded.n} />
         );
       })}
-      {actionEnd}
       {bandPreview}
       {menuTrigger}
     </div>
@@ -1672,14 +1665,7 @@ export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }
 }
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
-export function DevCard(
-  { model: m, actionEnd, headEnd }: {
-    model: DevCardModel;
-    actionEnd?: ReactNode;
-    /** The fold's mark at the head's end (card/fold.tsx FoldMark); the card draws none of its own. */
-    headEnd?: ReactNode;
-  },
-): ReactNode {
+export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
     // `tabindex` must reach React by its DOM-property name or React warns —
@@ -1769,7 +1755,6 @@ export function DevCard(
       actions={bandActions}
       menuKey={m.rail.menuKey || ''}
       preview={m.actionPreview || m.rail.preview || null}
-      actionEnd={actionEnd}
       dense={dense}
     />
   );
@@ -1798,7 +1783,6 @@ export function DevCard(
               <TitleContent t={m.title} />
             </div>
           </div>
-          {headEnd}
         </div>
         {metaRow}
         {statusRow}

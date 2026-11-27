@@ -85,8 +85,7 @@ const AppView = {
   // (`request_comments`, routes/chat.js), so the page paints the whole
   // discussion once instead of fetching the comments after paint. This is
   // that answer's one writer; `GroupChat` calls it before the render that
-  // merges the comments into the thread (`_requestThreadRows`). The feed's
-  // own lazy preview (`_wireFeedComments`) still fills the same cache.
+  // merges the comments into the thread (`_requestThreadRows`).
   _takeIssueComments(slug, ref, payload) {
     if (!slug || ref == null || !payload) return;
     AppView._ghComments.set(AppView._ghCommentsKey(slug, Number(ref)), {
@@ -628,46 +627,25 @@ const AppView = {
     return stamp(b) - stamp(a) || Number(b.item?.id || 0) - Number(a.item?.id || 0)
       || String(a.kind).localeCompare(String(b.kind));
   },
-  // Was this click (or key) inside a fold wrapper — a Workshop row, a Board
-  // row, or the open card either folds to (card/fold.tsx)? The fold owns
-  // those; the delegated handlers above stand aside for them.
+  // Was this click (or key) inside a Workshop or Board row? #4486: All
+  // items' columns draw the Workshop's row (workshop/work-row.tsx), which
+  // carries the item's hooks and opens the item's page through its own
+  // link, beside the board on a wide window. A click inside one that lands
+  // off the link (the status bar, the 💬 count) is the row's too, so the
+  // delegated handlers above stand aside for `.dev-ws-wrow`. (The name is
+  // from the fold, the row that unfolded in place, which is gone.)
   //
-  // Read off `composedPath()`, NOT `e.target.closest()`, and the difference
-  // is the whole bug this replaced. The fold's React listener sits on the
-  // portal host inside #dev-body, so it runs BEFORE the handler here, and
-  // React flushes the state update it makes in a microtask. On a real
-  // click the browser runs microtasks between listeners, so by the time
-  // the event reaches #dev-body the row that was clicked has already been
-  // replaced by the card (or the card by the row): `e.target` is a detached
-  // node, `closest()` from it finds no wrapper, the guard missed, and the
-  // row's own data-issue-row hook opened the item full-screen. The composed
-  // path is captured when dispatch begins and still holds the ancestors the
-  // target had. A scripted `el.click()` runs no microtask mid-dispatch, so
-  // the target is still attached and the old check passed — which is why
-  // the ?shot=board-open capture's predecessor could not catch this.
-  //
-  // #4486: AND THE BOARD'S ROWS. All items' columns and By category's lanes
-  // draw the Workshop's row (workshop/work-row.tsx), which carries the item's
-  // hooks like the folded card it replaced and opens the item's page through
-  // its own link, beside the board on a wide window. A click inside one that
-  // lands off the link (the status bar, the 💬 count) is the row's too, so
-  // the handler stands aside for `.dev-ws-wrow` as it does for a fold.
+  // Read off `composedPath()`, NOT `e.target.closest()`: a React listener on
+  // the portal host inside #dev-body runs BEFORE the handler here, and a
+  // repaint it causes can detach `e.target` by the time the event arrives,
+  // so `closest()` from it would find no row. The composed path is captured
+  // when dispatch begins and still holds the ancestors the target had.
   _inFoldWrapper(e) {
-    const own = (n) => !!(n && n.classList
-      && (n.classList.contains('dev-ws-rowwrap') || n.classList.contains('dev-ws-wrow')));
+    const own = (n) => !!(n && n.classList && n.classList.contains('dev-ws-wrow'));
     const path = e && typeof e.composedPath === 'function' ? e.composedPath() : null;
     if (path && path.length) return path.some(own);
     const t = e && e.target;
-    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-rowwrap, .dev-ws-wrow'));
-  },
-  // `?cards=open` — every board card drawn unfolded: the board as it was
-  // before its columns folded their cards to rows (#1787), and the state the
-  // declared checks that read a card's inner anatomy run in. Read on every
-  // view build like ?col=, never stored: it describes this page load.
-  _cardsOpen() {
-    try {
-      return new URLSearchParams(window.location.search).get('cards') === 'open';
-    } catch { return false; }
+    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-wrow'));
   },
   // Active tab as used by the render — never trusts the field blindly, so a
   // bad assignment can't produce a board with every column hidden.
@@ -1241,36 +1219,11 @@ const AppView = {
           (scope || head)?.querySelector(want)?.click();
         }, 300);
       }
-      // #1585's check asserts that a feed issue row previews its recent
-      // comments, and it had no route that could show one.
-      //
-      // The rows are real and so are the comments. What is not reachable
-      // from a plain URL is the STATE: the comment slots fill from an
-      // IntersectionObserver (see _wireFeedComments — thirty issues must not
-      // fire thirty requests on paint), and the feed is a chronological merge
-      // of issues, proposals, governance rows, shared sessions, the
-      // discussion and merged work. On a busy app the first ISSUE row sits
-      // well below the fold, so nothing scrolls to it, so nothing fills it,
-      // and the check read a screen on which its own claim was simply not
-      // being made. It passed or failed on how busy the app had been that
-      // hour, which is not a test.
-      //
-      // So this link goes to the first slot and fills it. Directly, not by
-      // scrolling and hoping the observer fires: the observer is an
-      // OPTIMISATION and racing it is what made the check flaky in the first
-      // place. `_fillFeedComments` is the same function the observer calls,
-      // through the same cache and the same endpoint, so this exercises the
-      // product's path rather than a second one written for a test.
-      //
-      // It scrolls too, because a before/after capture has to SHOW the row.
-      // Pure UI state: one GET the observer would have made anyway, no
-      // writes, not env-gated — so the "before" side of a capture works.
       // Every theme starts shut, so a THEME's contents — the stage lanes and
       // the folded rows in them — are now only reachable by tapping one. This
       // is the URL that reaches them: it opens the first theme and stops
       // there, leaving every row folded, which is what the declared check for
-      // the lanes selects. `feed-comments` below opens a theme AND unfolds a
-      // row inside it, so it cannot stand in for this one.
+      // the lanes selects.
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
       }
@@ -1379,38 +1332,6 @@ const AppView = {
           if (document.querySelector('.dev-ws-side[data-ws-side]')) { done(); return; }
           const row = document.querySelector('#dev-kanban .dev-ws-wrow-link');
           if (row) row.click();
-        }, 300);
-      }
-      if (shot === 'feed-comments') {
-        // The slot only exists inside an unfolded card. #4486: By category's
-        // rows open the item's page and no longer unfold, so the checks ride
-        // this link on the board with its cards open (`group=stage&cards=open`),
-        // where every card is drawn unfolded; this fills the first slot and
-        // brings it on screen. (The view model's autoExpand still opens the
-        // theme that row is in, for a By category route.)
-        AppView._workshopShot = 'feed-comments';
-        let tries = 0;
-        const done = () => {
-          clearInterval(tick);
-          document.removeEventListener('pointerdown', onUserInput, true);
-          document.removeEventListener('keydown', onUserInput, true);
-        };
-        // A human who opens this link must not be scrolled around after
-        // their first real gesture. Same guard the ⋯ menu link uses.
-        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
-        document.addEventListener('pointerdown', onUserInput, true);
-        document.addEventListener('keydown', onUserInput, true);
-        const tick = setInterval(() => {
-          // Give up on a route change, and cap the window so a link left
-          // open in a real tab cannot keep polling.
-          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          const slot = document.querySelector('#dev-workshop .dev-feed-comments[data-comments-for]');
-          if (!slot) return; // the workshop's fetches have not landed yet
-          // Arrived: the slot has rendered a comment. Stop, but leave the
-          // page where it is.
-          if (slot.querySelector('.dev-feed-comment-time')) { done(); return; }
-          slot.scrollIntoView({ block: 'center' });
-          AppView._fillFeedComments(slot);
         }, 300);
       }
       // #3620: `?shot=tab-back` walks the reported flow, which a declared check
@@ -5154,17 +5075,15 @@ const AppView = {
       // in place — and every repaint collapsed the list again. Open/closed
       // is component state now (card/list-rows.tsx) and survives repaints,
       // so both the branch and that helper are gone.
-      // A card inside a fold wrapper — the Workshop's rows, and the Board's
-      // columns since they fold too (card/fold.tsx) — is the fold's: its own
-      // handler opens and closes it, and the open card's "Open page ›" pill
-      // (#1886) is the route out. Both sizes keep their data-*-row hooks so the checks and the
-      // lookups below still find the item; this is what stops a click on
-      // them opening it full-screen. See _inFoldWrapper for why it reads the
-      // event's path rather than the target's ancestors.
+      // A Workshop or Board row opens its item's page through its own link.
+      // The row keeps its data-*-row hook so the checks and the lookups below
+      // still find the item; this is what stops a click elsewhere on it
+      // opening the item full-screen as well. See _inFoldWrapper for why it
+      // reads the event's path rather than the target's ancestors.
       //
       // It sits ABOVE the control guard rather than below it so the
       // discussion branch can sit between the two. Both arms only `return`,
-      // so which one a click on a link inside a fold takes is not
+      // so which one a click on a link inside a row takes is not
       // observable; `_inFoldWrapper` is a pure read of the event path.
       if (AppView._inFoldWrapper(e)) return;
       // The general discussion's row. It is not a topic — the chat is a
@@ -5212,7 +5131,7 @@ const AppView = {
     // Space activate, mirroring the old strip's per-row keydown wiring.
     bodyEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      // The folded row handles its own Enter and Space (it is the toggle).
+      // A Workshop or Board row handles its own keys (its link).
       if (AppView._inFoldWrapper(ev)) return;
       const el = ev.target.closest
         && ev.target.closest('[data-session-chip], [data-shared-session-row]');
@@ -13404,52 +13323,6 @@ const AppView = {
     gov: 'gov',
   },
 
-  // A feed row's own discussion thread, addressed exactly as _renderTopicThread
-  // addresses it — same namespaces, same ids, so a reply typed in the feed and
-  // the thread under the opened topic are one conversation.
-  //
-  // `merged` and `discussion` get none. A merged row is a completed thing
-  // whose conversation lives on the proposal it came from, and the discussion
-  // row IS the app's general chat — a reply box under a row that opens a chat
-  // would be a second way to post into the same stream, two lines apart.
-  _feedThreadRef(it) {
-    const item = it && it.item;
-    if (!item) return null;
-    if (it.kind === 'issue') {
-      return item.number != null ? { type: 'issue', ref: item.number } : null;
-    }
-    if (it.kind === 'proposal' || it.kind === 'shared-session') {
-      return item.id != null ? { type: 'session', ref: item.id } : null;
-    }
-    if (it.kind === 'gov') {
-      return item.id != null ? { type: 'governance', ref: item.id } : null;
-    }
-    return null;
-  },
-
-  // Hang the item's conversation on a card row: the app's own thread (the
-  // reply box) and, for an issue, its recent GitHub comments.
-  //
-  // #1884: the Workshop's rows carried both and the Board's carried
-  // neither, so the SAME card read as two different objects depending on
-  // which view you opened it from — the Board's had no reply box and no
-  // comment preview under it. Every surface that builds a card row calls
-  // this now, which is what stops the two drifting apart again; the fold
-  // renders whatever the row carries (card/fold.tsx UnfoldedRow).
-  //
-  // `my-session` is addressed as `shared-session`, the way _workshopRows
-  // has always addressed it: the thread is per session id, and whether the
-  // session is shared yet does not change which conversation it is.
-  _attachRowConversation(row, kind, item) {
-    if (!row || !item) return row;
-    const th = AppView._feedThreadRef({
-      kind: kind === 'my-session' ? 'shared-session' : kind, item,
-    });
-    if (th) row.thread = th;
-    if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
-    return row;
-  },
-
   // #4457: what the Workshop's rows say about an item, in words — the row
   // is the title, one line in the board's words ("PR #4456 · evan · for
   // #4455 · 4m ago", #4486), then small tags for what is happening on it
@@ -14583,7 +14456,7 @@ const AppView = {
   // started a chain of its own, and a busy board could be polling the
   // endpoint (which rebuilds the server's input) several times per interval.
   _workshopPollTimer: null,
-  // 'feed-comments' while that capture deep link is active — see the ?shot=
+  // 'themes' while that capture deep link is active — see the ?shot=
   // block in _applyShotDeepLink.
   _workshopShot: null,
 
@@ -15274,9 +15147,9 @@ const AppView = {
     const add = (kind, item, lane, build) => {
       const card = build();
       if (!card) return;
-      const row = AppView._attachRowConversation({
+      const row = {
         t: 'card', key: card.key, card, brief: AppView._workshopBrief(kind, item, card),
-      }, kind, item);
+      };
       const created = createdOf(kind, item);
       if (baseline && created > baseline) row.fresh = true;
       const people = [];
@@ -15369,13 +15242,6 @@ const AppView = {
     // and a reference, and NOTHING else. The server looks the item up from
     // that pair (services/workshop-ask.js) rather than trusting anything
     // the client says about it, so this carries an address, never content.
-    //
-    // #1902: it also carries the item's THREAD, exactly as the "mine" lane
-    // does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
-    // opened from the Needs-you deck had no reply box — the one place a
-    // reader most wants to ask a question before voting. `kind` is passed
-    // because the ref is per-kind (session / governance). The feed's
-    // comments sheet reads the same reference.
     const voteRow = (card, item, kind) => {
       if (!card) return null;
       const row = {
@@ -15405,7 +15271,7 @@ const AppView = {
         // and "What it touches" with whether nothing on screen changes.
         ...AppView._workshopPicture(kind, item),
       };
-      return kind ? AppView._attachRowConversation(row, kind, item) : row;
+      return row;
     };
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
@@ -15850,15 +15716,7 @@ const AppView = {
 
     // ── The capture deep link ──
     let autoExpand = null;
-    if (AppView._workshopShot === 'feed-comments') {
-      for (const t of drawn) {
-        for (const l of t.lanes) {
-          const r = l.rows.find((row) => row.commentsFor != null);
-          if (r) { autoExpand = { theme: t.id, key: r.key }; break; }
-        }
-        if (autoExpand) break;
-      }
-    } else if (AppView._workshopShot === 'themes') {
+    if (AppView._workshopShot === 'themes') {
       // The theme only. An empty `key` names no row, so every row in it stays
       // folded — which is the state the lanes check is about.
       const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
@@ -15941,395 +15799,6 @@ const AppView = {
   },
 
 
-  // A comment thread as the FEED shows it: the last few, flat, no card chrome.
-  //
-  // Deliberately not _issueCommentsHtml. That one is the opened-topic view —
-  // every comment, each in its own bordered box, under a "Discussion" heading.
-  // Inline in a stream the point is the opposite: enough to see what people
-  // said without leaving, and no chrome competing with the row above it. So
-  // this shows the LAST few (a thread's tail is the live part), as plain
-  // indented lines, with a count when there is more behind them.
-  FEED_COMMENT_PREVIEW: 2,
-
-  // How many issue slots fill on paint, before the observer takes over.
-  //
-  // The lazy fill below bounds its cost by REQUEST COUNT -- "a feed of thirty
-  // issues must not fire thirty requests on paint" -- but it was implemented
-  // as a bound on VIEWPORT POSITION, which is not the same thing in a stream
-  // that mixes issues with proposals, sessions and merged work. On an app with
-  // live proposal activity the first issue row can sit well below the fold, so
-  // every inline preview stayed empty until the reader scrolled to it one row
-  // at a time, and a preview nobody sees on the screen it belongs to is not
-  // doing its job.
-  //
-  // Counting from the SLOT list rather than from the stream makes this
-  // independent of where the issues land: the first few issue rows fill
-  // whether they are rows 1-3 or rows 12, 15 and 20. Three keeps the paint
-  // cost an order of magnitude under the thirty the comment above is about.
-  FEED_COMMENT_EAGER: 3,
-
-  // #2556: how many lines of one comment the preview shows before the
-  // "Show more" under it. The same four the two React comment surfaces
-  // clamp at (frontend/src/features/dev-board/comment-clamp.tsx); the number
-  // itself lives in public/css/app.css, on `.dev-feed-comment-clamp`.
-  FEED_COMMENT_CLAMP_LINES: 4,
-
-  // The Browse screen's "Show more", transcribed.
-  //
-  // That control is `<Button variant="neutral" ink="neutral" size="xsText">`
-  // (frontend/src/features/apps/browse-list.tsx), and this preview is filled
-  // by innerHTML from this file rather than by React, so the primitive is
-  // not reachable here. The string below is what that call site's cva table
-  // emits, group by group, and tests/dev-comment-clamp.test.js holds the two
-  // to each other so they cannot drift apart silently.
-  //
-  // Every class is a COMPLETE literal: Tailwind's extractor is a regex over
-  // source text and a name assembled from fragments compiles to nothing.
-  FEED_COMMENT_TOGGLE_CLASS:
-    'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'
-    + ' px-3 py-1 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
-
-  _feedCommentsHtml(comments) {
-    const list = Array.isArray(comments) ? comments : [];
-    if (!list.length) return '';
-    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
-      ? (s) => PlatformMarkdown.render(s)
-      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
-    const hidden = list.length - tail.length;
-    const more = hidden > 0
-      ? `<div class="dev-feed-comment-more">${PlatformI18n.htmlText('changes:feed.comment.earlier', { count: hidden })}</div>`
-      : '';
-    const rows = tail.map((c) => {
-      const isBot = AppView._isBotCommentAuthor(c.author);
-      const author = c.author ? escapeHtml(c.author) : PlatformI18n.htmlText('changes:feed.comment.unknownAuthor');
-      const botTag = isBot
-        ? ` <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">${PlatformI18n.htmlText('changes:feed.comment.botTag')}</span>`
-        : '';
-      // #1808: the age, with the unelided instant one hover away.
-      const age = relStamp(c.createdAt);
-      const ageHtml = age.text
-        ? `<span class="dev-feed-comment-time" title="${escapeAttr(age.title)}">${escapeHtml(age.text)}</span>`
-        : '';
-      // #2556: the author and the body share one clamped box, because the
-      // body renders INLINE after the name here — clamping the body alone
-      // would count its lines from the wrong left edge. The control is the
-      // clamp's sibling so it is never inside what it hides, and it ships
-      // `hidden`: only a measurement can say whether this comment is long,
-      // and only `_clampFeedComments` below has a laid-out box to measure.
-      // #3490: Homeroom bot's spec is its sentence and the spec's title
-      // here; the request's own page draws the spec itself.
-      const spec = AppView._botSpecOf(c);
-      const specLine = spec
-        ? `<span class="dev-feed-comment-spec">${spec.title ? PlatformI18n.htmlText('changes:feed.comment.specTitled', { title: spec.title }) : PlatformI18n.htmlText('changes:feed.comment.spec')}</span>`
-        : '';
-      return `<div class="dev-feed-comment">
-          <span class="dev-feed-comment-main">
-            <span class="dev-feed-comment-clamp">
-              <span class="dev-feed-comment-author">${author}</span>${botTag}
-              <span class="dev-feed-comment-body">${renderMd(spec ? spec.lead : (c.body || ''))}${specLine}</span>
-            </span>
-            <button type="button" class="dev-feed-comment-toggle ${AppView.FEED_COMMENT_TOGGLE_CLASS}" aria-expanded="false" hidden>${PlatformI18n.htmlText('changes:feed.comment.showMore')}</button>
-          </span>
-          ${ageHtml}
-        </div>`;
-    }).join('');
-    return `${more}${rows}`;
-  },
-
-  // ── Inline comments, loaded lazily ────────────────────────────────
-  //
-  // A feed of thirty issues must not fire thirty requests on paint, and most
-  // of them are below the fold anyway. So each slot is filled when its row is
-  // actually scrolled to, through one IntersectionObserver over the feed.
-  //
-  // The existing per-issue cache (`_ghComments`) and the existing endpoint do
-  // the work — this is the same data the opened-topic view already fetches, so
-  // opening a row you have scrolled past costs nothing, and a row whose thread
-  // you have already read paints from cache with no request at all.
-  //
-  // The observer is rebuilt on every render because _rerenderWorkshop replaces
-  // the container's innerHTML, which detaches every node it was watching.
-  _feedCommentObserver: null,
-
-  // #2556's companion, rebuilt on the same schedule and for the same reason:
-  // it watches the clamped boxes so "Show more" appears and disappears with
-  // the width, and a repaint detaches every node it was watching.
-  _feedClampObserver: null,
-
-  // The roots asked for since the last wiring pass. One board paint asks many
-  // times over: the Workshop's layout effect, each of the four columns', and
-  // the repaint that published them all call `_wireFeedComments` in the same
-  // task. On the platform's own board with every card open that was 17 calls
-  // in one load (October 2026). They are collected here and wired ONCE, in a
-  // microtask, which still runs before the frame those callers drew is shown.
-  _feedWireRoots: null,
-
-  // What each slot is showing: slot node -> the HTML last written into it. A
-  // slot already showing exactly what a fill would write is left alone,
-  // because writing the same HTML again is not free: the stylesheet has to be
-  // re-applied to everything the write could have touched, and with every
-  // card open that was the whole board each time. The HTML itself is what is
-  // compared, not the cached answer it came from, because a comment's age
-  // ("5m ago") is in it: a slot is written again as soon as what it would say
-  // has changed, and not before. Weak, so a slot a repaint dropped is forgotten.
-  _feedCommentsPainted: null,
-
-  // Comment requests on the wire, by `_ghCommentsKey`. `_ghComments` is only
-  // written when an answer lands, so it cannot say "already asked", and
-  // every wiring pass asks for the first few slots again. Before this, one
-  // load of that board fetched the same three threads six times each.
-  _ghCommentsInFlight: {},
-
-  _wireFeedComments(root) {
-    if (AppView._feedCommentObserver) {
-      AppView._feedCommentObserver.disconnect();
-      AppView._feedCommentObserver = null;
-    }
-    if (AppView._feedClampObserver) {
-      AppView._feedClampObserver.disconnect();
-      AppView._feedClampObserver = null;
-    }
-    // A teardown also forgets what was queued: the pass an earlier call
-    // scheduled must not rebuild the observers this one just dropped.
-    if (!root) { AppView._feedWireRoots = null; return; }
-    // ONE PASS PER PAINT (see `_feedWireRoots`). The first caller of a task
-    // schedules it; the others only add their root.
-    if (!AppView._feedWireRoots) {
-      AppView._feedWireRoots = new Set();
-      Promise.resolve().then(() => AppView._wireFeedCommentsNow());
-    }
-    AppView._feedWireRoots.add(root);
-  },
-
-  _wireFeedCommentsNow() {
-    const roots = AppView._feedWireRoots;
-    AppView._feedWireRoots = null;
-    if (!roots) return;
-    // The call that queued this pass dropped the clamp observer, and with it
-    // every comment it was watching, under these roots or not. Whatever is
-    // still on the page is watched again; a slot painted below adds its own.
-    AppView._watchFeedClamps(document);
-    // Callers overlap (a column passes the whole board, and so does the
-    // repaint), so a slot is taken once, in the order it was first found.
-    // A root replaced between the call and this pass has nothing live in it.
-    const slots = [];
-    const seen = new Set();
-    for (const root of roots) {
-      if (root.isConnected === false) continue;
-      for (const slot of root.querySelectorAll('.dev-feed-comments[data-comments-for]')) {
-        if (seen.has(slot)) continue;
-        seen.add(slot);
-        slots.push(slot);
-      }
-    }
-    if (!slots.length) return;
-    // The first few outright, wherever they sit in the stream. Also the whole
-    // behaviour where IntersectionObserver is unavailable, which used to fill
-    // nothing at all. "First" is by POSITION, not "the first few still
-    // unfilled": that would fill three more on every pass and walk the whole
-    // feed in a handful of repaints.
-    const lazy = slots.slice(AppView.FEED_COMMENT_EAGER);
-    for (const slot of slots.slice(0, AppView.FEED_COMMENT_EAGER)) {
-      AppView._fillFeedComments(slot);
-    }
-    if (!lazy.length || typeof IntersectionObserver !== 'function') return;
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        // Once per row: unobserve BEFORE the await, or a fast scroll can
-        // queue the same fetch several times over.
-        observer.unobserve(entry.target);
-        AppView._fillFeedComments(
-          entry.target.querySelector('.dev-feed-comments[data-comments-for]')
-        );
-      }
-    }, { rootMargin: '200px 0px' });
-    // WATCH THE ROW, NOT THE SLOT. The slot ships EMPTY -- that is the whole
-    // point of filling it lazily -- and `#dev-workshop .dev-feed-comments:empty`
-    // in public/css/app.css is `display: none`, so that it leaves no gap
-    // under a row with nothing to show. A `display: none` element has no box,
-    // an IntersectionObserver never reports one as intersecting, and so the
-    // callback below never ran: the slot was never filled, so it stayed
-    // `:empty`, so it stayed `display: none`. A deadlock, and it took out
-    // every inline comment preview in the feed rather than merely delaying
-    // one.
-    //
-    // The row is the right target anyway, and is what the comment above
-    // already describes -- "each slot is filled when its ROW is actually
-    // scrolled to". It always has a box, so the presentation rule and the
-    // lazy fill stop being coupled at all. Falling back to the slot keeps
-    // the old behaviour for any markup that is not inside an entry.
-    for (const slot of lazy) observer.observe(slot.closest('.dev-feed-entry') || slot);
-    AppView._feedCommentObserver = observer;
-  },
-
-  // ── "Show more" on a long comment (#2556) ─────────────────────────
-  //
-  // MEASURED, never counted. The same comment is three lines inside a
-  // desktop card and nine in a phone's column, and a character threshold
-  // gets one of those wrong whichever number it picks -- so the control
-  // appears only when the clamped box is actually hiding something, and a
-  // comment of exactly four short lines keeps the markup it has always had.
-  //
-  // `scrollHeight` is the whole content and `clientHeight` the four lines on
-  // screen. The 1px slack is for sub-pixel line heights: a body that lands a
-  // fraction over four lines must not offer a "Show more" that reveals
-  // nothing.
-  //
-  // The READ and the WRITE are two functions on purpose. Asking for
-  // `scrollHeight` makes the browser finish every style and layout change
-  // made so far, and showing or hiding the control is such a change, so
-  // measuring and toggling one comment after another pays for the page once
-  // per comment. The observer below reads all of them, then writes all of
-  // them.
-  _feedCommentOverflows(clamp) {
-    return clamp.scrollHeight - clamp.clientHeight > 1;
-  },
-
-  // `overflows` is the measurement when the caller already has it; left out,
-  // it is taken here.
-  _syncFeedCommentToggle(clamp, overflows) {
-    const main = clamp && clamp.parentElement;
-    const btn = main && main.querySelector('.dev-feed-comment-toggle');
-    if (!btn) return;
-    // An expanded comment keeps its control: it is the way back.
-    const hide = clamp.classList.contains('is-expanded')
-      ? false
-      : !(overflows === undefined ? AppView._feedCommentOverflows(clamp) : overflows);
-    // Only when it changes. The observer reports every box again after each
-    // wiring pass, and most of them have not moved.
-    if (btn.hidden !== hide) btn.hidden = hide;
-  },
-
-  // Watch the clamped boxes under `root`. The observer reports each box once
-  // when it is first watched (provided it has a size) and again whenever the
-  // size changes, and it does so after layout, when a measurement costs
-  // nothing. So it is both the first measurement and the tracking afterwards.
-  _watchFeedClamps(root, clamps) {
-    if (typeof ResizeObserver !== 'function') return;
-    const list = clamps || (root ? [...root.querySelectorAll('.dev-feed-comment-clamp')] : []);
-    if (!list.length) return;
-    if (!AppView._feedClampObserver) {
-      AppView._feedClampObserver = new ResizeObserver((entries) => {
-        const measured = entries.map((entry) => AppView._feedCommentOverflows(entry.target));
-        entries.forEach((entry, i) => AppView._syncFeedCommentToggle(entry.target, measured[i]));
-      });
-    }
-    for (const clamp of list) AppView._feedClampObserver.observe(clamp);
-  },
-
-  _clampFeedComments(root) {
-    if (!root) return;
-    const clamps = [...root.querySelectorAll('.dev-feed-comment-clamp')];
-    if (!clamps.length) return;
-    const observed = typeof ResizeObserver === 'function';
-    for (const clamp of clamps) {
-      const btn = clamp.parentElement
-        && clamp.parentElement.querySelector('.dev-feed-comment-toggle');
-      if (!btn) continue;
-      // One listener per node, and the nodes are fresh on every paint --
-      // `_fillFeedComments` replaces the slot's innerHTML outright.
-      btn.addEventListener('click', (e) => {
-        // The row sits under #dev-body's delegated handler, which opens the
-        // topic for a click anywhere on a card. Expanding a comment is not
-        // a request to leave the feed.
-        e.preventDefault();
-        e.stopPropagation();
-        const expanded = clamp.classList.toggle('is-expanded');
-        btn.setAttribute('aria-expanded', String(expanded));
-        btn.textContent = expanded ? PlatformI18n.t('changes:feed.comment.showLess') : PlatformI18n.t('changes:feed.comment.showMore');
-      });
-      // NOT MEASURED HERE when there is an observer to do it. This runs on
-      // the line after `innerHTML` was written, and a measurement there made
-      // the browser restyle the page before it could answer: with every card
-      // open, 30 such passes over about 9,000 elements, two of the board's
-      // four and a half seconds of work on load. The control ships `hidden`,
-      // which is also the right answer for a box that has no size yet.
-      if (!observed) AppView._syncFeedCommentToggle(clamp);
-    }
-    // A card that is still folded gives every clamp a zero height, and
-    // `#dev-workshop .dev-feed-comments:empty` hides an unfilled slot
-    // outright -- the same deadlock the observer note above is about. The
-    // ResizeObserver is what measures once the box exists, and what tracks
-    // the width afterwards.
-    AppView._watchFeedClamps(root, clamps);
-  },
-
-  // Is this slot already showing exactly `html`?
-  _feedSlotShows(node, html) {
-    const painted = AppView._feedCommentsPainted;
-    if (!painted || painted.get(node) !== html) return false;
-    // ...and still holding it. Nothing else writes into a slot, but one that
-    // was emptied anyway is filled again rather than believed.
-    return html === '' || !!node.firstChild;
-  },
-
-  async _fillFeedComments(slot) {
-    if (!slot) return;
-    const number = parseInt(slot.getAttribute('data-comments-for'), 10);
-    if (!Number.isFinite(number)) return;
-
-    // Re-resolve by number rather than holding the node: a WS repaint between
-    // the request and its answer detaches this one, and writing into an
-    // orphan would silently drop the comments.
-    const paint = (entry) => {
-      // Document-wide, not `#dev-workshop`-wide: the Board draws the same
-      // slot inside its unfolded cards now (#1884), and the same issue can
-      // legitimately hold a slot in more than one place at once — the
-      // Workshop's stage pane IS the Board's columns. Every live slot for
-      // this number gets the answer; a detached one is simply not found.
-      const html = AppView._feedCommentsHtml(entry.comments);
-      const live = document.querySelectorAll(
-        `.dev-feed-comments[data-comments-for="${number}"]`
-      );
-      if (!AppView._feedCommentsPainted) AppView._feedCommentsPainted = new WeakMap();
-      for (const node of live) {
-        // Already showing exactly this (see `_feedCommentsPainted`): nothing
-        // is written, so nothing has to be measured again either, and a
-        // comment the reader expanded stays expanded.
-        if (AppView._feedSlotShows(node, html)) continue;
-        node.innerHTML = html;
-        AppView._feedCommentsPainted.set(node, html);
-        AppView._clampFeedComments(node);
-      }
-    };
-
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const key = AppView._ghCommentsKey(slug, number);
-    const cached = AppView._ghComments.get(key);
-    if (cached) { paint(cached); return; }
-
-    // One request per issue, however many slots and passes ask (see
-    // `_ghCommentsInFlight`). The caller that joins does not wait for the
-    // answer: `paint` finds every live slot for this number when it lands,
-    // this one included.
-    if (AppView._ghCommentsInFlight[key]) return;
-    AppView._ghCommentsInFlight[key] = true;
-    try {
-      const res = await fetch(
-        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      const entry = {
-        comments: Array.isArray(data.comments) ? data.comments : [],
-        truncated: !!data.truncated,
-      };
-      AppView._ghComments.set(key, entry);
-      // The slots are found by number alone, so an answer that lands after
-      // another app opened would land in that app's slots for the same
-      // number. It is kept for its own app, and painted only there.
-      if ((AppView.appData && AppView.appData.slug) === slug) paint(entry);
-    } catch (_) {
-      /* best-effort: the row simply shows no replies */
-    } finally {
-      // Whatever happened, the next ask is free to try again.
-      delete AppView._ghCommentsInFlight[key];
-    }
-  },
-
   // Re-render the feed in place from the cached data, then re-mount the
   // expanded card's thread + roster (innerHTML replacement wipes any
   // previous mount).
@@ -16355,11 +15824,8 @@ const AppView = {
       react.mountWorkshop(el);
       react.publishWorkshop(AppView._workshopView());
     }
-    // Rebuilt every time: the publish above replaced every node the previous
-    // observer was watching. The store flushes synchronously (see
-    // features/dev-board/mount.ts), so the fresh slots are already in the
-    // DOM on this line — exactly as they were after an innerHTML assignment.
-    AppView._wireFeedComments(el);
+    // The store flushes synchronously (see features/dev-board/mount.ts), so
+    // the fresh kudos hosts are already in the DOM on this line.
     AppView._fillKudosHosts(el);
     AppView._refreshAiAvailability();
     AppView._startMergeCountdownTimer();
@@ -17529,10 +16995,6 @@ const AppView = {
       react.publishKanban(AppView._lastKanbanView);
     }
     AppView._fillKudosHosts(board);
-    // The comment slots an unfolded card ships empty, same as the Workshop's
-    // repaint does (#1884). The store flushed synchronously above, so the
-    // slots this walks are the ones just rendered.
-    AppView._wireFeedComments(board);
     AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
     AppView._reanchorCardMenu();
@@ -17647,22 +17109,15 @@ const AppView = {
     }
     const doneDeployment = AppView._doneDeploymentStatus();
 
-    // `refOf` names the kind and item the row's conversation hangs off
-    // (_attachRowConversation). A column that passes none gets a bare row:
-    // Done is built from merged rows, and a merged thing's conversation
-    // lives on the proposal it came from, which is what _feedThreadRef
-    // already declines to address.
-    //
     // #4486: every row carries its `brief`, what the Workshop's row says in
     // words (`_workshopBrief`), as the Workshop tab's lists do: the columns
-    // draw that row now. `briefOf` names the kind for a column whose rows
-    // hang no conversation.
+    // draw that row now. `refOf` names the kind and item it is said of;
+    // `briefOf` does the same for the Done column, built from merged rows.
     const cardRows = (items, build, refOf, briefOf) => items.map((it) => {
       const card = build(it);
       const ref = refOf ? refOf(it) : null;
       const b = ref || (briefOf ? briefOf(it) : null);
-      const row = { t: 'card', key: card.key, card, ...(b ? { brief: AppView._workshopBrief(b.kind, b.item, card) } : {}) };
-      return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
+      return { t: 'card', key: card.key, card, ...(b ? { brief: AppView._workshopBrief(b.kind, b.item, card) } : {}) };
     });
     const emptyNote = filtering ? PlatformI18n.t('changes:board.column.emptyFiltered') : PlatformI18n.t('changes:board.column.empty');
 
@@ -17726,13 +17181,11 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    // `slug` is what the open card's page link ("Open page ›") is built
-    // from; `unfolded` is the ?cards=open state (every card at full size).
+    // `slug` is what each row's link to its item's page is built from.
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
     return {
       activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devBoardDrawable(),
-      slug, canPost: !!(AppView.appData && AppView.appData.can_collaborate),
-      unfolded: AppView._cardsOpen(),
+      slug,
     };
   },
 
@@ -17911,7 +17364,7 @@ const AppView = {
   // #dev-body handler in renderDevView, so repaints stay cheap.
 
   // PLAIN TEXT, not HTML (#3010). Every reader is a React card model
-  // (card/fold.tsx and card/list-rows.tsx render it as a text child and a
+  // (the board's row and card/list-rows.tsx render it as a text child and a
   // `title` attribute) or ConfirmModal's title, all of which escape it
   // themselves. It returned escapeHtml's output from the innerHTML days,
   // so a title with a quote or an ampersand read `&quot;` / `&amp;` on the
@@ -18088,10 +17541,9 @@ const AppView = {
   },
 
   // One of the viewer's own session cards, as a MODEL (card/model.ts).
-  // The whole card is the tap target — it opens the CARD: unfolded in place
-  // inside a fold (card/fold.tsx), or the change's page from the delegated
-  // #dev-body handler — so the inner controls stay real buttons inside a
-  // role="button" div.
+  // The whole card is the tap target — it opens the change's page, through
+  // the board row's link or the delegated #dev-body handler — so the inner
+  // controls stay real buttons inside a role="button" div.
   _mySessionCardModel(s) {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
@@ -18221,7 +17673,7 @@ const AppView = {
       actions,
       actionPreview: null,
       // `preview` goes to the rail, not the action band. The chevron rides
-      // with it: a tap on the card opens it (the fold draws its own mark).
+      // with it: a tap on the card opens it.
       rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, menu), chevron: true, preview },
       extra: [],
       dense: true,
@@ -18417,8 +17869,7 @@ const AppView = {
     const note = AppView._sessionFilterNoteRow(regularSessionCount);
     if (note) rows.push(note);
     // #4486: each card row carries its brief, the words the board's row says.
-    const cardRow = (card, e) => AppView._attachRowConversation(
-      { t: 'card', key: card.key, card, brief: AppView._workshopBrief(e.kind, e.item, card) }, e.kind, e.item);
+    const cardRow = (card, e) => ({ t: 'card', key: card.key, card, brief: AppView._workshopBrief(e.kind, e.item, card) });
     // #4486: your private sessions lead the column as rows of their own,
     // each tagged "Only you" with a lock (`_workshopBrief`), where the
     // "Yours · not shared" divider used to say it over all of them. One on a
@@ -25805,8 +25256,8 @@ const AppView = {
   //
   // Deliberately a NEW function rather than a rewrite of voteCountPill:
   // group-chat.js's inline vote rows and home-panels.js's "Your proposals"
-  // strip still consume voteCountPill / MergeStatus.pillHtml, and migrating
-  // them is separate follow-up work.
+  // strip consumed voteCountPill (and MergeStatus.pillHtml, since deleted
+  // with no caller left), and migrating them was separate follow-up work.
   //
   // `kind` ∈ 'proposal' | 'gov' | 'merged'. Pure given (item, opts) apart
   // from reading _proposalsCtx for the fallbacks, so it unit-tests cleanly.
@@ -26978,7 +26429,6 @@ const AppView = {
   // behindBadgeHtml) are GONE: the composite status pill derives
   // "Conflict resolution failed" and "Behind main · N" from blockReasons()
   // and renders them itself, and no other surface ever called them.
-  // MergeStatus.badgeHtml still covers the home strip's equivalents.
 
   // #967: the "built with …" provenance chip for a proposal that arrived
   // through the hosted MCP connector — the code was written by the
