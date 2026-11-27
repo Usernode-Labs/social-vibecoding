@@ -99,6 +99,12 @@ const TopochainChallenges = {
   // Empty map = no personalization available (signed out, request failed);
   // the grid renders identically, just without the "you" decorations.
   _mine: new Map(),
+  // Where the viewer's own rows stand: 'idle' before anything was asked for,
+  // 'loading' while the read is out, 'ready' once rows landed, 'failed' when
+  // the answer was not rows (signed out, an error). The summary reads it so a
+  // figure is never shown from rows that are on their way out or gone
+  // (request #7220: the summary and the cards must not disagree).
+  _mineState: 'idle',
   // The viewer's block-production queue state from GET /challenges-api/bp/
   // state, read when a block-production challenge's page opens (#2493).
   // `undefined` is loading, `null` could not be read (the page offers a
@@ -198,20 +204,31 @@ const TopochainChallenges = {
       : TopochainChallenges.str(v);
   },
 
-  // The summary's points (the Semi design): what the viewer has earned on the
-  // challenges in view, from the same `_mine` rows the cards' green points
-  // read. Null when there are no rows to read (signed out, or before the
-  // personal read lands), so the summary says the count alone rather than a
-  // "0 pts" it cannot know.
-  _earnedPoints(challenges) {
-    const mine = TopochainChallenges._mine;
-    if (!mine || !mine.size) return null;
-    let earned = 0;
-    for (const c of Array.isArray(challenges) ? challenges : []) {
-      const m = mine.get(Number(c && c.id)) || null;
-      earned += Math.max(0, Number(m && m.activities_total) || 0);
-    }
-    return earned;
+  // The viewer's points on one challenge, from the same `_mine` row the cards'
+  // green points and the History tab read. One helper, so the summary, a
+  // card's rail and the detail page cannot compute different figures.
+  _pointsOf(c) {
+    const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
+    return Math.max(0, Number(m && m.activities_total) || 0);
+  },
+
+  // Did the viewer finish this challenge themselves, and is the scorer still
+  // to credit it? True only once the personal read has landed, so nothing
+  // waits on rows that are still out or gone. An organiser's `completed`
+  // (the archive flag on the public row) is not the viewer finishing it; nor
+  // is a challenge whose reward is prose rather than a number of points
+  // something the summary should hold the line for.
+  _awaitingCredit(c) {
+    if (TopochainChallenges._mineState !== 'ready') return false;
+    const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
+    const finished = c && c.progress ? c.progress.done === true : !!(m && m.completed === true);
+    if (!finished) return false;
+    if (TopochainChallenges._pointsOf(c) !== 0) return false;
+    const cp = (c && c.card_preview) || {};
+    const reward = String(cp.reward == null ? '' : cp.reward).trim();
+    // The same bare-number test formatReward makes; a zero- or prose-reward
+    // challenge has no figure to wait for.
+    return /^[\d][\d.,]*$/.test(reward) && (Number(reward.replace(/[.,]/g, '')) || 0) > 0;
   },
 
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
@@ -347,6 +364,8 @@ const TopochainChallenges = {
     TopochainChallenges._open = false;
     TopochainChallenges._detailChallenge = null;
     TopochainChallenges._detailHash = null;
+    // #7220: nothing is being read for a closed pane; a later open asks again.
+    TopochainChallenges._mineState = 'idle';
     if (TopochainChallenges._hashListener && window.removeEventListener) {
       window.removeEventListener('hashchange', TopochainChallenges._hashListener);
     }
@@ -420,6 +439,7 @@ const TopochainChallenges = {
         && TopochainEventContext._resolved !== true;
       TopochainChallenges._challengesError = null;
       TopochainChallenges._mine = new Map();
+      TopochainChallenges._mineState = 'idle';
       TopochainChallenges._onboarding = null;
       // Nothing to re-read for an event-less pane: a queued acknowledgement
       // waits for a read that can actually answer.
@@ -431,6 +451,7 @@ const TopochainChallenges = {
     TopochainChallenges._challengesLoading = true;
     TopochainChallenges._challengesError = null;
     TopochainChallenges._mine = new Map();
+    TopochainChallenges._mineState = 'idle';
     TopochainChallenges._onboarding = null;
     // Drop the previous event's cards while resolving this viewer's gate.
     TopochainChallenges._challenges = [];
@@ -453,6 +474,10 @@ const TopochainChallenges = {
       TopochainChallenges._challengesError = (res.data && res.data.error)
         || PlatformI18n.t('leaderboard:challenges.loadFailed');
     }
+    // #7220: the list is in and the viewer's own rows are about to be asked
+    // for, so the summary says it is still updating rather than showing a
+    // total that cannot include what the cards already show as done.
+    TopochainChallenges._mineState = 'loading';
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
     TopochainChallenges._loadMine(eventId, init);
@@ -490,6 +515,10 @@ const TopochainChallenges = {
     ));
     TopochainChallenges._onboarding = res.data.onboarding || null;
     const rereadOrdered = TopochainChallenges._ordered();
+    // #7220: the fresh list may already show a challenge as done while the
+    // old `_mine` rows are still in place; the summary must not total them,
+    // so it stays "updating" until the personal read lands.
+    TopochainChallenges._mineState = 'loading';
     TopochainChallenges._store?.set({
       grid: TopochainChallenges.gridView(rereadOrdered),
       history: TopochainChallenges.historyView(rereadOrdered),
@@ -502,7 +531,10 @@ const TopochainChallenges = {
   // additive: any failure (401 signed out, 422, network) leaves the grid as
   // rendered above — no error banner, no retry.
   async _loadMine(eventId, init) {
-    if (!TopochainChallenges._challenges.length) return;
+    if (!TopochainChallenges._challenges.length) {
+      TopochainChallenges._mineState = 'idle';
+      return;
+    }
     const seq = ++TopochainChallenges._mineSeq;
     const { ok, data } = await TopochainChallenges.fetchJson(
       `/challenges-api/challenges?season_event_id=${encodeURIComponent(eventId)}`, init
@@ -512,12 +544,20 @@ const TopochainChallenges = {
         || seq !== TopochainChallenges._mineSeq) return;
     // The /challenges-api envelope is { success, data } like /api/v4.
     const rows = (ok && data && Array.isArray(data.data)) ? data.data : null;
-    if (!rows) return;
+    if (!rows) {
+      // #7220: no rows is an answer too (signed out, or an error). The
+      // summary drops the stale total and says the count alone, instead of
+      // keeping a figure from rows that are not there any more.
+      TopochainChallenges._mineState = 'failed';
+      TopochainChallenges._renderGrid();
+      return;
+    }
     const mine = new Map();
     for (const r of rows) {
       if (r && r.id != null) mine.set(Number(r.id), r);
     }
     TopochainChallenges._mine = mine;
+    TopochainChallenges._mineState = 'ready';
     TopochainChallenges._renderGrid();
     // The detail page reads the viewer's own row too.
     if (TopochainChallenges._detailChallenge) TopochainChallenges._renderDetailOverlay();
@@ -679,13 +719,24 @@ const TopochainChallenges = {
   },
 
   // The summary over the grid: "3,500 pts · 4 of 11 done" (./season-progress
-  // .tsx draws it), over every challenge on the tab.
+  // .tsx draws it), over every challenge on the tab. `done` is read off the
+  // same state the cards draw, and `points` only once the viewer's own rows
+  // have landed — so the count, the points and the cards are one set of
+  // figures and cannot contradict each other (#7220). `updating` is true
+  // while those rows are still out, or while a challenge the viewer finished
+  // has not been credited yet; the line then says "points updating" instead of
+  // a total that would leave that challenge out.
   _summaryView(ordered) {
     const list = Array.isArray(ordered) ? ordered : [];
+    const ready = TopochainChallenges._mineState === 'ready';
     return {
-      done: list.filter((c) => TopochainChallenges._isDone(c)).length,
+      done: list.filter((c) => TopochainChallenges._stateOf(c).state === 'done').length,
       total: list.length,
-      points: TopochainChallenges._earnedPoints(list),
+      points: ready
+        ? list.reduce((sum, c) => sum + TopochainChallenges._pointsOf(c), 0)
+        : null,
+      updating: TopochainChallenges._mineState === 'loading'
+        || list.some((c) => TopochainChallenges._awaitingCredit(c)),
     };
   },
 
@@ -706,7 +757,7 @@ const TopochainChallenges = {
       const done = TopochainChallenges._isDone(c);
       if (!done && !own.length && !earlier.length) continue;
       const state = TopochainChallenges._stateOf(c);
-      const pointsSoFar = mine && Number(mine.activities_total) > 0 ? Number(mine.activities_total) : 0;
+      const pointsSoFar = TopochainChallenges._pointsOf(c);
       const points = done
         ? state.earned
         : pointsSoFar
@@ -955,7 +1006,7 @@ const TopochainChallenges = {
   // before anyone begins. "Not started" is the yes-or-no challenge's word.
   _stateOf(c) {
     const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
-    const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
+    const points = TopochainChallenges._pointsOf(c);
     const p = (c && c.progress) || null;
     if (TopochainChallenges._isDone(c)) {
       // What the viewer earned, without the word: the card draws it in the
@@ -1840,7 +1891,7 @@ const TopochainChallenges = {
     // the state and nothing else, as on the card.
     const rail = TopochainChallenges._stateOf(challenge);
     const mine = TopochainChallenges._mine.get(Number(challenge.id)) || null;
-    const points = mine && Number(mine.activities_total) > 0 ? Number(mine.activities_total) : 0;
+    const points = TopochainChallenges._pointsOf(challenge);
     const reward = TopochainChallenges.formatReward(cp.reward);
     let amount = null;
     if (rail.earned) amount = { text: rail.earned, earned: true };
@@ -1849,6 +1900,12 @@ const TopochainChallenges = {
         text: PlatformI18n.t('leaderboard:challenges.soFar', { count: points, points: points.toLocaleString('en-US') }),
         earned: false,
       };
+    }
+    // #7220: a finished challenge the scorer has not credited yet says so,
+    // rather than printing the reward on offer under a Done title, where it
+    // read as points already earned.
+    else if (TopochainChallenges._awaitingCredit(challenge)) {
+      amount = { text: PlatformI18n.t('leaderboard:challenges.counting'), earned: false, pending: true };
     }
     else if (reward) amount = { text: reward, earned: false };
 

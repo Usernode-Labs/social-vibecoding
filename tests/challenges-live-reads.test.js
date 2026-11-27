@@ -67,7 +67,7 @@ const json = (body, ok = true) => ({
 
 function loadPane({ context = { eventId: 10, onChange: () => () => {} } } = {}) {
   const live = fakeLiveReads();
-  const server = { credits: 1, fail: false, holdMine: null };
+  const server = { credits: 1, fail: false, failMine: false, holdMine: null };
   const reads = [];
   const sandbox = {
     console, setTimeout, clearTimeout,
@@ -78,7 +78,14 @@ function loadPane({ context = { eventId: 10, onChange: () => () => {} } } = {}) 
       reads.push({ url: String(url), cache: init && init.cache });
       if (server.fail) return json({ success: false, error: 'boom' }, false);
       if (String(url).startsWith('/challenges-api/')) {
-        const answer = json({ success: true, data: [{ id: 1, points: server.credits * 100 }] });
+        // The personal row's points under both fields the pane has read: the
+        // summary and the cards use `activities_total`, the older tests here
+        // still assert on `points`.
+        if (server.failMine) return json({ success: false, error: 'boom' }, false);
+        const answer = json({
+          success: true,
+          data: [{ id: 1, points: server.credits * 100, activities_total: server.credits * 100 }],
+        });
         if (server.holdMine) await server.holdMine;
         return answer;
       }
@@ -202,6 +209,53 @@ test('an older read of your own rows that lands late does not undo a newer one',
   release();
   await settle();
   assert.equal(pane._mine.get(1).points, 300, 'the late, older answer is dropped');
+});
+
+// #7220: the summary and the cards are one set of figures. A re-read pushes
+// the fresh list first, so a challenge it shows as done can be on screen
+// while the viewer's own rows are still being asked for; the summary must not
+// keep the old total beside it.
+test('a re-read says points are updating until the viewer’s own rows land again', async () => {
+  const { pane, live, server, state, grids, settle } = loadPane();
+  pane.open();
+  await settle();
+  assert.deepEqual({ ...state.grid.progress }, { done: 0, total: 1, points: 100, updating: false },
+    'the total once the own rows are in');
+
+  let release;
+  server.holdMine = new Promise((r) => { release = r; });
+  server.credits = 3;
+  grids.length = 0;
+  const pending = live.fire();
+  await settle();
+
+  const landed = grids.find((g) => g.kind === 'cards');
+  assert.ok(landed, 'the fresh list pushed its grid while the personal read was still out');
+  assert.deepEqual({ ...landed.progress }, { done: 1, total: 1, points: null, updating: true },
+    'the finished card is up, so the line says the points are updating');
+  assert.equal(pane._mineState, 'loading');
+
+  release();
+  await pending;
+  await settle();
+  assert.deepEqual({ ...state.grid.progress }, { done: 1, total: 1, points: 300, updating: false },
+    'the figure is back once the credit lands');
+});
+
+test('a failed personal read on a re-read drops the old points and stops saying updating', async () => {
+  const { pane, live, server, state, settle } = loadPane();
+  pane.open();
+  await settle();
+  assert.equal(state.grid.progress.points, 100);
+
+  server.credits = 2;
+  server.failMine = true;
+  await live.fire();
+  await settle();
+
+  assert.equal(pane._mineState, 'failed');
+  assert.deepEqual({ ...state.grid.progress }, { done: 0, total: 1, points: null, updating: false },
+    'no old total, and nothing more to wait for');
 });
 
 test('the Leaderboard\'s pull and the worker\'s correction read the tab fresh', () => {

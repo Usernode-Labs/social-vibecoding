@@ -162,7 +162,7 @@ type DetailView = {
   // start and finish. Null when the challenge has none, so no line is drawn.
   task?: string | null;
   // The points under the title: earned (emerald), so far, or on offer.
-  amount: { text: string; earned: boolean } | null;
+  amount: { text: string; earned: boolean; pending?: boolean } | null;
   // #3253/#3248: under the points, what the scoring rule counts (a proposal
   // once it is put to the vote; nothing past a counted measure's target).
   countNote?: string | null;
@@ -631,6 +631,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           size="lg"
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
+          pending={!!view.amount?.pending}
         />
         {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
         {view.amount ? <p className={NOTE}>{t('leaderboard:challenges.detail.pointsNote')}</p> : null}
