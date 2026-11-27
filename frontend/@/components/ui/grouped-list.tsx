@@ -279,8 +279,8 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
             desktop's reading distance. */}
         <Line className={cn(
           'ui-lrow-t truncate text-base font-semibold leading-[1.3125rem] text-zinc-900 dark:text-zinc-100',
-          as === 'label' && 'block',
           ownSize(titleClassName) ? null : 'md:text-[0.9375rem] md:leading-5',
+          as === 'label' && 'block',
           titleClassName,
         )}>{title}</Line>
         {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
@@ -290,8 +290,8 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
         {subtitle ? (
           <Line className={cn(
             'ui-lrow-s mt-0.5 truncate text-sm leading-[1.1875rem] text-zinc-500 dark:text-zinc-400',
-            as === 'label' && 'block',
             ownSize(subtitleClassName) ? null : 'md:text-[0.8125rem] md:leading-[1.125rem]',
+            as === 'label' && 'block',
             subtitleClassName,
           )}>{subtitle}</Line>
         ) : null}
