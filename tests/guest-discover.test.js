@@ -469,7 +469,8 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const src = read(JOIN);
   // The label is drawn whenever something is featured, but under Standard (WIP), which draws Featured apart from this list.
   assert.match(src, /const restLabel = featured\.length > 0 && !wip;/);
-  assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  assert.match(src, /\(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  assert.match(src, /return rankCommunities\(\s+\(query \? joinOrder\(pool, sort\)/, 'the search list is ranked by the shared rule, after the sort (#7021)');
   // The kind chips fade at whichever edge has more chips, the AI page's own
   // rail, and a chosen kind names itself in Featured's heading (#6660).
   assert.match(src, /<FadeRail role="group" aria-label=\{ta\('auth:guest\.categories\.label'\)\}/);
@@ -1302,4 +1303,20 @@ test('the list wears the website\'s look signed out only: repainted by its own h
   // The faces it names are the ones the stylesheet already declares.
   assert.match(css, /@font-face \{\s+font-family: 'Young Serif';/);
   assert.match(css, /@font-face \{\s+font-family: 'Geist';/);
+});
+
+test('a search leads with the community named what was typed, the loose matches still under it (#7021)', () => {
+  // The real component: CommunitiesToJoin ranks the list it draws, so a
+  // change that filters without ranking fails here by the order it renders.
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const draw = (query) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: APPS, exclude: new Set(), signedIn: false, query,
+  }));
+  const cardsOf = (html) => [...html.matchAll(/data-guest-card="([^"]+)"/g)].map((m) => m[1]);
+  // "Fresh" is a community's whole name; "Game Corner" only says "fresh every
+  // day" in its sentence, and the sort puts it first.
+  assert.deepEqual(cardsOf(draw('Fresh')), ['fresh-one', 'game-corner'],
+    'the exact name leads the description-only match, which is still shown');
+  assert.deepEqual(cardsOf(draw('fres')), ['game-corner', 'fresh-one'], 'a partial query with no exact name keeps the sort');
 });

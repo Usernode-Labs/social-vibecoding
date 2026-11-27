@@ -165,7 +165,7 @@ test('Home lists none of your communities until you search, and then finds them'
   assert.doesNotMatch(quiet, /data-home-community=/);
   const src = read('frontend/src/features/home/pinned-communities.tsx');
   assert.match(src, /if \(!query\) return \[\];/);
-  assert.match(src, /return \[\.\.\.state\.pins, \.\.\.joined\]\.filter\(\(c\) => matchesQuery\(query, c\.name, c\.slug\)\);/, 'pinned first, then the others you are in');
+  assert.match(src, /return rankCommunities\(\[\.\.\.state\.pins, \.\.\.joined\], query\);/, 'pinned first, then the others you are in, the exact name leading (#7021)');
   assert.match(src, /const visible = state\.ready && matches\.length > 0;/);
   assert.match(src, /<SectionHeading>\{t\('home:communities\.matches'\)\}<\/SectionHeading>/);
   assert.equal(message('home:communities.matches'), 'Your communities');
