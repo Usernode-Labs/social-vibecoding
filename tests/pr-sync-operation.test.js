@@ -347,7 +347,7 @@ test('a live draft opens or adopts no pull request before it is proposed', async
   t.mock.method(github, 'createPR', async () => { looked.push('create'); return { number: 1, html_url: 'x' }; });
   const realQuery = pool.query;
   t.mock.method(pool, 'query', async (sql, params) => {
-    if (/FROM live_drafts WHERE session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
+    if (/FROM live_drafts\b[\s\S]*?session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
     return realQuery(sql, params);
   });
   // create() answers the draft's own words, and nothing is opened or adopted.
@@ -381,7 +381,7 @@ test('applyPrMetadata opens no pull request for a draft session, even without a 
   const prMetadata = require('../src/services/pr-metadata');
   const realQuery = pool.query;
   t.mock.method(pool, 'query', async (sql, params) => {
-    if (/FROM live_drafts WHERE session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
+    if (/FROM live_drafts\b[\s\S]*?session_id = \$1/.test(String(sql))) return { rows: [{ '?column?': 1 }] };
     return realQuery(sql, params);
   });
   let created = 0;

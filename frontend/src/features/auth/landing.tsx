@@ -91,6 +91,7 @@ import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
 import { menuIsPopover, VisitorAppMenu, VisitorMark, VisitorSuggestPrompt } from '../guest/visitor-app-menu';
 import { noteSignUpFrom } from './sign-up-from';
+import { watchVisitorPlay } from '../popularity/popularity';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 import { WelcomePage } from './welcome-page';
@@ -860,6 +861,7 @@ export function intentTitle(intent: GuestIntent, t: Translate, waitlist: boolean
     case 'vote': return waitlist ? t('auth:guest.sheet.waitlistVote') : t('auth:guest.sheet.vote');
     case 'ask': return waitlist ? t('auth:guest.sheet.waitlistAsk') : t('auth:guest.sheet.ask');
     case 'chat': return waitlist ? t('auth:guest.sheet.waitlistChat', { project }) : t('auth:guest.sheet.chat', { project });
+    case 'heart': return waitlist ? t('auth:guest.sheet.waitlistHeart', { project }) : t('auth:guest.sheet.heart', { project });
     default: return t('auth:guest.sheet.use', { project });
   }
 }
@@ -1111,6 +1113,9 @@ export function LandingScreen() {
     // slides in and cuts out, as it always did.
     pressed: null as Element | null,
     zoomFrom: null as Element | null,
+    // A visitor's play of the open app, not yet counted: what calls it off
+    // when the app is closed first (../popularity/popularity.ts).
+    stopPlay: null as (() => void) | null,
     unwindingViewerEntry: false,
     anonBackShotRan: false,
   }).current;
@@ -1262,6 +1267,8 @@ export function LandingScreen() {
     // this, leaving #landing during that await can open the app behind the
     // next auth screen when the response finally arrives.
     st.launchId = (st.launchId || 0) + 1;
+    st.stopPlay?.();
+    st.stopPlay = null;
     clearViewerCover();
     if (!viewer || viewer.classList.contains('hidden')) return;
     st.openSlug = null;
@@ -1368,6 +1375,11 @@ export function LandingScreen() {
       // is its INITIAL navigation away from about:blank — the one browsers
       // elide instead of pushing onto the shared history stack.
       if (frame) frame.src = launchUrl;
+      // HEARTS AND PLAYS: a visitor with no account who keeps the app open is
+      // one play of it today. Somebody signed in is counted from the time
+      // they spend in the app, never from here.
+      st.stopPlay?.();
+      st.stopPlay = signedIn ? null : watchVisitorPlay(slug);
       history.pushState({ svAnonAppViewer: true }, '', location.href);
       // The flex-sibling pitfall (#764): #app-viewer and #auth-landing-scroll
       // are flex:1 siblings, so while BOTH are visible (fn reveals the viewer,
@@ -1406,6 +1418,8 @@ export function LandingScreen() {
     if (!viewer || !scroller || viewer.classList.contains('hidden')) return;
     st.openSlug = null;
     setOpenApp(null);
+    st.stopPlay?.();
+    st.stopPlay = null;
     // #931: retire the launch generation and drop the cover before the
     // zoom-out, so a `load` still in flight can't fade a cover back in over
     // the shrinking overlay.

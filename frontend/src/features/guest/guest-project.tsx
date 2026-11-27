@@ -20,6 +20,11 @@
  *                     is for, how many are in it and how many were active
  *                     this week, numbers only (its own strip until the
  *                     signed-out page's redesign, 26 Nov 2026).
+ *   Hearts and plays  how many times the app was played (or opened) and how
+ *                     many accounts gave it a heart, with the heart to give
+ *                     one (../popularity/hearts-plays.tsx). Signed out, the
+ *                     heart asks to sign in and is given once the account
+ *                     exists.
  *   The join card     "Made by the people who play it.", how many changes
  *                     went live this month, and Sign up to vote and suggest.
  *   Up for a vote     compact rows: a small after picture, the title and
@@ -57,6 +62,8 @@ import { agoStamp } from '../../lib/timestamp';
 import { GuestIcon, TryLink } from './guest-discover';
 import { GuestContributors } from './guest-contributors';
 import { GuestDiscussion } from './guest-discussion';
+import { HeartsPlays, useHeart } from '../popularity/hearts-plays';
+import { readHeart, type HeartState } from '../popularity/popularity';
 import { CARD_GLASS_BTN, CARD_OPEN_BTN, CARD_ROUND_BTN, PEOPLE_CARD, ProjectCard } from './project-card';
 import {
   type GuestApp, type GuestMerged, type GuestOverview, type GuestTopContributors, type GuestVote, MIN_ACTIVE,
@@ -69,6 +76,7 @@ export type GuestIntent =
   | { kind: 'vote'; app: GuestApp; change: string }
   | { kind: 'ask'; app: GuestApp }
   | { kind: 'chat'; app: GuestApp }
+  | { kind: 'heart'; app: GuestApp }
   | { kind: 'use'; app: GuestApp };
 
 /** The changes each list shows before its "N more" row opens the rest. */
@@ -333,6 +341,16 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
     return () => { live = false; };
   }, [app.slug, initialOverview]);
 
+  // Whether the signed-in reader gave it a heart: undefined while asked.
+  const [mine, setMine] = useState<HeartState | null | undefined>(undefined);
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    let live = true;
+    setMine(undefined);
+    void readHeart(app.slug).then((state) => { if (live) setMine(state); });
+    return () => { live = false; };
+  }, [app.slug, signedIn]);
+
   // A change opened, or closed again, starts at the top of the page.
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -353,6 +371,18 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   const active = activeWeek >= MIN_ACTIVE ? activeWeek : 0;
   const members = (app.member_count || 0) >= MIN_MEMBERS ? app.member_count || 0 : 0;
   const openVote = opened == null ? null : votes.find((v) => v.id === opened) || null;
+  // HEARTS AND PLAYS (../popularity/). The counts are the directory's, and
+  // the overview's once it has answered. A visitor has no heart of their
+  // own; for somebody signed in the page asks whether they gave one, and a
+  // read that fails is drawn as not given rather than as no panel.
+  const plays = overview?.app.plays ?? app.plays ?? 0;
+  const hearts = overview?.app.hearts ?? app.hearts ?? 0;
+  const heart = useHeart({
+    slug: app.slug,
+    initial: !signedIn ? { hearted: false, hearts } : mine === undefined ? null : mine || { hearted: false, hearts },
+    signedIn,
+    onSignIn: () => onIntent({ kind: 'heart', app }),
+  });
 
   const votesShown = allVotes ? votes : votes.slice(0, VOTES_SHOWN);
   const votesMore = Math.max(0, voteCount - votesShown.length);
@@ -478,6 +508,20 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
           parts placed around it by `order` (the column is `contents`). */}
       <div data-guest-cols="" className="flex flex-col md:mt-8 md:grid md:grid-cols-[300px_minmax(0,1fr)] md:items-start md:gap-5 lg:grid-cols-[340px_minmax(0,1fr)] lg:gap-6">
       <div data-guest-side="" className="contents md:flex md:min-w-0 md:flex-col md:[&>*:first-child]:mt-0">
+      {/* Hearts and plays lead the column, above the join card (owner, 27 Nov
+          2026): what a visitor reads first is how much it is played and liked. */}
+      {heart.state ? (
+        <div data-guest-popularity="" className={cn(SECTION, 'order-1 md:order-none')}>
+          <HeartsPlays
+            name={app.name}
+            played={playsIt(app)}
+            plays={plays}
+            heart={heart.state}
+            busy={heart.busy}
+            onHeart={heart.toggle}
+          />
+        </div>
+      ) : null}
       <section data-guest-made="" className={cn(SECTION, 'order-1 md:order-none')}>
         <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:p-5')}>
           <div className="min-w-0 flex-1">

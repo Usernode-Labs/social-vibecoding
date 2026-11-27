@@ -26,6 +26,7 @@ const SIGN_UP_FROM = Object.freeze([
   'vote',
   'ask',
   'chat',
+  'heart',
   'use',
   'story',
   'story_sign_in',
