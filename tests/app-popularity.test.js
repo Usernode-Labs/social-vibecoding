@@ -80,6 +80,20 @@ test('the panel for an app that is not a game says Opens; a new app says Be the 
   assert.doesNotMatch(fresh, />0</, 'a zero says nothing');
   assert.doesNotMatch(fresh, /shadow-\[inset_1px_0_0/, 'one cell, no hairline beside it');
 
+  // Both cells and no hearts yet, in a card too narrow for the words on one
+  // line: they wrap beside the heart. Two of their lines are the heart's
+  // height (2 x 1.125rem = h-9), so the card stays the height it has with a
+  // number. They had the number's own 2.25rem line, and a wrap made the cell
+  // twice as tall (27 Nov 2026).
+  const narrow = panel({ plays: 183, heart: { hearted: false, hearts: 0 } });
+  const first = narrow.match(/<span class="([^"]*)" data-hearts-plays-first="">/);
+  assert.ok(first, 'the words are drawn beside the plays cell');
+  assert.match(first[1], /(^| )leading-\[1\.125rem\]( |$)/, 'half the heart\'s height a line');
+  assert.match(first[1], /(^| )text-sm( |$)/);
+  assert.match(first[1], /(^| )text-start( |$)/, 'a wrapped pair of lines starts at the heart');
+  assert.doesNotMatch(first[1], /leading-9/, 'not the number\'s line height');
+  assert.match(narrow, /<button[^>]*class="[^"]*\bh-9 w-9 shrink-0\b/, 'the heart keeps its size beside them');
+
   assert.equal(panel({ plays: 6930, heart: null }), '', 'nothing until the counts are known');
 });
 
