@@ -86,6 +86,17 @@ function runHead({ storage, width = 1440, height = 900, textSize = null }) {
   return { props, classes };
 }
 
+// The placeholder is the tile's own size (27 Nov 2026): its two rows lie on the grid's rows, and from 1280px its tile is
+// today's 48px row. It drew the kit's 96px rows in a box held for two of 56px, and ran over what was under it.
+test('Pinned projects\' placeholder lies on the grid\'s rows, at today\'s tile size', () => {
+  const at = CSS.indexOf('html:root #app-list:not([data-view]) > .animate-pulse {');
+  assert.ok(at !== -1, 'the placeholder\'s own rule');
+  assert.match(CSS.slice(at, CSS.indexOf('}', at) + 1), /grid-row: span 2;\s*grid-auto-rows: var\(--home-cell-h\);/);
+  const rest = CSS.slice(at);
+  assert.match(rest, /@media \(min-width: 1280px\) \{\s*html:root #app-list:not\(\[data-view\]\) > \.animate-pulse > div \{ gap: 12px; height: 48px; padding: 0 4px; \}\s*html:root #app-list:not\(\[data-view\]\) > \.animate-pulse > div > :first-child \{ width: 48px; height: 48px;/);
+  assert.match(rest, /@media \(max-width: 639\.98px\) \{[^@]*html:root #app-list:not\(\[data-view\]\) \{ min-height: calc\(2 \* var\(--home-cell-h\) \+ 1\.875rem\); \}/);
+});
+
 test('the head and the module keep the same record: key, size and property names', () => {
   const reserve = loadTsx(RESERVE);
   assert.equal(reserve.RESERVE_KEY, 'usernode.first-paint.v1');
