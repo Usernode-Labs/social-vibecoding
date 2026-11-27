@@ -6,10 +6,12 @@ const templates = require('../src/services/mail/templates');
 const { ACTIONS, actionFor } = require('../src/services/mail/actions');
 
 test('covers every kind', () => {
-  assert.deepEqual(Object.keys(ACTIONS).sort(), [...templates.KINDS].sort());
+  assert.deepEqual(Object.keys(ACTIONS).sort(), [...templates.KINDS, ...templates.DRIP_KINDS].sort());
   // 13, then the two waitlist reminders (services/waitlist-reminders.js),
   // then app slot grants (#7043).
   assert.equal(templates.KINDS.length, 17);
+  // The drip emails: drafts on Admin > Email templates that nothing sends yet.
+  assert.equal(templates.DRIP_KINDS.length, 11);
   assert.equal(actionFor('otp'), ACTIONS.otp);
   assert.equal(actionFor('nope'), null);
   assert.equal(actionFor('constructor'), null);
@@ -82,7 +84,11 @@ test('activity mails and the waitlist reminders carry their unsubscribe headers;
     assert.equal(ACTIONS[kind].headers({ unsubscribeUrl: 'javascript:x' }), null, kind);
     assert.equal(ACTIONS[kind].headers({}), null, kind);
   }
-  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 6);
+  // The drip emails carry the same headers once a sender sends them.
+  for (const kind of templates.DRIP_KINDS) {
+    assert.deepEqual(Object.keys(ACTIONS[kind].headers({ unsubscribeUrl })), ['List-Unsubscribe', 'List-Unsubscribe-Post'], kind);
+  }
+  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 6 + templates.DRIP_KINDS.length);
 });
 
 test('only what an admin or an operator receives is English only', () => {

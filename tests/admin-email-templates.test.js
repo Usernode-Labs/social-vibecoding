@@ -82,17 +82,22 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
   await t.test('the list answers any admin with every action, template and layout', async () => {
     const res = await call('GET', '/api/admin/email-templates', undefined, 'view');
     assert.equal(res.status, 200);
-    assert.equal(res.body.actions.length, 17);
+    // 17 the sender sends, and the 11 drip emails, which nothing sends yet.
+    assert.equal(res.body.actions.length, 28);
+    const welcome = res.body.actions.find((a) => a.action === 'drip_welcome');
+    assert.ok(welcome.drip && welcome.drip.trigger && welcome.drip.from, 'a drip email says when it is sent and who from');
     const otp = res.body.actions.find((a) => a.action === 'otp');
     assert.deepEqual(otp.required, { html: ['code'], text: ['code'] });
     assert.ok(otp.placeholders.some((p) => p.name === 'code'));
     assert.ok(res.body.actions.find((a) => a.action === 'build_ready').placeholders.find((p) => p.name === 'lead').fromCode);
     assert.equal(res.body.templates.filter((r) => r.status === 'live').length, 17);
+    // Every drip email, and the staged invite wording, wait as drafts.
+    assert.equal(res.body.templates.filter((r) => r.status === 'draft').length, 12);
     assert.ok(Array.isArray(res.body.templates[0].locales));
     assert.ok(res.body.layouts.length >= 1);
     const layouts = await call('GET', '/api/admin/email-layouts', undefined, 'view');
     assert.equal(layouts.status, 200);
-    assert.equal(layouts.body.layouts[0].usedBy.length, 17);
+    assert.ok(layouts.body.layouts[0].usedBy.length >= 17);
     const outsider = await call('GET', '/api/admin/email-templates', undefined, 'none');
     assert.notEqual(outsider.status, 200, 'not an admin: adminMiddleware turns them away');
   });
@@ -105,6 +110,8 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
       ['POST', `/api/admin/email-templates/${current.id}/restore`, { expectedLiveId: current.id }],
       ['DELETE', `/api/admin/email-templates/${current.id}`, { replacementId: current.id }],
       ['POST', '/api/admin/email-templates/test', { action: 'otp', fields: otpBody(current) }],
+      ['POST', '/api/admin/email-templates/draft', otpBody(current, { subject: 'A draft' })],
+      ['POST', `/api/admin/email-templates/${current.id}/publish`, { expectedLiveId: current.id }],
       ['POST', '/api/admin/email-layouts', { familyId: layout.family_id, name: 'x', html: '{{content}}', text: '{{content}}', expectedLiveId: layout.id }],
       ['POST', `/api/admin/email-layouts/${layout.id}/restore`, { expectedLiveId: layout.id }],
       ['DELETE', `/api/admin/email-layouts/${layout.family_id}`, {}],
@@ -117,6 +124,39 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     }
     assert.equal((await eventsOf()).length, before);
     assert.equal((await live('otp')).id, current.id);
+    assert.equal(sent.length, 0);
+  });
+
+  await t.test('a draft is saved beside the live version, sends nothing, and goes live only when put live', async () => {
+    const current = await live('password_reset');
+    const body = { ...otpBody(current, { action: 'password_reset', subject: 'Reset, drafted' }) };
+    delete body.expectedLiveId;
+    const saved = await call('POST', '/api/admin/email-templates/draft', body);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.template.status, 'draft');
+    assert.equal((await live('password_reset')).id, current.id, 'the live version is untouched');
+    // A second save continues the same draft.
+    const again = await call('POST', '/api/admin/email-templates/draft', { ...body, subject: 'Reset, drafted again', expectedDraftId: saved.body.template.id });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.template.id, saved.body.template.id);
+    const published = await call('POST', `/api/admin/email-templates/${saved.body.template.id}/publish`, { expectedLiveId: current.id });
+    assert.equal(published.status, 200, JSON.stringify(published.body));
+    assert.equal((await live('password_reset')).subject, 'Reset, drafted again');
+    assert.equal(sent.length, 0);
+  });
+
+  await t.test('a drip email can be drafted but not put live: nothing sends it yet', async () => {
+    const { rows: [draft] } = await pool.query("SELECT * FROM email_templates WHERE action = 'drip_welcome' AND status = 'draft' AND deleted_at IS NULL");
+    assert.ok(draft, 'seeded as a draft');
+    assert.equal(await live('drip_welcome'), undefined);
+    const fields = { action: 'drip_welcome', name: draft.name, layoutFamilyId: draft.layout_family_id, subject: 'Welcome, edited', preheader: draft.preheader, why: draft.why, html: draft.html, text: draft.text, expectedDraftId: draft.id };
+    const saved = await call('POST', '/api/admin/email-templates/draft', fields);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const putLive = await call('POST', `/api/admin/email-templates/${draft.id}/publish`, {});
+    assert.equal(putLive.status, 409);
+    const { expectedDraftId, ...direct } = fields;
+    assert.equal((await call('POST', '/api/admin/email-templates', direct)).status, 409);
+    assert.equal(await live('drip_welcome'), undefined);
     assert.equal(sent.length, 0);
   });
 

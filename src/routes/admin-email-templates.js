@@ -20,6 +20,8 @@
 // Paths:
 //   GET    /api/admin/email-templates            actions, every version, languages
 //   POST   /api/admin/email-templates            save a new live version
+//   POST   /api/admin/email-templates/draft      save the action's draft, never sent ({ expectedDraftId })
+//   POST   /api/admin/email-templates/:id/publish  put that draft live ({ expectedLiveId })
 //   POST   /api/admin/email-templates/preview    render unsaved fields, store nothing
 //   POST   /api/admin/email-templates/test       send unsaved fields to yourself
 //   POST   /api/admin/email-templates/:id/restore
@@ -67,6 +69,7 @@ const STATUS = {
   english_only: 400,
   budget: 429,
   no_model: 503,
+  not_sending: 409,
 };
 
 const MESSAGES = {
@@ -147,6 +150,9 @@ function describeActions() {
     action,
     label: a.label,
     englishOnly: !!a.englishOnly,
+    // The drip's emails: who sends each, what sends it and when, what stops
+    // it. Nothing sends them yet, so their templates stay drafts.
+    drip: a.drip ? { ...a.drip } : null,
     required: a.required,
     placeholders: Object.entries(a.placeholders).map(([name, p]) => ({
       name, description: p.description, kind: p.kind, fromCode: !!p.fromCode,
@@ -354,6 +360,45 @@ function emailTemplateAdminRoutes(pool, config) {
       res.json({ template: row, unusableTranslations, translationsKept });
     } catch (err) {
       sendError(res, err, 'save template');
+    }
+  });
+
+  // A draft is checked as a live save is, so putting it live later needs no
+  // second round of fixes; it is never sent, so no translation is rechecked.
+  router.post('/api/admin/email-templates/draft', requireAdminWrite, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const action = str(body.action);
+      if (!actionFor(action)) throw invalid([{ field: 'action', message: 'Choose what this email is for from the list of actions.' }]);
+      const fields = templateFields(body);
+      const layoutFamilyId = optionalId(body, 'layoutFamilyId');
+      const expectedDraftId = optionalId(body, 'expectedDraftId');
+      const row = await store.saveDraft(pool, { action, ...fields, layoutFamilyId, expectedDraftId }, req.user.id, {
+        check: async ({ layout }) => { refuseUnless(validateTemplate(action, fields, layout)); },
+      });
+      await changed(req, { what: 'template', change: 'draft saved', id: row.id, action: row.action, version: row.version });
+      res.json({ template: row });
+    } catch (err) {
+      sendError(res, err, 'save template draft');
+    }
+  });
+
+  router.post('/api/admin/email-templates/:id/publish', requireAdminWrite, async (req, res) => {
+    try {
+      const id = toId(req.params.id);
+      if (!id) throw Object.assign(new Error('That draft is no longer there'), { code: 'not_found' });
+      const expectedLiveId = optionalId(req.body || {}, 'expectedLiveId');
+      let unusableTranslations = [];
+      const row = await store.restoreTemplate(pool, id, { expectedLiveId, draft: true }, req.user.id, {
+        check: async ({ row: version, layout, client }) => {
+          refuseUnless(validateTemplate(version.action, version, layout));
+          unusableTranslations = await translate.recheckTranslations(client, { templates: [version], layout });
+        },
+      });
+      await changed(req, { what: 'template', change: 'draft put live', id: row.id, action: row.action, version: row.version });
+      res.json({ template: row, unusableTranslations });
+    } catch (err) {
+      sendError(res, err, 'publish template draft');
     }
   });
 

@@ -125,14 +125,14 @@ test('the section is registered everywhere the console reads, inside the registr
   assert.match(audit, /'#admin\/email-templates'/, 'and the audit visits the route');
 });
 
-test('lists 17 actions, one row each, with its live version, languages and when it was edited', () => {
+test('lists every action (17 sent, 11 drip drafts), one row each, with its live version, languages and when it was edited', () => {
   const data = payload();
-  assert.equal(data.actions.length, 17);
+  assert.equal(data.actions.length, 28);
   const html = render('TemplateList', {
     payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
     onToggleArchived() {}, onNew() {}, onEdit() {}, onDelete() {}, onRestore() {}, onDeleteArchived() {},
   });
-  assert.equal(count(html, /data-email-action="/g), 17);
+  assert.equal(count(html, /data-email-action="/g), 28);
   for (const a of data.actions) assert.ok(html.includes(a.label.replace(/&/g, '&amp;').replace(/'/g, '&#x27;')), `${a.action} is listed`);
   assert.match(html, /data-email-action="otp"[\s\S]*?Sign-in code \(OTP\)[\s\S]*?v3[\s\S]*?Live[\s\S]*?12 of 12[\s\S]*?2 days ago/);
   assert.match(html, /data-email-action="password_reset"[\s\S]*?0 of 12, 12 need translating[\s\S]*?Original/);
@@ -240,7 +240,7 @@ test('the editor shows server errors beside their field, and others above the fo
   assert.match(html, /id="email-template-html-error"[^>]*>The HTML does not always include \{\{code\}\}\./);
   assert.match(html, /id="email-template-layout-error"[^>]*>That layout does not exist\./, 'the layout dropdown carries layoutFamilyId');
   assert.match(html, /A problem with no field\./, 'an error with no field of its own is still shown');
-  assert.match(html, />Save</);
+  assert.match(html, />Save and put live</);
   assert.match(html, />Preview</, 'the preview has its place beside the form');
 
   // Text tab: the text field and its error, the HTML one hidden.
@@ -327,7 +327,7 @@ test('layouts list each live layout, the emails using it, and the deleted case',
     onToggleArchived() {}, onNew() {}, onEdit() {}, onDelete() {}, onRestore() {},
   });
   assert.equal(count(html, /data-email-layout="/g), 2, 'live layouts only');
-  assert.match(html, /data-email-layout="1"[\s\S]*?Homeroom standard[\s\S]*?Used by 17 emails/);
+  assert.match(html, /data-email-layout="1"[\s\S]*?Homeroom standard[\s\S]*?Used by 28 emails/);
   assert.match(html, /data-email-layout="3"[\s\S]*?Not used/);
   assert.match(html, /data-email-layout-version="4"[\s\S]*?Restore/);
   assert.ok(!/Old frame/.test(html), 'a deleted layout is gone');
@@ -601,7 +601,7 @@ test('list counts out-of-date languages: usable translations of the live version
     payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
     onToggleArchived: noop, onNew: noop, onEdit: noop, onDelete: noop, onRestore: noop,
   });
-  assert.match(layouts, /Used by 17 emails · 0 of 12, 12 need translating/);
+  assert.match(layouts, /Used by 28 emails · 0 of 12, 12 need translating/);
 });
 
 test('shows per-language progress and failures, in words', () => {

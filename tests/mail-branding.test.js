@@ -81,11 +81,15 @@ test('the frame is applied in one place, not by the templates', () => {
   // switch is how a seventh template ships unbranded. The frame is now the
   // stored layout, and every first template wears the one seeded layout,
   // which holds the document; a template holds only its own fragment.
-  const { SEEDS, STANDARD_LAYOUT } = require(path.join(ROOT, 'src/db/email-template-seeds.js'));
-  assert.equal(SEEDS.layouts.length, 1);
-  assert.match(SEEDS.layouts[0].html, /^<!doctype html>/);
+  // The one exception is Evan's typed note, a second frame worn only by the
+  // drip emails he signs, which nothing sends yet.
+  const { SEEDS, STANDARD_LAYOUT, PLAIN_LAYOUT } = require(path.join(ROOT, 'src/db/email-template-seeds.js'));
+  const { isDrip } = require(path.join(ROOT, 'src/services/mail/actions.js'));
+  assert.deepEqual(SEEDS.layouts.map((l) => l.name), [STANDARD_LAYOUT, PLAIN_LAYOUT]);
+  for (const layout of SEEDS.layouts) assert.match(layout.html, /^<!doctype html>/);
   for (const [kind, seed] of Object.entries(SEEDS.templates)) {
-    assert.equal(seed.layout, STANDARD_LAYOUT, kind);
+    if (seed.layout === PLAIN_LAYOUT) assert.ok(isDrip(kind), kind);
+    else assert.equal(seed.layout, STANDARD_LAYOUT, kind);
     assert.doesNotMatch(seed.html, /<!doctype|<html|<body/i, kind);
   }
   // And no frame or markup is written in the code that renders.
@@ -102,7 +106,7 @@ test('an unknown kind still throws rather than sending a blank frame', () => {
 });
 
 test('KINDS is derived from the actions, so the two cannot drift', () => {
-  assert.match(SRC, /const KINDS = Object\.keys\(ACTIONS\);/);
+  assert.match(SRC, /const KINDS = Object\.keys\(ACTIONS\)\.filter\(\(kind\) => !isDrip\(kind\)\);/);
   for (const kind of templates.KINDS) {
     assert.doesNotThrow(() => templates.buildMessage(kind, PAYLOAD), `${kind} renders`);
   }

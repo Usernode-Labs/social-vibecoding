@@ -13,7 +13,7 @@
 // logs it.
 
 const tracking = require('./tracking');
-const { ACTIONS, actionFor } = require('./actions');
+const { ACTIONS, actionFor, isDrip } = require('./actions');
 const { renderResolved } = require('./render');
 const { plainMessage } = require('./plain-message');
 
@@ -58,8 +58,11 @@ function buildMessage(kind, payload = {}) {
   return { ...tracking.decorate(kind, { ...message, ...(headers ? { headers } : {}) }, payload), plainBecause: reason };
 }
 
-// Every kind there is, for the admin console and for tests that want to assert
-// the set didn't quietly shrink.
-const KINDS = Object.keys(ACTIONS);
+// Every kind the sender sends, for the admin console and for tests that want
+// to assert the set didn't quietly shrink. The drip emails are actions too, but
+// nothing sends them yet: they are drafts an admin reviews on Admin > Email
+// templates (actions.js isDrip), so they are listed apart.
+const KINDS = Object.keys(ACTIONS).filter((kind) => !isDrip(kind));
+const DRIP_KINDS = Object.keys(ACTIONS).filter(isDrip);
 
-module.exports = { buildMessage, plainMessage, KINDS };
+module.exports = { buildMessage, plainMessage, KINDS, DRIP_KINDS };

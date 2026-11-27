@@ -12,10 +12,15 @@ import { AdminUI } from '../admin-console.js';
 
 export interface Placeholder { name: string; description: string; kind?: string; fromCode?: boolean }
 
+// For an email of the drip: who it is from, what sends it, when, and what
+// stops it. Nothing sends these yet, so their templates stay drafts.
+export interface DripInfo { from: string; trigger: string; timing: string; skip: string; nudge: boolean }
+
 export interface ActionInfo {
   action: string;
   label: string;
   englishOnly: boolean;
+  drip?: DripInfo | null;
   required: { html: string[]; text: string[] };
   placeholders: Placeholder[];
 }
@@ -26,7 +31,8 @@ export interface TemplateRow {
   name: string;
   layout_family_id: number | null;
   version: number;
-  status: 'live' | 'archived';
+  // A draft is saved and previewed but never sent.
+  status: 'live' | 'archived' | 'draft';
   subject: string;
   preheader: string;
   why: string;
@@ -185,6 +191,13 @@ export const isLive = (row: { status: string; deleted_at: string | null }) => ro
 
 export function liveTemplate(payload: TemplatesPayload, action: string): TemplateRow | null {
   return payload.templates.find((t) => t.action === action && isLive(t)) || null;
+}
+
+export const isDraft = (row: { status: string; deleted_at: string | null }) => row.status === 'draft' && !row.deleted_at;
+
+/** The action's open draft: the version an admin is still working on, never sent. */
+export function draftTemplate(payload: TemplatesPayload, action: string): TemplateRow | null {
+  return payload.templates.find((t) => t.action === action && isDraft(t)) || null;
 }
 
 export function liveLayouts(payload: TemplatesPayload): LayoutRow[] {
