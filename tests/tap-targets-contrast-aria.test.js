@@ -312,7 +312,11 @@ test('7164: Challenges\' tabs are pressed at 44px and the track is drawn where i
 });
 
 test('7164: a thread\'s reaction chips are pressed at 44px, and a chip never loses a tap to its neighbour', () => {
-  assert.match(CSS, /\n\.messages-reactions button \{[^}]*height: 32px;/, 'drawn 32px tall, as before');
+  // Dedupe step 2: the chip is the one every message row draws
+  // (message-actions/reactions.tsx, the feed primitive's ReactionPill),
+  // still 32px tall.
+  assert.match(read('frontend/@/components/ui/feed.tsx'), /reaction: 'h-8 px-3 /, 'drawn 32px tall, as before');
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /<MessageReactions className="messages-reactions"/);
   assert.match(PHONE_TAPS, /html:root \.messages-reactions button \{ position: relative; \}/);
   assert.match(PHONE_TAPS, /html:root \.messages-reactions button::after \{ content: ""; position: absolute; z-index: -1; inset-inline: 0; top: 50%; height: 44px; transform: translateY\(-50%\); \}/,
     'the box is 44px tall and sits under the chips');

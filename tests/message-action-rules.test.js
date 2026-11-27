@@ -149,7 +149,7 @@ test('reactions are one chip: the feed primitive\'s ReactionPill, with its count
     assert.match(read(file), /<MessageReactions\b/, `${file} draws the one chip`);
     assert.doesNotMatch(read(file), /<ReactionPill\b/, `${file} draws no chip of its own`);
   }
-  assert.doesNotMatch(read('public/css/app.css'), /\.messages-reactions button \{/, 'the Messages chip\'s own CSS is gone');
+  assert.doesNotMatch(read('public/css/app.css'), /\n\.messages-reactions button \{/, 'the Messages chip\'s own CSS is gone');
 });
 
 test('the shared row: a room\'s named row, a conversation\'s bubble, and the place\'s own hooks on it', () => {
