@@ -4,10 +4,13 @@
 //
 //   GET /                             the shell for somebody signed out,
 //                                     with the front page's own title, link
-//                                     preview and canonical in its head.
+//                                     preview and canonical in its head, and
+//                                     the page in words for a reader that
+//                                     runs no JavaScript.
 //   GET /app/:slug                    the shell, as `app.get('*')` serves it,
 //                                     with the project's link preview in its
-//                                     head: for a public project only.
+//                                     head and its page in words in its
+//                                     body: for a public project only.
 //   GET /api/public/apps/:slug/cover.png   its 1200 x 630 cover.
 //   GET /embed/:slug                  the project inside a post on X, for a
 //                                     public project somebody with no
@@ -79,6 +82,11 @@ function worthListing(app) {
   return !!(app && ((app.description && String(app.description).trim()) || Number(app.active_users) > 0));
 }
 
+/** The public projects a search engine is pointed at: the sitemap's list, and the front page's links. */
+function listedProjects(apps) {
+  return (apps || []).filter((app) => worthListing(app) && SLUG_RE.test(String(app.slug || '')));
+}
+
 function escapeXml(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -101,8 +109,7 @@ function lastModified(app) {
 function sitemapXml(origin, apps, { pageDay = null } = {}) {
   const projects = [];
   let newest = null;
-  for (const app of apps) {
-    if (!worthListing(app) || !SLUG_RE.test(String(app.slug || ''))) continue;
+  for (const app of listedProjects(apps)) {
     const lastmod = lastModified(app);
     if (lastmod && (!newest || lastmod > newest)) newest = lastmod;
     projects.push(`  <url><loc>${escapeXml(preview.pageUrl(origin, app.slug))}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}</url>`);
@@ -122,6 +129,25 @@ function projectPreviewRoutes(config) {
   const entries = new Map();
   const covers = new Map();
   let sitemap = null;
+  let landingLinks = null;
+
+  // The projects the front page links to for a reader with no JavaScript:
+  // the sitemap's own list, name and slug only, read at most as often as the
+  // sitemap is. A read that fails leaves the page without its list, never
+  // without the page.
+  async function landingProjects() {
+    if (landingLinks && landingLinks.expiresAt > Date.now()) return landingLinks.apps;
+    try {
+      const apps = listedProjects(await listPublicApps(pool, { includeWallets: false }))
+        .slice(0, preview.LANDING_LINKS_MAX)
+        .map((app) => ({ slug: app.slug, name: app.name }));
+      landingLinks = { apps, expiresAt: Date.now() + SITEMAP_TTL_MS };
+      return apps;
+    } catch (err) {
+      log.error('project-preview', 'Listing the front page\'s projects failed', { err: err.message });
+      return landingLinks ? landingLinks.apps : [];
+    }
+  }
 
   // The public project, its icon's bytes, and whether its cover can be
   // drawn; null for anything the public directory does not list.
@@ -170,7 +196,8 @@ function projectPreviewRoutes(config) {
       if (link) res.setHeader('Link', link);
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
       applyShellDocumentHeaders(res, INDEX_PATH);
-      return res.type('html').send(preview.withHead(html, tags, preview.LANDING_TITLE));
+      const content = preview.landingContent(await landingProjects());
+      return res.type('html').send(preview.withBody(preview.withHead(html, tags, preview.LANDING_TITLE), content));
     } catch (err) {
       log.error('project-preview', 'Serving the front page failed', { err: err.message });
       return next();
@@ -195,7 +222,8 @@ function projectPreviewRoutes(config) {
       });
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
       applyShellDocumentHeaders(res, INDEX_PATH);
-      return res.type('html').send(preview.withPreview(html, tags, entry.app.name || slug));
+      const page = preview.withPreview(html, tags, entry.app.name || slug);
+      return res.type('html').send(preview.withBody(page, preview.projectContent(entry.app)));
     } catch (err) {
       log.error('project-preview', 'Serving a project page failed', { slug, err: err.message });
       return next();
@@ -312,3 +340,4 @@ module.exports = projectPreviewRoutes;
 module.exports.robotsTxt = robotsTxt;
 module.exports.sitemapXml = sitemapXml;
 module.exports.worthListing = worthListing;
+module.exports.listedProjects = listedProjects;
