@@ -5529,11 +5529,13 @@ html:root #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups
     line-height: 40px;
   }
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-search-open], [data-home-join-kind]) {
+#auth-landing-screen [data-guest-discover] :is([data-guest-search-open], [data-home-join-kind], [data-home-join-sort]) {
   background-color: var(--site-panel);
   color: var(--site-ink);
   box-shadow: inset 0 0 0 1px var(--site-line);
 }
+/* The sort menu is one of the chips (`.wip-sort`): its chevron takes the ink too. */
+#auth-landing-screen [data-guest-discover] .wip-sort { color: var(--site-ink); }
 #auth-landing-screen [data-guest-discover] [data-guest-search-open] {
   box-shadow: inset 0 0 0 1px var(--site-line), 0 2px 0 var(--site-line);
 }
@@ -7979,22 +7981,46 @@ html:root:where([data-motion="reduce"]) .wip-activity-card { transition: none; }
   gap: var(--wip-card-gap);
   padding-bottom: 0.625rem;
 }
-/* Its menu is one of the line's own: a chip's height, shape and type, on the
-   card's colour under a hairline, at the line's end. */
-html:root .wip-filterbar > select {
+/* Its menu is one of the line's own, at the line's end (`.wip-sort`, next). */
+html:root .wip-filterbar > .wip-sort { margin-inline-start: auto; }
+/* The sort menu, wherever it is drawn (the filter line, or a line of its own
+   over a search's results): a chip's height, shape and type, on the card's
+   colour under a hairline, with our own chevron at its end where the
+   browser drew its arrow. It is a <select> still, so the open list is the
+   browser's own; a select takes no ::after, so the chevron is an icon beside
+   it that a press goes through. The signed-out page gives it the site's
+   colours (THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES). */
+.wip-sort {
+  position: relative;
+  display: inline-flex;
   flex: none;
+  color: var(--wip-ink);
+}
+html:root .wip-sort > select {
+  -webkit-appearance: none;
+  appearance: none;
   width: auto;
   height: 2.75rem;
-  margin-inline-start: auto;
   padding-block: 0;
-  padding-inline-start: 1rem;
+  padding-inline: 1.25rem 2.5rem;
   border: 0;
-  border-radius: var(--wip-radius-pill);
+  border-radius: 9999px;
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
-  font-size: var(--wip-title-size);
+  font-size: 0.9375rem;
   font-weight: 500;
-  color: var(--wip-ink);
+  color: inherit;
+  cursor: pointer;
+}
+html:root .wip-sort > select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.wip-sort-mark {
+  position: absolute;
+  inset-inline-end: 1rem;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.5rem;
+  pointer-events: none;
 }
 /* On a phone the menu takes a line of its own, under the choices (phone
    review, 23 Nov 2026): side by side, the menu left the choices about 217px,
@@ -8235,11 +8261,11 @@ html:root .home-row > .home-aside {
 }
 html:root .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
 html:root .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
-/* A pinned project's press area, the search field and the sort menu: inside
-   a card, or a field. */
+/* A pinned project's press area and the search field: inside a card, or a
+   field. (The sort menu is not one of them: it is pressed, so it is a pill,
+   `.wip-sort`.) */
 html:root #app-list > .app-card,
-html:root .wip-search > input,
-html:root #home-join-section select { border-radius: var(--wip-radius-inner); }
+html:root .wip-search > input { border-radius: var(--wip-radius-inner); }
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
