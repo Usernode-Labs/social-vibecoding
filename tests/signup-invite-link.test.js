@@ -7,8 +7,8 @@
 //
 // That behaviour spans four files with nothing structural tying them
 // together — the mail builds the link, the legacy router forwards its
-// segment, the React login screen decodes it and sends, and the server
-// decides whether a repeat request mints a new code. A change to any one of
+// segment, the sign-in sheet (the one sign-in, over the landing) decodes it
+// and sends, and the server decides whether a repeat request mints a new code. A change to any one of
 // them alone is silent breakage, so these pin the joins. Source pins in the
 // style of tests/password-reset-ui.test.js; the behaviour itself is covered
 // by tests/topochain-mail-transport.test.js, tests/platform-mail.test.js and
@@ -24,7 +24,11 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const LOGIN_TSX = 'frontend/src/features/auth/login.tsx';
+const { loadTsx } = require('./lib/render-tsx');
+
+const SHEET_TSX = 'frontend/src/features/auth/sign-in-sheet.tsx';
+const ROUTES_TSX = 'frontend/src/features/auth/sign-in-routes.ts';
+const LANDING_TSX = 'frontend/src/features/auth/landing.tsx';
 
 // ─── the link and the route that receives it ────────────────────────
 
@@ -71,80 +75,77 @@ test('#1548: the release path supplies the token it promises', () => {
     'and the release route sends that notice');
 });
 
-test('signup is a login-screen route and the segment reaches the screen', () => {
+test('signup is the landing\'s route, and its segment reaches the sheet', () => {
   const js = read('public/js/auth-screens.js');
-  assert.match(js, /signup:\s*'auth-login-screen'/,
-    'signup renders on the login screen');
-  assert.match(js, /if \(route === 'signup'\) AuthScreens\._loginOnShow\(true, seg\)/,
-    'the router must forward the segment, not just open the signup view');
-  assert.match(read(LOGIN_TSX),
-    /_loginOnShow: \(openSignup\?: boolean, seg\?: string \| null\) =>/,
-    'the React screen accepts the segment on the patched dispatcher');
+  assert.match(js, /signup: 'auth-landing-screen'/, 'signup is the landing, with the sheet over it');
+  assert.match(js, /AuthScreens\._signInRoute = signIn \? \{ route, seg: seg \|\| null \} : null;/,
+    'the router must forward the segment, not just open the sheet');
+  const landing = read(LANDING_TSX);
+  assert.match(landing, /const signInRoute = takeSignInRoute\(\);/);
+  assert.match(landing, /opening: sheetOpening\(signInRoute\.route, signInRoute\.seg\),/);
+  assert.match(landing, /route=\{routeSheet\.opening\}/);
 });
 
 // ─── arriving from the link ─────────────────────────────────────────
 
-test('#1548: the screen resolves the token, and still refuses a non-address', () => {
-  const tsx = read(LOGIN_TSX);
-  // The token is read from the query and resolved through the endpoint that
-  // already exists for it. Nothing new is minted: more_token is already an
-  // unguessable capability delivered to that address, and
-  // /api/public/waitlist/more/:token already returns the email.
-  assert.match(tsx, /function inviteTokenFromQuery/);
-  assert.match(tsx, /function inviteEmailFromToken/);
-  assert.match(tsx, /waitlist\/more\/\$\{encodeURIComponent\(token\)\}/,
+test('#1548: the sheet resolves the token, and still refuses a non-address', () => {
+  const routes = read(ROUTES_TSX);
+  // The token is resolved through the endpoint that already exists for it.
+  // Nothing new is minted: more_token is already an unguessable capability
+  // delivered to that address, and /api/public/waitlist/more/:token already
+  // returns the email.
+  assert.match(routes, /export async function inviteEmailFromToken/);
+  assert.match(routes, /export function releaseTokenFromQuery/);
+  assert.match(routes, /waitlist\/more\/\$\{encodeURIComponent\(token\)\}/,
     'resolved through the existing rate-limited endpoint');
   // Whatever comes back is still validated before it can reach the OTP
   // endpoint: a prefill is a convenience, not a reason to trust a response.
-  assert.match(tsx, /includes\('@'\)/, 'only an address prefills and sends');
+  assert.match(routes, /includes\('@'\)/, 'only an address prefills and sends');
   // The segment form stays for the screenshot state, which cannot carry a
   // live token and must paint without a network round trip.
-  assert.match(tsx, /function inviteFromSegment/);
-  assert.match(tsx, /decodeURIComponent\(seg\)/);
+  const { addressFromSegment, sheetOpening } = loadTsx(ROUTES_TSX);
+  assert.equal(addressFromSegment('Ada%40Example.com'), 'ada@example.com');
+  assert.equal(addressFromSegment('not-an-address'), null);
+  assert.equal(addressFromSegment('%E0%A4%A'), null, 'a stray % fills in nothing');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sheetOpening('signup', 'demo%40example.invalid', null))),
+    { route: 'signup', step: 'email', email: 'demo@example.invalid', codeSent: false, token: null, code: null, resetSent: false, notice: null },
+  );
+  assert.equal(sheetOpening('signup', null, null).email, null, 'a bare #signup is the empty email step');
 });
 
 test('the code is requested once per address per tab, not once per load', () => {
-  const tsx = read(LOGIN_TSX);
+  const routes = read(ROUTES_TSX);
   // sessionStorage rather than a ref: a reload is exactly the case a ref
   // forgets, and a reload is the common way to arrive here twice.
-  assert.match(tsx, /const AUTO_SEND_KEY = 'usernode\.signup\.otp\.v1'/);
-  assert.match(tsx, /sessionStorage\.getItem\(AUTO_SEND_KEY\)/);
-  assert.match(tsx, /sessionStorage\.setItem\(AUTO_SEND_KEY/);
-  // The guard is read again on every pass rather than remembered, and the
-  // record is written BEFORE the request so a failed send is not retried
-  // on a loop.
-  assert.match(tsx, /writeAutoSend\(inviteEmail\);\s*\n\s*void otpRequestCode\(inviteEmail\);/);
+  assert.match(routes, /const AUTO_SEND_KEY = 'usernode\.signup\.otp\.v1'/);
+  assert.match(routes, /sessionStorage\.getItem\(AUTO_SEND_KEY\)/);
+  assert.match(routes, /sessionStorage\.setItem\(AUTO_SEND_KEY/);
+  // The record is read again on every arrival rather than remembered, and
+  // written BEFORE the request so a failed send is not retried on a loop.
+  const sheet = read(SHEET_TSX);
+  const arrival = sheet.slice(sheet.indexOf('export function addressArrival('), sheet.indexOf('/** A waitlist "you\'re in" link\'s one-time sign-in, spent'));
+  assert.match(arrival, /const prior = readAutoSend\(\);/);
+  assert.match(arrival, /writeAutoSend\(address\);\s+return \{ address, send: true \};/);
+  assert.match(sheet, /: addressArrival\(address\);\s+if \(arrival\.send\) \{ void requestCode\(address\); return; \}/);
 });
 
 test('a second visit lands back on the code step instead of an empty form', () => {
-  const tsx = read(LOGIN_TSX);
-  // loginOnShow's showOtpView() resets the screen to the email step, and
-  // the router calls it again on a re-entry that leaves the address
-  // unchanged — so this has to be painted from loginOnShow itself, not
-  // from an effect keyed on the address.
-  const onShow = tsx.slice(tsx.indexOf('const loginOnShow'), tsx.indexOf('// ── The OTP'));
-  assert.ok(onShow.length > 0, 'loginOnShow must still exist');
-  assert.match(onShow, /readAutoSend\(\)/,
-    'the standing confirmation is restored inside loginOnShow');
-  assert.match(onShow, /setOtpStatus\(translate\(CODE_SENT_MSG\)\)/);
-  assert.match(onShow, /setCooldownUntil\(/,
-    'the remaining cooldown is restored, not restarted');
+  const sheet = read(SHEET_TSX);
+  // A code this tab already sent for the address: the code step, with what
+  // is left of the wait, and nothing sent again.
+  const prefill = sheet.slice(sheet.indexOf('// #signup/<address> (`route.email`)'), sheet.indexOf('// Inside the Homeroom app, the wallet is asked once'));
+  assert.match(prefill, /if \(!open \|\| !route\?\.email \|\| routeSeen\.current === route\) return;/, 'once per opening');
+  assert.match(prefill, /setStep\('code'\);\s+setCooldownUntil\(arrival\.cooldownUntil\);/,
+    'the remaining wait is restored, not restarted');
 });
 
 test('the resend is held for the same gap the mail layer enforces', () => {
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /const RESEND_COOLDOWN_MS = 60 \* 1000/);
-  // The button says how long is left rather than looking broken, and both
-  // arms of every conditional class are whole literals — Tailwind's
-  // extractor is a regex over source text.
-  assert.match(tsx, /t\('auth:login\.otp\.resendIn', \{ count: cooldownLeft \}\)/);
-  assert.equal(message('auth:login.otp.resendIn', { count: 42 }), 'Send a new code in 42s');
-  assert.match(tsx, /t\('auth:login\.otp\.requestIn', \{ count: cooldownLeft \}\)/);
-  assert.equal(message('auth:login.otp.requestIn', { count: 42 }), 'Email me a code in 42s');
-  assert.match(tsx, /const QUIET_BUTTON_WAITING =\s*\n?\s*'[^']*'/);
-  assert.doesNotMatch(tsx, /className=\{`[^`]*\$\{[^`]*\}[^`]*`\}/,
-    'no computed Tailwind class names');
-
+  const sheet = read(SHEET_TSX);
+  assert.match(sheet, /const RESEND_COOLDOWN_MS = 60 \* 1000;/);
+  // The button says how long is left rather than looking broken.
+  assert.match(sheet, /t\('auth:signInSheet\.code\.resendIn', \{ count: waitLeft \}\)/);
+  assert.match(message('auth:signInSheet.code.resendIn', { count: 42 }), /42/);
   // Client-side politeness only. The server-side gap is the mail layer's,
   // and requestCode reuses the outstanding code inside it rather than
   // minting one it then refuses to send.
@@ -164,26 +165,33 @@ test('the post-send screen is URL-reachable for captures and checks', () => {
   // about getting rid of.
   assert.match(read('public/js/app.js'), /shot !== 'signup-code-sent'/,
     'the shot must survive restoreFromHash for a signed-in reviewer');
-  const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /shot === 'signup-code-sent'/);
+  const { sheetOpening } = loadTsx(ROUTES_TSX);
+  const shot = sheetOpening('signup', 'demo%40example.invalid', 'signup-code-sent');
+  assert.equal(shot.step, 'code');
+  assert.equal(shot.codeSent, true);
   // It paints; it must never send. The shot has to be deterministic, and
   // staging mail is log-only, so a real request would prove nothing.
-  assert.match(tsx, /if \(currentShot\(\) === 'signup-code-sent'\) return;/,
-    'the auto-send effect must short-circuit on the shot');
+  assert.match(read(SHEET_TSX), /const arrival: ReleaseArrival = route\.codeSent\s+\? \{ address, send: false, cooldownUntil: Date\.now\(\) \+ RESEND_COOLDOWN_MS \}/,
+    'the shot paints the code step with the resend held, and sends nothing');
 
   const dapp = JSON.parse(read('dapp.json'));
   const declared = dapp.tests.filter((t) => t.path.includes('shot=signup-code-sent'));
-  assert.equal(declared.length, 2, 'both halves of the screen are checked');
+  assert.equal(declared.length, 1, 'one check holds both halves: the address and the held resend');
   for (const t of declared) {
     assert.match(t.path, /#signup\/demo%40example\.invalid$/,
       'the check must carry an encoded address, like a real link');
+    assert.match(t.expectSelector, /button\[disabled\]/);
+    // The sheet draws the address as two parts (the name part shortens on a
+    // phone, ./sign-in-sheet.tsx SentAddress), which the page's text reads on
+    // two lines, so the check reads the provider's part.
+    assert.equal(t.expectText, '@example.invalid');
   }
 });
 
 // ─── copy ───────────────────────────────────────────────────────────
 
 test('no em dash reaches a reader on any surface this touched', () => {
-  for (const rel of [LOGIN_TSX, 'src/services/mail/templates.js']) {
+  for (const rel of [SHEET_TSX, ROUTES_TSX, 'src/services/mail/templates.js']) {
     const src = read(rel);
     // Comments in these files are agent-facing and may use one; the strings
     // are not. Check every quoted literal rather than the whole file.

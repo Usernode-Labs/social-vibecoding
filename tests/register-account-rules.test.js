@@ -92,22 +92,25 @@ test('a valid form still reaches the activation-code preflight', async () => {
   } finally { server.close(); }
 });
 
-test('the register form states both rules and shows a field refusal under its field', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/register.tsx'), 'utf8');
+test('the activation-code step states both rules and shows a field refusal under its field', () => {
+  // The sign-in sheet's register step (#register[/<code>]), the one sign-in
+  // since the full-page register screen went.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8');
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/sign-in-routes.ts'), 'utf8');
   const shared = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/shared.ts'), 'utf8');
   // The rules' words are catalog entries, one for each place they are said.
-  assert.equal(message('auth:register.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
-  assert.equal(message('auth:register.passwordRule'), 'At least 8 characters.');
-  assert.match(src, /id="reg-username-hint"[\s\S]{0,200}?fieldError\.message : t\('auth:register\.usernameRule'\)/);
+  assert.equal(message('auth:signInSheet.register.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
+  assert.equal(message('auth:signInSheet.register.passwordRule'), 'At least 8 characters.');
+  assert.match(src, /id="sign-in-sheet-reg-username-hint"[\s\S]{0,200}?regFieldError\.message : t\('auth:signInSheet\.register\.usernameRule'\)/);
   // #3575: and, directly under the field, ahead of the rule, who will see it.
-  assert.match(src, /<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
-  assert.equal(message('auth:register.usernamePublic'), 'Your username will be public to other users on Homeroom.');
-  assert.match(src, /aria-describedby="reg-username-public reg-username-hint"/);
-  assert.match(src, /id="reg-password-hint"[\s\S]{0,200}?fieldError\.message : t\('auth:register\.passwordRule'\)/);
-  assert.match(src, /data\.field === 'username' \|\| data\.field === 'password'/);
-  // And the handle field does not let a phone capitalise or correct it.
+  assert.match(src, /<p id="sign-in-sheet-reg-username-public" className=\{FIELD_HINT\}>\{t\('auth:signInSheet\.register\.usernamePublic'\)\}<\/p>\s*<p id="sign-in-sheet-reg-username-hint"/);
+  assert.equal(message('auth:signInSheet.register.usernamePublic'), 'Your username will be public to other users on Homeroom.');
+  assert.match(src, /aria-describedby="sign-in-sheet-reg-username-public sign-in-sheet-reg-username-hint"/);
+  assert.match(src, /id="sign-in-sheet-reg-password-hint"[\s\S]{0,200}?regFieldError\.message : t\('auth:signInSheet\.register\.passwordRule'\)/);
+  assert.match(routes, /data\.field === 'username' \|\| data\.field === 'password'/);
+  assert.match(routes, /fetchSessionMint\('\/api\/auth\/register',/);
+  // And the handle fields do not let a phone capitalise or correct them.
   assert.match(shared, /HANDLE_FIELD = \{ autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false \}/);
-  assert.match(src, /id="reg-username"[\s\S]{0,200}?\{\.\.\.HANDLE_FIELD\}/);
-  const login = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/login.tsx'), 'utf8');
-  assert.match(login, /id="login-username"[\s\S]{0,200}?\{\.\.\.HANDLE_FIELD\}/);
+  assert.match(src, /id="sign-in-sheet-reg-username"[\s\S]{0,700}?\{\.\.\.HANDLE_FIELD\}/);
+  assert.match(src, /id="sign-in-sheet-identifier"[^\n]*\{\.\.\.HANDLE_FIELD\}/);
 });

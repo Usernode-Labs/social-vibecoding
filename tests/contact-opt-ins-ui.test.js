@@ -43,8 +43,6 @@ test('the boxes are on the account-creating steps, never on a plain sign-in', ()
   assert.match(sheet, /\{askName && !phoneLink \? \(\s*<SignupOptIn id="sign-in-sheet-news-text" kind="sms"/);
   // Only ticked boxes are sent.
   assert.match(sheet, /optIns\.marketingEmail \? \{ marketingEmail: true \} : \{\}/);
-  const login = read('frontend/src/features/auth/login.tsx');
-  assert.match(login, /otpSignup\?\.needsUsername && otpNewsByEmail \? \{ marketingEmail: true \} : \{\}/);
   const welcome = read('frontend/src/features/auth/welcome-page.tsx');
   assert.match(welcome, /saveAccount\(handle, \{ marketingEmail: account\.needsUsername && newsByEmail \}\)/);
 });

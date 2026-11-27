@@ -224,8 +224,6 @@ const SAFE_SCROLL_IDS = [
   'admin-screen',
   'settings-screen',
   'auth-landing-scroll',
-  'auth-login-screen',
-  'auth-register-screen',
   'auth-waiting-screen',
   'auth-waitlist-screen',
   'auth-more-screen',

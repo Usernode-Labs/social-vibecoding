@@ -1837,16 +1837,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // screens and what was also noticed; no check opened that change's page,
   // and the only shots check (#4269) reads route captures from before shots.
   // 708 leaves 172 slots.
-  // 708 → 709: +1 (request 7210) Home's Next challenges, with more than
-  // three open, folds the rest behind "Show all N challenges". It needs
-  // `?demo=1&challenges=many`: the default demo route holds three unfinished
-  // open challenges, which draws no toggle, and no existing check opens the
-  // five-open route. 709 leaves 171 slots.
-  // 709 → 710: +1 (the hub's Discussion, 26 Nov 2026) a phone's Discussion
+  // 708 → 706: −2 (one sign-in: the sheet) the full-page sign-in and
+  // register screens are gone, and their addresses open the sign-in sheet at
+  // their step. Their twelve checks became ten on the sheet: the two
+  // signup-code-sent checks are one (the address and the held resend), and
+  // the four that drew the sign-in page's card, its pills and its Back disc
+  // became three: #login's step, #signup's and the reset link's. 706 leaves
+  // 174 slots.
+  // 706 → 707: +1 (the hub's Discussion, 26 Nov 2026) a phone's Discussion
   // card opens the Discussion as a page under the Hub, `?ws=posts`: its own
   // route, which no check opens, so nothing could take it in a :has(). The
   // hub's own Discussion card rides the rewritten "#852 review, B8" check on
-  // the hub's route. 710 leaves 170 slots.
+  // the hub's route.
+  // 707 → 708: +1 (request 7210) Home's Next challenges, with more than
+  // three open, folds the rest behind "Show all N challenges". It needs
+  // `?demo=1&challenges=many`: the default demo route holds three unfinished
+  // open challenges, which draws no toggle, and no existing check opens the
+  // five-open route.
   // 709 → 704: −5 (#general is the Discussion, no chat view, 26 Nov 2026).
   // The 23 checks that read #general or an app channel as a chat move to the
   // Discussion: grouping and the room in place fold into one address check,
@@ -1855,10 +1862,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // replies where they landed into a post's replies with its reply field,
   // and the Communities tab lit into the app address's. Two are new: the
   // Earlier post's own reactions and a visitor's read-only Discussion on a
-  // public project's signed-out page. 704 leaves 176 slots.
-  // 704 → 705: +1 (the hub's Discussion card, kept from this branch) on top of
-  // main's count. 705 leaves 175 slots.
-  checkCap.assertPinned(DAPP.tests.length, 705);
+  // public project's signed-out page. 702 leaves 178 slots.
+  // 702 → 703: +1 (request 7210, above) on top of main's count. 703 leaves
+  // 177 slots.
+  checkCap.assertPinned(DAPP.tests.length, 703);
   // Every selector fits the runner's cap (app-manifest.js
   // MAX_TEST_SELECTOR_LEN): a longer one is cut mid-token and fails on every
   // build with "was not found".

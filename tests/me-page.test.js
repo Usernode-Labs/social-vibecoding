@@ -139,8 +139,22 @@ test('the page renders its six parts in order', () => {
   // the two rows the desktop Me page never had.
   const settingsCard = html.slice(html.indexOf('id="profile-settings"'), html.indexOf('id="profile-row-settings"'));
   assert.ok(!/md:hidden/.test(settingsCard), 'no md:hidden on the Settings card');
-  assert.ok(settingsCard.includes('id="profile-row-profile"') && settingsCard.includes('id="profile-row-notifications"'),
-    'Profile and Notifications rows render before Settings');
+  assert.ok(settingsCard.includes('id="profile-row-profile"'),
+    'the Profile row renders before Settings');
+  // #7226: Notifications is listed once, in the Preferences card. The
+  // Settings card used to draw a second row to the same page.
+  assert.ok(!html.includes('id="profile-row-notifications"'),
+    'no second Notifications row on Me');
+  // Each Preferences row goes to a section Settings registers (#7226): the
+  // Privacy row used #settings/privacy, which resolves to no section at all.
+  const preferencesAt = html.indexOf('id="profile-preferences"');
+  assert.ok(preferencesAt >= 0 && preferencesAt < html.indexOf('id="profile-account"'),
+    'the Preferences card renders on Me, above the Account card');
+  const preferences = html.slice(preferencesAt, html.indexOf('id="profile-account"'));
+  for (const href of ['#settings/theme', '#settings/alerts', '#settings/contact-privacy']) {
+    assert.ok(preferences.includes(`href="${href}"`), `Preferences links to ${href}`);
+  }
+  assert.ok(!html.includes('href="#settings/privacy"'), 'no link to a Settings key that does not exist');
   assert.ok(!/profile-contributions|data-contribution=/.test(html), 'Your contributions is gone');
   assert.ok(!/id="profile-friends"/.test(html), 'Friends is a row, not a section, until it is opened');
   assert.ok(!/id="profile-more"/.test(html), 'the "More" list is regrouped away');

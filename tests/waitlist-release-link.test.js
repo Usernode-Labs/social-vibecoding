@@ -144,7 +144,7 @@ test('a new account\'s link is spent as the page opens, after a check that spend
   // Its one Continue is an old #waitlist link's (#5261), never over a release
   // link: the guard says so.
   assert.equal((body.match(/setSheet\('start'\)/g) || []).length, 1);
-  assert.match(body, /if \(takeStartSheet\(\) && !link\) \{/);
+  assert.match(body, /if \(takeStartSheet\(\) && !link && !signInRoute\) \{/);
   // The one spend on load: after the GET that names the address says the
   // account is new, and with the flag that has the server refuse anything
   // else (tests/release-link-postgres.test.js).

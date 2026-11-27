@@ -1055,17 +1055,17 @@ const App = {
     // ordinary boot: this path skips /api/auth/me, so the capture or
     // proposal check's own session can't promote the page into the
     // signed-in shell and stop exercising the guest viewer at all.
-    // `password-recovery` (#1158) opens the login screen's forgot-password
-    // view (login.tsx reads the shot in loginOnShow); it needs the same
-    // anonymous boot so the capture session can't strip #login to the feed.
-    // `password-recovery-sent` is the same view with the post-submit
-    // confirmation painted (the green "link is on its way" success box).
+    // `password-recovery` (#1158) opens the sign-in sheet's reset-link step
+    // over the landing (features/auth/sign-in-routes.ts reads the shot); it
+    // needs the same anonymous boot so the capture session can't strip
+    // #login to the feed. `password-recovery-sent` is the same step with the
+    // "link is on its way" confirmation painted.
     // `password-reset-complete` is the terminal step after that link is
-    // redeemed: the reset form is gone and the login form carries the durable
-    // success notice. It sends nothing and consumes no token.
-    // `email-code-password-account` (#1586) is the login screen carrying the
-    // explanation an email code hands back when the account it matches can
-    // only be signed in with its password. Same anonymous boot, same reason.
+    // redeemed: the sheet's password step carrying the durable "Password
+    // changed" notice. It sends nothing and consumes no token.
+    // `email-code-password-account` (#1586) is the password step carrying
+    // the explanation an email code hands back when the account it matches
+    // can only be signed in with its password. Same anonymous boot, same reason.
     // `waitlist-more` opens the stage-2 survey for the token in the
     // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
     // auth screen, and restoreFromHash drops an auth route outright for a
@@ -1097,13 +1097,13 @@ const App = {
     // so and the control that turns the dead end into a join, and like the
     // two above it needs the anonymous boot. Nothing is sent to paint it —
     // waitlist.tsx sets the note from a literal.
-    // `signup-code-sent` (#1548) is the signup screen a second after a
-    // waitlist-release link opens it: the code step, the confirmation, and
-    // the resend held for its cooldown. The address rides in the fragment
+    // `signup-code-sent` (#1548) is the sign-in sheet a second after
+    // #signup/<address> opens it: the code step for that address, and the
+    // resend held for its cooldown. The address rides in the fragment
     // (`/?shot=signup-code-sent#signup/<url-encoded address>`), and like
     // `waitlist-more` it needs the anonymous boot, because restoreFromHash
     // drops an auth route for the signed-in session every capture and
-    // proposal check runs as. login.tsx paints it and sends nothing.
+    // proposal check runs as. The sheet paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
@@ -1135,9 +1135,8 @@ const App = {
   // Screenshot-state deep links for the offline experience (#1021):
   //   ?shot=offline         — the signed-in shell in read-only offline mode
   //                           (the fixed strip above everything).
-  //   ?shot=offline-signin  — the signed-out login screen while offline:
-  //                           the explanation block, and the credential
-  //                           fields greyed out because they cannot work.
+  //   ?shot=offline-signin  — the sign-in sheet (#login) while offline: its
+  //                           note saying why no step can work.
   //
   // Both pin connectivity rather than reading it, because the one thing a
   // capture runner and a reviewer's browser always have is a working
@@ -7240,8 +7239,6 @@ const App = {
   REACT_SCREEN_IDS: [
     // #1080 chunk C — the anonymous shell's screens, converted in order.
     'auth-landing-screen',
-    'auth-login-screen',
-    'auth-register-screen',
     'auth-waiting-screen',
     'auth-waitlist-screen',
     'auth-more-screen',
@@ -9822,18 +9819,19 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
   // own, in its order. A signed-out DEEP LINK lands on the landing screen,
   // which opens its sign-in sheet over it, titled for the place the link
   // names, with the address remembered for after (AuthScreens.showSignInFor,
-  // #5264). It used to land on the full-page sign-in form.
+  // #5264). It used to land on the full-page sign-in form. The sign-in
+  // addresses (#login, #signup, #register, #reset-password) are the landing
+  // too, with the sheet open at their step: the full pages are gone.
   if (!signedIn) {
-    if (head === 'login' || head === 'signup' || head === 'reset-password') return 'auth-login-screen';
-    if (head === 'register') return 'auth-register-screen';
     // Check your status (`#waitlist?confirm=1`) is the waitlist screen; a
     // bare #waitlist opens Continue on the landing (#5261).
     if (head === 'waitlist' || head.startsWith('waitlist?')) {
       return /[?&]confirm=1(?:&|$)/.test(head) ? 'auth-waitlist-screen' : 'auth-landing-screen';
     }
-    // Everything else is the landing: no route at all, 'waiting' (which the
-    // router redirects to landing for a viewer with no session to be waiting
-    // on), and a deep link, an app path included, under its sign-in sheet.
+    // Everything else is the landing: no route at all, a sign-in address,
+    // 'waiting' (which the router redirects to landing for a viewer with no
+    // session to be waiting on), and a deep link, an app path included,
+    // under its sign-in sheet.
     return 'auth-landing-screen';
   }
 

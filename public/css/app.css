@@ -3610,6 +3610,31 @@ html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) 
   object-position: left top;
 }
 
+/* THE PICTURE YOU PRESSED IS THE ONE THAT FLIES. The page's picture is
+   snapshotted about 30ms after the press, and it starts on its still: its
+   preview loop mounts after it and fades in once it plays
+   (frontend/src/features/guest/project-card.tsx). A card under the pointer is
+   already playing that loop, so the default cross-fade turned the loop into
+   the poster and back again in mid-air. The card's image is held for most of
+   the flight and the page's comes in over its last 100ms, by which time a
+   loop the card was playing has usually started on the page as well. */
+@keyframes guest-hero-hold-out {
+  0%, 75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes guest-hero-hold-in {
+  0%, 75% { opacity: 0; }
+  100% { opacity: 1; }
+}
+::view-transition-old(guest-hero) {
+  animation-name: guest-hero-hold-out;
+  animation-timing-function: linear;
+}
+::view-transition-new(guest-hero) {
+  animation-name: guest-hero-hold-in;
+  animation-timing-function: linear;
+}
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress
@@ -3766,8 +3791,6 @@ html[data-browser-scroller="profile-screen"] #profile-screen,
 html[data-browser-scroller="settings-screen"] #settings-screen,
 html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll,
 html[data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll,
-html[data-browser-scroller="auth-login-screen"] #auth-login-screen,
-html[data-browser-scroller="auth-register-screen"] #auth-register-screen,
 html[data-browser-scroller="auth-waiting-screen"] #auth-waiting-screen,
 html[data-browser-scroller="auth-waitlist-screen"] #auth-waitlist-screen,
 html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
@@ -3777,8 +3800,7 @@ html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
   overflow-y: visible;
 }
 html[data-browser-scroller^="auth-"] body :is(
-  #auth-landing-screen, #auth-login-screen, #auth-register-screen,
-  #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
+  #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
 ):not(.hidden) {
   position: relative;
   inset: auto;
@@ -3807,13 +3829,6 @@ html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
    tucked under the toolbar there. */
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story-compact] {
   padding-bottom: 0;
-}
-/* The same toolbar under the sign-in screen's foot (#4593): with the story
-   switched off, the release mail's "Create my account" lands on #signup,
-   and its steps (the account step's button, the line pinned at the foot)
-   ran on under Safari's toolbar the way the story's foot did. */
-html.un-ios[data-browser-scroller="auth-login-screen"] #auth-login-screen > .min-h-full {
-  padding-bottom: max(0px, calc(100lvh - 100svh));
 }
 /* THE INVITE PAGE'S LAST LINE IS AT THE FOOT OF ITS SCROLLER (#4049). Paged
    by the document in a phone browser, the landing's scroller is
@@ -4578,9 +4593,7 @@ html[data-browser-scroller] #landing-header {
   background: transparent;
   clip-path: inset(0);
 }
-html[data-browser-scroller^="auth-"] :is(
-  #auth-login-screen, #auth-register-screen, #auth-waiting-screen
-) > .min-h-full {
+html[data-browser-scroller^="auth-"] #auth-waiting-screen > .min-h-full {
   min-height: calc(100dvh - var(--browser-banner-h));
 }
 /* These screens are already below the strips in document flow. The bounded
@@ -4868,7 +4881,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #fffeea;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -4906,7 +4919,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on the cream is a faint cool
@@ -4947,7 +4960,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4961,7 +4974,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -5018,7 +5031,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -5330,7 +5343,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -5340,8 +5353,6 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    paints — inherited from the body's rule, which is on because this root
    is showing — in both modes. */
 #auth-landing-screen,
-#auth-login-screen,
-#auth-register-screen,
 #auth-waiting-screen,
 #auth-waitlist-screen,
 #auth-more-screen {
@@ -10965,7 +10976,14 @@ html:root #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platfor
     --platform-rail-full: var(--wip-nav-mini-w);
     --platform-rail-w: var(--wip-nav-mini-w);
   }
-  html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) { display: flex; }
+  /* …BUT A RAIL THE ROUTE HAS TAKEN AWAY STAYS AWAY. An id outranks
+     Tailwind's `.hidden`, so this rule without `:not(.hidden)` kept a hidden,
+     folded rail laid out under the signed-out landing and a running app. A
+     view transition draws `platform-tabs` as its own group, above the page,
+     and the "rail is going away" rule holds its old image at full opacity:
+     pressing a Discover card on a medium window flashed the strip down the
+     left for the 0.4s of the morph. */
+  html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek):not(.hidden) { display: flex; }
   html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-inline: var(--wip-nav-mini-pad); }
   html:root #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x) { display: none; }
   /* THE COUNTS STAY, ON THE GLYPH'S CORNER (phone review #81, 23 Nov 2026). Folded, the votes waiting on you were
@@ -19316,8 +19334,6 @@ body.is-offline.has-install-strip {
    step with the strip's own height, per the safe-area tokens at the top
    of this file. */
 body.has-install-strip #auth-landing-screen,
-body.has-install-strip #auth-login-screen,
-body.has-install-strip #auth-register-screen,
 body.has-install-strip #auth-waiting-screen,
 body.has-install-strip #auth-waitlist-screen,
 body.has-install-strip #auth-more-screen {
@@ -19325,8 +19341,6 @@ body.has-install-strip #auth-more-screen {
 }
 
 body.is-offline.has-install-strip #auth-landing-screen,
-body.is-offline.has-install-strip #auth-login-screen,
-body.is-offline.has-install-strip #auth-register-screen,
 body.is-offline.has-install-strip #auth-waiting-screen,
 body.is-offline.has-install-strip #auth-waitlist-screen,
 body.is-offline.has-install-strip #auth-more-screen {
@@ -34977,8 +34991,13 @@ html:root #ai-screen .ai-lists > :is([data-ai-search-empty], [data-ai-search-fai
 }
 
 /* ── The head card: the mark, the counts and the +; then search and the menu chip. ── */
-html:root #ai-screen [data-ai-sheet="head"] { display: grid; gap: 10px; padding: 12px; }
-html:root #ai-screen [data-ai-sheet="head"] > :is([data-ai-hero], [data-ai-tools]) { padding: 0; }
+/* The card is one column that can be narrower than its contents' min-content
+   (request #7231): an implicit auto track is as wide as the search field's
+   own width, which put the + and All projects past the card at the 280px
+   list floor. minmax(0, 1fr) lets the track be the card, and the two lines'
+   own min-width: 0 lets them wrap instead of overflowing. */
+html:root #ai-screen [data-ai-sheet="head"] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 12px; }
+html:root #ai-screen [data-ai-sheet="head"] > :is([data-ai-hero], [data-ai-tools]) { padding: 0; min-width: 0; }
 html:root #ai-screen [data-ai-hero] { gap: 10px; }
 html:root #ai-screen [data-ai-hero] > img { width: 40px; height: 40px; border-radius: 10px; }
 /* The mark keeps its place down to a 250px line (the 320px card beside a thread), as the design review drew it. */
@@ -35011,10 +35030,12 @@ html:root #ai-screen [data-ai-search-box] {
 }
 html:root #ai-screen [data-ai-search-box]:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 html:root #ai-screen [data-ai-search-box] > svg:first-child { width: 19px; height: 19px; }
-html:root #ai-screen [data-ai-search-box] > input { font-size: 16px; color: var(--one-ink); }
+/* The field's own width (about 20 characters) is no floor: it grows only by
+   flex-1, so the search can be as narrow as the label's 7rem. */
+html:root #ai-screen [data-ai-search-box] > input { width: 0; font-size: 16px; color: var(--one-ink); }
 html:root #ai-screen [data-ai-search-box] > input::placeholder { color: var(--one-ink-3); }
 /* All projects: the shared menu chip. It says what it shows, so no filter glyph before it; a picked project keeps its tile. */
-html:root #ai-screen [data-ai-project-more].one-chip { max-width: 100%; }
+html:root #ai-screen [data-ai-project-more].one-chip { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 html:root #ai-screen [data-ai-project-more].one-chip:hover:not(:disabled) { background: var(--one-surface); }
 html:root #ai-screen [data-ai-project-more].one-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 html:root #ai-screen [data-ai-project-more].one-chip:disabled { color: var(--one-ink-3); }
@@ -36256,10 +36277,24 @@ html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) 
   text-transform: none;
   color: var(--one-ink);
 }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 12px; }
+/* Even room inside a step: the list reaches 10px past the card's content edge, so a step's press sits 10px
+   inside it and the current step's box has the same 10px on every side (its date no longer touches the
+   box's edge), while the marks stay one column lined up with the heading. A step's note starts under its
+   mark: it is pulled back by the mark and the press's gap, so its text runs to the box's content edges. */
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-steps { margin-inline: -10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step { padding: 0 0 4px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step:last-child { padding-bottom: 0; }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 14px; top: 34px; }
-html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 0; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step::before { inset-inline-start: 24px; top: 38px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-press { gap: 12px; padding: 4px 10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-now] .dev-rail-press { padding: 10px; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note { margin-inline-start: calc(-30px - 12px); }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-note[data-rail-note="plain"] { padding-inline: 0; }
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-pile {
+  margin-inline: -10px;
+  width: calc(100% + 20px);
+  padding: 4px 10px 8px;
+}
+html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-pile::before { inset-inline-start: 24px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark { width: 30px; height: 30px; border-radius: 8px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-mark .dev-rail-glyph { width: 18px; height: 18px; }
 html:root #dev-topic-thread#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-rail-step[data-rail-step="asked"] .dev-rail-mark:not([data-rail-tone]) { background: var(--one-tile-g-bg); color: var(--one-tile-g-ink); }

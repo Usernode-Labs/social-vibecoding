@@ -7,7 +7,7 @@
 //
 // Now /api/auth/otp/verify reports what it did (additive fields, pinned
 // against real PostgreSQL in tests/email-signup-postgres.test.js), and the
-// set-password step:
+// account step (the sign-in sheet's, since the sheet became the one sign-in):
 //   * says the code created the account,
 //   * asks for the username and sends it (the first-run gate's rules and
 //     endpoint semantics), and, since #4891, no password: the account signs
@@ -34,7 +34,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const LOGIN = read('frontend/src/features/auth/login.tsx');
+const SHEET = read('frontend/src/features/auth/sign-in-sheet.tsx');
 const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 
@@ -58,61 +58,53 @@ test('the verify answer says what happened, additively, and suggests a name from
   assert.ok(spot < SIGNUP.indexOf('result.waitlisted = await isWaitlisted'));
 });
 
-test('the password step says the account is new, and asks for its handle with the suggestion in the field', () => {
-  assert.match(LOGIN, /const OTP_PASSWORD_INTRO_NEW =\n\s*'auth:login\.signup\.introNew';/);
-  assert.equal(message('auth:login.signup.introNew'), "Code verified. No account uses this email yet, so we'll create one. Choose a username.");
-  assert.match(LOGIN, /otpSignup\?\.created\s+\? OTP_PASSWORD_INTRO_NEW/);
-  const field = LOGIN.slice(LOGIN.indexOf('id="otp-username"'), LOGIN.indexOf('id="otp-username-hint"'));
+test('the account step says the account is being made, and asks for its handle with the suggestion in the field', () => {
+  // The sign-in sheet's account step (the one sign-in since the full-page
+  // sign-in screen went): titled for the choice, the field holding the
+  // server's suggestion, who sees the name, and the rule.
+  assert.match(SHEET, /needsUsername && !welcome \? t\('auth:signInSheet\.account\.titleUsername'\)/);
+  assert.equal(message('auth:signInSheet.account.titleUsername'), 'Pick your username');
+  assert.match(SHEET, /\(needsUsername \? t\('auth:signInSheet\.account\.leadPublic'\) : ''\)/);
+  assert.match(message('auth:signInSheet.account.leadPublic'), /^Everyone on Homeroom sees it/);
+  const field = SHEET.slice(SHEET.indexOf('id="sign-in-sheet-username"'), SHEET.indexOf('id="sign-in-sheet-username-check"'));
   assert.match(field, /\{\.\.\.HANDLE_FIELD\}/, 'no auto-capitalising a handle');
   // #4596: the field arrives holding the server's suggestion ('' for none),
   // and stays the person's to change.
-  assert.match(field, /defaultValue=\{otpSignup\.suggestedUsername\}/);
-  assert.match(LOGIN, /suggestedUsername: typeof data\.suggestedUsername === 'string' \? data\.suggestedUsername : '',/);
-  assert.doesNotMatch(field, /data-username-suggested|readOnly/);
-  // Beside it, who will see it; then the rule, or the server's refusal.
-  assert.match(field, /aria-describedby="otp-username-public otp-username-hint"/);
-  assert.match(field, /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>/);
-  assert.equal(message('auth:login.signup.usernamePublic'), 'Your username will be public to other users on Homeroom.');
-  assert.match(LOGIN, /\{otpUsernameError \|\| t\('auth:login\.signup\.usernameRule'\)\}/);
-  assert.equal(message('auth:login.signup.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
-  assert.match(LOGIN, /\{otpSignup\?\.needsUsername \? \(/, 'only when the account still owes a choice');
-  // The handle rides with the password, an empty field is caught before the
-  // round trip, and a refusal lands under the field.
-  assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\(translate\('auth:login\.signup\.usernameMissing'\)\);/);
-  assert.equal(message('auth:login.signup.usernameMissing'), 'Enter a username.');
-  assert.match(LOGIN, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
-  assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(errorText\(data\)\);/);
+  assert.match(field, /defaultValue=\{suggestedUsername\}/);
+  assert.match(SHEET, /const suggested = typeof data\.suggestedUsername === 'string' \? data\.suggestedUsername : '';/);
+  assert.doesNotMatch(field, /readOnly/);
+  assert.match(SHEET, /\{t\('auth:signInSheet\.account\.rules'\)\}/);
+  assert.match(SHEET, /\{needsUsername \? \(\s+<>/, 'only when the account still owes a choice');
+  // An empty field is caught before the round trip, and a refusal names the field.
+  assert.match(SHEET, /if \(handle === ''\) \{ setError\(translate\('auth:signInSheet\.account\.usernameMissing'\)\);/);
+  assert.equal(message('auth:signInSheet.account.usernameMissing'), 'Enter a username.');
+  assert.match(SHEET, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
+  assert.match(SHEET, /if \(saved\.field === 'username'\) usernameField\.current\?\.focus/);
 });
 
-test('the set-password step asks for no password, and says how they sign in (#4891)', () => {
-  const step = LOGIN.slice(LOGIN.indexOf('id="otp-step-password"'), LOGIN.indexOf('id="otp-error"'));
+test('the account step asks for no password, and says how they sign in (#4891)', () => {
+  const step = SHEET.slice(SHEET.indexOf("{step === 'account' ? ("), SHEET.indexOf('{error ? (', SHEET.indexOf("{step === 'account' ? (")));
   assert.ok(step.length > 0, 'the step renders');
-  // No password, no confirmation, and no "Skip the password for now".
-  assert.doesNotMatch(step, /PasswordInput|new-password|otp-new-password|otp-confirm-password|onOtpSetPassword\(true\)/);
-  assert.doesNotMatch(LOGIN, /otpNewPassword|otpConfirmPassword|login\.signup\.(?:password|confirm|skip|saving)/);
-  for (const intro of ['intro', 'introNew', 'introUsername']) {
-    assert.doesNotMatch(message(`auth:login.signup.${intro}`), /password/i, intro);
-  }
-  assert.doesNotMatch(message('auth:login.signup.submit'), /password/i);
+  assert.doesNotMatch(step, /PasswordInput|new-password/);
   // The request carries the handle and, only when ticked, the sign-up
   // form's "Homeroom news by email" box (#6044); never a password.
-  const handler = LOGIN.slice(LOGIN.indexOf('const onOtpSetPassword = useCallback'), LOGIN.indexOf('// ── Wallet sign-in'));
-  assert.match(handler, /useCallback\(async \(\) => \{/);
-  assert.match(handler, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\/\/[^\n]*\n\s*\.\.\.\(otpSignup\?\.needsUsername && otpNewsByEmail \? \{ marketingEmail: true \} : \{\}\),\s*\}\),/);
-  assert.doesNotMatch(handler, /password:|passwordConfirmation/);
+  const save = SHEET.slice(SHEET.indexOf('export async function saveAccount('), SHEET.indexOf('export function linkSigningIn('));
+  assert.match(save, /\.\.\.\(handle \? \{ username: handle \} : \{\}\),/);
+  assert.match(save, /\.\.\.\(optIns\.marketingEmail \? \{ marketingEmail: true \} : \{\}\),/);
+  assert.doesNotMatch(save, /password:|passwordConfirmation/);
   // In the password's place, how they sign in and where a password is added.
-  assert.match(step, /<p className="text-sm text-zinc-500 dark:text-zinc-400">\s*\{t\('auth:login\.signup\.codeNote'\)\}\s*<\/p>/);
-  assert.equal(message('auth:login.signup.codeNote'),
+  assert.match(step, /<p data-sign-in-sheet-code-note="" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('auth:signInSheet\.account\.codeNote'\)\}<\/p>/);
+  assert.equal(message('auth:signInSheet.account.codeNote'),
     'You sign in with a code we email you. You can add a password later in Settings.');
-  assert.equal(message('auth:login.signup.codeNote'), message('auth:signInSheet.account.codeNote'),
-    'the sign-in screen and the sheet say the same');
 });
 
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /const OTP_WAITLIST_NOTE =\n\s*'auth:login\.signup\.waitlistNote';/);
-  assert.equal(message('auth:login.signup.waitlistNote'), 'New accounts get a spot on the waitlist. We\u2019re letting people in a few at a time.');
-  assert.doesNotMatch(LOGIN, /in the queue|your turn/);
-  assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
+  // The verify answer says whether the new account will wait; the account
+  // step says so under its button, and only then.
+  assert.match(SHEET, /setWaitlisted\(data\.waitlisted === true\);/);
+  assert.match(SHEET, /\{waitlisted \? \(\s+<p data-sign-in-sheet-waitlist-note=""/);
+  assert.equal(message('auth:signInSheet.account.waitlistNote'), 'New accounts get a spot on the waitlist. We’re letting people in a few at a time.');
+  assert.doesNotMatch(message('auth:signInSheet.account.waitlistNote'), /in the queue|your turn/);
 });
 
 test('set-password spends the signup session only on a name it accepts', () => {

@@ -476,10 +476,11 @@ test('it presents at once, with an empty field and nothing fetched to fill it (#
 test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
   const shared = read('frontend/src/features/auth/shared.ts');
   const note = 'Your username will be public to other users on Homeroom.';
-  // The React forms read the sentence from the catalog, one entry per form.
-  assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
-  assert.equal(message('auth:register.usernamePublic'), note);
-  assert.equal(message('auth:login.signup.usernamePublic'), note);
+  // The sign-in sheet's activation-code step reads the sentence from the
+  // catalog (its email account step says it in its own words, above the
+  // field: auth:signInSheet.account.leadPublic).
+  assert.match(shared, /Catalog entry: auth:signInSheet\.register\.usernamePublic\./);
+  assert.equal(message('auth:signInSheet.register.usernamePublic'), note);
   // The gate is a classic module with no imports, so it reads the words
   // from the catalog by id; this is what holds the copies together.
   assert.ok(gateJs.includes("const PUBLIC_NOTE = 'onboarding:username.publicNote';"));
@@ -494,14 +495,11 @@ test('beside the field, every sign-up surface says the username will be public (
   assert.match(gateJs, /input\.setAttribute\('aria-describedby', 'choose-username-public'\);/);
   assert.match(gateJs, /note\.setAttribute\('data-choose-username-public', ''\);/);
 
-  // The register form and the email sign-up's set-password step render the
-  // shared constant on its own line, directly under the input.
-  const register = read('frontend/src/features/auth/register.tsx');
-  assert.match(register,
-    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
-  const login = read('frontend/src/features/auth/login.tsx');
-  assert.match(login,
-    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
+  // The activation-code step renders it on its own line, directly under the
+  // input, ahead of the rule.
+  const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  assert.match(sheet,
+    /aria-describedby="sign-in-sheet-reg-username-public sign-in-sheet-reg-username-hint"[\s\S]{0,700}?\/>\s*\{\/\*[^*]*\*\/\}\s*<p id="sign-in-sheet-reg-username-public" className=\{FIELD_HINT\}>\{t\('auth:signInSheet\.register\.usernamePublic'\)\}<\/p>\s*<p id="sign-in-sheet-reg-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {

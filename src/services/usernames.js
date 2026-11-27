@@ -140,8 +140,9 @@ function validateUsername(raw) {
 // the private half of the address. So nothing on the platform derives a
 // handle from an email address any more: a new account holds the opaque
 // placeholder below, and every field that asks for the handle starts EMPTY
-// (the set-password step in frontend/src/features/auth/login.tsx, and the
-// first-run gate in frontend/src/features/auth/username-first-run.js).
+// (the sign-in sheet's account step in frontend/src/features/auth/
+// sign-in-sheet.tsx, and the first-run gate in
+// frontend/src/features/auth/username-first-run.js).
 
 /**
  * The handle a new account holds between being created and choosing one.

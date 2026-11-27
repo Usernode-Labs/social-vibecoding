@@ -228,7 +228,7 @@
       }
 
       // Accepted by continuing: the sign-in screens say "By continuing, you
-      // agree to Homeroom's terms" (../auth/sign-in-sheet.tsx, login.tsx),
+      // agree to Homeroom's terms" (../auth/sign-in-sheet.tsx),
       // so a version never answered is recorded as accepted here, with no
       // sheet in the way. Somebody who accepted an earlier version is told
       // once that the terms changed. Reading them in full stays in

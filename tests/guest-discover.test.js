@@ -611,6 +611,21 @@ test('the card grows into its project\'s page and back: a view transition with o
   assert.match(read('public/css/app.css'), /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;/);
 });
 
+test('the picture you pressed is the one that flies: the page\'s comes in at the end, not cross-faded from the start', () => {
+  // The page's picture starts on its still and fades its loop in once it plays, so a snapshot taken ~30ms after the
+  // press is the poster. A card under the pointer is already playing the loop: cross-faded the whole way, the box
+  // turned from the loop into the poster and back in mid-air (26 Nov 2026).
+  const css = read('public/css/app.css');
+  const card = read('frontend/src/features/guest/project-card.tsx');
+  assert.match(card, /shown \? 'opacity-100' : 'opacity-0'/, 'the loop still fades in once it plays, after the snapshot');
+  assert.match(css, /@keyframes guest-hero-hold-out \{\s+0%, 75% \{ opacity: 1; \}\s+100% \{ opacity: 0; \}\s+\}/);
+  assert.match(css, /@keyframes guest-hero-hold-in \{\s+0%, 75% \{ opacity: 0; \}\s+100% \{ opacity: 1; \}\s+\}/);
+  assert.match(css, /::view-transition-old\(guest-hero\) \{\s+animation-name: guest-hero-hold-out;\s+animation-timing-function: linear;\s+\}/);
+  assert.match(css, /::view-transition-new\(guest-hero\) \{\s+animation-name: guest-hero-hold-in;\s+animation-timing-function: linear;\s+\}/);
+  // It changes the two pictures only: the group's own flight keeps its 0.4s and its curve.
+  assert.match(css, /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;\s+animation-timing-function: cubic-bezier\(0\.2, 0\.8, 0\.2, 1\);/);
+});
+
 test('the kinds, and the sort of the rest; what an account adds is the hero\'s, not a card in the grid', () => {
   // Nothing featured, so all three cards are the list the sort orders.
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.map((a) => ({ ...a, featured: false })) }));
@@ -947,9 +962,8 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   // with the looks, 26 Nov 2026).
   assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 1);
   assert.match(read(LANDING), /<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
-  assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(mounted\)\);/);
-  assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
-  assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
+  // The sign-in sheet's email step, the one sign-in, names no waitlist at all.
+  assert.doesNotMatch(message('auth:signInSheet.email.lead'), /waitlist/i);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
   // No examples: the real apps follow it.
   assert.doesNotMatch(html, /For example/);
@@ -1028,9 +1042,10 @@ test('the ways in are the sheet\'s: Apple, Google and email, and a phone number 
   assert.match(sheet, /\{phoneLink && !phone \? \(/);
   assert.match(sheet, /className=\{QUIET\} onClick=\{\(\) => \{ setError\(null\); setStep\('phone'\); \}\}>\{t\('auth:signInSheet\.toPhoneLink'\)\}<\/button>/);
   const landing = read(LANDING);
-  // The story's sheet (Sign up, Sign in), a project page's and a shared
-  // link's: each offers it, and asks for a username after the code.
-  assert.equal((landing.match(/phoneLink=\{phoneSignIn\}\s+askName=\{false\}/g) || []).length, 3);
+  // The story's sheet (Sign up, Sign in), a project page's, a shared link's
+  // and a sign-in address's (#login, #signup, …): each offers it, and asks
+  // for a username after the code.
+  assert.equal((landing.match(/phoneLink=\{phoneSignIn\}\s+askName=\{false\}/g) || []).length, 4);
   // And the page no longer draws the four buttons itself.
   assert.doesNotMatch(landing, /SignUpButtons|signUpWith/);
 });
