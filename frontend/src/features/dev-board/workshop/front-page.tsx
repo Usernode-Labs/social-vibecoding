@@ -12,7 +12,7 @@
  *   └─────────────────────────────────────────────────┘  └──────────────┘
  *   IN THE WORKSHOP NOW                                  Open the board ›
  *     ● Asked ───── ● Being built ───── ● Up for a vote ───── ● Live
- *     68 waiting     5 right now         [6 need your vote]     127 this week
+ *     68 suggestions 5 right now         [6 need your vote]     127 this week
  *   ─ 🛡 A change goes live when its checks pass and evan or snait says yes.
  *   LATELY  4 new since you were last here    All of this week ›  │ LIVE BY WEEK
  *   ✓ three things that went live, title only                     │ ▇▇▇ ▅▅ ▆▆
@@ -129,7 +129,7 @@ export interface FrontStop {
 }
 
 /**
- * Pure: the line under a stop's word ("68 waiting"), or null: a zero, a
+ * Pure: the line under a stop's word ("68 suggestions"), or null: a zero, a
  * number not yet read, or the vote stop while its pill says the number.
  */
 export function stopLine(stop: FrontStop, pill: boolean): Phrase | null {

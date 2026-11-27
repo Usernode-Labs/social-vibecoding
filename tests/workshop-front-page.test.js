@@ -114,12 +114,17 @@ test('the path: four stops in order, each a door, a zero saying its word alone',
   assert.deepEqual([...html.matchAll(/data-ws-front-stop="([a-z]+)"/g)].map((m) => m[1]), ['asked', 'building', 'votes', 'live']);
   assert.match(html, /<h2 class="dev-ws-front-label">In the workshop now<\/h2><button type="button" class="dev-ws-front-go" data-ws-all-open="">Open the board<svg/);
   assert.match(html, /data-ws-front-stop="asked" data-n="17"><button type="button" class="dev-ws-front-stop-door">/);
-  assert.ok(html.includes('17 waiting') && html.includes('6 open') && html.includes('7 this week'));
+  assert.ok(html.includes('17 suggestions') && html.includes('6 open') && html.includes('7 this week'));
+  assert.equal(message('project:workshop.front.path.asked.line', { count: 17 }), '17 suggestions');
+  assert.equal(message('project:workshop.front.path.asked.line', { count: 1 }), '1 suggestion', 'one is one suggestion');
   // The bot's builds are read after mount: until then Being built says its word alone.
   assert.match(html, /data-ws-front-stop="building"><button[^>]*>[\s\S]*?<b class="dev-ws-front-word">Being built<\/b><\/button>/);
   assert.equal(front.stopLine({ key: 'asked', n: 0, mine: 0 }, false), null, 'zero says nothing');
   assert.equal(front.stopLine({ key: 'asked', n: null, mine: 0 }, false), null, 'nor does a number not yet read');
   assert.deepEqual(front.stopLine({ key: 'building', n: 5, mine: 0 }, false), { id: 'project:workshop.front.path.building.line', values: { count: 5 } });
+  // Being built says how many builds are under way, as the other stops state theirs; zero says nothing.
+  assert.equal(message(front.stopLine({ key: 'building', n: 3, mine: 0 }, false).id, { count: 3 }), '3 right now');
+  assert.equal(front.stopLine({ key: 'building', n: 0, mine: 0 }, false), null);
   assert.deepEqual(front.stopLine({ key: 'live', n: 127, atLeast: true, mine: 0 }, false), { id: 'project:workshop.front.path.live.lineAtLeast', values: { count: 127 } });
   assert.equal(message('project:workshop.front.path.live.lineAtLeast', { count: 127 }), '127+ this week');
   // The page is drawn while the board is read: the four words, no numbers.
