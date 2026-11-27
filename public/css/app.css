@@ -34733,10 +34733,17 @@ html:root [data-bot-new-thread-pane] .messages-live-start:disabled { opacity: .4
    other, and neither followed the pointer past its clamp. So while it waits (`data-ai-live-wait`, features/ai/
    index.tsx) the two edges remember widths of their own (`--ai-live-col-chosen-w`, `--ai-live-preview-chosen-w`,
    features/side-panel/resize.ts), in the rules a real preview's follow, floors and all, so each drags as a
-   preview's does. Never dragged, they start balanced: 440px each where there is room, the list taking the rest. */
+   preview's does.
+   NEVER DRAGGED, THEY USE ALL OF THE ROOM (27 Nov 2026). They started at 440px each with the list taking the rest,
+   but the list is held to 42rem (`--ai-list-max`, THE THREAD TAKES THE SPARE ROOM), so on a wide window the rest
+   was an empty band between the list and New chat (about 90px at 1900px). The starting widths give that room away:
+   the column 440px, New chat whatever the list's 42rem and the column do not need, never under 440px. Past New
+   chat's 720px reading measure ("A WIDER COLUMN KEEPS A READABLE LINE") the column takes the rest instead. These
+   are only the widths nothing was chosen for: a dragged width is kept as dragged, and New chat's start follows the
+   column's width, so dragging the column's edge alone shares the room between the two and leaves the list be. */
 body:has(#ai-screen[data-ai-preview="three"][data-ai-live-wait]:not(.hidden)) {
-  --ai-preview-w: max(360px, min(var(--ai-live-preview-chosen-w, min(440px, calc(var(--ai-room) - 920px))), calc(var(--ai-room) - 800px)));
-  --ai-col-w: max(320px, min(var(--ai-live-col-chosen-w, min(var(--ai-main-w), 440px)), calc(var(--ai-room) - 480px - var(--ai-preview-w))));
+  --ai-preview-w: max(360px, min(var(--ai-live-preview-chosen-w, max(min(440px, calc(var(--ai-room) - 920px)), calc(var(--ai-room) - var(--ai-list-max, 42rem) - 720px))), calc(var(--ai-room) - 800px)));
+  --ai-col-w: max(320px, min(var(--ai-live-col-chosen-w, max(min(var(--ai-main-w), 440px), calc(var(--ai-room) - var(--ai-list-max, 42rem) - var(--ai-preview-w)))), calc(var(--ai-room) - 480px - var(--ai-preview-w))));
 }
 body:has(#ai-screen[data-ai-preview="halves"][data-ai-live-wait]:not(.hidden)) {
   --ai-preview-w: max(320px, min(var(--ai-live-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 320px)));
