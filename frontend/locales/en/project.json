@@ -724,12 +724,12 @@
     "description": "Word under the first stop of the path on the Workshop tab's front page, under the standard look (a yellow circle): the requests nobody is building yet and that are not up for a vote. Pressing it opens the board narrowed to them."
   },
   "workshop.front.path.asked.line_one": {
-    "text": "{{count}} waiting",
-    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+    "text": "{{count}} suggestion",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are at the Asked stop (people's suggestions nobody is building yet and that are not up for a vote). Never shown for zero."
   },
   "workshop.front.path.asked.line_other": {
-    "text": "{{count}} waiting",
-    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+    "text": "{{count}} suggestions",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are at the Asked stop (people's suggestions nobody is building yet and that are not up for a vote). Never shown for zero."
   },
   "workshop.front.path.building.word": {
     "text": "Being built",
