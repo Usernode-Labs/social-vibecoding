@@ -92,12 +92,17 @@ async function canPush(pool, userId) {
  * bot's chat (its root), or the message it rang for, or the chat; else the
  * project.
  */
-function openUrl({ appSlug, conversationId = null, threadRootId = null, messageId = null, issueNumber = null }) {
+function openUrl({ appSlug, conversationId = null, threadRootId = null, messageId = null, issueNumber = null, topicPath = null }) {
   const valid = (v) => Number.isSafeInteger(Number(v)) && Number(v) > 0;
   // A request's own page, where its stage rang from (the bell's door,
   // frontend notifications.js).
   if (appSlug && valid(issueNumber) && !valid(conversationId)) {
     return `${origin()}/#homeroom-bot/request/${encodeURIComponent(appSlug)}/${Number(issueNumber)}`;
+  }
+  // #7272: a change's or a decision's own page in the project, where the
+  // message that rang it is (the addresses the router already lands).
+  if (appSlug && typeof topicPath === 'string' && /^dev\/(proposals|governance)\/\d+$/.test(topicPath)) {
+    return `${origin()}/#app/${encodeURIComponent(appSlug)}/${topicPath}`;
   }
   if (valid(conversationId)) {
     if (valid(threadRootId)) return `${origin()}/#messages/${Number(conversationId)}/thread/${Number(threadRootId)}`;
@@ -135,7 +140,7 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
   detail = null, threadRootId = null, messageId: rangFor = null, count = null, notice = null, issueNumber = null,
-  username = null, added = null, total = null,
+  topicPath = null, username = null, added = null, total = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
@@ -175,7 +180,7 @@ async function emailIfNoPush(pool, {
     ...(added != null ? { added } : {}),
     ...(total != null ? { total } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
-    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId, issueNumber }),
+    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId, issueNumber, topicPath }),
     unsubscribeUrl: unsubscribe,
   });
   return 'sent';
@@ -232,6 +237,28 @@ function noticeEmail(row) {
   const english = englishFrom(englishTexts(undefined, 'email'));
   const values = { actor: row.username, app: row.app_name };
   if (row.kind === 'first_message') {
+    // #7272: their first message is counted anywhere in the project, so the
+    // line says where they wrote, and the button opens that thread.
+    const threadId = Number(row.thread_ref);
+    const onThread = Number.isSafeInteger(threadId) && threadId > 0;
+    if (onThread && row.thread_type === 'issue') {
+      const withNumber = { ...values, number: threadId };
+      return {
+        kind: 'invite_activity', ...app,
+        line: english('email:inviteActivity.firstMessageRequest', withNumber),
+        notice: { id: 'first_message_request', values: withNumber },
+        issueNumber: threadId,
+      };
+    }
+    if (onThread && (row.thread_type === 'session' || row.thread_type === 'governance')) {
+      const change = row.thread_type === 'session';
+      return {
+        kind: 'invite_activity', ...app,
+        line: english(change ? 'email:inviteActivity.firstMessageChange' : 'email:inviteActivity.firstMessageDecision', values),
+        notice: { id: change ? 'first_message_change' : 'first_message_decision', values },
+        topicPath: `dev/${change ? 'proposals' : 'governance'}/${threadId}`,
+      };
+    }
     return { kind: 'invite_activity', ...app, line: english('email:inviteActivity.firstMessage', values), notice: { id: 'first_message', values } };
   }
   if (row.kind === 'member_joined') {
@@ -256,12 +283,15 @@ async function mailNotice(pool, notificationId, steps) {
   const { rows: [row] } = await pool.query(
     `SELECT n.id, n.user_id, n.kind, n.detail, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
             n.conversation_message_id,
+            -- #7272: where the first message sits, for its words and its link.
+            cm.thread_type, cm.thread_ref,
             a.slug AS app_slug, a.name AS app_name, u.username,
             ru.username AS recipient_username
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN users u ON u.id = n.source_user_id
        LEFT JOIN users ru ON ru.id = n.user_id
+       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
       WHERE n.id = $1`,
     [notificationId, NOTICE_MAIL_WITHIN_HOURS],
   );

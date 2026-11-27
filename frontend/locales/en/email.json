@@ -23,6 +23,18 @@
     "text": "@{{actor}} said hi in {{app}}.",
     "description": "Email to somebody whose invite link brought a person: that person wrote their first message. {{actor}} is a username, after its @. {{app}} is the project's name."
   },
+  "inviteActivity.firstMessageRequest": {
+    "text": "@{{actor}} wrote on #{{number}} in {{app}}.",
+    "description": "Email to somebody whose invite link brought a person: that person wrote their first message on a request (something people asked a project for). {{actor}} is a username, after its @. {{number}} is the request's number, kept with its # before it. {{app}} is the project's name."
+  },
+  "inviteActivity.firstMessageChange": {
+    "text": "@{{actor}} commented on a change in {{app}}.",
+    "description": "Email to somebody whose invite link brought a person: that person wrote their first message on a change (a proposed change to the project). {{actor}} is a username, after its @. {{app}} is the project's name."
+  },
+  "inviteActivity.firstMessageDecision": {
+    "text": "@{{actor}} commented on a decision in {{app}}.",
+    "description": "Email to somebody whose invite link brought a person: that person wrote their first message on a decision (something the group decides together). {{actor}} is a username, after its @. {{app}} is the project's name."
+  },
   "inviteActivity.joined": {
     "text": "@{{actor}} joined {{app}} through your invite.",
     "description": "Email to somebody whose invite link brought a person. {{actor}} is a username, after its @. {{app}} is the project's name."

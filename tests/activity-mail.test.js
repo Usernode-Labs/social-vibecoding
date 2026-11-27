@@ -203,3 +203,60 @@ test('the unsubscribe route is mounted before sign-in, and the column defaults o
   assert.match(route, /router\.get\('\/mail\/unsubscribe'/);
   assert.match(route, /router\.post\('\/mail\/unsubscribe'/);
 });
+
+// #7272: a first message on a request, a change or a decision says where it
+// was written, and its button opens that thread; the channel is as it was.
+test('#7272: a first message is mailed with the thread it was written on', async () => {
+  activityMail.init({ sessionSecret: 'k1' });
+  const seen = [];
+  const real = activityMail.emailIfNoPush;
+  activityMail.emailIfNoPush = async (_pool, args) => { seen.push(args); return 'sent'; };
+  const notice = (over) => ({
+    id: 4, user_id: 7, kind: 'first_message', mailed_at: null, recent: true,
+    conversation_message_id: null, app_slug: 'run-club', app_name: 'Run Club', username: 'sam', recipient_username: 'maya',
+    ...over,
+  });
+  const poolWith = (row) => ({
+    async query(sql) {
+      if (/FROM notifications n/.test(sql)) return { rows: [row] };
+      if (/UPDATE notifications SET mailed_at/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  });
+  const steps = { once: (_key, fn) => fn() };
+  try {
+    await activityMail.mailNotice(poolWith(notice({ thread_type: 'issue', thread_ref: '212' })), 4, steps);
+    assert.deepEqual(seen.at(-1).notice,
+      { id: 'first_message_request', values: { actor: 'sam', app: 'Run Club', number: 212 } });
+    assert.equal(seen.at(-1).line, '@sam wrote on #212 in Run Club.');
+    assert.equal(seen.at(-1).issueNumber, 212);
+    assert.match(activityMail.openUrl({ appSlug: 'run-club', issueNumber: 212 }),
+      /\/#homeroom-bot\/request\/run-club\/212$/, 'the request page, as the build emails open');
+
+    await activityMail.mailNotice(poolWith(notice({ thread_type: 'session', thread_ref: '31' })), 4, steps);
+    assert.deepEqual(seen.at(-1).notice, { id: 'first_message_change', values: { actor: 'sam', app: 'Run Club' } });
+    assert.equal(seen.at(-1).line, '@sam commented on a change in Run Club.');
+    assert.equal(seen.at(-1).topicPath, 'dev/proposals/31');
+    assert.match(activityMail.openUrl({ appSlug: 'run-club', topicPath: 'dev/proposals/31' }),
+      /\/#app\/run-club\/dev\/proposals\/31$/);
+
+    await activityMail.mailNotice(poolWith(notice({ thread_type: 'governance', thread_ref: '7' })), 4, steps);
+    assert.deepEqual(seen.at(-1).notice, { id: 'first_message_decision', values: { actor: 'sam', app: 'Run Club' } });
+    assert.equal(seen.at(-1).line, '@sam commented on a decision in Run Club.');
+    assert.match(activityMail.openUrl({ appSlug: 'run-club', topicPath: 'dev/governance/7' }),
+      /\/#app\/run-club\/dev\/governance\/7$/);
+
+    // The channel, an unusable ref and a deleted message are as they were.
+    await activityMail.mailNotice(poolWith(notice({})), 4, steps);
+    assert.deepEqual(seen.at(-1).notice, { id: 'first_message', values: { actor: 'sam', app: 'Run Club' } });
+    assert.equal(seen.at(-1).line, '@sam said hi in Run Club.');
+    await activityMail.mailNotice(poolWith(notice({ thread_type: 'issue', thread_ref: 'nope' })), 4, steps);
+    assert.equal(seen.at(-1).notice.id, 'first_message');
+    assert.match(activityMail.openUrl({ appSlug: 'run-club' }), /\/app\/run-club$/);
+    // A topicPath that is not one of the router's own addresses is ignored.
+    assert.match(activityMail.openUrl({ appSlug: 'run-club', topicPath: '../../etc' }), /\/app\/run-club$/);
+  } finally {
+    activityMail.emailIfNoPush = real;
+    activityMail.init(null);
+  }
+});

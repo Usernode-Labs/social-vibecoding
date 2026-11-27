@@ -268,3 +268,45 @@ test('no row sends a reader to the old full-screen chat any more — except a sh
   const spec = SRC.slice(SRC.indexOf("if (item.kind === 'spec_shared'"));
   assert.ok(spec.indexOf("subTab: 'chat'") > 0 && spec.indexOf("subTab: 'chat'") < spec.indexOf('return;\n    }'));
 });
+
+// #7272: a first message is counted anywhere in the project, so it may sit on
+// a request's, a change's or a decision's thread. Tapping the row opens that
+// thread, as a mention or a reply there does; the channel still opens the
+// discussion, on the message.
+test('#7272: a first message on a request opens that request, on the message', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'first_message', chatMessageId: 9, threadType: 'issue', threadRef: '212' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 212 } }]]);
+});
+
+test('#7272: a first message on a change or a decision opens that thread', () => {
+  const change = load();
+  change.N.items = [row({ kind: 'first_message', chatMessageId: 9, threadType: 'session', threadRef: '31' })];
+  change.N._onItemClick(1);
+  assert.deepEqual(nav(change.calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 31 } }]]);
+  const decision = load();
+  decision.N.items = [row({ kind: 'first_message', chatMessageId: 9, threadType: 'governance', threadRef: '7' })];
+  decision.N._onItemClick(1);
+  assert.deepEqual(nav(decision.calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'gov', id: 7 } }]]);
+});
+
+test('#7272: a first message in the channel still opens the discussion on it', () => {
+  const { N, calls, location } = load();
+  N.items = [row({ kind: 'first_message', chatMessageId: 5552 })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/m/5552']]);
+  assert.equal(location.hash, '');
+});
+
+test('#7272: a small group\'s discussion message opens its thread too, and an asked first message keeps the channel', () => {
+  const channel = load();
+  channel.N.items = [row({ kind: 'channel_message', chatMessageId: 9, threadType: 'issue', threadRef: '44' })];
+  channel.N._onItemClick(1);
+  assert.deepEqual(nav(channel.calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 44 } }]]);
+  // "Asked for a change" keeps opening where it always has.
+  const asked = load();
+  asked.N.items = [row({ kind: 'first_message', chatMessageId: 5552, threadType: 'issue', threadRef: '44', requestNumber: 44 })];
+  asked.N._onItemClick(1);
+  assert.deepEqual(nav(asked.calls), [['address', '#messages/app/garden-ab12/m/5552']]);
+});

@@ -626,11 +626,28 @@ function buildCopy(kind, context, now, t) {
         title: app ? t('push:memberJoined.title.app', { actor, app }) : t('push:memberJoined.title.plain', { actor }),
         body: t('push:memberJoined.body'),
       };
-    case 'first_message':
-      return actor && {
-        title: app ? t('push:firstMessage.title.app', { actor, app }) : t('push:firstMessage.title.plain', { actor }),
-        body: message,
-      };
+    case 'first_message': {
+      // #7272: their first message is counted anywhere in the project, so the
+      // title says where they wrote. A channel message keeps "said hi".
+      const threadType = cleanText(context.messageThreadType);
+      const threadRef = Number(context.messageThreadRef);
+      const threadId = Number.isSafeInteger(threadRef) && threadRef > 0 ? threadRef : null;
+      const said = threadId && (
+        threadType === 'issue' ? t(app ? 'push:firstMessage.title.request.app' : 'push:firstMessage.title.request.plain',
+          { actor, number: threadId, app })
+          : threadType === 'session' ? t(app ? 'push:firstMessage.title.change.app' : 'push:firstMessage.title.change.plain',
+            { actor, app })
+            : threadType === 'governance' ? t(app ? 'push:firstMessage.title.decision.app' : 'push:firstMessage.title.decision.plain',
+              { actor, app })
+              : null);
+      if (!said || !actor) {
+        return actor && {
+          title: app ? t('push:firstMessage.title.app', { actor, app }) : t('push:firstMessage.title.plain', { actor }),
+          body: message,
+        };
+      }
+      return { title: said, body: message };
+    }
     // The leaked-link guard (services/community-invites.js GUARD): one link
     // brought in a lot of people today, or paused itself. `detail` is
     // "<inviteId>:<joins>" (invite-activity.js noteGuard).
