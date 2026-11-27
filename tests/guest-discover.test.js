@@ -417,6 +417,13 @@ test('Featured on the signed-in pages stops at six, a full row, and the seventh 
   assert.deepEqual(cardsOf(signedInHtml), ['f7', 'f8']);
   // The visitor's landing is unchanged: it draws every featured community.
   assert.deepEqual(featuredOf(draw(false)), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
+  // The Communities page draws this same section signed in (the spec's
+  // second surface), so it takes the same cap.
+  assert.match(
+    read('frontend/src/features/communities/index.tsx'),
+    /<CommunitiesToJoin\s+apps=\{directory\}[\s\S]*?\bsignedIn\b/,
+    'the Communities page mounts Communities to join as a signed-in page',
+  );
 });
 
 // Twenty projects, the even ones (a01, a03, …) open for a visitor.
