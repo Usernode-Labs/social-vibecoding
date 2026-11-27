@@ -36544,6 +36544,36 @@ html:root #leaderboard-screen .tc-se-card[data-challenge-state="done"] > span:la
 }
 /* ── END ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
 
+/* ── PHONE AUDIT (request 7164, page by page): FIVE SMALL CONTROLS PRESSED AT 44PX ──
+   Under 768px only. Nothing is drawn any larger: each control gets a tap box beyond its own shape.
+   CHALLENGES' TABS (30px in a 34px track). The strip scrolls sideways, so it clips what is past its padding box:
+   it takes 5px more padding above and below, pulled back by its margins so nothing under it moves, and each tab's
+   box reaches into that room. The track is then drawn by the strip's ::after, 5px in, where it always was, and the
+   sliding pill keeps its 2px from the track's edge.
+   A THREAD'S REACTIONS (32px). The chips wrap into rows 6px apart, so a box over the chip would take the next
+   row's taps. It sits under every chip of the row instead (z-index -1 in the row's own stacking context, as the
+   cards' attribute chips do): a chip's own shape always wins, and the box answers only in the gaps around it.
+   THE WORKSHOP'S HEAD LINKS (Open the board, a week's list, Earlier weeks: 32px). 6px more above and below, inside
+   the card's own padding and the 12px over what follows.
+   ALL ITEMS. A card's menu button is 28px: 8px of reach on every side, which stops at the card's edge. Its category
+   chip is 22px and opens the category vote: its box, under the chip's words, is 44px tall. A chip that is only a
+   label is a span and gets nothing. */
+@media (max-width: 767.98px) {
+  html:root #leaderboard-screen #standings-tabs.one-seg { padding-block: 7px; margin-block: -5px 7px; background: none; }
+  html:root #leaderboard-screen #standings-tabs.one-seg::after { content: ""; position: absolute; z-index: -1; inset: 5px 0; border-radius: 9999px; background: var(--one-seg-track); }
+  html:root #leaderboard-screen #standings-tabs.one-seg[style*="--one-seg-i"]::before { top: 7px; bottom: 7px; }
+  html:root #leaderboard-screen #standings-tabs.one-seg > button::after { content: ""; position: absolute; inset: -7px 0; }
+  html:root .messages-reactions { isolation: isolate; }
+  html:root .messages-reactions button { position: relative; }
+  html:root .messages-reactions button::after { content: ""; position: absolute; z-index: -1; inset-inline: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+  html:root #dev-workshop .dev-ws-front-go { position: relative; }
+  html:root #dev-workshop .dev-ws-front-go::after { content: ""; position: absolute; inset-inline: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+  html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-menu > .dev-card-menu-btn { position: relative; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-menu > .dev-card-menu-btn::after { content: ""; position: absolute; inset: -8px; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-status > button.attr-chip { position: relative; }
+  html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-status > button.attr-chip::after { content: ""; position: absolute; z-index: -1; inset-inline: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+}
+
 /* ── PHONE AUDIT (request 7164, points 2 and 5): A FINGER'S REACH AND 16PX BOXES ──
    Under 768px only, in the standard look; nothing here is read on a desktop.
    TAP AREAS. The bar's own controls (Back, the bell, the Homeroom menu) carry .un-touch-target, whose ::after is a
