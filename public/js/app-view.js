@@ -12023,12 +12023,14 @@ const AppView = {
     // Discussion tab's name and its messages say what it is.
 
     // The PANE is features/group-chat/general-chat.tsx's — the message
-    // stream, the status line, the composer and the spec panel's slot —
-    // mounted as a portal where this used to be one `content.innerHTML`
-    // string. Its shape is fixed for the life of a mount, so it travels as
-    // props rather than through a store; the parts that move while it is open
-    // (the staged reply, the uploads, the error line, the typing text) go
-    // through the composer store, which the THREAD composer shares.
+    // stream, the status line, the box and the spec panel's slot — mounted
+    // as a portal where this used to be one `content.innerHTML` string. Its
+    // shape is fixed for the life of a mount, so it travels as props rather
+    // than through a store; the parts that move while it is open (the staged
+    // reply, the typing text) go through the composer store, which the
+    // THREAD box shares. The box is Messages' own (one message box, 27 Nov
+    // 2026): it sends, saves its draft, uploads and offers @, # and emoji
+    // itself, so nothing is wired to it here.
     //
     // The transcript's own portal points INTO `#gc-messages`, so drop it
     // before re-rendering the pane: React usually preserves that element, but
@@ -12039,11 +12041,14 @@ const AppView = {
     const previousList = content.querySelector('#gc-messages');
     if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
     AppView._reactGroupChat()?.mountGeneralChat(content, {
+      slug: app ? app.slug : '',
+      channel: app && app.channel && app.channel.type && app.channel.ref
+        ? { type: app.channel.type, ref: Number(app.channel.ref) }
+        : null,
       readOnly: !!(app && app.readOnly),
       notice: archived
         ? PlatformI18n.t('changes:discussion.archivedNotice')
         : ((ctx && ctx.notice) || null),
-      maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
       ...(ctx && ctx.placeholder ? { placeholder: ctx.placeholder } : {}),
     });
 
@@ -12056,100 +12061,6 @@ const AppView = {
       document.getElementById('platform-header'),
       { navBar: false },
     );
-
-    const gcInput = document.getElementById('gc-input');
-    // #621: read-only viewers have no composer — mount the live stream
-    // (WS connects at view level; the server drops any write) and stop.
-    if (!gcInput) {
-      if (app) GroupChat.mount(app.slug, app);
-      return;
-    }
-    // Restore any in-progress draft. The input element is a new DOM node
-    // on every tab switch, so we rehydrate from the persisted draft
-    // (localStorage-backed, keyed by app slug) — this also survives full
-    // page refreshes.
-    const slugForDraft = app && app.slug;
-    if (slugForDraft) {
-      const saved = GroupChat.getDraft(slugForDraft);
-      if (saved) gcInput.value = saved;
-    }
-    // Size the (now multi-line) composer to its restored draft, then back
-    // to one row after a send.
-    GroupChat._autoGrowTextarea(gcInput);
-
-    const submitGeneral = () => {
-      const content = gcInput.value.trim();
-      // #694: an attachments-only send is allowed; a send while an upload
-      // is still in flight waits (input keeps its text).
-      if (GroupChat.attachmentsUploading(null)) {
-        GroupChat._setAttachError(GroupChat.UPLOAD_WAIT_NOTICE, null);
-        return;
-      }
-      if (!content && !GroupChat.hasPendingAttachments(null)) return;
-      GroupChat.send(content);
-      gcInput.value = '';
-      if (slugForDraft) GroupChat.setDraft(slugForDraft, '');
-      GroupChat._autoGrowTextarea(gcInput);
-    };
-
-    document.getElementById('gc-form').addEventListener('submit', (e) => {
-      e.preventDefault();
-      submitGeneral();
-    });
-
-    // #694: paperclip / paste / drag-and-drop attachment wiring for the
-    // general composer (thread composers wire their own in mountThread).
-    GroupChat.setupAttachments(null);
-
-    gcInput.addEventListener('input', () => {
-      if (slugForDraft) GroupChat.setDraft(slugForDraft, gcInput.value);
-      GroupChat._autoGrowTextarea(gcInput);
-      GroupChat.sendTyping();
-    });
-
-    // A <textarea> doesn't submit on Enter, so we drive it here, by the one
-    // rule every message box keeps (frontend/src/lib/enter-sends.ts, via
-    // `GroupChat._enterSends`). Bubble phase, so the autocomplete's
-    // capture-phase keydown still owns Enter while its dropdown is open.
-    gcInput.addEventListener('keydown', (e) => {
-      if (GroupChat._enterSends(e)) {
-        e.preventDefault();
-        submitGeneral();
-      }
-    });
-
-    // #87: @mention autocomplete. Re-attaches on every tab mount (the
-    // input is a fresh DOM node each time). Its capture-phase keydown
-    // handler intercepts Enter/Tab/Arrows/Escape while the dropdown is
-    // open, so the form submit + the Escape-clears-reply handler below
-    // only see those keys once the dropdown is closed.
-    if (typeof MentionAutocomplete !== 'undefined') {
-      MentionAutocomplete.attach(gcInput, slugForDraft);
-    }
-
-    // #130: PR# / # reference autocomplete (open PRs + open issues). Same
-    // attach lifecycle as mentions; its capture-phase keydown only consumes
-    // keys while its own menu is open, and the `@` vs `#` triggers are
-    // mutually exclusive so the two menus never fight.
-    if (typeof RefAutocomplete !== 'undefined') {
-      RefAutocomplete.attach(gcInput, slugForDraft);
-    }
-
-    // `:th` emoji shortcode autocomplete, and `:tada:` → 🎉 as the closing
-    // colon is typed. Same capture-phase lifecycle; a `:` token never shares
-    // a caret with an `@` or `#` one, so the three menus never fight.
-    if (typeof EmojiAutocomplete !== 'undefined') {
-      EmojiAutocomplete.attach(gcInput);
-    }
-
-    // #15: Escape clears a staged reply quote (when the input is empty so
-    // we don't fight other Escape semantics mid-typing).
-    gcInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && GroupChat.replyDraft && !gcInput.value) {
-        e.preventDefault();
-        GroupChat.clearQuote();
-      }
-    });
 
     if (app) {
       // `mount` re-uses the existing WS + message cache when the user
@@ -24876,27 +24787,19 @@ const AppView = {
     const want = typeof text === 'string' ? text.trim() : '';
     const chat = typeof GroupChat !== 'undefined' ? GroupChat : null;
     const staged = () => !!(chat && chat.replyDraft && Number(chat.replyDraft.refMsgId) === id);
+    // The thread's box is Messages' own (features/group-chat/composer.tsx):
+    // words go in through it, so its state and its draft hold them.
+    const put = (text) => !!window.UsernodeReact?.groupChat?.putInChatComposer?.('thread', text, { onlyIfEmpty: true });
     for (let i = 0; id > 0 && chat && typeof chat.replyToMessage === 'function' && i < 8; i += 1) {
       chat.replyToMessage(id, 'thread');
       if (staged()) {
         // #6399: Go ahead is ready to send, after the staged Reply.
-        const input = document.getElementById('gc-thread-input');
-        if (want && input && !String(input.value || '').trim()) {
-          input.value = want;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.focus();
-        }
+        if (want) put(want);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    const input = document.getElementById('gc-thread-input');
-    if (!input) return;
-    if (!String(input.value || '').trim()) {
-      input.value = want ? `@homeroom_bot ${want}` : '@homeroom_bot ';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    input.focus();
+    put(want ? `@homeroom_bot ${want}` : '@homeroom_bot ');
   },
 
   /**
