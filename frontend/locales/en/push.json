@@ -247,6 +247,30 @@
     "text": "@{{actor}} said hi",
     "description": "Phone notification title: somebody the reader invited wrote their first message. {{actor}} is a username: keep the @ in front of it."
   },
+  "firstMessage.title.request.app": {
+    "text": "@{{actor}} wrote on #{{number}} in {{app}}",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a request (something people asked a project for). {{actor}} is a username: keep the @ in front of it. {{number}} is the request's number, kept with its # before it. {{app}} is a project's name."
+  },
+  "firstMessage.title.request.plain": {
+    "text": "@{{actor}} wrote on #{{number}}",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a request (something people asked a project for), when the project's name is not known. {{actor}} is a username: keep the @ in front of it. {{number}} is the request's number, kept with its # before it."
+  },
+  "firstMessage.title.change.app": {
+    "text": "@{{actor}} commented on a change in {{app}}",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a change (a proposed change to the project). {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "firstMessage.title.change.plain": {
+    "text": "@{{actor}} commented on a change",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a change (a proposed change to the project), when the project's name is not known. {{actor}} is a username: keep the @ in front of it."
+  },
+  "firstMessage.title.decision.app": {
+    "text": "@{{actor}} commented on a decision in {{app}}",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a decision (something the group decides together). {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "firstMessage.title.decision.plain": {
+    "text": "@{{actor}} commented on a decision",
+    "description": "Phone notification title: somebody the reader invited wrote their first message on a decision (something the group decides together), when the project's name is not known. {{actor}} is a username: keep the @ in front of it."
+  },
   "collabInvite.join.title.app": {
     "text": "@{{actor}} invited you to join {{app}}",
     "description": "Phone notification title: an invitation to join a private project. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."

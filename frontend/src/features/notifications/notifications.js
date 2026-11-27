@@ -1493,13 +1493,21 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']);
+      // #7272: a first message, and a small group's discussion message, are
+      // chat messages too: when their message sits on a topic thread they
+      // open that thread, as a mention or a reply there does. A first
+      // message Homeroom bot filed as a request ("Asked for a change") keeps
+      // the channel it has always opened.
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply',
+        'first_message', 'channel_message', 'change_thread_reply']);
+      const askedFirstMessage = item.kind === 'first_message' && item.requestNumber != null;
+      const routeChat = chatKinds.has(item.kind) && !askedFirstMessage;
       // #2387: a message in a REPLY thread (thread_type 'message', its ref
       // the thread's first message) opens that thread beside the channel,
       // at the address the server worked out for the row — which the router
       // takes to the project page's Discussion tab, the thread open there
       // (#3653).
-      if (chatKinds.has(item.kind) && item.threadType === 'message' && item.threadRef != null) {
+      if (routeChat && item.threadType === 'message' && item.threadRef != null) {
         const root = parseInt(item.threadRef, 10);
         const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
           ? item.href
@@ -1519,7 +1527,7 @@ const Notifications = {
       // (`#messages/app/<slug>/c/<topic>/m/<id>`, which the router takes to
       // the channel's place). A reply in one of its reply threads is a
       // 'message' row above, whose address names the topic too.
-      if (chatKinds.has(item.kind) && item.threadType === 'category' && item.threadRef != null) {
+      if (routeChat && item.threadType === 'category' && item.threadRef != null) {
         const topic = parseInt(item.threadRef, 10);
         const message = parseInt(item.chatMessageId, 10);
         const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
@@ -1533,7 +1541,7 @@ const Notifications = {
           return;
         }
       }
-      if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
+      if (routeChat && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];
         const topicId = parseInt(item.threadRef, 10);
@@ -4317,6 +4325,21 @@ function rowWords(n) {
     // rang) it is called that. Several people's hellos folded into one row
     // stay hellos.
     const asked = n.kind === 'first_message' && count === 1 && n.requestNumber != null;
+    // #7272: the first message counts anywhere in the project, so a question
+    // on a request is not a greeting. Where the message sits decides the
+    // words; the channel keeps "Said hi".
+    const firstMessageWords = () => {
+      if (n.threadType === 'issue') {
+        const story = storyIssueOf(n);
+        const ref = Number(n.threadRef);
+        const number = Number.isSafeInteger(story) && story > 0 ? story
+          : (Number.isSafeInteger(ref) && ref > 0 ? ref : null);
+        if (number) return t('notifications:row.inviteLink.wroteOnRequest', { number });
+      }
+      if (n.threadType === 'session') return t('notifications:row.inviteLink.commentedOnChange');
+      if (n.threadType === 'governance') return t('notifications:row.inviteLink.commentedOnDecision');
+      return null;
+    };
     return {
       ...base,
       wrap: true,
@@ -4328,7 +4351,7 @@ function rowWords(n) {
           : t('notifications:row.inviteLink.joined'), null)
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
-            : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
+            : (firstMessageWords() || t('notifications:row.inviteLink.saidHi'))), messageWords(n.messageContent))),
     };
   }
 

@@ -449,7 +449,8 @@ test('every email id in the code is in the catalog whole, and every entry is ask
   // Only the words built in code: the mails themselves are stored templates.
   assert.deepEqual([...used].sort(), [
     'buildReady.lead.notWorking', 'buildReady.lead.ready', 'buildReady.subject.notWorking', 'buildReady.subject.ready', 'buildReady.unnamedProject',
-    'inviteActivity.firstMessage', 'inviteActivity.joined', 'inviteActivity.joinedSomeone', 'inviteActivity.joinedUnnamed',
+    'inviteActivity.firstMessage', 'inviteActivity.firstMessageChange', 'inviteActivity.firstMessageDecision',
+    'inviteActivity.firstMessageRequest', 'inviteActivity.joined', 'inviteActivity.joinedSomeone', 'inviteActivity.joinedUnnamed',
   ]);
   const stems = new Set(Object.keys(ENGLISH));
   assert.deepEqual([...used].filter((id) => !stems.has(id)), [], 'an id the catalog does not have');
