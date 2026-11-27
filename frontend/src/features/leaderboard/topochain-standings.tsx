@@ -30,6 +30,7 @@
 
 import { Fragment, type ReactNode } from 'react';
 
+import { Chip } from '@/components/ui/chip';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -194,29 +195,25 @@ function ChallengeLine(
  * podium-excluded user (the descriptor is null); the count in the label is
  * the server's own non_podium_count, and a server old enough to omit that
  * field renders the chip without a number rather than with a wrong one.
- * Class recipe and aria-pressed are the Kudos history chips'
- * (./kudos-pane.tsx) — a filter chip, not a tab.
+ * The shared filter chip (@/components/ui/chip.tsx), as the Kudos history
+ * chips (./kudos-pane.tsx) are — a filter chip, not a tab.
  */
 function NonPodiumChip({ toggle }: { toggle: NonPodiumToggle | null }): ReactNode {
   const t = useMessages('leaderboard');
   if (!toggle) return null;
-  const on = toggle.on
-    ? 'bg-violet-600 text-white border-violet-600'
-    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
-      + 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700';
   return (
     <div className="flex items-center mb-3">
-      <button
-        type="button"
+      <Chip
         id="tc-lb-non-podium-toggle"
-        aria-pressed={toggle.on}
-        className={`px-3 py-1 text-xs font-medium rounded-full border ${on}`}
+        size="bar"
+        className="px-4"
+        selected={toggle.on}
         onClick={() => controller()?._toggleNonPodium()}
       >
         {toggle.count == null
           ? t('leaderboard:standings.showNonPodium')
           : t('leaderboard:standings.showNonPodiumCount', { count: toggle.count })}
-      </button>
+      </Chip>
     </div>
   );
 }

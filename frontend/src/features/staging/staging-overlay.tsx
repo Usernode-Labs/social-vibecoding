@@ -54,17 +54,22 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
+import { myVoteWords, voteStanding, type ChangeVote } from '../dev-board/card/change';
 import { useDetail } from '../ai/detail';
 import { DetailPicker } from '../detail/detail-card';
 import { useStoreState } from '../../lib/use-store-state';
 import { LiveDraftControls, useDraftForSession, useLiveDraftActs } from '../messages/live-draft-bar';
 import { PreviewPinLayer, togglePreviewPins, usePreviewPins } from './preview-pin';
 import { ShotsViewer } from '../review-flow/shots-viewer';
+
+/** The preview's two views, in the order its switch draws them. */
+const PREVIEW_VIEWS = ['preview', 'shots'] as const;
 
 /**
  * The first visit's line. A project that is just yours goes live when you
@@ -93,43 +98,28 @@ export function previewClockToggleText(label: string, asNow: boolean): string {
   return asNow ? translate('devchat:staging.clock.seeAt', { moment: label }) : translate('devchat:staging.clock.seeNow');
 }
 
-interface VoteLike {
-  yes: number | null;
-  needed: number | null;
-  needsOtherMember: boolean;
-  myVote: 'yes' | 'no' | null;
-  status: string;
-}
-
 /**
- * Pure: the line under the change's name, as parts. The vote's facts read as
- * the chat's vote card says them (group-chat/vote-card.tsx `voteFacts`); the
- * one that asks something of the viewer ("Needs 1 more yes") is `ask`, drawn
- * in the accent.
+ * Pure: the line under the change's name, as parts. The vote's facts are the
+ * one model of a change's phrases (dev-board/card/change.ts), as the chat's
+ * vote card says them (group-chat/vote-card.tsx `voteFacts`); the one that
+ * asks something of the viewer ("Needs 1 more yes") is `ask`, drawn in the
+ * accent.
  */
 export function previewFacts(
-  { appName, number, vote, withApp }: { appName: string; number: number; vote: VoteLike | null; withApp: boolean },
+  { appName, number, vote, withApp }: { appName: string; number: number; vote: ChangeVote | null; withApp: boolean },
 ): Array<{ text: string; ask?: boolean; app?: boolean }> {
   const parts: Array<{ text: string; ask?: boolean; app?: boolean }> = [];
   if (withApp && appName) parts.push({ text: appName, app: true });
   if (number) parts.push({ text: translate('chat:group.voteCard.change', { number }) });
   if (!vote) return parts;
-  if (vote.status === 'merged') parts.push({ text: translate('chat:group.voteCard.merged') });
-  else if (vote.status === 'merging') parts.push({ text: translate('chat:group.voteCard.merging') });
-  else {
-    const yes = vote.yes ?? 0;
-    const needed = vote.needed ?? 1;
-    if (yes < needed) parts.push({ text: translate('chat:group.voteCard.needsMore', { count: needed - yes }), ask: !vote.myVote });
-    else if (vote.needsOtherMember) parts.push({ text: translate('chat:group.voteCard.needsOtherMember') });
-    else parts.push({ text: translate('chat:group.voteCard.reached', { yes, needed }) });
+  for (const words of [voteStanding(vote), myVoteWords(vote)]) {
+    if (words) parts.push({ text: translate(words.id, words.values), ...(words.ask ? { ask: true } : {}) });
   }
-  if (vote.myVote === 'yes') parts.push({ text: translate('chat:group.voteCard.youVotedYes') });
-  else if (vote.myVote === 'no') parts.push({ text: translate('chat:group.voteCard.youVotedNo') });
   return parts;
 }
 
 /** Pure: the vote is decided (merging, merged, closed): nothing is left to vote on. */
-export function previewVoteSettled(vote: VoteLike | null): boolean {
+export function previewVoteSettled(vote: ChangeVote | null): boolean {
   return !!vote && vote.status !== 'promoted';
 }
 
@@ -139,7 +129,7 @@ export function previewVoteSettled(vote: VoteLike | null): boolean {
  * the viewer has voted yet (a vote can be changed until it is decided), and
  * "See the vote" once it is decided.
  */
-export function previewVoteLabel(vote: VoteLike | null): string {
+export function previewVoteLabel(vote: ChangeVote | null): string {
   if (!vote) return '';
   return previewVoteSettled(vote)
     ? translate('chat:group.voteCard.seeVote')
@@ -316,37 +306,25 @@ export function StagingOverlay(): ReactNode {
           })()}
           {/*
               The two ways to check a change before voting on it: the running
-              preview, or its before-and-after shots. Drawn like the Light / Dark
-              / System control. Only when the change has verified shots.
+              preview, or its before-and-after shots: the shared strip's
+              segment look (@/components/ui/tabs.tsx). Only when the change
+              has verified shots.
           */}
-          <div
-            id="staging-view-switch"
-            ref={switchRef}
-            className="hidden staging-switch"
-            role="tablist"
-            aria-label={t('devchat:staging.switch.label')}
-          >
-            <button
-              type="button"
-              role="tab"
-              id="staging-view-preview"
-              aria-selected={!showingShots}
-              data-on={!showingShots ? '' : undefined}
-              onClick={() => stagingHandlers.onView?.('preview')}
+          <Tabs kind="tabs" look="segment" values={PREVIEW_VIEWS} value={showingShots ? 'shots' : 'preview'} onValueChange={(next) => stagingHandlers.onView?.(next === 'shots' ? 'shots' : 'preview')}>
+            <TabsList
+              id="staging-view-switch"
+              ref={switchRef}
+              className="hidden staging-switch"
+              aria-label={t('devchat:staging.switch.label')}
             >
-              {t('devchat:staging.switch.preview')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id="staging-view-shots"
-              aria-selected={showingShots}
-              data-on={showingShots ? '' : undefined}
-              onClick={() => stagingHandlers.onView?.('shots')}
-            >
-              {t('devchat:staging.switch.shots')}
-            </button>
-          </div>
+              <TabsTrigger value="preview" id="staging-view-preview">
+                {t('devchat:staging.switch.preview')}
+              </TabsTrigger>
+              <TabsTrigger value="shots" id="staging-view-shots">
+                {t('devchat:staging.switch.shots')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <span className="staging-gap" />
           {/*
               The platform's Vote, as on a chat's vote card: it opens the
