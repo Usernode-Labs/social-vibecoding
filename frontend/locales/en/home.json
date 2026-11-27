@@ -979,6 +979,62 @@
     "text": "{{formatted}} changes live this week",
     "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
+  "communities.plays_one": {
+    "text": "{{formatted}} play",
+    "description": "Part of the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many times the community's app, a game, was played, counting one per person per day. It follows how many hearts the app has, after a dot, and comes before how many changes went live this week. Shown only from 20 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.plays_other": {
+    "text": "{{formatted}} plays",
+    "description": "Part of the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many times the community's app, a game, was played, counting one per person per day. It follows how many hearts the app has, after a dot, and comes before how many changes went live this week. Shown only from 20 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.opens_one": {
+    "text": "{{formatted}} open",
+    "description": "Part of the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many times the community's app, which is not a game, was opened, counting one per person per day. \"Open\" is a noun here: one opening of the app. It follows how many hearts the app has, after a dot, and comes before how many changes went live this week. Shown only from 20 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.opens_other": {
+    "text": "{{formatted}} opens",
+    "description": "Part of the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many times the community's app, which is not a game, was opened, counting one per person per day. \"Opens\" is a plural noun here: openings of the app. It follows how many hearts the app has, after a dot, and comes before how many changes went live this week. Shown only from 20 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.hearts_one": {
+    "text": "{{formatted}} heart",
+    "description": "Read by a screen reader in place of a heart glyph and a number, in the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many accounts gave the community's app a heart, the way a person likes something. Shown only from 10 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.hearts_other": {
+    "text": "{{formatted}} hearts",
+    "description": "Read by a screen reader in place of a heart glyph and a number, in the line at the foot on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page): how many accounts gave the community's app a heart, the way a person likes something. Shown only from 10 up. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "popularity.labelPlays": {
+    "text": "Plays and hearts",
+    "description": "Accessible name of the hearts and plays card of a project's hub, for a member and on the project's signed-out page, when the project's app is a game: the card says how many times the game was played and how many accounts gave it a heart."
+  },
+  "popularity.labelOpens": {
+    "text": "Opens and hearts",
+    "description": "Accessible name of the hearts and plays card of a project's hub, for a member and on the project's signed-out page, when the project's app is not a game: the card says how many times the app was opened and how many accounts gave it a heart. \"Opens\" is a plural noun: openings of the app."
+  },
+  "popularity.plays": {
+    "text": "Plays",
+    "description": "Small label over a number in the hearts and plays card of a project's hub, for a member and on the project's signed-out page, when the app is a game: the number is how many times the game was played, counting one per person per day. A plural noun."
+  },
+  "popularity.opens": {
+    "text": "Opens",
+    "description": "Small label over a number in the hearts and plays card of a project's hub, for a member and on the project's signed-out page, when the app is not a game: the number is how many times the app was opened, counting one per person per day. A plural noun: openings of the app."
+  },
+  "popularity.hearts": {
+    "text": "Hearts",
+    "description": "Small label over a heart button and a number in the hearts and plays card of a project's hub, for a member and on the project's signed-out page: the number is how many accounts gave the app a heart, the way a person likes something. A plural noun."
+  },
+  "popularity.give": {
+    "text": "Heart {{app}}",
+    "description": "Accessible name of the round heart button in the hearts and plays card of a project's hub, for a member and on the project's signed-out page, before the reader has given the app a heart: pressing it gives one, the way a person likes something. {{app}} is the app's name. A verb phrase."
+  },
+  "popularity.takeBack": {
+    "text": "Take your heart back from {{app}}",
+    "description": "Accessible name of the round heart button in the hearts and plays card of a project's hub, for a member and on the project's signed-out page, once the reader has given the app a heart (the heart is drawn filled): pressing it takes the heart back. {{app}} is the app's name."
+  },
+  "popularity.beFirst": {
+    "text": "Be the first",
+    "description": "Beside the heart button in the hearts and plays card of a project's hub, for a member and on the project's signed-out page, in place of a number, while no account has given the app a heart yet: an invitation to be the first to give one."
+  },
   "communities.compactMembersActive_one": {
     "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
     "description": "Line under a community's name on its compact card (the Communities page's Joined list), in grey: how many people are in the community, then how many took part in it in the last seven days (talked in its channel, started a change or voted). Shown only when somebody took part; otherwise the line is the member count alone. {{members}} is the member count already worded, for example \"34 members\" (communities.members). <0> and <1> each hold one of the two facts, which a narrow card keeps whole and puts on two lines rather than break one: keep each tag round its fact, with this language's own joining punctuation inside <0>. {{formatted}} is the number active with digit grouping; {{count}} is the same number and only selects the plural form."
@@ -1017,7 +1073,7 @@
   },
   "join.sort.label": {
     "text": "Sort communities",
-    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular, Most active and A to Z."
+    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular, Most active, Most played, Most hearts and A to Z."
   },
   "join.sort.new": {
     "text": "New",
@@ -1030,6 +1086,14 @@
   "join.sort.active": {
     "text": "Most active",
     "description": "One choice of the sort menu in Communities to join on Home: the communities with the most people active lately first. It is the starting order."
+  },
+  "join.sort.played": {
+    "text": "Most played",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities whose app was played or opened the most times first."
+  },
+  "join.sort.hearts": {
+    "text": "Most hearts",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities whose app was given the most hearts first. A heart is an account saying it likes the app."
   },
   "join.sort.name": {
     "text": "A to Z",

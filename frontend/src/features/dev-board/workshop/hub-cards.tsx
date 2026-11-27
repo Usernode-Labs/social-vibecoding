@@ -5,6 +5,8 @@
  * people in it. Under the hero (./community-card.tsx: what it is, who it is
  * for and who is around this week), top to bottom:
  *
+ *   HEARTS AND PLAYS, first: how much the app is used and liked, with the
+ *   heart to give one. PopularityCard.
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
  *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
  *   (what happened, and every item; 6 Nov 2026: it took Your work's place
@@ -98,6 +100,7 @@ import {
   type UpstreamState, type VersionsSummary,
 } from '../../versions/upstream';
 import { dayNumber, getTimeZoneSnapshot, inZone, zonedDay } from '../../../lib/time-zone';
+import { HeartsPlays, useHeart } from '../../popularity/hearts-plays';
 
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
@@ -932,6 +935,37 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
           <p className="dev-ws-week-note" data-ws-contrib-none="">{t('project:hub.contributors.emptyMonth')}</p>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * HEARTS AND PLAYS (../../popularity/hearts-plays.tsx): how many times the
+ * project's app was played or opened and how many accounts gave it a heart,
+ * with the heart to give one. Anybody who can see the hub can, a member or
+ * not. It is the one place the hub says a number about the app itself; who
+ * is around stays the hero's faces. The counts are the server's
+ * (GET /api/apps/:slug/community `popularity`); an answer without them, as
+ * the platform's own project's is, draws nothing.
+ */
+export function PopularityCard({ slug, name, data }: { slug: string; name: string; data: CommunityPayload | null }): ReactNode {
+  const counts = data?.popularity || null;
+  const heart = useHeart({
+    slug,
+    initial: counts ? { hearted: counts.hearted, hearts: counts.hearts } : null,
+    signedIn: true,
+  });
+  if (!counts || !heart.state) return null;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-popularity="">
+      <HeartsPlays
+        name={name}
+        played={counts.played}
+        plays={counts.plays}
+        heart={heart.state}
+        busy={heart.busy}
+        onHeart={heart.toggle}
+      />
     </section>
   );
 }
