@@ -10211,84 +10211,6 @@ html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok { background-color: transparent; color: var(--wip-tag-ok-ink); }
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok::before { background-color: var(--wip-tag-ok-ink); box-shadow: 0 0 0 3px var(--wip-tag-ok-bg); }
 html:root #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-vote-btn { height: 2rem; padding-inline: 0.875rem 0.625rem; font-size: 0.8125rem; font-weight: 700; }
-/* THE BOARD'S VOTE PICKER (request #7065). The picker that opens on a card's
-   Still yes?, Vote or Approve on All items is portaled out of the page — to
-   <body> (.dev-vote-pop) or into the phone's kit sheet (.dev-vote-sheet) — so
-   the board's scoped rules cannot reach it, and it fell back to the shell's
-   blue. When its button stands on the board the picker's frame carries
-   data-vote-look="board" (dev-card.tsx), and its parts are painted here from
-   the board's own --wip-* tokens: the switch track is a column's tray, the
-   picked Yes and Vote yes are the page's sun pill with its ink outline and
-   hard foot, the line box is a white field with a soft edge, and the labels
-   are the look's muted ink. A No keeps the app's own red (the look has none),
-   and the tallies keep their own inks. Every rule is the standard look's
-   alone, so the brand look's own picker rules still paint there; the tokens
-   are declared on html, so the dark look follows without a rule of its own.
-   Colours, backgrounds, borders, shadows, the focus ring and the press only:
-   no size, padding, radius or type changes. */
-html:root .dev-vote-pop[data-vote-look="board"] {
-  background: var(--wip-card-bg);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
-  font-family: var(--wip-font);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch {
-  background: var(--wip-tray);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-opt:not([aria-pressed="true"]):hover {
-  background: var(--wip-card-bg);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n {
-  color: var(--wip-top-cta-ink);
-}
-html:root:not(.dark):not([data-app-tone="dark"]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
-  box-shadow: inset 0 0 0 1px var(--wip-top-cta-ink);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label) {
-  color: var(--wip-ink-muted);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt {
-  background: var(--wip-card-bg);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt[aria-checked="true"] {
-  background: var(--state-blocked-bg);
-  color: var(--state-blocked);
-  border-color: transparent;
-  box-shadow: none;
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt:focus-visible {
-  outline-color: var(--wip-ink-action);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box {
-  background: var(--wip-card-bg);
-  color: var(--wip-ink);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-field-drop);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box:focus {
-  outline-color: var(--wip-ink-action);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-cancel:hover {
-  background: var(--wip-ghost);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-  box-shadow: var(--wip-top-cta-edge);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):hover {
-  filter: brightness(1.04);
-}
-html:root :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):active {
-  box-shadow: var(--wip-top-cta-edge-down);
-  transform: var(--wip-top-cta-press);
-}
 /* THE BOARD'S TIES (board-links.ts): while a card is rested on, a ring
    round it and round each card it is tied to, and an arrow from a request
    to each change made for it, drawn in a layer over the page that takes no
@@ -14211,14 +14133,12 @@ span.gc-vote-btn-icon { cursor: default; }
    trail a vote row and hang under Homeroom bot's "It's up for a vote" post.
 
    The CARD, anywhere the change's own section is not on the page: the
-   plane colour, 20px, one hairline, as every card on the shell is drawn
-   (@/components/ui/grouped-list.tsx); 15 over 13 inside it, as a row is;
-   its two pills are the shell's. Under a centred system line it sits
-   centred too, its words starting left. */
+   change page's bar (`.dev-thread-foot`) in a card drawn as every card on
+   the shell is (@/components/ui/grouped-list.tsx): the plane colour, 20px,
+   one hairline. Inside it the bar is the whole card, so it keeps no band of
+   its own, and its words are 15 over 13, as a row's are. Under a centred
+   system line it sits centred too, its words starting left. */
 .gc-vote-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   max-width: 480px;
   margin-top: 8px;
   padding: 12px 14px;
@@ -14229,23 +14149,8 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--text-primary);
 }
 .gc-msg-system .gc-vote-card { margin-inline: auto; }
-.gc-vote-card-name {
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-.gc-vote-card-facts {
-  font-size: 13px;
-  line-height: 1.35;
-  color: var(--text-muted);
-}
-.gc-vote-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 2px;
-}
+.gc-vote-card > .dev-thread-foot, .gc-vote-card > .dev-thread-foot[data-thread-foot-end] { margin: 0; padding: 0; border-top: 0; border-radius: 0; background: none; gap: 8px 12px; }
+.gc-vote-card .dev-thread-foot-head { font-size: 15px; line-height: 1.3; font-weight: 650; }
 /* The LINE, on a request's page, where the change's section with its
    Votes card is below: the change's name and See the vote, in the stream's
    own small type (.dev-request-event-link is the Try it / Read link). */
@@ -19831,13 +19736,30 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-status-pill-vote .gc-vote-count-dot-core { background: var(--accent); }
 
 /* ── The vote button ──
-   One 30px r14 button beside the bar, and the accent FILLED until the viewer
-   has voted: it is the one thing on a promoted card a member is meant to do,
-   and as a neutral well it read as one more chip. The same fill the + and
-   Improve buttons wear, on the board, the Workshop and the proposal page
-   alike. A cast Yes recedes to the accent tint (done, not to-do), No wears
-   the blocked tint, and a caret rides every state because the vote can
-   always be changed. */
+   One 30px r14 button beside the bar, FILLED until the viewer has voted: it
+   is the one thing on a promoted card a member is meant to do. One paint
+   wherever it is drawn (a channel's vote card, a board card, a change's,
+   a request's and a decision's page): the change page bar's yellow, with
+   its hover and its edge, in light and dark. These tokens are that bar's
+   values (--bl-sun, --bl-sun-lit, --bl-on-sun, --bl-pill-edge), declared
+   once for the whole app, so no page paints its own Vote. A cast Yes
+   recedes to the bar's quiet raised paint, Preview's (done, not to-do), No
+   wears the blocked tint, a Yes on an earlier version the attention tint,
+   and a caret rides every state because the vote can always be changed. */
+html:root {
+  --vote-btn-bg: var(--wip-btn-1-bg);
+  --vote-btn-ink: var(--wip-btn-1-ink);
+  --vote-btn-hover: #fff6ac;
+  --vote-btn-edge: inset 0 0 0 1px var(--wip-btn-1-line), 0 2px 0 var(--wip-btn-1-line);
+  --vote-btn-done-bg: #ffffff;
+  --vote-btn-done-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
+}
+html:root.dark:not([data-app-tone="light"]) {
+  --vote-btn-hover: var(--wip-btn-1-hover);
+  --vote-btn-edge: 0 0 0 transparent;
+  --vote-btn-done-bg: #243047;
+  --vote-btn-done-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
 .dev-vote-btn {
   flex: none;
   display: inline-flex;
@@ -19852,8 +19774,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding-block: 0 0; padding-inline: 11px 8px;
   border: 0;
   border-radius: 14px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--vote-btn-bg);
+  color: var(--vote-btn-ink);
+  box-shadow: var(--vote-btn-edge);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -19865,12 +19788,13 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn svg { width: 14px; height: 14px; }
 /* B7: on a project that is just yours, "Approved" is the one face with no
    caret (nothing is left to pick), so its sides are even. "Approve" opens the
-   picker like any vote and keeps the caret's padding (#3977). */
-.dev-vote-btn-approve[data-vote-btn="approved"] { padding: 0 11px; }
+   picker like any vote and keeps the caret's padding (#3977). A channel vote
+   card's See the vote (vote-card.tsx) has no caret either. */
+.dev-vote-btn-approve[data-vote-btn="approved"], .dev-vote-btn[data-vote-open] { padding: 0 11px; }
 .dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
-.dev-vote-btn:hover { background: var(--accent-light); }
-.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
-.dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-vote-btn:hover { background: var(--vote-btn-hover); }
+.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--vote-btn-done-bg); color: var(--text-primary); box-shadow: var(--vote-btn-done-edge); }
+.dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); box-shadow: none; }
 /* #3984: a vote on its way reads "Sending…" and takes no press until the
    server answers. */
 .dev-vote-btn[aria-busy="true"] { cursor: progress; opacity: 0.75; }
@@ -20053,23 +19977,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
 .dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
-.dev-vote-sheet .dev-vote-why-opt, .dev-ws-vote-form .dev-vote-why-opt { height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; }
+.dev-vote-sheet .dev-vote-why-opt { height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
-/* The Needs you feed's vote sheet (#3613) draws the same picker inline, at
-   the same tap-target size: the switch, the line box, Cancel and the send. */
-.dev-ws-vote-form { display: flex; flex-direction: column; gap: 4px; }
-.dev-ws-vote-form .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
-.dev-ws-vote-form .dev-vote-switch-opt svg { width: 16px; height: 16px; }
-.dev-ws-vote-form .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
-.dev-ws-vote-form .dev-vote-switch-label { padding: 0 4px 4px; font-size: 14px; }
-.dev-ws-vote-form .dev-vote-reason { margin-top: 10px; gap: 6px; }
-.dev-ws-vote-form .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
-.dev-ws-vote-form .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
-.dev-ws-vote-form .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
-.dev-ws-vote-form .dev-vote-reason-cancel, .dev-ws-vote-form .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
-.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); box-shadow: none; }
 /* The roster's lines (#1688): each voter's sentence under the names, and the
    earlier-version note under those. */
 .dev-ledger-reason { display: block; padding-inline-start: 12px; font-size: 12.5px; color: var(--text-muted); }
@@ -20140,9 +20052,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
-  /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
-     tint. The band's pills were the neutral grey fill, which read as a
-     third colour beside the blue Vote and the blue Preview.
+  /* The accent on its tint. The band's pills were the neutral grey fill,
+     which read as a third colour beside the blue Preview.
      The INK is --accent-tint-ink, the accent one step darker in light, since
      the accent itself is 4.34:1 on its own tint (QA 2026-09-24 Q20). */
   background: var(--accent-tint);
@@ -22048,16 +21959,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-change-gate-main { min-width: 0; }
 .dev-change-gate-act { display: flex; align-items: center; gap: 8px; }
-/* The card's Yes and No (#7064): one face acts, the other is quiet. The
-   acting face keeps the `.dev-vote-btn` accent fill; the quiet one is the
-   neutral well the inline style used to paint, so a look that is not
-   restyled keeps today's colours. Neither is padded out to the board
-   button's width: the pair sits beside the figure. Both sides are even
-   (#7064): the base button's 8px end made way for a caret these two do not
-   carry, so the label sat nearer its right edge than its icon sat to the
-   left. */
+/* A vote button beside the card's figure is not padded out to the board
+   button's width, and both its sides are even (#7064). */
 .dev-change-gate-act .dev-vote-btn { min-width: 0; padding-inline: 11px; }
-.dev-vote-btn-quiet, .dev-vote-btn-quiet:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
 .dev-change-gate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; line-height: 1.3; }
 .dev-change-gate-name { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .dev-change-gate-check { width: 14px; height: 14px; color: var(--state-ok); stroke-width: 2.5; }
@@ -23027,33 +22931,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 /* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dev-ws-needs-scroll { scroll-behavior: auto; }
-/* ── The item: a card of the page's own ───────────────────────────────
-   ONE CARD, IN THE PAGE'S SCHEME, in the light theme and the dark alike,
-   like the hub's and the Workshop's grouped cards are: the plane colour
-   (--dc-sheet-solid), the 20px corners and the one hairline
-   (--app-sheet-line). The picture fills it, and the caption is laid over
-   its foot (workshop.tsx FeedItem); the rail stands over the card's right
-   edge on a phone, so the caption keeps its lane (80px) free. Everything
-   inside reads the theme's own tokens --text-*, --accent, --state-* and
-   --app-sheet-line, so the pictures (lib/diagram, What it touches, the
-   shots' switch) and the facts follow the viewer's theme without a second
-   copy of their rules. The end card is an item too, and keeps the page's
-   own scheme. */
-.dev-ws-item {
-  position: relative;
-  height: 100%; box-sizing: border-box;
-  scroll-snap-align: start; scroll-snap-stop: always;
-  display: flex; flex-direction: column;
-  padding: 0;
-  border-radius: 20px;
-  overflow: hidden;
-  background-color: var(--dc-sheet-fill);
-}
-.dev-ws-item:not(.dev-ws-needs-done) {
-  background-color: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  color: var(--text-primary);
-}
 /* #4754: THE STAGE. The strip and the scroller share one column, so the
    strip is as wide as the card and sits over it, and neither scrolls. */
 .dev-ws-needs-stage {
@@ -23082,156 +22959,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.dev-ws-item-top {
-  position: relative; z-index: 2;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  min-height: 20px; margin: 22px 14px 0;
-}
-.dev-ws-item-top > .dev-ws-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* #3517: the way back on a phone, at the right end of the card's top line,
-   where the counter sat before it moved to the strip (workshop.tsx draws it
-   there only, from the second item on). A small round, the rail's own fill,
-   drawn at 26px but held to the row's 20px by negative margins.
-   `margin-left: auto` takes the row's free space, so it rides at the row's
-   right end rather than in the middle of it; the tap target is the 44px
-   square around it. */
-.dev-ws-item-prev {
-  position: relative; flex: none;
-  width: 26px; height: 26px; margin-block: -3px -3px; margin-inline: auto -4px; padding: 0;
-  display: grid; place-items: center;
-  border: 0; border-radius: 9999px;
-  background-color: var(--state-neutral-bg);
-  color: var(--text-primary); cursor: pointer;
-}
-.dev-ws-item-prev::after { content: ''; position: absolute; inset: -9px; }
-.dev-ws-item-prev-icon { width: 16px; height: 16px; }
-/* After a vote the eyebrow IS the confirmation: the same line, in the ok
-   tone, with a tick — no toast over the title. */
-.dev-ws-item-done {
-  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
-  font-size: 13px; font-weight: 700; color: var(--state-ok);
-}
-.dev-ws-item-tick {
-  width: 18px; height: 18px; flex: none; padding: 3px; box-sizing: border-box;
-  border-radius: 9999px; background: var(--state-ok); color: #fff;
-}
-/* A no vote (#4568): the confirmation, and its tick, in the blocked red
-   instead of the ok green. Yes keeps the rules above. */
-.dev-ws-item-done[data-ws-voted="no"] { color: var(--state-blocked); }
-.dev-ws-item-done[data-ws-voted="no"] .dev-ws-item-tick { background: var(--state-blocked); }
-/* THE PICTURE takes the card from under the counter to its foot, edge to
-   edge; the scrim and the caption are laid over its lower part. */
-.dev-ws-item-spacer { flex: 1 1 auto; min-height: 0; }
-/* What keeps the caption legible over any picture: a fade up from the
-   card's foot, into the card's own colour. Open, the caption has the whole
-   card, and the picture is washed out in the card's colour under it. Taps
-   go through to the picture. */
-.dev-ws-item-scrim {
-  position: absolute; inset-inline-start: 0; inset-inline-end: 0; bottom: 0; z-index: 1;
-  height: 300px; max-height: 75%;
-  background: linear-gradient(to top, var(--dc-sheet-solid), transparent);
-  pointer-events: none;
-}
-.dev-ws-item[data-ws-open] > .dev-ws-item-scrim { top: 0; height: auto; max-height: none; background: var(--dc-sheet-solid); opacity: .94; }
-/* THE CAPTION, bottom-left, as on a reel. Open ("more") it grows up the
-   card and scrolls once it meets the counter. */
-.dev-ws-item-caption {
-  position: absolute; inset-inline-start: 14px; inset-inline-end: 80px; bottom: 16px; z-index: 2;
-  max-height: calc(100% - 64px); box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 7px;
-}
-.dev-ws-item[data-ws-open] > .dev-ws-item-caption {
-  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
-}
-/* #5039: a diagram's picture is words too, so its caption sits below it in
-   the flow, still clear of the rail. Open ("more") it keeps the overlay. */
-.dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption {
-  position: relative; inset-inline-start: auto; inset-inline-end: auto; bottom: auto;
-  flex: none; margin-block: 12px 16px; margin-inline: 14px 80px;
-}
-.dev-ws-item-by {
-  display: flex; align-items: center; gap: 8px; margin: 0; min-width: 0;
-  font-size: 13px; color: var(--text-muted);
-}
-.dev-ws-item-by-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-item-by b { color: var(--text-primary); font-size: 15px; font-weight: 650; }
-.dev-ws-item-avatar {
-  width: 30px; height: 30px; border-radius: 9999px; flex: none;
-  display: grid; place-items: center;
-  color: #fff; font-size: 12.5px; font-weight: 700;
-}
-.dev-ws-item-caption .dev-ws-item-avatar { box-shadow: 0 0 0 2px var(--dc-sheet-solid); }
-.dev-ws-item-title {
-  margin: 0;
-  font-size: 18px; line-height: 1.22; font-weight: 750; letter-spacing: -.01em;
-  color: var(--text-primary);
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
-  text-wrap: balance; overflow-wrap: anywhere;
-}
-.dev-ws-item-title > a { color: inherit; text-decoration: none; }
-.dev-ws-item-title > a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.dev-ws-item[data-ws-open] .dev-ws-item-title { display: block; overflow: visible; }
-/* THE SUMMARY in two lines, its "more" at the end of the second. The
-   button floats right, first in the paragraph, held down to the last line
-   by a float as tall as the paragraph less one line (the paragraph is a
-   flex item, so its height is definite for the float's percentage), and
-   the clamp's ellipsis falls just before it. Short, it sits at the end of
-   the text. */
-.dev-ws-item-summary { display: flex; margin: 0; }
-.dev-ws-item-summary-text {
-  margin: 0; min-width: 0;
-  font-size: 15px; line-height: 1.4; color: var(--text-secondary);
-  white-space: pre-line; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.dev-ws-item-summary-text::before { content: ''; float: inline-end; height: calc(100% - 1.4em); }
-.dev-ws-item-more {
-  margin-block: 0 0; margin-inline: 6px 0; padding: 0; border: 0; background: none; cursor: pointer;
-  font: inherit; font-style: normal; font-weight: 700; color: var(--text-primary);
-}
-.dev-ws-item-more-end { float: inline-end; clear: both; }
-.dev-ws-item-nosummary { font-style: italic; color: var(--text-muted); }
-.dev-ws-item-summary-open { display: block; }
-.dev-ws-item-summary-open > .dev-ws-item-summary-text { display: block; overflow: visible; }
-.dev-ws-item-summary-open > .dev-ws-item-summary-text::before { content: none; }
-.dev-ws-item-words { font-size: 14px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
-.dev-ws-item-words > * { margin: 0 0 8px; }
-.dev-ws-item-words > :last-child { margin-bottom: 0; }
-.dev-ws-item-words :is(h1, h2, h3, h4, h5, h6) { font-size: 15px; font-weight: 700; color: var(--text-primary); }
-.dev-ws-item-words :is(ul, ol) { padding-inline-start: 20px; }
-.dev-ws-item-words a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
-.dev-ws-item-words code { padding: 0 4px; border-radius: 4px; background: var(--state-neutral-bg); font-size: 13px; }
-/* A CHANGE WITH NO PICTURE AT ALL (workshop.tsx `pictureless`): the card is
-   its words. The caption takes the card from under the counter to its foot
-   and sits in the middle of it (auto margins, which give way to the top
-   when the words run long), in a larger size, and the summary runs to eight
-   lines before "more" is offered. No art stands in for the picture. */
-.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 56px; }
-/* #5039: the caption's words sit on a solid panel of the card's own colour
-   with a hairline, so they read over any picture, light or dark. Every
-   pictured card gets it; a pictureless card, where the words fill the card
-   and nothing sits behind them, does not. */
-.dev-ws-item:not([data-ws-picture="none"]) > .dev-ws-item-caption {
-  padding: 10px 12px; border-radius: 16px;
-  background: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-}
-.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child { margin-top: auto; }
-.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :last-child { margin-bottom: auto; }
-.dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 22px; line-height: 1.2; -webkit-line-clamp: 4; }
-.dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text { font-size: 16px; line-height: 1.45; -webkit-line-clamp: 8; }
-.dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text::before { height: calc(100% - 1.45em); }
-/* What "more" adds under the summary: the declared changes, numbered as
-   the picture's outlines are, and what the change touches. */
-.dev-ws-item-part { display: flex; flex-direction: column; gap: 6px; }
-.dev-ws-item-part-head { margin: 2px 0 0; font-size: 13px; font-weight: 650; color: var(--text-primary); }
-.dev-ws-shot-changes.dev-ws-item-changes { margin: 0; }
-.dev-ws-item-changes .dev-ws-shot-change { font-size: 14px; font-weight: 500; line-height: 1.45; color: var(--text-secondary); }
 .dev-ws-item-touched { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
-.dev-ws-item-less {
-  align-self: flex-start; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
-  font: inherit; font-size: 14px; font-weight: 700; color: var(--text-primary);
-}
 /* A request's number on a change's page (topic-head.tsx) is a chip. */
 .dev-ws-chip {
   display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
@@ -23239,24 +22967,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   background: var(--state-neutral-bg); color: var(--text-secondary);
 }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
-/* THE FACTS: where the vote stands, "your yes puts it live", the status and
-   the topic. A line that does not fit wraps to a second one rather than
-   losing its end (the topic is last). On a phone the whole line is one quiet
-   pill with the people glyph; on a wide window the vote's words are the pill
-   and the topic follows it (the wide block). */
-.dev-ws-item-facts {
-  display: block; align-self: flex-start; max-width: 100%; box-sizing: border-box; margin: 2px 0 0;
-  padding: 4px 10px; border-radius: 12px; background: var(--state-neutral-bg);
-  font-size: 12px; font-weight: 600; line-height: 16px; color: var(--text-primary);
-  white-space: normal; overflow-wrap: anywhere;
-}
-.dev-ws-item-facts-icon { display: inline-block; width: 12px; height: 12px; margin-inline-end: 6px; vertical-align: -2px; }
-.dev-ws-fact + .dev-ws-fact::before,
-.dev-ws-item-facts-vote + .dev-ws-fact::before { content: " · "; font-weight: 400; color: var(--text-muted); }
-.dev-ws-fact.dev-ws-fact-ok { color: var(--state-ok); }
-.dev-ws-fact.dev-ws-fact-progress { color: var(--state-progress); }
-.dev-ws-fact.dev-ws-fact-warn { color: var(--state-attention); }
-.dev-ws-fact.dev-ws-fact-blocked { color: var(--state-blocked); }
 /* The Communities screen's two views (Current status | Needs you,
    `.workshop-scope-tabs`) are gone with the UI overhaul: the list is the
    page, and Needs you is a row at its top that opens the feed below. */
@@ -24420,7 +24130,6 @@ html:root body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overl
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
   font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
 }
-.dev-ws-item-caption > .workshop-reel-app { align-self: flex-start; max-width: 100%; color: var(--text-primary); }
 .workshop-reel-tile {
   width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
   display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
@@ -24769,152 +24478,10 @@ button.dev-ws-recent-card {
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 
-/* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
-   workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
-   card the viewer can vote on is `[data-ws-swipeable]`, and while a drag is
-   on it carries `--ws-swipe-x` (px, right is Yes), `--ws-swipe-p` (0 to 1,
-   how near the line) and `[data-ws-swipe]` naming the side. Both come off
-   once it is back at rest, so an untouched card has no transform.
-
-   `touch-action: pan-y` hands the vertical drag to the scroller, as ever,
-   and keeps the sideways one for the gesture. Anything narrower would take
-   the pan the feed pages on away from every touch that starts on a card,
-   the trap #1762 fell into on Home.
-
-   The hints are stamps half way down the card, on the side the card is
-   leaving from, where the title and summary are not: the text sits at the
-   top and the middle is the picture or air. Each is laid on the page
-   colour, so it reads the same over a dark capture as over the tint, and it
-   fades in with the drag, never past 0.9. Where motion is unwelcome the
-   card itself does not travel or spring: only the hint says what letting
-   go would do. */
-.dev-ws-swipe-hint {
-  position: absolute; top: 50%; z-index: 2;
-  padding: 3px 14px; border: 2px solid currentColor; border-radius: 12px;
-  font-size: 28px; font-weight: 800; line-height: 1.2; letter-spacing: .05em;
-  text-transform: uppercase;
-  background-color: var(--bg-primary);
-  opacity: 0; pointer-events: none;
-}
-.dev-ws-swipe-yes {
-  inset-inline-start: 20px; color: var(--state-ok);
-  background-image: linear-gradient(var(--state-ok-bg), var(--state-ok-bg));
-  transform: translateY(-50%) rotate(-10deg);
-}
-.dev-ws-swipe-no {
-  inset-inline-end: 90px; color: var(--state-blocked);
-  background-image: linear-gradient(var(--state-blocked-bg), var(--state-blocked-bg));
-  transform: translateY(-50%) rotate(10deg);
-}
-.dev-ws-item[data-ws-swipe="yes"] > .dev-ws-swipe-yes,
-.dev-ws-item[data-ws-swipe="no"] > .dev-ws-swipe-no { opacity: calc(var(--ws-swipe-p, 0) * .9); }
 @media (max-width: 699.98px) {
   .dev-ws-needs-scroll { overflow-x: hidden; }
-  .dev-ws-item[data-ws-swipeable] { touch-action: pan-y; }
-  .dev-ws-item[data-ws-swiping] { user-select: none; -webkit-user-select: none; }
-}
-@media (max-width: 699.98px) and (prefers-reduced-motion: no-preference) {
-  .dev-ws-item[data-ws-swipe] { transform: translateX(var(--ws-swipe-x, 0px)); }
-  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: transform .26s cubic-bezier(.2, .8, .2, 1); }
-  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) > .dev-ws-swipe-hint { transition: opacity .2s ease; }
-}
-/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
-@media (max-width: 699.98px) {
-  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe] { transform: none; }
-  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: none; }
-  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) > .dev-ws-swipe-hint { transition: none; }
 }
 
-/* ── The picture: the two stills, cropped to what changed ──────────────
-   The view is the box the still is placed in; the still keeps its natural
-   size and is moved and scaled with a transform (workshop.tsx computes the
-   crop), so the outline can sit on the changed region in the same
-   coordinates. It fills the card from under its switch to its foot, edge
-   to edge, under the caption, and never scrolls. */
-.dev-ws-media {
-  position: relative;
-  flex: 1 1 auto; min-height: 120px;
-  margin: 12px 0 0;
-  display: flex; flex-direction: column;
-}
-.dev-ws-media-view {
-  position: relative; flex: 1 1 auto; min-height: 0;
-  overflow: hidden;
-  background: #111114;
-}
-.dev-ws-media-img { position: absolute; inset-inline-start: 0; top: 0; max-width: none; transform-origin: 0 0; display: block; }
-.dev-ws-media-spot {
-  position: absolute; pointer-events: none;
-  border: 2px solid #16a34a; border-radius: 8px;
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, .25), 0 0 22px rgba(22, 163, 74, .35);
-}
-.dev-ws-media-wait {
-  position: absolute; inset: 0;
-  background: linear-gradient(90deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .10), rgba(255, 255, 255, .04));
-}
-/* The switch and the way out sit in a bar ABOVE the picture, never on it:
-   laid over the still they covered the corner a change often is. */
-.dev-ws-media-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin: 0 14px 8px; min-height: 30px;
-}
-.dev-ws-media-full {
-  flex: none; padding: 6px 11px; border: 0; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 12px; font-weight: 600; line-height: 1.2;
-  background: var(--state-neutral-bg); color: var(--text-secondary);
-}
-.dev-ws-seg {
-  display: inline-flex; flex: none; padding: 2px; border-radius: 9999px;
-  background: var(--state-neutral-bg);
-}
-.dev-ws-seg-btn {
-  padding: 5px 12px; border: 0; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 12px; font-weight: 700;
-  background: none; color: var(--text-secondary);
-}
-.dev-ws-seg-btn[aria-pressed="true"] { background: #fff; color: #14171f; box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
-.dev-ws-seg-one { padding: 5px 12px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
-/* With a run's outlines the switch wears their colours: red where it was,
-   green where it is now. */
-.dev-ws-seg-btn.dev-ws-seg-before[aria-pressed="true"] { background: #dc2626; color: #fff; }
-.dev-ws-seg-btn.dev-ws-seg-after[aria-pressed="true"] { background: #15803d; color: #fff; }
-.dev-ws-media-size { font-size: 12px; font-weight: 600; color: var(--text-muted); }
-
-/* ── The picture from a before & after run (workshop.tsx ShotsPicture) ──
-   One screen, cropped to the areas the run outlined. Both sides are laid in
-   the view with the same transform and one is hidden, so a flip never moves
-   the crop; the outlines are drawn in the view's own pixels over them, so a
-   line and a number stay crisp whatever the scale. */
-.dev-ws-media-shots .dev-ws-media-view { cursor: pointer; }
-.dev-ws-media-shots .dev-ws-media-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dev-ws-shot-side { position: absolute; inset-inline-start: 0; top: 0; transform-origin: 0 0; }
-.dev-ws-shot-side > img { display: block; width: 100%; height: 100%; max-width: none; }
-.dev-ws-media-shots[data-side="after"] .dev-ws-shot-before,
-.dev-ws-media-shots[data-side="before"] .dev-ws-shot-after,
-.dev-ws-media-shots[data-side="after"] .dev-ws-shot-on-before,
-.dev-ws-media-shots[data-side="before"] .dev-ws-shot-on-after { visibility: hidden; }
-.dev-ws-shot-box { position: absolute; pointer-events: none; border: 2px solid #16a34a; border-radius: 6px; background: rgba(22, 163, 74, .1); }
-.dev-ws-shot-box.dev-ws-shot-on-before { border-color: #dc2626; background: rgba(220, 38, 38, .1); }
-.dev-ws-shot-box.dev-ws-shot-box-other { border: 1.5px dashed rgba(161, 161, 170, .95); background: transparent; }
-/* Lifted by its own width, so a line at the very foot of a shot shows. */
-.dev-ws-shot-mark { position: absolute; pointer-events: none; height: 0; margin-top: -2px; border-top: 2px dashed #16a34a; }
-.dev-ws-shot-mark.dev-ws-shot-on-before { border-top-color: #dc2626; }
-.dev-ws-shot-n {
-  flex: none; width: 20px; height: 20px; border-radius: 9999px; display: inline-grid; place-items: center;
-  font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; font-variant-numeric: tabular-nums;
-}
-.dev-ws-shot-box > .dev-ws-shot-n, .dev-ws-shot-mark > .dev-ws-shot-n {
-  position: absolute; inset-inline-start: -9px; top: -9px; box-shadow: 0 0 0 2px #111114;
-}
-.dev-ws-media-shots[data-side="before"] .dev-ws-shot-n { background: #dc2626; }
-/* The changes its outlines are numbered by: the caption's "more" lists
-   them. */
-.dev-ws-shot-changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.dev-ws-shot-change { display: flex; align-items: flex-start; gap: 8px; min-width: 0; font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
-.dev-ws-shot-change > .dev-ws-shot-n { margin-top: 1px; }
-/* A long URL or word in a change's words wraps in its row (and the row in
-   the list's grid column) instead of widening the caption. */
-.dev-ws-shot-change > :not(.dev-ws-shot-n) { min-width: 0; overflow-wrap: anywhere; }
 .dev-ws-shot-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── A change's diagram and "What it touches" (#4490, lib/diagram) ──
@@ -24932,15 +24499,6 @@ button.dev-ws-recent-card {
   box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-primary); overflow-wrap: anywhere;
 }
-.dev-ws-item > .dev-ws-diagram {
-  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding-block: 0 16px; padding-inline: 24px 80px; overflow: hidden;
-  gap: 14px; border-radius: 0; background: none; box-shadow: none;
-}
-.dev-ws-item > .dev-ws-diagram .dev-ws-diagram-src { margin: 2px 0 0; font-size: 12.5px; }
-.dev-ws-item > .dev-ws-diagram .dev-ws-diagram-rows { gap: 12px; }
-.dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 15px; font-weight: 650; }
-.dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 9px; }
-.dev-ws-item > .dev-ws-diagram[role="button"] { cursor: pointer; }
 .dev-ws-diagram[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-diagram-kicker {
   font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);
@@ -25053,11 +24611,6 @@ button.dev-ws-recent-card {
   .dev-ws-diagram-step-pic { width: 56px; }
   .dev-ws-diagram-step-pic > svg { width: 32px; height: 32px; }
   .dev-ws-diagram-step-caption { font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
-  /* The card's picture keeps the other kinds' generous inline padding, which
-     on a phone squeezes a five-step row: 390 less the card's 32px gutters and
-     104px of padding leaves 254px for a row of 328px. Narrower padding lets
-     the row fit inside the gutters without wrapping or scrolling sideways. */
-  .dev-ws-item > .dev-ws-diagram { padding-inline: 12px; }
 }
 /* From 420px Before and After sit side by side, as the "seen" kind's two
    sides do: two equal columns, Before on the start side, a hairline before
@@ -25225,17 +24778,6 @@ button.dev-ws-recent-card {
    their own bodies. */
 @media (max-width: 699.98px) {
   .dev-ws-sheet-card { overflow-y: auto; overscroll-behavior: contain; }
-  .dev-ws-sheet-vote .dev-ws-sheet-card:has(> .dev-ws-vote-form) {
-    --ws-vote-foot: calc(22px + var(--platform-safe-bottom, 0px));
-    padding-bottom: 0;
-    scroll-padding-bottom: calc(54px + var(--ws-vote-foot));
-  }
-  .dev-ws-needs[data-ws-kb] .dev-ws-sheet-vote .dev-ws-sheet-card:has(> .dev-ws-vote-form) { --ws-vote-foot: 12px; }
-  .dev-ws-sheet-vote .dev-ws-vote-form > .dev-vote-reason-actions {
-    position: sticky; bottom: 0; z-index: 1;
-    padding-bottom: var(--ws-vote-foot);
-    background-color: var(--dc-sheet);
-  }
 }
 /* ── Open and close MOVE. The card rises from the floor and the scrim fades
    in; on the way out (`[data-ws-leaving]`, which workshop.tsx keeps mounted
@@ -25317,7 +24859,6 @@ button.dev-ws-recent-card {
   position: sticky; bottom: 0; margin-top: auto; padding: 8px 0 4px;
   background-color: var(--dc-sheet);
 }
-.dev-ws-talk > .dev-ws-ask { flex: 1 1 auto; min-height: 0; padding: 0 16px; }
 .dev-ws-talk > [role="tabpanel"][hidden] { display: none; }
 /* The vote sheet's own lines. */
 .dev-ws-ask-q { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
@@ -26809,31 +26350,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 
 /* ── The ask pane, the sheet's Ask tab ─────────────────────────────── */
-.dev-ws-ask { display: flex; flex-direction: column; gap: 8px; }
 .dev-ws-ask-private { margin: 8px 0 0; font-size: 12.5px; line-height: 1.35; color: var(--text-muted); }
 .dev-ws-ask-log {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 8px; padding: 6px 0 2px;
 }
 .dev-ws-ask-hint { margin: 0; font-size: 13px; color: var(--text-muted); font-style: italic; }
-.dev-ws-ask-msg {
-  margin: 0; max-width: 88%; padding: 9px 13px; border-radius: 17px;
-  font-size: 15px; line-height: 1.36; white-space: pre-wrap;
-}
-.dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; border-end-end-radius: 6px; }
-.dev-ws-ask-ai { align-self: flex-start; background: var(--bg-secondary); color: var(--text-primary); border-end-start-radius: 6px; }
-/* The answer on its way: a breathing bubble, still while it grows. */
-.dev-ws-ask-pending {
-  color: var(--text-muted);
-  animation: dev-ws-ask-breathe 1.6s ease-in-out infinite;
-}
-@keyframes dev-ws-ask-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-@media (prefers-reduced-motion: reduce) {
-  .dev-ws-ask-pending { animation: none; }
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .dev-ws-ask-pending { animation: none; }
-.dev-ws-ask-failed { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* THE COMPOSER is a card padded evenly, so its resting line sits on its
    own middle. */
 .dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; flex: none; }
@@ -26854,82 +26376,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-ask-send-icon { width: 17px; height: 17px; }
 .dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 
-/* ── The end of the feed ──────────────────────────────────────────────
-   One card past the last item, always (#2172): the same snap slot as an
-   item, in the page's own scheme rather than the reels' dark, so the swipe
-   that lands here reads as arriving somewhere rather than as one more
-   decision. On top, a note when your Yes met a change's rule; under it the
-   card itself, in the plane colour with one hairline: the tick, the
-   headline, what the pass did, and the buttons at its foot. */
-.dev-ws-needs-done {
-  gap: 8px; padding: 0;
-  background-color: transparent;
-}
-.dev-ws-done-over {
-  flex: none; display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 14px; border-radius: 18px;
-  background-color: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 6px 20px rgba(0, 0, 0, .08);
-}
-.dev-ws-done-over-ic {
-  flex: none; width: 28px; height: 28px; border-radius: 9999px;
-  display: grid; place-items: center;
-  background: var(--state-ok-bg); color: var(--state-ok);
-}
-.dev-ws-done-over-ic > svg { width: 16px; height: 16px; }
-.dev-ws-done-over-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dev-ws-done-over-line { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
-.dev-ws-done-over-sub { font-size: 13px; line-height: 1.35; color: var(--text-muted); }
-.dev-ws-done-body {
-  flex: 1 1 auto; min-height: 0; box-sizing: border-box; overflow-y: auto;
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 26px 18px 16px; border-radius: 22px; text-align: center;
-  background-color: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-}
-.dev-ws-done-tick {
-  flex: none; width: 56px; height: 56px; border-radius: 18px;
-  display: grid; place-items: center;
-  background: var(--state-ok-bg); color: var(--state-ok);
-}
-.dev-ws-done-tick > svg { width: 28px; height: 28px; }
-.dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--text-primary); }
-.dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-secondary); }
-/* What your votes did: a row each, its title cut short beside its status. */
-.dev-ws-done-did { align-self: stretch; display: flex; flex-direction: column; margin-top: 10px; text-align: start; }
-.dev-ws-done-did-head { margin: 0 0 2px; font-size: 13px; font-weight: 650; color: var(--text-primary); }
-.dev-ws-done-did-list { list-style: none; margin: 0; padding: 0; }
-.dev-ws-done-did-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
-.dev-ws-done-did-row + .dev-ws-done-did-row { border-top: 1px solid var(--app-sheet-line); }
-.dev-ws-done-did-title {
-  flex: 1 1 auto; min-width: 0;
-  font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.dev-ws-done-status {
-  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
-  border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;
-  background: var(--state-neutral-bg); color: var(--text-secondary);
-}
-.dev-ws-done-status-ok { background: var(--state-ok-bg); color: var(--state-ok); }
-.dev-ws-done-status-progress { background: var(--accent-tint); color: var(--accent-wash-ink); }
-.dev-ws-done-status-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
-.dev-ws-done-status-ic { width: 12px; height: 12px; flex: none; }
-.dev-ws-done-actions { align-self: stretch; display: flex; gap: 8px; margin-top: auto; padding-top: 14px; }
-.dev-ws-done-cta, .dev-ws-done-hub {
-  flex: 1 1 0; min-width: 0; height: 46px; padding: 0 14px; border: 0; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 15px; font-weight: 650;
-}
-.dev-ws-done-cta { background: var(--accent); color: #fff; }
-.dev-ws-done-hub { background: var(--dc-sheet); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border); }
-/* The way back to what was passed over: a quiet action under the two,
-   drawn only when there is something above to go back to. */
-.dev-ws-done-back {
-  flex: none; height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 14px; font-weight: 600;
-  background: transparent; color: var(--accent);
-}
-.dev-ws-done-back:hover { background: var(--accent-wash); }
 
 /* ── The deck at the top, on a wide screen ───────────────────
    On a phone the deck fills the reading area and the answers sit at the
@@ -27250,31 +26696,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-needs-stage { flex: 0 1 440px; max-width: 440px; }
   .dev-ws-needs-scroll { border-radius: 20px; }
   .dev-ws-needs-progress { margin: 0 4px 8px; }
-  .dev-ws-item-top { margin: 26px 16px 0; }
-  .dev-ws-item-caption { inset-inline-start: 18px; inset-inline-end: 18px; bottom: 20px; gap: 8px; }
-  /* #5039: beside the card, the caption below a diagram needs no rail lane. */
-  .dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption { margin: 12px 18px 20px; }
-  .dev-ws-item-avatar { width: 32px; height: 32px; font-size: 13px; }
-  .dev-ws-item-by b { font-size: 15px; }
-  .dev-ws-item-title { font-size: 21px; line-height: 1.2; }
-  .dev-ws-item-summary-text { font-size: 15px; }
-  .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 64px; }
-  .dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 26px; line-height: 1.18; }
-  .dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text { font-size: 17px; -webkit-line-clamp: 10; }
-  /* The facts: the vote's words are the pill, the topic follows it. */
-  .dev-ws-item-caption > .dev-ws-item-facts { padding: 0; border-radius: 0; background: none; font-size: 12.5px; line-height: 26px; color: var(--text-muted); }
-  .dev-ws-item-caption .dev-ws-item-facts-vote { display: inline-block; padding: 0 10px; border-radius: 9999px; background: var(--state-neutral-bg); color: var(--text-primary); }
-  .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact { margin-inline-start: 8px; }
-  .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact::before { content: none; }
-  .dev-ws-media-bar { margin: 0 16px 8px; }
-  .dev-ws-item > .dev-ws-diagram { padding: 0 32px 16px; gap: 16px; }
-  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 15px; font-weight: 650; }
-  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 10px; }
-  /* With the panel up the card keeps its picture and its by-line: the rest
-     of the caption is at the panel's top. */
-  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-caption > :not(.dev-ws-item-by) { display: none; }
-  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-scrim { height: 180px; }
-  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: auto; }
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-stage { flex-basis: 400px; }
   .dev-ws-rail {
     position: relative; inset-inline-end: auto; bottom: auto; z-index: auto;
@@ -27335,20 +26756,16 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     display: flex; flex-direction: column; gap: 8px; flex: 0 1 auto; max-height: 45%; overflow-y: auto;
     padding-block: 16px 14px; padding-inline: 18px 52px; border-bottom: 1px solid var(--border-light);
   }
-  .dev-ws-talk-head .dev-ws-item-avatar { width: 28px; height: 28px; font-size: 12px; }
-  .dev-ws-talk-head .dev-ws-item-by b { font-size: 14px; font-weight: 650; }
   .dev-ws-talk-title { margin: 0; font-size: 17px; font-weight: 750; line-height: 1.25; color: var(--text-primary); }
   .dev-ws-talk-words { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-secondary); white-space: pre-line; overflow-wrap: anywhere; }
   .dev-ws-talk-words > * { margin: 0 0 8px; }
   .dev-ws-talk-words > :last-child { margin-bottom: 0; }
-  .dev-ws-talk-head .dev-ws-item-facts { background: var(--state-neutral-bg); color: var(--text-secondary); }
   .dev-ws-talk-tabs { position: static; justify-content: flex-start; padding: 0 18px; }
   .dev-ws-talk-tablist { gap: 22px; }
   .dev-ws-talk-tab { height: 42px; font-size: 14.5px; }
   .dev-ws-talk-tabs > .dev-ws-sheet-x { inset-inline-end: 12px; top: 12px; }
   .dev-ws-talk > .dev-ws-sheet-body { padding: 4px 18px 0; }
   .dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > form { background-color: var(--dc-sheet-solid); }
-  .dev-ws-talk > .dev-ws-ask { padding: 0 18px; }
   .dev-ws-sheet-handle { display: none; }
   /* The vote: a popover on its button, arrow towards it. The button's top in
      the rail is measured (`--ws-vote-top`, workshop.tsx), because the rail's
@@ -27370,7 +26787,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-vote-sub { font-size: 13px; }
   .dev-ws-answer-btn { height: 46px; font-size: 15px; border-radius: 12px; }
   .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
-  .dev-ws-ask-msg { font-size: 14px; }
   .dev-ws-ask-log { max-height: none; }
   /* #5820: from the wide layout up the All items chips say their words beside
      their glyphs — the same job the tooltip and the aria-label still do on a
@@ -33891,8 +33307,6 @@ html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-chip[aria-pressed="true"] { background-color: var(--bl-sun); color: var(--bl-on-sun); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #dev-topic-thread,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-vote-look="thread"] { --state-progress: var(--bl-sky); --state-progress-bg: var(--bl-tint-sky); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior) { background: var(--bl-count); color: var(--bl-on-count); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior):hover { background: color-mix(in srgb, var(--bl-count) 86%, var(--thread-000000)); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="run"] { color: var(--bl-sky); background: var(--bl-tint-sky); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-tag[data-tone="bot"] { color: var(--bot-ink); background: var(--bot-tint); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-ws-wrow[data-on] { background: var(--bl-row-on); box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge); }
@@ -33996,17 +33410,13 @@ html:root:not(.dark):not([data-app-tone="dark"]) :where(#dev-topic-thread) .dev-
 html:root.dark:not([data-app-tone="light"]) :where(#dev-topic-thread) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-rail-title { font-size: 13px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--bl-label); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary),
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-ask .dev-vote-btn[aria-checked="true"] { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts .dev-request-primary { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts .dev-request-primary:hover { background: var(--bl-sun-lit); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts .dev-request-primary { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts .dev-request-primary:hover { background: var(--bl-sun-lit); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-pair .dev-change-gate { background: var(--bl-card); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act:hover { background: var(--bl-sun-lit); }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-quiet { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); --rail-note-plain: transparent; }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-card { --thread-fact: var(--bl-card); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,

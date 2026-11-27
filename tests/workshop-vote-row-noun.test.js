@@ -56,8 +56,7 @@ test('the sheets that name a vote row all say "change"', () => {
   assert.match(REVIEW_SHEET, /\{sub\(t\('communities:review\.help\.ask'\)\)\}/);
   assert.equal(message('communities:review.help.ask'), 'Ask privately');
   assert.match(message('communities:review.ask.inAiNote'), /\bthis change\b/);
-  // The caption with no summary, and the end card that counts changes.
-  assert.match(SRC, /\{summary \|\| t\('project:needsYou\.noSummary\.change'\)\}/);
+  // The words the reel's caption had for a change with no summary.
   assert.equal(message('project:needsYou.noSummary.change'), 'No plain-language summary was written for this change.');
   // The end card counts changes, as the cards above it do.
   assert.equal(message('project:needsYou.end.reviewedAll', { count: 4 }), 'You reviewed all 4 changes that were waiting on you.');

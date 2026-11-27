@@ -1109,8 +1109,4 @@ test('the feed shapes a run\'s frames onto its screens, and outlines only its ar
   // A change's page draws the same screens with the slider, which frames on
   // them and outlines nothing (review-flow/shots-viewer.tsx).
   assert.match(read('frontend/src/features/review-flow/shots-model.ts'), /const shaped = shape \? shape\(null, raw, mode\) : null;/);
-  // The Workshop's picture crops to frames first, and outlines regions only.
-  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);
-  assert.match(ws, /const outlines = \(which: Side\) => \(place \? screen\.regions\.map\(/);
 });

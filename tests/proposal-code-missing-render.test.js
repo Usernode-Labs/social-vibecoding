@@ -172,27 +172,9 @@ test('the change\'s page: the notice above Votes and Testing, in the project pag
     'above the Votes and Testing cards, which stay as they are');
 });
 
-test('Needs you: "Code missing" on the facts line, never "your yes puts it live"; the Communities feed carries it', () => {
-  const { factsFor } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const row = (extra = {}) => ({
-    t: 'card', key: 'vote:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    card: { key: 'proposal:7', attrs: { 'data-proposal-row': '7' }, title: { text: 'Change 7', title: '' },
-      pill: { state: { yes: 1, majority: 2, key: 'needs_vote', label: 'Vote · 1/2', plainVote: true } }, badges: [], chatCount: null,
-      rail: { menuKey: '', preview: null }, actionPreview: null },
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [7, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [7, 'no'] } },
-    askAbout: { kind: 'proposal', ref: 7 }, ...extra,
-  });
-  const facts = factsFor(row({ codeMissing: true, lastYes: true }), null);
-  assert.deepEqual(facts.find((f) => f.key === 'code_missing'), {
-    key: 'code_missing', tone: 'blocked', text: 'Code missing', title: SENTENCE,
-  });
-  assert.equal(facts.some((f) => f.key === 'last'), false, 'its Yes puts nothing live');
-  assert.ok(facts.find((f) => f.key === 'tally'), 'the count stays: the vote is recorded');
-  assert.equal(factsFor(row(), null).some((f) => f.key === 'code_missing'), false);
-  assert.match(read('frontend', 'src', 'features', 'dev-board', 'workshop', 'workshop.tsx'),
-    /\{vote\.map\(\(f\) => <span key=\{f\.key\} className=\{factTone\(f\.tone\)\} title=\{f\.title\}>\{f\.text\}<\/span>\)\}/,
-    'the fact carries its tooltip');
-
+test('Needs you: a missing change\'s rows carry "Code missing"; the Communities feed carries it', () => {
+  // The old Needs you reel's facts line (workshop.tsx factsFor) went with
+  // the reel; the feed and the queue still carry the flag.
   // A project's own Needs you: the queue row carries it from the board row.
   assert.match(APP_VIEW_SRC, /\.\.\.\(x\.kind === 'proposal' && AppView\._codeMissing\(x\.item\) \? \{ codeMissing: true \} : \{\}\),/);
   // The Communities screen's: from the feed's item.

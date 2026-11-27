@@ -2025,125 +2025,6 @@ test('one hover for both sizes, and a facts line that is not clipped', () => {
 
 
 
-test('the end card says what your votes did, in words the platform can stand behind', () => {
-  const { DoneItem, outcomeFor } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const row = (id, extra = {}) => ({
-    t: 'card', key: `vote:proposal:${id}`, kind: 'vote', ask: 'Should this change go in?',
-    card: { key: `proposal:${id}`, attrs: { 'data-proposal-row': String(id) }, title: { text: `Change ${id}`, title: '' },
-      pill: { state: { yes: 0, majority: 1, key: 'needs_vote', label: 'Vote · 0/1', plainVote: true } }, badges: [], chatCount: null,
-      rail: { menuKey: '', preview: null }, actionPreview: null },
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [id, 'no'] } },
-    askAbout: { kind: 'proposal', ref: id }, ...extra,
-  });
-  const fresh = {
-    1: { key: 'merging', label: 'Going live', yes: 1, majority: 1 },
-    2: { key: 'deployed', label: 'Live', yes: 2, majority: 2 },
-    3: { key: 'tally', label: '1 / 3', yes: 1, majority: 3 },
-    5: { key: 'merge_countdown', label: 'Goes live in 2h', yes: 2, majority: 2 },
-  };
-  const prev = global.window;
-  global.window = { AppView: { _needsOutcome: (kind, id) => (kind === 'proposal' ? fresh[id] || null : null) } };
-  try {
-    // Read fresh off the board rows the vote's refresh brought back.
-    const one = outcomeFor(row(1, { lastYes: true }), 'yes');
-    assert.deepEqual({ ...one }, { text: 'Going live', tone: 'progress', over: true, live: false }, 'the Yes that met the rule');
-    assert.equal(outcomeFor(row(2), 'yes').text, 'Live');
-    assert.equal(outcomeFor(row(3), 'yes').text, 'Waiting for 2 more');
-    assert.equal(outcomeFor(row(5), 'yes').text, 'Goes live in 2h', 'a countdown in the pill\'s own words');
-    assert.equal(outcomeFor(row(5, { lastYes: true }), 'yes').over, false, 'and not "going live now" while a clock runs');
-    // A No always carries its line, and the line goes to the author.
-    assert.deepEqual({ ...outcomeFor(row(3), 'no') }, { text: 'Back to the author', tone: undefined, over: false, live: false });
-    // Nothing fresh (another project's change, on the Communities screen):
-    // what the row said before the vote.
-    assert.equal(outcomeFor(row(9, { lastYes: true }), 'yes').text, 'Going live');
-    assert.equal(outcomeFor(row(9), 'yes').text, 'You voted yes', 'a rule with no count to go on');
-    const short = row(9, { card: { ...row(9).card, pill: { state: { yes: 0, majority: 3, key: 'needs_vote', plainVote: true } } } });
-    assert.equal(outcomeFor(short, 'yes').text, 'Waiting for 2 more');
-
-    // The card: every row answered here, the lead when a Yes met a rule.
-    const rows = [row(1, { lastYes: true }), row(2), row(3), row(4)];
-    const answered = { 'vote:proposal:1': 'yes', 'vote:proposal:2': 'yes', 'vote:proposal:3': 'no', 'vote:proposal:4': 'yes' };
-    const html = renderToHtml(createElement(DoneItem, { rows, answered, left: 0, onDone() {}, onBack() {}, onHub() {} }));
-    assert.match(html, /<div class="dev-ws-done-over" role="status" data-ws-done-over="">[\s\S]*?Your yes put it over the line[\s\S]*?Change 1 is going live now\./);
-    assert.match(html, /dev-ws-needs-done-line">All caught up</);
-    assert.match(html, /You reviewed all 4 changes that were waiting on you\./);
-    assert.match(html, /<h3 class="dev-ws-done-did-head">What your votes did<\/h3>/);
-    const did = [...html.matchAll(/data-ws-done-row="vote:proposal:(\d)"><span class="dev-ws-done-did-title">Change \d<\/span><span class="([^"]+)">(?:<svg[\s\S]*?<\/svg>)?([^<]+)</g)]
-      .map((m) => [m[1], m[2], m[3]]);
-    assert.deepEqual(did, [
-      ['1', 'dev-ws-done-status dev-ws-done-status-progress', 'Going live'],
-      ['2', 'dev-ws-done-status dev-ws-done-status-ok', 'Live'],
-      ['3', 'dev-ws-done-status', 'Back to the author'],
-      ['4', 'dev-ws-done-status', 'You voted yes'],
-    ]);
-    // Some skipped, nothing to lead with: "That's it for now", N of M.
-    const some = renderToHtml(createElement(DoneItem, { rows, answered: { 'vote:proposal:3': 'yes' }, left: 3, onDone() {}, onBack() {} }));
-    assert.match(some, /That’s it for now/);
-    assert.match(some, /You reviewed 1 of 4 changes that were waiting on you\. You skipped 3\. They stay above if you change your mind\./);
-    assert.ok(!some.includes('data-ws-done-over'), 'no lead');
-    assert.ok(!some.includes('data-ws-done-hub'), 'no Hub button where none was given');
-    assert.match(some, /data-ws-done-back=""/);
-  } finally { global.window = prev; }
-});
-
-// #5236: the card you just answered counts your vote. The pin holds the row
-// as it was BEFORE the vote (and castVote bumps only yes_count/no_count,
-// while the pill reads qualified_yes_count), so the facts line kept the
-// pre-vote count for the whole session. It reads the board rows the vote's
-// own refresh brought back instead (AppView._needsOutcome, the end card's
-// seam), and keeps the snapshot where nothing fresher can be said.
-test('#5236: the answered card in a project\'s Needs you counts your vote', () => {
-  const { factsFor, VoteSub } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const row = (id, extra = {}) => ({
-    t: 'card', key: `vote:proposal:${id}`, kind: 'vote', ask: 'Should this change go in?',
-    card: { key: `proposal:${id}`, attrs: { 'data-proposal-row': String(id) }, title: { text: `Change ${id}`, title: '' },
-      pill: { state: { yes: 0, majority: 2, key: 'needs_vote', label: 'Vote · 0/2', plainVote: true } }, badges: [], chatCount: null,
-      rail: { menuKey: '', preview: null }, actionPreview: null },
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [id, 'no'] } },
-    askAbout: { kind: 'proposal', ref: id }, ...extra,
-  });
-  const fresh = { 1: { key: 'tally', label: '1 / 2', yes: 1, majority: 2 } };
-  const prev = global.window;
-  global.window = { AppView: { _needsOutcome: (kind, id) => (kind === 'proposal' ? fresh[id] || null : null) } };
-  try {
-    const tally = (r, voted) => factsFor(r, voted).filter((f) => f.key === 'tally').map((f) => f.text);
-    assert.deepEqual(tally(row(1), 'yes'), ['1 of 2 approvals'], 'your vote is counted');
-    assert.deepEqual(tally(row(1), null), ['0 of 2 approvals'], 'an unanswered card is unchanged');
-    assert.deepEqual(tally(row(9), 'yes'), ['0 of 2 approvals'], 'nothing fresh yet: the snapshot, not a guess');
-    // The vote sheet's line under its question counts the same way.
-    const sub = (r, voted) => renderToHtml(createElement(VoteSub, { row: r, voted }));
-    assert.match(sub(row(1), 'yes'), /1 of 2 have said yes so far\./);
-    assert.match(sub(row(9), 'yes'), /0 of 2 have said yes so far\./, 'the snapshot, and it renders');
-  } finally { global.window = prev; }
-});
-
-// #5236, on the Communities feed: its rows carry the counts but no pill, and
-// there is no fresh read for another project's change, so the card adds the
-// viewer's one side to the tally it already had. Safe because the feed only
-// lists changes the viewer had not voted on yet.
-test('#5236: the Communities feed\'s answered card adds your vote to its counts', () => {
-  const { factsFor } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const reelRow = () => ({
-    t: 'card', key: 'vote:proposal:12', kind: 'vote', ask: 'Should this change go in?',
-    card: { key: 'proposal:12', attrs: { 'data-proposal-row': '12' }, title: { text: 'Change 12', title: '' }, pill: null,
-      badges: [], chatCount: null, rail: { menuKey: '', preview: null }, actionPreview: null },
-    yes: { label: 'Yes', act: { fn: 'castVote', args: [12, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [12, 'no'] } },
-    askAbout: { kind: 'proposal', ref: 12 },
-    app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null },
-    tally: { yes: 2, no: 0 },
-  });
-  const tally = (voted) => factsFor(reelRow(), voted).filter((f) => f.key === 'tally').map((f) => f.text);
-  const prev = global.window;
-  // Even where this project's AppView is loaded, the reel counts its own
-  // snapshot: that cached row is not refreshed off the dev tab.
-  global.window = { AppView: { _needsOutcome: () => ({ key: 'tally', label: '', yes: 99, majority: 99 }) } };
-  try {
-    assert.deepEqual(tally('yes'), ['3 yes'], 'your yes is counted on the spot');
-    assert.deepEqual(tally('no'), ['2 yes · 1 no'], 'and your no');
-    assert.deepEqual(tally(null), ['2 yes'], 'unanswered: what the feed said, and a zero says nothing');
-  } finally { global.window = prev; }
-});
-
 // #5466: a vote cast OFF the project page used to leave the kept queue
 // holding the row — `AppView._publishWorkshop` publishes only while
 // #dev-workshop is up and `refreshDevData` no-ops outside the dev tab — so
@@ -4984,18 +4865,18 @@ test('#6098: the card\'s Vote button keeps focus while its vote is sent, and tak
   assert.match(CSS, /\.dev-vote-btn\[aria-disabled="true"\] \{ cursor: progress; opacity: 0\.75; \}/);
 });
 
-test('#6098: the request\'s ballot and its vote to close keep the button that was pressed focused', () => {
+test('#6098: the request\'s ballot keeps the button that was pressed focused, and its vote to close is the one Vote', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.doesNotMatch(src, /disabled=\{busy\}/, 'neither the ballot nor the close vote is switched off mid-vote');
+  assert.doesNotMatch(src, /disabled=\{busy\}/, 'the ballot is not switched off mid-vote');
   assert.match(src, /data-ballot-option=\{c\.key\}\s*aria-disabled=\{busy \|\| undefined\}/);
-  // #6990: the chosen side is locked too, so it is `busy || on`.
-  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| on \|\| undefined\}\s*data-close-vote=\{side\}\s*data-sending=\{sending \? 'true' : undefined\}/);
   assert.match(src, /onClick=\{\(e\) => \{ if \(!on\) void choose\(c\.pick, e\.currentTarget\); \}\}/, 'the pressed button is what comes back');
-  assert.match(src, /onClick=\{\(e\) => \{ void vote\(side, e\.currentTarget\); \}\}/);
   assert.match(src, /if \(active && active !== document\.body\) return;/, 'only where focus was actually lost');
   assert.match(src, /focus\(\{ preventScroll: true \}\)/, 'and the page does not scroll under it');
   assert.match(src, /refocusAfterVote\(box\.current, 'ballot-option', from, wasFocused\)/);
-  assert.match(src, /refocusAfterVote\(box\.current, 'close-vote', from, wasFocused\)/);
+  // The vote to close and a decision's vote are the change page's Vote
+  // (VoteButton), which takes focus back itself after the picker sends.
+  assert.doesNotMatch(src, /data-close-vote/, 'no Yes and No of their own');
+  assert.equal((src.match(/<VoteButton yes=\{specs\.yes\} no=\{specs\.no\} \/>/g) || []).length, 2);
 });
 
 // ── #6987: a vote that never got sent says so ─────────────────────────
@@ -5006,15 +4887,15 @@ test('#6098: the request\'s ballot and its vote to close keep the button that wa
 // word. The prompt is raced against a watchdog now, and castIssueVote
 // answers true only when the server took the vote (as castVote does).
 
-test('#6987: the Votes card shows "Sending…" on the side that is being sent', () => {
+test('#6987: a vote to close and a decision\'s vote say "Sending…" through the one Vote', () => {
+  // They are the change page's Vote (VoteButton), which reads the sending
+  // store by its call and the decision's id (`castIssueVote:<id>`), as the
+  // change page's own does for `castVote:<id>`.
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /import \{ voteSendingStore \} from '\.\.\/card\/cards-store';/);
-  assert.match(src, /const sendingSide = sendingAll\[`castIssueVote:\$\{close\.id\}`\] \|\| null;/, 'a request\'s close vote reads its own key');
-  assert.match(src, /const sendingSide = sendingAll\[`castIssueVote:\$\{g\.id\}`\] \|\| null;/, 'and a decision\'s card reads its own');
-  assert.match(src, /const sending = sendingSide === \(side === 'up' \? 'yes' : 'no'\);/, 'only the side that was sent');
-  assert.match(src, /\{sending \? t\('project:topic\.thread\.close\.sending'\) :/, 'the label replaces Yes or No');
+  assert.match(src, /act: \{ fn: 'castIssueVote', args: \[id, 'up'\] \}/);
+  assert.match(CARD_TSX, /const sendKey = `\$\{yes\.act\?\.fn\}:\$\{String\(yes\.act\?\.args\?\.\[0\] \?\? ''\)\}`;/);
+  assert.match(CARD_TSX, /\{sending \? t\('project:card\.vote\.sending'\) : \(/, 'the face says it is on its way');
   assert.doesNotMatch(src, /disabled=\{busy\}/, 'never switched off mid-vote, so focus stays');
-  assert.equal(message('project:topic.thread.close.sending'), 'Sending…');
 });
 
 test('#6987: castIssueVote answers only when the server took the vote', async () => {

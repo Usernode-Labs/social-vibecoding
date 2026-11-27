@@ -428,13 +428,20 @@ test('#6990: a saved vote moves the count by exactly one, and never the wrong wa
 
 test('#6990: both Votes cards apply the saved vote, lock the chosen side and re-read current', () => {
   const src = read(CHANGES);
-  assert.match(src, /const result = await av\.castIssueVote\(close\.id, side\);/, 'the request\'s card keeps what the server saved');
-  assert.match(src, /const result = await av\.castIssueVote\(g\.id, side\);/, 'and so does a decision\'s');
+  // The vote is cast by the change page's own Vote (VoteButton); the card
+  // hears what the server saved from the store castIssueVote publishes.
+  assert.match(src, /useDecisionVoteSaved\(close\.id, \(vote\) => \{/, 'the request\'s card keeps what the server saved');
+  assert.match(src, /useDecisionVoteSaved\(g\.id, \(vote\) => \{/, 'and so does a decision\'s');
+  assert.match(src, /const saved = useStoreState\(govVoteSavedStore\)\[String\(id\)\] \|\| null;/);
   assert.match(src, /setApplied\(applyVote\(/, 'both apply it at once');
-  assert.match(src, /const mine = shownMine;/, 'the card reads the side from the applied vote first');
+  assert.match(src, /const mine = applied \? applied\.mine : row \? row\.myVote : close\.myVote \|\| null;/, 'the card reads the side from the applied vote first');
   assert.match(src, /const yes = applied \? applied\.yes : row \? row\.yes : 0;/, 'and the count too');
-  assert.match(src, /if \(shownMine === \(side === 'up' \? 'yes' : 'no'\)\) return;/, 'the chosen side sends nothing');
-  assert.match(src, /aria-disabled=\{busy \|\| on \|\| undefined\}/, 'and is marked locked');
+  // The chosen side is kept by the one picker: a decision's side already
+  // chosen is never sent again (the server would take it back).
+  const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(card, /const taken: 'yes' \| 'no' \| null = yes\.act\?\.fn === 'castIssueVote' \? mine : null;/);
+  assert.match(card, /if \(taken && side === taken\) \{ shut\(\); return; \}/, 'the chosen side sends nothing');
+  assert.match(card, /disabled=\{\(withLine && !yesOn && !noChoice\) \|\| \(!!taken && side === taken\)\}/, 'and its send is off');
   assert.match(src, /cache: 'no-cache'/, 'the re-read asks for the current answer, not a pre-vote copy');
   assert.equal(src.match(/cache: 'no-cache'/g).length, 2, 'both re-reads');
   assert.match(src, /if \(revision <= 0\) return undefined;/, 'a decision\'s first vote re-reads too');

@@ -252,10 +252,9 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // The Workshop's By category draws the board's rows (#4486), so it no
-  // longer imports the fold's row at all; `openHref` rides the same import
-  // since the Needs-you feed, and `voteSpecs` since Your work's rows carry
-  // a change's own Vote (After-Workshop-B).
-  assert.match(WORKSHOP, /import \{ callAppView, openHref \} from '\.\.\/card\/fold';/);
+  // longer imports the fold's row at all. `openHref` rode the same import
+  // for the Needs-you reel, which is gone with it.
+  assert.match(WORKSHOP, /import \{ callAppView \} from '\.\.\/card\/fold';/);
   assert.ok(!/CardRowView/.test(WORKSHOP), 'By category unfolds nothing in place');
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
@@ -1979,9 +1978,10 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
 // pill foldable, the tags on the meta line at both sizes, that line tabbed
 // in under the title and snug beneath it, and folded rows 4px apart.
 
-test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview just before it', () => {
-  // The neutral grey fill read as a third colour beside the blue Vote and
-  // the blue Preview; the pills take `.dev-vote-btn-yes`'s accent on tint.
+test('the band’s pills wear the accent tint; the hamburger holds the band’s right edge, Preview just before it', () => {
+  // The neutral grey fill read as a third colour beside the blue Preview;
+  // the pills take the accent on its tint. (The Vote button's own Yes is the
+  // bar's raised pill now: tests/thread-card.test.js.)
   const at = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {');
   assert.ok(at > 0, 'the band pill rule exists');
   const pill = CSS.slice(at, CSS.indexOf('\n}', at));
@@ -1990,7 +1990,6 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   // accent itself is 4.34:1 on its own tint, under AA for these 12px labels.
   assert.match(pill, /color: var\(--accent-tint-ink\);/);
   assert.match(pill, /border-color: transparent;/);
-  assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the
   // pills that do not fit the band go, so its trigger is the band's own
   // "more": a hamburger at its far right, and Preview, when there is one,

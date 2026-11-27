@@ -84,38 +84,7 @@ test('the wide layout keeps its own stacking: the 40 is the phone sheet\'s alone
   assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; inset-inline-end: auto; bottom: auto; z-index: auto;/);
 });
 
-test('on a phone a tall sheet scrolls and the vote keeps its buttons on screen', () => {
+test('on a phone a tall sheet scrolls', () => {
   const phone = phoneBlock();
   assert.match(phone, /\.dev-ws-sheet-card \{ overflow-y: auto; overscroll-behavior: contain; \}/, 'the card scrolls, and the page behind it does not');
-  // The action row is sticky at the card's foot and carries the clearance the
-  // card's foot had, on the sheet's own fill.
-  assert.match(phone, /\.dev-ws-sheet-vote \.dev-ws-vote-form > \.dev-vote-reason-actions \{\n\s*position: sticky; bottom: 0; z-index: 1;\n\s*padding-bottom: var\(--ws-vote-foot\);\n\s*background-color: var\(--dc-sheet\);/);
-  assert.match(phone, /\.dev-ws-sheet-vote \.dev-ws-sheet-card:has\(> \.dev-ws-vote-form\) \{\n\s*--ws-vote-foot: calc\(22px \+ var\(--platform-safe-bottom, 0px\)\);\n\s*padding-bottom: 0;\n\s*scroll-padding-bottom: calc\(54px \+ var\(--ws-vote-foot\)\);/,
-    'the foot is the home indicator, and a focused field scrolls in above the row, not under it');
-  assert.match(phone, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-vote \.dev-ws-sheet-card:has\(> \.dev-ws-vote-form\) \{ --ws-vote-foot: 12px; \}/,
-    'with the keys up the indicator is behind them');
-  // 54px is the row above its foot: the form's 10px top padding and a 44px button.
-  assert.match(CSS, /\.dev-ws-vote-form \.dev-vote-reason-actions \{ padding-top: 10px; gap: 8px; \}/);
-  assert.match(CSS, /\.dev-ws-vote-form \.dev-vote-reason-cancel, \.dev-ws-vote-form \.dev-vote-reason-send \{ height: 44px;/);
-});
-
-test('the sticky row is a child of the form, so it can ride anywhere over the form', () => {
-  // A sticky box moves only within its containing block. The row is the
-  // picker's last child, directly in `.dev-ws-vote-form`, which spans the
-  // switch, the line and the row: it can pin to the card's foot whatever
-  // the form's height.
-  const { reelRows } = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const row = reelRows([{
-    kind: 'proposal', id: 7, title: 'A change', summary: null, author: 'ada', number: 3, epoch: 1,
-    at: null, yes: 0, no: 0, app: { slug: 'demo', name: 'Demo', icon_url: null, icon_emoji: null },
-  }])[0];
-  const noop = () => {};
-  for (const side of ['yes', 'no']) {
-    const html = renderToHtml(createElement(NeedsVoteForm, {
-      row, side, line: '', onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
-    }));
-    assert.match(html, /^<div class="dev-ws-vote-form"[^>]*>/);
-    assert.match(html, /<div class="dev-vote-reason-actions">(?:(?!<div)[\s\S])*<\/div><\/div>$/, `the action row closes the form (${side})`);
-  }
 });
