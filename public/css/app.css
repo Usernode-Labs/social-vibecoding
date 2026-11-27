@@ -35954,6 +35954,8 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * { order: 1; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols > [data-ws-hub-discussion] { order: 2; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > :not([data-ws-hub-for-you]) { order: 3; }
+/* Hearts and plays lead the hub's parts at every width, above For you (hub-cards.tsx PopularityCard). */
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > [data-ws-hub-popularity] { order: 0; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
 /* The full card, or on a phone the preview of it: both are in the page, one drawn. */
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-discussion="preview"] { display: none; }

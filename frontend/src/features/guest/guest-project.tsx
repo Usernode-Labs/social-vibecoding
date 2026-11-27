@@ -19,13 +19,13 @@
  *                     is for, how many are in it and how many were active
  *                     this week, numbers only (its own strip until the
  *                     signed-out page's redesign, 26 Nov 2026).
- *   The join card     "Made by the people who play it.", how many changes
- *                     went live this month, and Sign up to vote and suggest.
  *   Hearts and plays  how many times the app was played (or opened) and how
  *                     many accounts gave it a heart, with the heart to give
  *                     one (../popularity/hearts-plays.tsx). Signed out, the
  *                     heart asks to sign in and is given once the account
  *                     exists.
+ *   The join card     "Made by the people who play it.", how many changes
+ *                     went live this month, and Sign up to vote and suggest.
  *   Up for a vote     compact rows: a small before & after, the title, a
  *                     line of it, the tally and Vote. Two, then "N more up
  *                     for a vote". A row opens the change (GuestChange):
@@ -501,6 +501,20 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
           parts placed around it by `order` (the column is `contents`). */}
       <div data-guest-cols="" className="flex flex-col lg:mt-8 lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start lg:gap-6">
       <div data-guest-side="" className="contents lg:flex lg:flex-col lg:[&>*:first-child]:mt-0">
+      {/* Hearts and plays lead the column, above the join card (owner, 27 Nov
+          2026): what a visitor reads first is how much it is played and liked. */}
+      {heart.state ? (
+        <div data-guest-popularity="" className={cn(SECTION, 'order-1 lg:order-none')}>
+          <HeartsPlays
+            name={app.name}
+            played={playsIt(app)}
+            plays={plays}
+            heart={heart.state}
+            busy={heart.busy}
+            onHeart={heart.toggle}
+          />
+        </div>
+      ) : null}
       <section data-guest-made="" className={cn(SECTION, 'order-1 lg:order-none')}>
         <div className={cn(PEOPLE_CARD, 'flex flex-col gap-4 p-4 md:flex-row md:items-center md:gap-6 md:p-5 lg:flex-col lg:items-stretch lg:gap-4')}>
           <div className="min-w-0 flex-1">
@@ -528,19 +542,6 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
           )}
         </div>
       </section>
-
-      {heart.state ? (
-        <div data-guest-popularity="" className={cn(SECTION, 'order-1 lg:order-none')}>
-          <HeartsPlays
-            name={app.name}
-            played={playsIt(app)}
-            plays={plays}
-            heart={heart.state}
-            busy={heart.busy}
-            onHeart={heart.toggle}
-          />
-        </div>
-      ) : null}
 
       {votes.length ? (
         <section data-guest-votes="" className={cn(SECTION, 'order-2 lg:order-none')}>

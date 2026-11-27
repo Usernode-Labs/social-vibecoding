@@ -5,14 +5,14 @@
  * people in it. Under the hero (./community-card.tsx: what it is, who it is
  * for and who is around this week), top to bottom:
  *
+ *   HEARTS AND PLAYS, first: how much the app is used and liked, with the
+ *   heart to give one. PopularityCard.
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
  *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
  *   (what happened, and every item; 6 Nov 2026: it took Your work's place
  *   there) and the Discussion (#general and its last line, or "No messages
  *   yet."). ForYouCard.
  *   TOPICS, a row for each live topic's channel. TopicsCard.
- *   HEARTS AND PLAYS, how much the app is used and liked, with the heart to
- *   give one. PopularityCard.
  *   TOP CONTRIBUTORS, the people who took part most, this month or over
  *   all time, each a name and a count in words. ContributorsCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after

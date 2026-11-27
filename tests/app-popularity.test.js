@@ -135,7 +135,15 @@ test('a visitor\'s heart opens the sign-in sheet titled for it, and counts as a 
   assert.match(read('frontend/src/features/guest/guest-project.tsx'), /onSignIn: \(\) => onIntent\(\{ kind: 'heart', app \}\)/);
   assert.match(read('frontend/src/features/guest/guest-project.tsx'), /<div data-guest-popularity=""/);
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'), /<section className="dev-ws-hub-section" data-ws-hub-popularity="">/);
-  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<PopularityCard slug=\{slug\}/);
+  // It leads the side column on both pages: above For you on the hub (at
+  // every width: app.css orders it first where the column is laid out by
+  // `order`), and above the join card signed out.
+  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.ok(lander.indexOf('<PopularityCard slug={slug}') > 0);
+  assert.ok(lander.indexOf('<PopularityCard slug={slug}') < lander.indexOf('<ForYouCard'), 'above For you');
+  assert.match(read('public/css/app.css'), /\.dev-ws-hub-side > \[data-ws-hub-popularity\] \{ order: 0; \}/);
+  const guest = read('frontend/src/features/guest/guest-project.tsx');
+  assert.ok(guest.indexOf('<div data-guest-popularity=""') < guest.indexOf('<section data-guest-made=""'), 'above the join card');
 });
 
 /** A browser's storage, timers and fetch, enough for the device's half. */

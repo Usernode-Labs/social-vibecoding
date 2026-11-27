@@ -2332,6 +2332,12 @@ export function DevWorkshop(): ReactNode {
       {slug ? (
         <div className="dev-ws-hub-cols" data-ws-hub-cols={talkHere ? 'two' : 'one'}>
           <div className="dev-ws-hub-side">
+            {/* HEARTS AND PLAYS lead the column, above For you (owner, 27 Nov
+                2026): how many times the app was played or opened and how many
+                accounts gave it a heart, with the heart to give one. On a
+                narrow window too, where the column's parts are placed by
+                `order` (app.css). See ./hub-cards.tsx PopularityCard. */}
+            <PopularityCard slug={slug} name={community?.name || app.name || slug} data={community} />
             <ForYouCard
               slug={slug}
               queue={v.queue}
@@ -2349,10 +2355,6 @@ export function DevWorkshop(): ReactNode {
                 a row here. It was the phone's alone (3 Nov 2026), a wide window
                 listing them in its sidebar only. See ./hub-cards.tsx TopicsCard. */}
             <TopicsCard data={community} onOpen={(key) => openTab(key)} />
-            {/* HEARTS AND PLAYS: how many times the app was played or opened and how
-                many accounts gave it a heart, with the heart to give one. See
-                ./hub-cards.tsx PopularityCard. */}
-            <PopularityCard slug={slug} name={community?.name || app.name || slug} data={community} />
             {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
                 its versions sent it, what went live in them lately, and how its
                 last update went down. Nothing on a project nobody has made a
