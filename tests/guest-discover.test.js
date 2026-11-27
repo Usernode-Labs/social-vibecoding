@@ -675,8 +675,8 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sort, 'the rest has a sort menu');
   assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
-  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'name'],
-    'New, Popular, Most active and A to Z, in that order');
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'played', 'hearts', 'name'],
+    'New, Popular, Most active, Most played, Most hearts and A to Z, in that order');
   assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
     'most active until another is picked');
   assert.equal(message('home:join.sort.new'), 'New');

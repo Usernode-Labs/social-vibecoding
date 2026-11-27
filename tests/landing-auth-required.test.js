@@ -29,6 +29,10 @@ function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
   const historyEntries = [];
   const tokenMints = [];
   const toasts = [];
+  // A visitor's play of the open app, watched until it has stayed open
+  // (features/popularity/popularity.ts); `stoppedPlays` is each one called off.
+  const plays = [];
+  const stoppedPlays = [];
   const frame = { src: 'about:blank' };
   const region = { classList: { add() {}, remove() {} } };
   const location = { href: 'https://platform.example/#landing', hash: '#landing' };
@@ -60,6 +64,7 @@ function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
     zoomFx: (fn, opts) => { fn(); opts.after?.(); },
     refreshHeader() {},
     history: { pushState: (state) => historyEntries.push(state) },
+    watchVisitorPlay: (slug) => { plays.push(slug); return () => stoppedPlays.push(slug); },
   };
   vm.runInNewContext(compiled, sandbox);
   return {
@@ -69,6 +74,8 @@ function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
     historyEntries,
     tokenMints,
     toasts,
+    plays,
+    stoppedPlays,
     frame,
     location,
     st,
@@ -122,6 +129,10 @@ test('a signed-in waitlist user sees an account-required app unlocked and opens 
   assert.equal(h.historyEntries.length, 1);
   assert.deepEqual(h.remembered, []);
   assert.deepEqual(h.toasts, []);
+  // Somebody signed in is counted from the time they spend in the app,
+  // never from the viewer.
+  assert.deepEqual(h.plays, [], 'no visitor play for an account');
+  assert.equal(h.st.stopPlay, null);
 });
 
 test('a signed-in waitlist user never loads an account-required app when identity minting fails', async () => {
@@ -164,6 +175,13 @@ test('an explicitly public app still opens normally, without a lock, signup, or 
   assert.equal(h.historyEntries[0].svAnonAppViewer, true);
   assert.deepEqual(h.remembered, []);
   assert.deepEqual(h.tokenMints, []);
+  // Hearts and plays: a visitor with no account who keeps it open is one
+  // play, watched from the moment the app is loaded. Opening another app
+  // calls the first one's watch off.
+  assert.deepEqual(h.plays, ['public-app']);
+  await h.open({ slug: 'second-app', url: 'https://second.example/', requires_login: false });
+  assert.deepEqual(h.plays, ['public-app', 'second-app']);
+  assert.deepEqual(h.stoppedPlays, ['public-app']);
 });
 
 test('a public app without a launch URL does not open an empty viewer', async () => {
@@ -193,6 +211,7 @@ test('a signed-out visitor opens a guest-ready app in the viewer, as a guest and
   assert.equal(h.historyEntries.length, 1);
   assert.equal(h.historyEntries[0].svAnonAppViewer, true);
   assert.deepEqual(h.domReads, ['app-viewer', 'auth-landing-scroll', 'app-viewer-frame']);
+  assert.deepEqual(h.plays, ['game-corner'], 'a guest keeping it open is one play');
 });
 
 for (const [label, value] of [

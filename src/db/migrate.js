@@ -632,6 +632,9 @@ const STAGING_SEEDS = Object.freeze([
   stagingSeed('seedStagingGuestProjectPage', async (pool, config) => { await seedStagingGuestProjectPage(pool); }),
   // Its Discussion, for a visitor to read (posts, replies, a picture).
   stagingSeed('seedStagingGuestDiscussion', async (pool, config) => { await seedStagingGuestDiscussion(pool); }),
+  // Hearts and plays on that project, for its card, its hub and its
+  // signed-out page (services/app-popularity.js).
+  stagingSeed('seedStagingHeartsAndPlays', async (pool, config) => seedStagingHeartsAndPlays(pool)),
   // #4803: feedback is private in clones and GitHub writes are unavailable.
   stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
 ]);
@@ -2744,6 +2747,42 @@ async function seedDiscussionFiles(db, { appId, userId, content, at, files, root
       [f.id, appId, id, userId, f.kind, f.filename, f.contentType, f.data.length, f.data]);
   }
   return id;
+}
+
+// Hearts and plays (services/app-popularity.js): a fresh staging copy has no
+// hearts and no visitor plays, so the busy public project
+// seedStagingGuestProjectPage makes is given some, for its hub's card, its
+// signed-out page and its card on Communities to draw: hearts from fourteen
+// of its own fake members, and three days of visitors' plays. Fake people on
+// a fake project only, and nothing here is read to decide anything.
+// Idempotent: every row is ON CONFLICT DO NOTHING. A no-op outside staging.
+async function seedStagingHeartsAndPlays(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+  const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-guest-page-busy'")).rows[0];
+  if (!app) return seedSkipped('no project staging-guest-page-busy');
+  const members = (await pool.query(
+    `SELECT c.user_id FROM app_collaborators c
+      WHERE c.app_id = $1 AND c.status = 'member' ORDER BY c.user_id LIMIT 14`, [app.id])).rows;
+  if (!members.length) return seedSkipped('staging-guest-page-busy has no members');
+  for (const { user_id: userId } of members) {
+    await pool.query(
+      `INSERT INTO app_hearts (app_id, user_id, created_at)
+       VALUES ($1, $2, NOW() - INTERVAL '2 days') ON CONFLICT DO NOTHING`,
+      [app.id, userId]
+    );
+  }
+  for (const [daysAgo, plays] of [[1, 64], [2, 58], [3, 61]]) {
+    await pool.query(
+      `INSERT INTO app_visitor_plays (app_id, day, plays)
+       VALUES ($1, CURRENT_DATE - $2::int, $3) ON CONFLICT DO NOTHING`,
+      [app.id, daysAgo, plays]
+    );
+  }
+  log.info('db', 'Staging hearts and plays seeded');
+  } catch (err) {
+    log.warn('db', 'Staging hearts and plays seeding failed', { message: err.message });
+  }
 }
 
 // The signed-out project page's Discussion (26 Nov 2026): the busy public

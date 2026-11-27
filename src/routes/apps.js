@@ -34,6 +34,7 @@ const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const usageAnalytics = require('../services/usage-analytics');
 const appAccess = require('../services/app-access');
+const appPopularity = require('../services/app-popularity');
 const edgeGate = require('../services/edge-gate');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
@@ -4199,6 +4200,45 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // A HEART (services/app-popularity.js): an account saying it likes an
+  // app. Anybody signed in who can SEE the app can give one and take it
+  // back, a member or not: it is not taking part in the project, so no
+  // membership gate, and it joins and pins nothing. GET answers how things
+  // stand for the reader (the signed-out project page drawn for somebody
+  // signed in asks it); PUT hearts, DELETE takes the heart back, both
+  // idempotent. The platform's own project has no app to heart.
+  const heartApp = async (req) => {
+    if (!req.user?.id) return { status: 401, body: { error: 'Authentication required' } };
+    // getAppForUser: the same visibility, suspension and viewer-block guard
+    // as the app's own page, at the level of somebody who may only look.
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app || app.self_hosted) return { status: 404, body: { error: 'App not found' } };
+    return { app };
+  };
+  router.get('/api/apps/:slug/heart', async (req, res) => {
+    try {
+      const found = await heartApp(req);
+      if (!found.app) return res.status(found.status).json(found.body);
+      const summary = await appPopularity.summaryFor(pool, found.app.id, req.user.id);
+      return res.json({ hearted: !!summary?.hearted, hearts: summary?.hearts || 0 });
+    } catch (err) {
+      log.error('apps', 'Failed to read a heart', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  const setHeart = (hearted) => async (req, res) => {
+    try {
+      const found = await heartApp(req);
+      if (!found.app) return res.status(found.status).json(found.body);
+      return res.json(await appPopularity.setHeart(pool, { appId: found.app.id, userId: req.user.id, hearted }));
+    } catch (err) {
+      log.error('apps', 'Failed to save a heart', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+  router.put('/api/apps/:slug/heart', sameOriginBrowserOnly, setHeart(true));
+  router.delete('/api/apps/:slug/heart', sameOriginBrowserOnly, setHeart(false));
+
   router.post('/api/apps/:slug/favorite', async (req, res) => {
     const { favorited } = req.body;
     if (typeof favorited !== 'boolean') {
@@ -4602,11 +4642,24 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         log.warn('apps', 'Could not read the versions for the hub', { slug: app.slug, message: err.message });
         return { made_from: null, versions: null };
       });
+      // HEARTS AND PLAYS (services/app-popularity.js), for the hub's card:
+      // how many times the app was played or opened, how many accounts
+      // hearted it and whether this reader has. The platform's own project
+      // has no app, so none. Best-effort, like the reads above.
+      let popularity = null;
+      if (!app.self_hosted) {
+        try {
+          popularity = await appPopularity.summaryFor(pool, app.id, req.user?.id ?? null);
+        } catch (err) {
+          log.warn('apps', 'Could not read hearts and plays for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       res.json({
         slug: app.slug,
         name: app.name,
         // What the app is, for the page's hero (above).
         description,
+        popularity,
         cover,
         invite_link: inviteLink,
         invite_summary: inviteSummary,
