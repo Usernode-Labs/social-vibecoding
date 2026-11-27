@@ -108,6 +108,7 @@ import { CardHomeContext, MessageMarkdown, ObjectCard, UserAvatar, fileSize } fr
 import { applyFormat, type FormatKind } from '../../messages/composer-format';
 import { LinkEmbeds } from '../../messages/link-cards';
 import { channelHandles, setUserBlocked } from '../../messages/store';
+import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking, type TranslateView } from '../../messages/translate';
 import type { ConversationUser } from '../../messages/types';
 import type { CommunityPayload } from './community-card';
 import { ChannelMute } from './channel-head';
@@ -1315,11 +1316,12 @@ function SignInDoor({ preview = false }: { preview?: boolean }): ReactNode {
  * shares, the cards it shares, its files (images in place, any other file
  * as the chat's chip). Clamped to two lines in the phone's preview.
  */
-function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean; className: string }): ReactNode {
+export function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean; className: string }): ReactNode {
   const t = useMessages('project');
   const tc = useMessages('chat');
   const room = useContext(RoomContext);
   const editing = useContext(EditingContext);
+  const translation = useContext(TranslationContext);
   if (editing && editing.id === said.id) return <EditBox editing={editing} />;
   if (said.deleted) return <p className={`${className} dh-deleted`}>{t('project:hub.discussion.deleted')}</p>;
   const words = said.content.trim();
@@ -1330,6 +1332,11 @@ function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean
           : t('project:hub.discussion.files', { count: Math.max(1, said.files) });
     return <p className={`${className} dh-clamp${words ? '' : ' dh-quiet'}`}>{line}</p>;
   }
+  // #7232: somebody else's words, read in the reader's language. The
+  // translation is drawn in the post's own markdown, and the line under it
+  // is Messages' own; a post with no translation to show keeps its words.
+  const view = translation && translation.id === said.id ? translation.view : null;
+  const translated = view && view.state === 'shown' ? view.texts[0] : null;
   const files: Attachment[] = said.attachments.map((a) => ({
     id: a.id,
     kind: a.image ? 'image' : a.kind === 'html' && a.viewUrl ? 'html' : 'binary',
@@ -1341,7 +1348,8 @@ function Words({ said, clamp = false, className }: { said: Said; clamp?: boolean
   }));
   return (
     <div className={className}>
-      {words ? <MessageMarkdown content={said.content} channels={room.homeroom ? channelHandles() : undefined} appSlug={room.slug || null} /> : null}
+      {words ? <MessageMarkdown content={translated ?? said.content} channels={room.homeroom ? channelHandles() : undefined} appSlug={room.slug || null} /> : null}
+      {view ? <TranslateNote view={view} className="mt-1" /> : null}
       {said.spec ? <SpecCard spec={said.spec} slug={room.slug} /> : null}
       {/* #4238: Homeroom bot's first-version post opens the app it made. */}
       {said.openApp && !clamp ? (
@@ -1441,6 +1449,24 @@ interface Editing {
 }
 const EditingContext = createContext<Editing | null>(null);
 
+/**
+ * #7232: the translation of the post or reply a `Message` draws, handed to
+ * its `Words` so the words themselves swap and the line under them says
+ * where they came from. `id` is the message's own, so a reply's own words
+ * never take the post's.
+ */
+export const TranslationContext = createContext<{ id: number; view: TranslateView } | null>(null);
+
+/**
+ * Whether these words can be read in the reader's language: somebody else's,
+ * a person's (not Homeroom bot's), not a deleted post, with words in it, for
+ * a reader who is signed in and is not a visitor of a public project.
+ */
+export function canTranslateSaid(said: Said, me: string | null, visitor: boolean): boolean {
+  return !!me && said.who.username !== me && !said.who.bot && !said.deleted
+    && said.content.trim().length > 0 && !visitor;
+}
+
 /** The platform's in-place editor (as Messages' row draws it): Enter saves, Escape cancels. */
 function EditBox({ editing }: { editing: Editing }): ReactNode {
   const t = useMessages('messages');
@@ -1510,8 +1536,22 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
   const bar = useRef<HTMLDivElement | null>(null);
   const pickerButton = useRef<HTMLButtonElement | null>(null);
   const moreButton = useRef<HTMLButtonElement | null>(null);
+  const article = useRef<HTMLElement | null>(null);
+  const room = useContext(RoomContext);
   const can = !!me && !said.deleted;
   const mine = can && said.who.username === me;
+  // #7232: a post or a reply by somebody else is read in the reader's
+  // language, as a message in Messages is: asked for as it comes into view
+  // (only when there is something worth asking), offered in the ⋯ menu.
+  const canRead = canTranslateSaid(said, me, !!room.visitor);
+  const autoTranslate = canRead && worthAsking(said.content);
+  const translation = useTranslate(said.content ? [said.content] : [], { enabled: canRead, auto: autoTranslate });
+  const { askAuto } = translation;
+  useEffect(() => {
+    const el = article.current;
+    if (!el || !autoTranslate) return undefined;
+    return observeAutoTranslate(el, askAuto);
+  }, [autoTranslate, askAuto]);
   useDismiss(picking, [bar], () => setPicking(false));
   const press = useLongPress(() => setSheet(true), { disabled: !can || !!edit });
   const reacted = (emoji: string) => said.reactions.some((r) => r.emoji === emoji && r.reacted);
@@ -1522,6 +1562,7 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
     text: said.content || null,
     pictures: said.attachments.filter((a) => a.image).map((a) => ({ src: a.url, name: a.name })),
     link: feed.source.address(said),
+    translation: canRead ? translation : null,
     remove: mine ? () => feed.remove(said.id) : null,
     report: !mine && who.id ? () => openReport(feed.source.kind === 'app'
       ? { targetType: 'app_message', target: said.id, label: tc('chat:group.report.label', { username: who.username }), userId: who.id || undefined }
@@ -1547,12 +1588,15 @@ function Message({ said, feed, me, className, marked = false, onReply, children 
   const Tag = className === 'dh-post' ? 'article' : 'div';
   return (
     <Tag
+      ref={(el: HTMLElement | null) => { article.current = el; }}
       className={`${className} dh-msg`}
       data-ws-discussion-message={String(said.id)}
       data-ws-discussion-marked={marked ? '' : undefined}
       {...(can && !edit ? press : {})}
     >
-      <EditingContext.Provider value={editing}>{children}</EditingContext.Provider>
+      <EditingContext.Provider value={editing}>
+        <TranslationContext.Provider value={canRead ? { id: said.id, view: translation } : null}>{children}</TranslationContext.Provider>
+      </EditingContext.Provider>
       {can && !edit ? (
         <MessageActionBar
           className="dh-actions"

@@ -2599,6 +2599,27 @@ async function seedStagingDiscussion(pool) {
       const host = await say(club, 'priya', 'I can host on the 14th if we start at 7. Who is in?', 60);
       await react(host, '👍', ['dev', 'ana', 'jo', 'marcus']);
       await react(host, '🎉', ['ana']);
+      // #7232: one post and its reply written in another language, so the
+      // Discussion's translation has something to translate for a reader of
+      // English. Obviously fake, by a fake person, and nothing reads it to
+      // decide anything.
+      const abroad = await say(club, 'jo', 'Selamat pagi semua, buku bulan ini sudah datang. Siapa yang mau ikut baca bareng hari Sabtu?', 130);
+      await say(club, 'ana', 'Aku ikut! Jam sepuluh pagi di perpustakaan ya.', 125, abroad);
+      // ...and their answers, kept as the route keeps them (a digest of the
+      // exact words, answers/user-content-translations), so the translation
+      // shows where no model can be asked (the before & after copies).
+      for (const [content, text] of [
+        ['Staging demo: Selamat pagi semua, buku bulan ini sudah datang. Siapa yang mau ikut baca bareng hari Sabtu?',
+          'Staging demo: Morning everyone, this month\'s book has arrived. Who wants to read it together on Saturday?'],
+        ['Staging demo: Aku ikut! Jam sepuluh pagi di perpustakaan ya.',
+          'Staging demo: Count me in! Ten in the morning at the library, okay?'],
+      ]) {
+        await tx.query(
+          `INSERT INTO user_content_translations (source_digest, language, text, source_language, model)
+           VALUES ($1, 'en', $2, 'id', 'staging-seed')
+           ON CONFLICT (source_digest, language) DO NOTHING`,
+          [crypto.createHash('sha256').update(content).digest('hex'), text]);
+      }
       const chairs = await say(club, 'dev', 'In. I can bring four chairs.', 50, host);
       await react(chairs, '🙌', ['priya', 'ana']);
       // #2783: `#1` reads as the project's request.
