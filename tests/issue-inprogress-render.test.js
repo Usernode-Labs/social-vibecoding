@@ -963,7 +963,10 @@ test('a request waiting for its plan\'s OK: the chip says the row\'s word, not t
   assert.equal(st.label, message('core:work.whyOthers.plan'));
   assert.notEqual(st.label, message('changes:chips.work.botQueued'));
   assert.equal(st.spinner, false, 'nothing runs while it waits for an OK');
-  assert.equal(st.tone, 'zinc');
+  // #7236: this one wait needs a person to act, so its chip is amber (the
+  // tint the app already gives a wait on somebody) rather than the grey
+  // every other row word wears.
+  assert.equal(st.tone, 'amber');
   assert.equal(st.who, null, 'and it names nobody');
   assert.match(st.note, /It starts once the plan is OK'd\./, st.note);
   assert.doesNotMatch(st.note, /as soon as a builder is free/);

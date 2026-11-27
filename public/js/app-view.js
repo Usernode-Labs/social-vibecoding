@@ -27950,8 +27950,13 @@ const AppView = {
       const said = AppView._botChipWords(issue);
       if (said && said.row) {
         rowWords = said.row;
-        spinner = AppView.WORK_BUSY_STAGES.has(said.stage);
-        tone = spinner ? 'sky' : 'zinc';
+        // #7236: a plan waiting for its OK is the one wait that needs a
+        // person to act, so its chip is amber (and does not spin: nothing
+        // is running). Every other wait on the row keeps the quiet grey.
+        const s = AppView._issueStanding(issue);
+        const planWait = !!s && s.stage === 'waiting_for_you' && s.why === 'plan';
+        spinner = !planWait && AppView.WORK_BUSY_STAGES.has(said.stage);
+        tone = planWait ? 'amber' : (spinner ? 'sky' : 'zinc');
       } else if (said) botLabelId = said.id;
     } else if (over && (active.length || paused.length || claims.length)) {
       // Somebody's session or claim is there, and the row says where the
@@ -28370,6 +28375,10 @@ const AppView = {
     // #7182: Homeroom bot's own work, in the bot's periwinkle rather than
     // the yellow every running task shares. The tokens swap for dark.
     bot: 'bg-[color:var(--bot-tint)] text-[color:var(--bot-ink)]',
+    // #7236: a plan waiting for its OK needs a person to act, so its chip
+    // takes the amber tint the app already gives a wait on somebody (the
+    // imported-change chip, a Medium priority) rather than the quiet grey.
+    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
@@ -28377,6 +28386,7 @@ const AppView = {
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
     bot: 'hover:bg-[color:var(--bot-line)]',
+    amber: 'hover:bg-amber-500/20',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session

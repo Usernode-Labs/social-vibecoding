@@ -2991,6 +2991,11 @@ async function seedStagingBotWaitingRows(pool) {
       // set, no build session). Says Ready to build and "will build this
       // next", never "is building this".
       { number: 9106, title: 'Staging demo: a request the bot is ready to build', buildQueued: true },
+      // #7236: a plan Homeroom bot wrote and waits for its requester to OK,
+      // so the request card's chip can show that one wait in amber. Its
+      // subject is its own: a title close to another demo's would be read as
+      // that one's duplicate (_twinOf) and hidden from the board.
+      { number: 9122, title: 'Staging demo: the bake sale poster gets bigger type', planWaiting: true },
       // #6867: a request a build left owed because OpenRouter's credit ran
       // out. Its row on the bot's tab and its own page say it waits for
       // building credit and that the bot picks it up again by itself.
@@ -3061,6 +3066,45 @@ async function seedStagingBotWaitingRows(pool) {
            SELECT $1, $2, 2, 'credit_wait', $3, NOW() - INTERVAL '1 day'
             WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
           [appId, d.number, userId],
+        );
+      }
+      if (d.planWaiting) {
+        // #7236: a plan written and waiting for the requester's OK, with
+        // nothing built from it, so the card's chip reads "Waiting for you
+        // to OK the plan". Nothing here is a signal the bot decides on.
+        // Filed just now, so it heads the board's list (most recently
+        // updated first, and only a page of requests fits) instead of
+        // falling under a page of older ones. A row this seed already
+        // freshened is left alone, so a later boot changes nothing.
+        await pool.query(
+          `UPDATE requests SET created_at = NOW(), updated_at = NOW()
+            WHERE app_id = $1 AND number = $2 AND updated_at < NOW() - INTERVAL '1 hour'`,
+          [appId, d.number],
+        );
+        const plan = {
+          complicated: true,
+          questions: [],
+          bullets: ['Staging demo: the sample screen gets a sample banner.'],
+          card: {
+            summary: 'Staging demo: the sample screen gets a sample banner. Nothing else changes.',
+            lines: [
+              { n: 1, text: 'Staging demo: a sample banner sits at the top of the sample screen.' },
+              { n: null, text: 'Staging demo: nothing else on the screen moves.' },
+            ],
+          },
+        };
+        await pool.query(
+          `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+          [appId, d.number, userId, d.title],
+        );
+        await pool.query(
+          `INSERT INTO homeroom_bot_runs
+             (app_id, issue_number, mode, verdict, plan, awaiting_go_at, created_at)
+           SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                               WHERE app_id = $1 AND issue_number = $2 AND mode = 'live')`,
+          [appId, d.number, JSON.stringify(plan)],
         );
       }
       if (d.buildQueued) {
