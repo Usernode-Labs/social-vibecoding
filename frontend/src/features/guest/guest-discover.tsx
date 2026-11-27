@@ -229,11 +229,15 @@ export function Card({ app, eager, featured = false, lead = false }: {
  * guest opens at its own address, where the app host gives the visitor a
  * guest's view, the "You're looking around" strip and "Make an account to
  * continue" (src/services/edge-gate.js, public/usernode-bridge.js).
+ *
+ * The opener is handed the link itself as well: a page that wants the app to
+ * grow out of what was pressed (a project's page, features/auth/landing.tsx)
+ * reads it, and one that does not takes the app alone.
  */
 export function TryLink({ app, className, onOpenInside, inside = false, children }: {
   app: GuestApp;
   className: string;
-  onOpenInside: (app: GuestApp) => void;
+  onOpenInside: (app: GuestApp, from?: HTMLElement | null) => void;
   /** Open it in the landing's viewer whatever it needs: the visitor is signed in (a waitlisted account). */
   inside?: boolean;
   children: ReactNode;
@@ -246,7 +250,7 @@ export function TryLink({ app, className, onOpenInside, inside = false, children
       onClick={(e) => {
         if (inside || app.requires_login === false) {
           e.preventDefault();
-          onOpenInside(app);
+          onOpenInside(app, e.currentTarget);
         }
       }}
     >
