@@ -260,9 +260,7 @@ test('Kubernetes workflow resolves every image before publishing a release', () 
   const workerDockerfile = read('worker/Dockerfile');
   const action = read('.github/actions/build-kubernetes-image/action.yml');
   const resolver = read('scripts/resolve-kubernetes-image.js');
-  assert.match(workflow, /component: \[platform, worker, capture, wasm-runner, wasm-data\]/);
-  // Wasm previews' images are pinned by the release beside the worker's.
-  assert.match(workflow, /wasmRunnerImage:[\s\S]*digest\('wasm-runner'\)[\s\S]*wasmDataImage:[\s\S]*digest\('wasm-data'\)/);
+  assert.match(workflow, /component: \[platform, worker, capture\]/);
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /uses: \.\/\.github\/actions\/build-kubernetes-image/);
   assert.match(resolver, /ghcr\.io\/\$\{owner\.toLowerCase\(\)\}\/social-vibecoding-\$\{component\}/);
