@@ -276,7 +276,7 @@ test('until it is cleaned and measured the words are drawn: never an empty bubbl
   // Dedupe step 2: the bubble is drawn by the shared row (MessageRowView),
   // which takes the rich case as a prop.
   assert.match(row, /rich=\{!!richHtml && !translatedBody && !editing\}/);
-  assert.match(row, /rich \? 'messages-bubble messages-bubble-rich' : 'messages-bubble'/);
+  assert.match(read('frontend/src/features/messages/message-row-view.tsx'), /rich \? 'messages-bubble messages-bubble-rich' : 'messages-bubble'/);
   assert.match(read('public/css/app.css'), /\.messages-bubble\.messages-bubble-rich \{ width: 100%; max-width: min\(100%, 720px\); \}/);
   const source = read('frontend/src/features/messages/bot-html.tsx');
   assert.match(source, /\{measured \? null : fallback\}/, 'the words until it has its size');

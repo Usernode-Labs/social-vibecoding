@@ -50,9 +50,11 @@ test('D13: the hover bar on somebody else\'s bubble hangs off its name line, bes
   const row = read('frontend/src/features/messages/message-row.tsx');
   // Dedupe step 2: `barPlacement` decides it once, for every place that
   // draws the shared row (MessageRowView), which hangs the bar in its head.
-  assert.match(row, /if \(!sided \|\| mine\) return 'row';\n\s*return grouped \? 'bubble' : 'head';/);
-  assert.match(row, /\{meta\}\n\s*\{barInHead \? bar : null\}\n\s*<\/div>/);
-  assert.match(row, /\{barInHead \? null : bar\}\n\s*\{sheet\}/);
+  const view = read('frontend/src/features/messages/message-row-view.tsx');
+  assert.match(row, /barInHead=\{placement === 'head'\}/);
+  assert.match(view, /if \(!sided \|\| mine\) return 'row';\n\s*return grouped \? 'bubble' : 'head';/);
+  assert.match(view, /\{meta\}\n\s*\{barInHead \? bar : null\}\n\s*<\/div>/);
+  assert.match(view, /\{barInHead \? null : bar\}\n\s*\{sheet\}/);
   assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; inset-inline-end: auto; inset-inline-start: calc\(100% \+ 8px\); \}/);
 });
 

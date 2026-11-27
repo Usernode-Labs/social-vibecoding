@@ -40,7 +40,7 @@ import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
 import { UserAvatar } from '../../messages/format';
-import { MessageRowView } from '../../messages/message-row';
+import { MessageRowView } from '../../messages/message-row-view';
 import { useMessageControls } from '../../message-actions/controls';
 import { messageActions } from '../../message-actions/rules';
 import { ClampedComment } from '../comment-clamp';
@@ -117,7 +117,7 @@ function isMine(m: FeedThreadMessage): boolean {
 }
 
 /**
- * One reply: Messages' own row (../../messages/message-row.tsx
+ * One reply: Messages' own row (../../messages/message-row-view.tsx
  * MessageRowView) at the board's size (`compact`): the author's face, their
  * name and how long ago above the words, the words in a bubble, the
  * viewer's own on the right in the accent tint as their sent messages are.

@@ -121,6 +121,9 @@ test('every place that draws a message asks the rule and wires it through the on
 
 test('every place that draws a message draws Messages\' row', () => {
   assert.match(read('frontend/src/features/messages/message-row.tsx'), /<MessageRowView\b/);
+  // The view is on its own, importing nothing of Messages' store or screens,
+  // so the board's comments can draw it.
+  assert.doesNotMatch(read('frontend/src/features/messages/message-row-view.tsx'), /from '\.\/(?:store|index|translate)'|image-viewer/);
   const transcript = read('frontend/src/features/group-chat/transcript.tsx');
   assert.equal((transcript.match(/<MessageRowView\b/g) || []).length, 2, 'a person\'s message and a GitHub comment');
   assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'), /<MessageRowView\b[\s\S]*?\bcompact\b/, 'a comment, at the board\'s size');
@@ -150,7 +153,7 @@ test('reactions are one chip: the feed primitive\'s ReactionPill, with its count
 });
 
 test('the shared row: a room\'s named row, a conversation\'s bubble, and the place\'s own hooks on it', () => {
-  const { MessageRowView } = loadTsx('frontend/src/features/messages/message-row.tsx');
+  const { MessageRowView } = loadTsx('frontend/src/features/messages/message-row-view.tsx');
   const base = {
     author: 'ada', at: '2026-11-01T10:00:00Z', time: '10:00 AM', timeTitle: 'Nov 1, 2026, 10:00 AM', gutter: '10:00',
     avatar: createElement('span', { 'aria-hidden': 'true' }, 'A'),

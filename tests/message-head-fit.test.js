@@ -24,7 +24,8 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const CSS = read('public/css/app.css');
-const ROW = read('frontend/src/features/messages/message-row.tsx');
+// Dedupe step 2: the head is drawn by the shared row, on its own module.
+const ROW = read('frontend/src/features/messages/message-row-view.tsx');
 
 /** The declarations of the FIRST top-level rule for exactly `selector`. */
 function rule(selector) {

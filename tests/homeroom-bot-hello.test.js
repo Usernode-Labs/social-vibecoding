@@ -54,8 +54,9 @@ test('B5: every place Messages names the bot names it, with an AI badge beside i
   // place, after the author's name; Messages hands it the sender's name and
   // whether it is the bot.
   assert.match(row, /author=\{senderName\(message\.sender, \{ bare: true \}\)\}\n\s*bot=\{!!message\.sender\.bot\}/);
-  assert.match(row, /\{author\}<\/span>\n\s*\{bot \? <BotBadge \/> : null\}/);
-  assert.match(row, /<span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span>/);
+  const view = read('frontend/src/features/messages/message-row-view.tsx');
+  assert.match(view, /\{author\}<\/span>\n\s*\{bot \? <BotBadge \/> : null\}/);
+  assert.match(view, /<span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span>/);
   assert.doesNotMatch(row, />Bot<\/span>/);
   assert.match(row, /<span>\{senderName\(message\.reply\.sender, \{ bare: true \}\)\}<\/span>/, 'the quote');
   assert.match(row, /preview: \{ who: senderName\(message\.sender, \{ bare: true \}\)/, 'the action sheet');

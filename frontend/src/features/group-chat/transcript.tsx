@@ -4,7 +4,7 @@ import { openReport } from '../dialogs/report';
  * that host.
  *
  * A person's message here is Messages' own row
- * (../messages/message-row.tsx MessageRowView): the named row in a channel
+ * (../messages/message-row-view.tsx MessageRowView): the named row in a channel
  * and a reply thread, a conversation's bubbles in a request's or a change's
  * stream. What the viewer can do with any row is the one rule's answer
  * (../message-actions/rules.ts), wired through the shared controls
@@ -75,7 +75,7 @@ import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
 import { UserAvatar } from '../messages/format';
-import { MessageRowView, barPlacement } from '../messages/message-row';
+import { MessageRowView, barPlacement } from '../messages/message-row-view';
 import { BuildNoteView, buildNoteOf } from '../messages/bot-cards/build-note';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
@@ -781,7 +781,7 @@ function SpecSnippet({ html }: { html: string }) {
 
 /**
  * A person's message in a project's chat — Messages' own row
- * (../messages/message-row.tsx MessageRowView), on every surface: a topic's
+ * (../messages/message-row-view.tsx MessageRowView), on every surface: a topic's
  * channel and the general chat, a reply thread, and a request's or a
  * change's stream. Where it is drawn decides its shape, as it does in
  * Messages: a channel and a reply thread are rooms, so a message there is

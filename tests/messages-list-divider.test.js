@@ -121,7 +121,7 @@ test('11: a continuation line of theirs puts its bar on the bubble', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
   // Dedupe step 2: `barPlacement` decides it for every place that draws the
   // shared row, and the place names the class on its bar.
-  assert.match(row, /if \(!sided \|\| mine\) return 'row';\n\s*return grouped \? 'bubble' : 'head';/);
+  assert.match(read('frontend/src/features/messages/message-row-view.tsx'), /if \(!sided \|\| mine\) return 'row';\n\s*return grouped \? 'bubble' : 'head';/);
   assert.match(row, /barClassName: `messages-message-actions \$\{placement === 'bubble' \? 'msgx-bar-on-bubble' : ''\}`,/);
   assert.ok(row.indexOf('const placement = barPlacement(') < row.indexOf('const controls = useMessageControls('), 'decided before the bar reads it');
 

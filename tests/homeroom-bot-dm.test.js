@@ -709,7 +709,9 @@ test('the DM screen draws the bot\'s question and badge, and the reply bar names
   // B6: two questions at once draw their own card (./bot-plan.tsx) instead.
   // B7: nor does a change's ready card (./bot-ready.tsx), whose buttons are its own.
   assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
-  assert.match(row, /messages-bot-badge/);
+  // Dedupe step 2: the badge is drawn by the shared row, for the sender Messages names a bot.
+  assert.match(row, /bot=\{!!message\.sender\.bot\}/);
+  assert.match(read('frontend/src/features/messages/message-row-view.tsx'), /messages-bot-badge/);
   const composer = read('frontend/src/features/messages/composer.tsx');
   // #6019: this chat is private. A typed reply comes back as a draft with
   // Post it (homeroom-bot-mayor.js offerPost), and the reply bar says so.

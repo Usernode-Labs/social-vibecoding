@@ -350,7 +350,7 @@ test('#1808: the app chat view model carries both forms to the row', () => {
     assert.match(tag, /title=\{msg\.timeTitle\}/,
       'every rendered time hangs the full stamp off title');
   }
-  assert.match(read('frontend/src/features/messages/message-row.tsx'), /<time className=\{timeClassName\} dateTime=\{at\} title=\{timeTitle\}>\{time\}<\/time>/);
+  assert.match(read('frontend/src/features/messages/message-row-view.tsx'), /<time className=\{timeClassName\} dateTime=\{at\} title=\{timeTitle\}>\{time\}<\/time>/);
 });
 
 test('#1808: the DM rows use the shared rule rather than a fourth copy', () => {

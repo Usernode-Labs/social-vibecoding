@@ -417,7 +417,7 @@ test('a chat row asks for itself, but only for someone else’s words and only o
   // Dedupe step 2: the row is drawn by the shared MessageRowView, which puts
   // the ref on its <article>.
   assert.match(src, /rowRef=\{article\}/);
-  assert.match(src, /<article\n\s*ref=\{rowRef\}/);
+  assert.match(read('frontend/src/features/messages/message-row-view.tsx'), /<article\n\s*ref=\{rowRef\}/);
   // #6081 keeps its answer: a request's words are asked for on a tap only.
   assert.doesNotMatch(read(HEAD), /auto:/);
 });

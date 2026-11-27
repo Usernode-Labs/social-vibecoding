@@ -1332,7 +1332,7 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
 /* Audit D13: on somebody else's bubble the bar is a child of its name line
-   (message-row.tsx `barBesideHead`), which is as wide as the name and the
+   (message-row-view.tsx `barPlacement` "head"), which is as wide as the name and the
    time, so it hangs just past the time, centred on that line, beside the
    message it acts on. It already sits beside the message rather than over
    its words, so it keeps its own place and takes neither the bridge nor the
@@ -1341,7 +1341,7 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
 .messages-message-head > .messages-message-actions::after { content: none; }
 /* Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
-   name line, so its bar sits on the bubble (message-row.tsx `barOnBubble`):
+   name line, so its bar sits on the bubble (message-row-view.tsx `barPlacement` "bubble"):
    its bottom edge 2px over the bubble's top, and its trailing edge on the
    bubble's, or its leading edge on the bubble's start when the bubble is
    the narrower, so it never starts before the bubble. MessageActionBar
@@ -19222,7 +19222,7 @@ body.is-offline [data-offline-disabled] {
    (22px avatar + 8px gap), so it reads as the top of the conversation. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-earlier { padding-inline-start: 30px; }
 /* One reply: Messages' own row at the board's size (card/feed-thread.tsx
-   MessageLine, messages/message-row.tsx MessageRowView `compact`): a 22px
+   MessageLine, messages/message-row-view.tsx MessageRowView `compact`): a 22px
    face, the name and the age above a bubble whose words are 12.5px. The
    bubble rules are the conversation's own (`.messages-message-bubble`,
    ONE LOOK below); these only take them down to the card's scale. */
@@ -34695,7 +34695,7 @@ html:root body:has(#messages-screen:not(.hidden)) #platform-header .nav-drawer-t
 /* ── A request's replies: the same stream, inside the stream's own card ── */
 /* features/group-chat/transcript.tsx draws a request's (and a change's) replies in `.dev-request-stream`, under the
    "30 replies" line of #gc-thread-messages, the card the page already gives the stream. They are Messages' own rows
-   (messages/message-row.tsx MessageRowView) with a conversation's sides, drawn by the bubble rules above: theirs on
+   (messages/message-row-view.tsx MessageRowView) with a conversation's sides, drawn by the bubble rules above: theirs on
    the left, yours on the right. Homeroom bot's own rows keep the flat named row, as in Messages. */
 html:root #messages-screen .messages-reply-pane .messages-reply-count,
 html:root #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count {
