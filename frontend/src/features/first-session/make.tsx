@@ -163,6 +163,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { revealScrollTop, useKeyboardSurface } from '../../lib/keyboard-surface';
 import { usePageLock } from '../../lib/page-lock';
+import { openSheetCount } from '../../lib/sheet';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { MakeRuleLine } from '../who-decides/make-rule';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
@@ -697,10 +698,11 @@ export function MakeScreen({
     setLeaving(true);
   }, []);
   const motion = arrived && !leaving ? ARRIVED : ARRIVING;
-  // From Create, Escape closes it, as it closes a dialog.
+  // From Create, Escape closes it, as it closes a dialog; not while a sheet
+  // is up over it ("Something else…"), whose Escape it is (lib/sheet.ts).
   useEffect(() => {
     if (!onClose) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') leave(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !openSheetCount()) leave(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, leave]);

@@ -110,10 +110,13 @@ test('Q18: an anchored popover closes on a scroll only when its anchor moved, an
 test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => {
   const src = read('frontend/src/features/messages/index.tsx');
   const plus = src.slice(src.indexOf('function NewMessageButton()'), src.indexOf('/** The heading over each part of the list'));
-  assert.match(plus, /const menuKeys = useMenuKeyboard\(open, popRef, btnRef, shut\);/);
-  assert.match(plus, /id="messages-new-menu"[\s\S]*?onKeyDown=\{menuKeys\.onKeyDown\}/);
+  // Both are the Menu's now (lib/menu.ts): the keys, an outside press,
+  // Escape and Back, and focus in and back to their buttons.
+  assert.match(plus, /const \{ panelProps \} = useMenu\(open, \{ trigger: btnRef, panel: popRef, onClose: shut, move: true \}\);/);
+  assert.match(plus, /id="messages-new-menu"[\s\S]*?\{\.\.\.panelProps\}/);
   const head = src.slice(src.indexOf('function ThreadHeader()'), src.indexOf('/** The day a message was sent'));
-  assert.match(head, /useDismiss\(menu, \[menuWrapRef, menuRef\], closeMenu\);/, 'an outside press and Escape close it');
+  assert.match(head, /useMenu\(menu, \{ trigger: menuBtnRef, panel: menuRef, onClose: closeMenu \}\);/, 'an outside press and Escape close it');
+  assert.match(head, /className="messages-thread-menu"\s+role="menu"[\s\S]{0,120}?\{\.\.\.menuPanelProps\}/);
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
   assert.match(head, /className="messages-thread-menu"\s+role="menu"/);
   // Includes Rename group and the conversation-level Report user action.

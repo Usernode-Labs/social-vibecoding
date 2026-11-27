@@ -310,6 +310,12 @@ const MENU_CALLERS = [
   'frontend/src/features/workshop/community-switcher.tsx',
   'frontend/src/features/detail/detail-card.tsx',
   'frontend/src/features/side-panel/side-panel.tsx',
+  // Messages' "+", a conversation's and a private thread's ⋯, and the blank
+  // thread's "+" wrote their own outside press and Escape (or leant on
+  // menu-keys' and message-actions' halves of it).
+  'frontend/src/features/messages/index.tsx',
+  'frontend/src/features/messages/private-thread-done.tsx',
+  'frontend/src/features/messages/new-thread.tsx',
 ];
 
 test('the sheets are the Sheet\'s, and write no Escape, Back or kit hand-off of their own', () => {
@@ -325,9 +331,10 @@ test('the sheets are the Sheet\'s, and write no Escape, Back or kit hand-off of 
 test('the menus are the Menu\'s', () => {
   for (const file of MENU_CALLERS) {
     const src = read(file);
-    assert.match(src, /useMenu\((true|open|menu), \{/, `${file} hangs its menu through the Menu`);
-    assert.match(src, /\{\.\.\.panelProps\}/, `${file} puts the Menu's keys and mark on its panel`);
+    assert.match(src, /useMenu\((true|open|menu|addOpen), \{/, `${file} hangs its menu through the Menu`);
+    assert.match(src, /\{\.\.\.(panelProps|menuPanelProps|addPanelProps)\}/, `${file} puts the Menu's keys and mark on its panel`);
     assert.doesNotMatch(src, /addEventListener\('pointerdown', (onDown|away), true\)/, `${file} writes no outside press of its own`);
+    assert.doesNotMatch(src, /useMenuKeyboard\(/, `${file} writes no menu keys of its own`);
   }
 });
 

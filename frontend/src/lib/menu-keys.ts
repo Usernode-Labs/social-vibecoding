@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 /**
  * Keyboard behaviour for the shell's small React menus (QA 2026-09-24 Q18).
@@ -15,11 +15,12 @@ import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefOb
  *   - Tab closes too, from the trigger, so the browser's own Tab carries on
  *     from where the menu hangs rather than from the end of the document.
  *
- * What closes a menu on an outside press, a scroll or a resize stays with
- * each caller (./popover-dismiss.ts, message-actions/use-dismiss.ts), because
- * those differ by how the menu is placed. The native kit's own menus
- * (usernode-native `menu()` / `popover()`) already behave this way; this is
- * the same contract for the menus the shell draws itself.
+ * These are the pieces; the Menu (./menu.ts `useMenu`) puts them together
+ * with what closes a menu (an outside press, Escape, Back, a scroll or a
+ * resize) for every menu the shell draws itself. The hook that paired the
+ * keys with a caller's own dismissal (`useMenuKeyboard`) went when its last
+ * callers, Messages' menus, moved onto the Menu. The native kit's own menus
+ * (usernode-native `menu()` / `popover()`) already behave this way.
  */
 
 /** Rows a menu offers: its menu items, or any button/link when it has none. */
@@ -65,51 +66,4 @@ export function roveMenuFocus(
   event.preventDefault();
   next.focus({ preventScroll: true });
   return true;
-}
-
-/**
- * The menu-button contract for an open/close flag the caller owns.
- *
- * While `open`: focus moves to the first row once the menu has rendered, and
- * the returned `onKeyDown` (put it on the menu's root) handles the arrows,
- * Escape and Tab. `close` is read through a ref, so it may change identity on
- * every render.
- */
-export function useMenuKeyboard(
-  open: boolean,
-  menuRef: RefObject<HTMLElement | null>,
-  triggerRef: RefObject<HTMLElement | null>,
-  close: () => void,
-  selector: string = MENU_ITEM_SELECTOR,
-): { onKeyDown: (event: ReactKeyboardEvent) => void } {
-  const closeRef = useRef(close);
-  closeRef.current = close;
-
-  useEffect(() => {
-    if (!open) return;
-    focusFirstItem(menuRef.current, selector);
-    // Only on the opening edge: a re-render while open must not pull focus
-    // back to the first row from wherever the arrows have taken it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const onKeyDown = (event: ReactKeyboardEvent) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      closeRef.current();
-      triggerRef.current?.focus({ preventScroll: true });
-      return;
-    }
-    if (event.key === 'Tab') {
-      // No preventDefault: focus goes back to the trigger first, and the
-      // browser's Tab then moves on from there.
-      closeRef.current();
-      triggerRef.current?.focus({ preventScroll: true });
-      return;
-    }
-    roveMenuFocus(event, menuRef.current, selector);
-  };
-
-  return { onKeyDown };
 }

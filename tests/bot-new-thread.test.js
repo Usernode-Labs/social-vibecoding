@@ -282,7 +282,9 @@ test('its box is the conversation composer\'s card, piece for piece', () => {
   for (const piece of [
     '<div className="messages-composer-card">',
     '<div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? \'\' : undefined}>',
-    '<div className="messages-composer-add" ref={addRef}>',
+    // The "+" holder; its menu hangs off the "+" through the Menu here
+    // (lib/menu.ts), so the holder needs no ref of its own.
+    '<div className="messages-composer-add"',
     'className="messages-composer-input"',
     'className="messages-send"',
     "aria-label={t('messages:composer.send')}",

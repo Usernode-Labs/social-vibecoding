@@ -11,7 +11,9 @@
  * (./make.tsx), which opens this again. It is drawn like the screen's other
  * sheet, "Who can change it" (../who-decides/make-rule.tsx): on <body> after
  * the screen, so the page lock leaves it live (lib/page-lock.ts), with its
- * scrim, its handle and its close button, and Escape closes it.
+ * scrim, its handle and its close button. The Sheet (lib/sheet.ts) presents
+ * it, drawn in place (`gate: 'none'`): Escape, Back, the scrim's tap and
+ * focus are its.
  */
 
 import { useEffect, useState } from 'react';
@@ -20,6 +22,7 @@ import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-lis
 import { CheckIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useSheet } from '../../lib/sheet';
 import { MORE, type Template } from './examples';
 import { TierChart } from './tier-chart';
 
@@ -47,21 +50,21 @@ export function MoreSheet({ picked, onPick, onPickIdea, onClose }: {
     const r = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(r);
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Focus goes to the sheet itself as it opens, as the kit's does to its
+  // shell, so Escape is the sheet's wherever the press that opened it was.
+  const { panelRef, scrimProps } = useSheet({ kind: 'sheet', gate: 'none', onClose, initialFocus: (panel) => panel });
   const mark = (on: boolean) => (on ? <CheckIcon className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" /> : null);
   return (
     <div className="fixed inset-0 z-[9002]" data-make-more-sheet="">
-      <div aria-hidden="true" onClick={onClose}
+      <div aria-hidden="true" {...scrimProps}
         className={`absolute inset-0 bg-[color:var(--pane-scrim)] transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="make-more-sheet-title"
-        className={`absolute inset-x-0 bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-start transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
+        tabIndex={-1}
+        className={`absolute inset-x-0 outline-none bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-start transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">

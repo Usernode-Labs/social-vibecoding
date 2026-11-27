@@ -25,8 +25,8 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
-import { useMenuKeyboard } from '../../lib/menu-keys';
-import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
+import { useMenu } from '../../lib/menu';
+import { anchorRectOf } from '../../lib/popover-dismiss';
 import { matchesSearch } from '../../lib/search-rank.js';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { getTimeZone, inZone, zonedDay } from '../../lib/time-zone';
@@ -58,7 +58,6 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
-import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
@@ -377,9 +376,9 @@ function MessagesGuide() {
  * The "+" and its popover (#2778), beside the search since the filter strip
  * went (16 Oct 2026).
  *
- * The popover is placed and dismissed exactly as the vote picker's desktop
- * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
- * shared — and portalled to
+ * The popover is placed as the vote picker's desktop home is
+ * (lib/anchor-popover.ts), hangs off the "+" through the Menu (lib/menu.ts,
+ * which dismisses it as lib/popover-dismiss.ts does), and is portalled to
  * the body so the list's own scroller cannot clip it.
  *
  * ON TOUCH IT OPENS THE DIALOG ITSELF (phone review #124, 23 Nov 2026). It
@@ -406,8 +405,9 @@ function NewMessageButton() {
   const popRef = useRef<HTMLDivElement>(null);
   const open = !!rect;
   const shut = () => setRect(null);
-  useAnchoredDismiss(open, [btnRef, popRef], shut);
-  const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
+  // The Menu (lib/menu.ts): a press outside, Escape, Back, a scroll that
+  // moves the "+", the rows' keys, and focus in and back to the "+".
+  const { panelProps } = useMenu(open, { trigger: btnRef, panel: popRef, onClose: shut, move: true });
   // What the press opens, for a screen reader: read after hydration, so the
   // prerender and the first render agree on the menu.
   const [touch, setTouch] = useState(false);
@@ -454,7 +454,7 @@ function NewMessageButton() {
           aria-label={t('messages:inbox.new.menuName')}
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
-          onKeyDown={menuKeys.onKeyDown}
+          {...panelProps}
         >
           {NEW_CHOICES.map((item) => (
             <button
@@ -945,8 +945,8 @@ function ThreadHeader() {
   // outside it and on Escape (it used to stay open until its own button was
   // pressed again), takes focus to its first row when it opens, moves
   // between rows on the arrow keys, and hands focus back to the ⋯ on
-  // Escape. Hooks before the early return below, so their order is stable.
-  const menuWrapRef = useRef<HTMLDivElement>(null);
+  // Escape: the Menu's (lib/menu.ts), Back included. Hooks before the early
+  // return below, so their order is stable.
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   // #3407: #general's hub is the platform project's, whose slug may land
@@ -954,11 +954,10 @@ function ThreadHeader() {
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
-  useDismiss(menu, [menuWrapRef, menuRef], closeMenu);
   const toggleMenu = () => {
     setMenu((open) => !open);
   };
-  const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
+  const { panelProps: menuPanelProps } = useMenu(menu, { trigger: menuBtnRef, panel: menuRef, onClose: closeMenu });
   // Another conversation is another header: a menu left open does not follow.
   useEffect(() => { setMenu(false); }, [active?.id]);
   const peer = active ? conversationPeer(active) : null;
@@ -1045,7 +1044,7 @@ function ThreadHeader() {
     <>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
-      <div className="relative" ref={menuWrapRef}>
+      <div className="relative">
         <button ref={menuBtnRef} type="button" onClick={toggleMenu} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (
           <div
@@ -1053,7 +1052,7 @@ function ThreadHeader() {
             className="messages-thread-menu"
             role="menu"
             aria-label={t('messages:header.actions')}
-            onKeyDown={menuKeys.onKeyDown}
+            {...menuPanelProps}
           >
             {active.kind === 'group' && active.canManage
               ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>

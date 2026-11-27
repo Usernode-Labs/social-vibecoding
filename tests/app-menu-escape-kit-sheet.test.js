@@ -137,7 +137,7 @@ test('the Sheet hands Escape on a kit-held sheet to the helper and closes it', (
   const SHEET = read('frontend/src/lib/sheet.ts');
   assert.match(SHEET, /import \{ kitSheetTakesEscape \} from '\.\/kit-escape';/);
   assert.match(SHEET,
-    /if \(top\.kitSheet\(\) && !kitSheetTakesEscape\(e, document, top\.panel\(\)\)\) return;\s*e\.preventDefault\(\);\s*top\.close\(\);/,
+    /if \(top\.kitSheet\(\) && !kitSheetTakesEscape\(e, document, top\.panel\(\)\)\) return;\s*if \(!top\.mayEscape\(\)\) return;\s*e\.preventDefault\(\);\s*top\.close\(\);/,
     'held by the kit: Escape closes it unless a kit surface is above');
   assert.match(SHEET, /kitSheet: \(\) => !!adoption && kind === 'sheet',/);
   // The island writes no Escape of its own any more.

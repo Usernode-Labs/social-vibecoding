@@ -145,7 +145,9 @@ test('no invite surface says the maker sees a join; the made screen promises no 
   // WP-E said "usually in about 8 minutes" here, an ordinary request's
   // typical build; a first version took 50 (first-session run-through, 5
   // October 2026), and Evan asked for no average at all.
-  const { buildNote } = loadTsx('frontend/src/features/first-session/made.tsx');
+  // buildNote is plain; the Sheet the invite sheet is presented by is not
+  // needed here (lib/back-stack.ts would read the stand-in window above).
+  const { buildNote } = loadTsx('frontend/src/features/first-session/made.tsx', { stubs: { '../../lib/sheet': { useSheet: () => ({}) } } });
   assert.equal(buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
   assert.equal(buildNote(false), 'You or anyone you invite can build it from there.');
   const made = read('frontend/src/features/first-session/made.tsx');

@@ -115,8 +115,13 @@ export interface SheetOptions {
    * as the calling component is mounted.
    */
   open?: boolean;
-  /** When the kit takes it: whenever it is loaded (`'kit'`, the default), or on touch only. */
-  gate?: 'kit' | 'touch';
+  /**
+   * When the kit takes it: whenever it is loaded (`'kit'`, the default), on
+   * touch only, or never (`'none'`): a sheet its caller draws in place, as
+   * the first session's are, which the Sheet still closes, holds focus in
+   * and answers Back for.
+   */
+  gate?: 'kit' | 'touch' | 'none';
   /** Where the panel waits while the kit does not hold it (./kit-surface.ts). Default `'placeholder'`. */
   home?: 'placeholder' | 'body';
   /** Hold the page still while it is up (default true). */
@@ -141,6 +146,12 @@ export interface SheetOptions {
   exitMs?: number;
   /** Once it has left the screen: the kit's exit ended, or `exitMs` after it closed. */
   onExited?: () => void;
+  /**
+   * Whether Escape may close it now (default: always). The first session's
+   * invite sheet says no while the OS share sheet is over it, whose own
+   * Escape reaches the page too.
+   */
+  mayEscape?: () => boolean;
 }
 
 export interface SheetResult {
@@ -174,6 +185,7 @@ interface OpenSheet {
   /** Its key in ./open-surfaces.ts, for a sheet that holds a slot there. */
   surface?: string;
   trap: boolean;
+  mayEscape: () => boolean;
 }
 
 /** Open sheets, oldest first; the last is the one the keys reach. */
@@ -214,6 +226,7 @@ function onSheetKey(e: KeyboardEvent): void {
     }
     // Held by the kit as a bottom sheet: not while a kit surface is above it.
     if (top.kitSheet() && !kitSheetTakesEscape(e, document, top.panel())) return;
+    if (!top.mayEscape()) return;
     e.preventDefault();
     top.close();
     return;
@@ -248,7 +261,10 @@ function addOpenSheet(entry: OpenSheet): () => void {
   };
 }
 
-/** How many sheets are open. For tests. */
+/**
+ * How many sheets are open: a screen's own Escape stands aside while one is
+ * up over it (the make screen under "Something else…"), and tests count.
+ */
 export function openSheetCount(): number {
   return openSheets.length;
 }
@@ -304,7 +320,7 @@ export function useSheet(options: SheetOptions): SheetResult {
       gone = true;
       opts.current.onExited?.();
     };
-    let adoption: KitAdoption | null = adoptKitSurface({
+    let adoption: KitAdoption | null = gate === 'none' ? null : adoptKitSurface({
       kind,
       contentEl: panel,
       adoptedOn: rootRef.current || undefined,
@@ -354,6 +370,7 @@ export function useSheet(options: SheetOptions): SheetResult {
       close,
       surface,
       trap: trapFocus,
+      mayEscape: () => opts.current.mayEscape?.() ?? true,
     });
 
     return () => {

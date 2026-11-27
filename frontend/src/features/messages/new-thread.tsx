@@ -67,6 +67,7 @@ import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIc
 import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { NewChatInBar, publishNewChatWords } from '../ai/new-chat-bar';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useMenu } from '../../lib/menu';
 import { createStore } from '../../lib/plain-store.js';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
@@ -367,7 +368,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const uploadSeq = useRef(0);
   const [addOpen, setAddOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const addRef = useRef<HTMLDivElement>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   // Who works on it: Homeroom bot, or the person's own Claude Code or ChatGPT.
@@ -549,21 +551,14 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   // #4065: the same drop zone a reply thread has, in the same shared tracker.
   const drop = useFileDrag({ onFiles: (files) => { void addFiles(files); } });
 
-  // The "+" menu closes the way every other transient panel in the shell
-  // does: a press outside it, or Escape. Bound only while it is open.
-  useEffect(() => {
-    if (!addOpen) return undefined;
-    const onDown = (event: MouseEvent) => {
-      if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAddOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [addOpen]);
+  // The "+" menu is the Menu's (lib/menu.ts), as every other menu in the
+  // shell is: a press outside it, Escape, Back, its row's keys, and focus in
+  // and back to the "+".
+  const { panelProps: addPanelProps } = useMenu(addOpen, {
+    trigger: addBtnRef,
+    panel: addMenuRef,
+    onClose: () => setAddOpen(false),
+  });
 
   /** The field, focused with its caret at the end of what it holds. */
   const toField = () => {
@@ -811,10 +806,10 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
             <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
             {/* The same "+" and menu a reply thread offers. The cap disables the
                 Attach files ROW, never the "+" itself. */}
-            <div className="messages-composer-add" ref={addRef}>
-              <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
+            <div className="messages-composer-add">
+              <button ref={addBtnRef} type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
               {addOpen ? (
-                <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
+                <div ref={addMenuRef} className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')} {...addPanelProps}>
                   <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
                     <PaperClipIcon aria-hidden="true" />
                     <span>{t('messages:composer.attachFiles')}</span>
