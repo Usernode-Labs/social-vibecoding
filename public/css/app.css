@@ -34726,19 +34726,23 @@ html:root [data-bot-new-thread-pane] .messages-live-start:disabled { opacity: .4
 @media (hover: hover) {
   html:root [data-bot-new-thread-pane] .messages-live-start:hover:not(:disabled) { background: var(--one-sky-tint-hover); }
 }
-/* WAITING, THE COLUMN IS NEVER WIDER THAN THE CHAT (27 Nov 2026). A real preview keeps the widths its edges were
-   dragged to, and people drag it wide: the app is what they look at, and the thread beside it is left at its 320px
-   floor. Those same widths under a column that is only waiting gave New chat 320px beside 860px of empty outline.
-   While it waits (`data-ai-live-wait`, features/ai/index.tsx) the chat keeps at least 440px, the room its starts
-   need, the column takes the chat's width unless it was dragged narrower, and the list has the rest. Both edges
-   still drag. With the list put away the two are halves, the column never the wider. */
+/* WAITING, THE COLUMN HAS WIDTHS OF ITS OWN (27 Nov 2026). A real preview keeps the widths its edges were dragged
+   to, and people drag it wide: the app is what they look at, and the thread beside it is left at its 320px floor.
+   Those same widths under a column that is only waiting gave New chat 320px beside 860px of empty outline. The first
+   fix clamped the waiting column to the chat's width, which tied the two edges together: dragging one moved the
+   other, and neither followed the pointer past its clamp. So while it waits (`data-ai-live-wait`, features/ai/
+   index.tsx) the two edges remember widths of their own (`--ai-live-col-chosen-w`, `--ai-live-preview-chosen-w`,
+   features/side-panel/resize.ts), in the rules a real preview's follow, floors and all, so each drags as a
+   preview's does. Never dragged, they start balanced: 440px each where there is room, the list taking the rest. */
 body:has(#ai-screen[data-ai-preview="three"][data-ai-live-wait]:not(.hidden)) {
-  --ai-live-col: max(440px, min(var(--ai-col-chosen-w, 440px), calc((var(--ai-room) - 480px) / 2)));
-  --ai-preview-w: max(360px, min(var(--ai-preview-chosen-w, var(--ai-live-col)), var(--ai-live-col), calc(var(--ai-room) - 480px - var(--ai-live-col))));
-  --ai-col-w: var(--ai-live-col);
+  --ai-preview-w: max(360px, min(var(--ai-live-preview-chosen-w, min(440px, calc(var(--ai-room) - 920px))), calc(var(--ai-room) - 800px)));
+  --ai-col-w: max(320px, min(var(--ai-live-col-chosen-w, min(var(--ai-main-w), 440px)), calc(var(--ai-room) - 480px - var(--ai-preview-w))));
 }
 body:has(#ai-screen[data-ai-preview="halves"][data-ai-live-wait]:not(.hidden)) {
-  --ai-preview-w: max(320px, min(var(--ai-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) / 2)));
+  --ai-preview-w: max(320px, min(var(--ai-live-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 320px)));
+}
+body:has(#ai-screen[data-ai-preview="halves"][data-ai-live-wait][data-ai-list-closed]:not(.hidden)) {
+  --ai-preview-w: max(320px, min(var(--ai-live-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 16px - 320px)));
 }
 /* From 1500px the preview's column waits beside New chat instead (features/messages/live-start-pane.tsx), drawn as the
    column's other cards are (.detail-card: a head card, then a card): the project's tile and "Live preview" over where
