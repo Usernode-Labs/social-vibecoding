@@ -509,6 +509,69 @@ test('the self app\'s reset writes the change\'s seeds into the before copy, nam
   }
 });
 
+test('a seed runner that says its seeds failed ends the wait at once, and is removed', async () => {
+  const original = {
+    remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
+    clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
+    fullAdmin: fixtures.ensureFullAdminIdentity, hostedApp: fixtures.ensureHostedAppFixture,
+    invitedCan: fixtures.canInstallInvitedFixtures, invited: fixtures.ensureInvitedFixtures,
+    inspectDemo: demoStates.inspectDemoStates, fetch: global.fetch,
+  };
+  const runId = '7'.repeat(32);
+  const slug = 'usernode-2d5619';
+  const pair = {
+    app: { slug }, runId, sessionId: 47,
+    preparedSource: { fingerprint: 'source-fingerprint' },
+    sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
+      dbName: dbManager.shotsDbName(slug, runId, side), runtimeName: `shots-${side}`,
+      sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
+      imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: {},
+      ...(side === 'head' ? { hasBeforeSeedRunner: true } : {}),
+    }])),
+  };
+  const removed = [];
+  let resultReads = 0;
+  try {
+    runtime.remove = async (_config, ref) => { removed.push(ref.runtimeName); };
+    runtime.deploy = async (_config, spec) => ({ runtimeName: spec.runtimeName });
+    runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
+    dbManager.cloneFromPreparedSource = async () => ({ password: 'disposable' });
+    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
+    fixtures.ensureFullAdminIdentity = async () => ({ id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users' });
+    fixtures.ensureHostedAppFixture = async () => ({ id: fixtures.HOSTED_APP_PROFILE, persona: 'member', path: '/#' });
+    fixtures.canInstallInvitedFixtures = async () => false;
+    fixtures.ensureInvitedFixtures = async () => [];
+    demoStates.inspectDemoStates = async () => [];
+    global.fetch = async (url) => {
+      if (String(url).endsWith('/result')) resultReads += 1;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ version: 1, failed: true }) };
+    };
+    const started = Date.now();
+    const deployment = await environment.resetPair({
+      selfAppSlug: slug,
+      appRuntime: 'kubernetes',
+      kubernetes: { captureImage: `capture@sha256:${'c'.repeat(64)}`, appDomain: 'apps.example.invalid', platformDomain: 'example.invalid' },
+    }, pair);
+    assert.deepEqual(deployment.beforeSeeds, { ran: false, reason: 'failed' });
+    assert.equal(resultReads, 1, 'one read of /result, not a poll until the deadline');
+    assert.ok(Date.now() - started < 5_000, 'the reset does not wait out SEEDS_TIMEOUT_MS');
+    assert.ok(removed.includes(`${pair.sides.head.runtimeName}-seeds`), 'the runner is removed');
+    assert.equal(pair.seedsDeployment, null);
+  } finally {
+    runtime.remove = original.remove;
+    runtime.deploy = original.deploy;
+    runtime.appOrigin = original.appOrigin;
+    dbManager.cloneFromPreparedSource = original.clone;
+    dbManager.connectionUrl = original.connectionUrl;
+    fixtures.ensureFullAdminIdentity = original.fullAdmin;
+    fixtures.ensureHostedAppFixture = original.hostedApp;
+    fixtures.canInstallInvitedFixtures = original.invitedCan;
+    fixtures.ensureInvitedFixtures = original.invited;
+    demoStates.inspectDemoStates = original.inspectDemo;
+    global.fetch = original.fetch;
+  }
+});
+
 test('a child app\'s reset never runs the before-copy seed runner', async () => {
   const original = {
     remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
