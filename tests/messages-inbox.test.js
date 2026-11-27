@@ -338,7 +338,9 @@ test('#5393: a group row shows its members\' faces and names the person who spok
     'joined members only, and never the viewer');
   assert.match(faces, /\.slice\(0, 2\)/, 'two faces at most');
   assert.match(faces, /<span className="messages-group-faces" aria-hidden="true">/, 'two members: the stacked pair');
-  assert.match(faces, /<UserAvatar user=\{others\[0\]\} size="sm" shape="square" \/>/, 'each face the kit\'s own sm square');
+  // Each face is a person, so round (UserAvatar draws a person with
+  // PersonAvatar whatever shape it is asked for); `sm` is its 28px.
+  assert.match(faces, /<UserAvatar user=\{others\[0\]\} size="sm" \/>/, 'each face the kit\'s own sm picture');
   // The row draws it for a group the viewer is in; a DM and an unanswered
   // invitation keep today's tile.
   const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const NEW_CHOICES = ['));

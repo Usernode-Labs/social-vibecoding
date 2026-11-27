@@ -70,7 +70,8 @@ test('the pill, the cards, the rows and the Open button say what the design says
     [['apps', '1', 'project'], ['members', '2', 'members'], ['merged', '0', 'changes live']]);
   assert.equal(model.taglineOf({ manifest_snapshot: { description: '  Sketch\n together. ' } }), 'Sketch together.');
   assert.equal(model.taglineOf({ manifest_snapshot: {} }), null);
-  assert.deepEqual(model.contributorView({ username: 'dana', merged_count: '6' }), { who: 'dana', initial: 'D', merged: 6, creator: false });
+  // No `initial`: the roster draws a person with PersonAvatar, which takes the name.
+  assert.deepEqual(model.contributorView({ username: 'dana', merged_count: '6' }), { who: 'dana', merged: 6, creator: false });
   assert.equal(model.contributorView({ username: 'dana', merged_count: 0, is_creator: true }).creator, true);
   assert.deepEqual(model.openLabel('running', false), { label: 'Open', canOpen: true });
   assert.deepEqual(model.openLabel('running', true), { label: 'Resume', canOpen: true });

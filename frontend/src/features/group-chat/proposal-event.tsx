@@ -4,14 +4,15 @@
  * ── A message from whoever did it ─────────────────────────────────────
  *
  * The row is the transcript's own named row (@/components/ui/chat.tsx,
- * `ChatMessageRow`): the sender's square avatar, their name in bold and the
+ * `ChatMessageRow`): the sender's picture, their name in bold and the
  * stamp on the header line, exactly where a person's message puts them, so
  * "cyrcle_0 proposed PR #2357 for a vote" reads as something cyrcle_0 did at
  * a time, in the same grid as what alice said a minute later. The sender is
  * the person for a submission and for a force-merge, and the app itself for
- * a merge its vote decided — the app announcing its own change. The avatar
- * is the swatch that person's messages wear (./swatch.ts), because it is
- * the same person.
+ * a merge its vote decided — the app announcing its own change. The picture
+ * is the one round person picture every surface draws
+ * (@/components/ui/feed.tsx PersonAvatar), in the colour that person wears
+ * everywhere, because it is the same person.
  *
  * ── One box, in the Current status tab's language ─────────────────────
  *
@@ -47,14 +48,13 @@
 import { memo } from 'react';
 
 import { ChatMessageRow } from '@/components/ui/chat';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { plainPrRefs } from '../../lib/change-ref';
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { CardIcon } from '../dev-board/card/dev-card';
-import { swatchFor } from './swatch';
 import type { ProposalEvent, TranscriptMessage } from './transcript-store';
 
 /**
@@ -219,9 +219,7 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
         data-msg-id={msg.id ?? ''}
         data-event="weekly"
         avatar={(
-          <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
-            {ev.sender.charAt(0).toUpperCase()}
-          </Avatar>
+          <PersonAvatar name={ev.sender} size={44} aria-hidden="true" />
         )}
         name={<span data-event-sender="">{ev.sender}</span>}
         timestamp={<span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>}
@@ -263,9 +261,7 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
       {...(ev.type === 'vote' && ev.vote ? { 'data-vote': ev.vote } : {})}
       {...(ev.type === 'vote' && ev.earlier ? { 'data-earlier': '1' } : {})}
       avatar={(
-        <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
-          {ev.sender.charAt(0).toUpperCase()}
-        </Avatar>
+        <PersonAvatar name={ev.sender} size={44} aria-hidden="true" />
       )}
       name={<span data-event-sender="">{ev.sender}</span>}
       timestamp={<span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>}

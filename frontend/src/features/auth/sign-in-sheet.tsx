@@ -202,6 +202,7 @@ import { reducedMotion } from '../../lib/reduced-motion';
 
 import { alertVariants } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, KeyIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -2377,7 +2378,7 @@ export function SignInSheet({
                   <div data-sign-in-sheet-username-preview="" className="rounded-2xl bg-white px-4 py-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
                     <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLabel')}</p>
                     <div className="mt-2 flex items-center gap-3">
-                      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[15px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{handleDraft.trim().charAt(0).toUpperCase()}</span>
+                      <PersonAvatar name={handleDraft} size={36} aria-hidden="true" />
                       <div className="min-w-0">
                         <p className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">@{handleDraft.trim()}</p>
                         <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLine')}</p>

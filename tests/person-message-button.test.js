@@ -122,7 +122,7 @@ test('the control itself: named for the person, and a refusal is never silent', 
 
 test('a person\'s picture replaces the letter on their page and their Top users row', () => {
   const profileChrome = (avatarUrl) => ({
-    kind: 'profile', who: 'dana', initial: 'D', canMessage: true, avatarUrl,
+    kind: 'profile', who: 'dana', canMessage: true, avatarUrl,
   });
   const tabChrome = {
     kind: 'tabs',
@@ -134,7 +134,6 @@ test('a person\'s picture replaces the letter on their page and their Top users 
     key: 'dana|0',
     rank: 1,
     who: 'dana',
-    initial: 'D',
     avatarUrl,
     meta: [],
     unmergedNote: null,
@@ -146,25 +145,26 @@ test('a person\'s picture replaces the letter on their page and their Top users 
   });
   const draw = () => renderToHtml(createElement(pane.KudosPane, {}));
 
+  // The picture is the one round person picture (PersonAvatar): the photo
+  // covers the letter inside the same circle, which stays under it as the
+  // fallback for a photo that fails to load.
   const header = draw();
-  assert.match(header, /<img[^>]+src="\/avatars\/9"/, 'the page shows the picture');
-  assert.ok(!header.includes('>D</div>'), 'and not the letter as well');
+  assert.match(header, /aria-hidden="true">D<img[^>]+src="\/avatars\/9"/, 'the page shows the picture, over the letter');
 
   state.chrome = profileChrome(null);
   const noPicture = draw();
   assert.ok(!noPicture.includes('<img'), 'no picture, no image');
-  assert.match(noPicture, />D<\/div>/, 'the initial stays the fallback');
+  assert.match(noPicture, /aria-hidden="true">D<\/span>/, 'the initial stays the fallback');
 
   state.chrome = tabChrome;
   state.body = { kind: 'users', rows: [userRow('/avatars/9')] };
   const row = draw();
   assert.match(row, /<img[^>]+src="\/avatars\/9"[^>]*loading="lazy"/, 'the row shows it too, lazily');
-  assert.ok(!row.includes('>D</div>'));
 
   state.body = { kind: 'users', rows: [userRow(null)] };
   const plainRow = draw();
   assert.ok(!plainRow.includes('<img'));
-  assert.match(plainRow, />D<\/div>/);
+  assert.match(plainRow, /aria-hidden="true">D<\/span>/);
 });
 
 test('the button renders where the prototype puts it, and only when allowed', () => {

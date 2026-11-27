@@ -81,6 +81,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import {
   ArrowTopRightOnSquareIcon,
   CheckIcon,
@@ -95,7 +96,6 @@ import { linkKind } from '../../lib/repo-link.js';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
-import { swatchFor } from '../messages/format';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
 import { isNativeApp, isStandalone } from '../mobile-install/environment';
@@ -233,27 +233,6 @@ function afterDismiss(then: () => void): void {
 }
 
 /**
- * A person's initial in the roster's circle. Phone review #119 (23 Nov 2026):
- * the one face a person wears in a list of people, the hub's and the
- * dialogs' (messages/format.tsx UserAvatar): a disc in their own colour
- * (swatchFor) with a white initial. It was a pale blue disc here only.
- */
-function Avatar({ who, size }: { who: string; size: 'sm' | 'xs' }): ReactNode {
-  const box = size === 'xs'
-    ? 'w-6 h-6 text-[0.625rem] ring-2 ring-white dark:ring-zinc-900'
-    : 'w-7 h-7 text-xs';
-  return (
-    <span
-      aria-hidden="true"
-      className={`${box} shrink-0 rounded-full text-white font-semibold flex items-center justify-center`}
-      style={{ backgroundColor: swatchFor(who) }}
-    >
-      {(who[0] || '?').toUpperCase()}
-    </span>
-  );
-}
-
-/**
  * The roster's rows and its fold. The rows sit in their own wrapper so the
  * toggle can name what it opens (aria-controls) and say whether it is open
  * (aria-expanded), as Discover's list's "Show more" does (#2991). The wrapper
@@ -279,7 +258,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
               className={ROW}
               onClick={() => { void AppContext.dismissForNav(); }}
             >
-              <Avatar who={c.who} size="sm" />
+              <PersonAvatar name={c.who} size={28} aria-hidden="true" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
               {/* "Creator", "3 live", both, or nothing: a zero says nothing. */}
               {note ? <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{note}</span> : null}
@@ -458,7 +437,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
                 <span className="flex -space-x-1.5 rtl:space-x-reverse" aria-hidden="true">
-                  {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
+                  {stack.map((c) => <PersonAvatar key={c.who} name={c.who} size={24} aria-hidden="true" className="ring-2 ring-white dark:ring-zinc-900" />)}
                 </span>
               ) : null}
               {pill ? (

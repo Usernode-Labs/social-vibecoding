@@ -50,9 +50,8 @@ import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../group-chat/swatch';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
@@ -1077,9 +1076,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
       {images.viewer}
       <ThreadCardContext.Provider value={cardContext}>
       <article className="messages-message dev-request-root dev-change-root dev-thread-card" data-change-root={id ?? ''} data-thread-card="change">
-        <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
-          {(v.author || '?').charAt(0).toUpperCase()}
-        </Avatar>
+        <PersonAvatar name={v.author} size={36} aria-hidden="true" />
         <div className="min-w-0 flex-1" {...images.scope}>
           <ThreadKicker kind="change" number={v.number} category={v.category} />
           <div className="messages-message-head">

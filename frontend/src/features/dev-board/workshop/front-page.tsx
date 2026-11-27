@@ -54,6 +54,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import {
   AppWindowIcon, ArrowUpIcon, BallotIcon, ChatIcon, CheckIcon, ChevronRightIcon, CodeIcon, DescriptionIcon, FlagIcon,
 } from '@/components/ui/icons';
@@ -66,7 +67,7 @@ import { projectTabAddress } from '../../ai/filter-address';
 import type { Phrase } from '../../ai/model';
 import { SpeakButton } from '../../dictation/speak-button';
 import { platformSlug } from '../../messages/channel-hub';
-import { BOT_AVATAR, swatchFor } from '../../messages/format';
+import { BOT_AVATAR } from '../../messages/format';
 import { carryWordsToNewChat } from '../../messages/new-chat-carry';
 import { LIVE_START, NEW_THREAD_STARTS, offersLive } from '../../messages/new-thread';
 import { callAppView } from '../card/fold';
@@ -368,9 +369,7 @@ function YoursDoor({ slug, name, viewer }: { slug: string; name: string; viewer:
 
 function Faces({ who, n }: { who: Viewer | null; n: number }): ReactNode {
   if (!who) return null;
-  const face = (i: number) => (who.avatarUrl
-    ? <img key={i} className="dev-ws-front-face" src={who.avatarUrl} alt="" />
-    : <i key={i} className="dev-ws-front-face" style={{ background: swatchFor(who.username) }}>{who.username.charAt(0).toUpperCase()}</i>);
+  const face = (i: number) => <PersonAvatar key={i} name={who.username} src={who.avatarUrl} size={null} className="dev-ws-front-face" />;
   return <span className="dev-ws-front-faces" aria-hidden="true">{Array.from({ length: Math.min(2, n) }, (_, i) => face(i))}</span>;
 }
 

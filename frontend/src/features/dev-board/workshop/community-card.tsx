@@ -75,8 +75,8 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
@@ -558,39 +558,13 @@ export function useCommunity(slug: string): CommunityPayload | null {
 /** How many faces the hero shows before the count says the rest. */
 export const HERO_FACES = 5;
 
-/**
- * One face in the hub's rows (#7230): the person's picture when the server
- * sent one, over their coloured initial, which stays for somebody no account
- * is known for. Sizes, the ring and the overlap are the face's own CSS.
- */
-export function HubFace({ person, className, title, decorative }: {
-  person: { username: string; avatarUrl?: string | null };
-  className?: string;
-  title?: string;
-  decorative?: boolean;
-}) {
-  return (
-    <span
-      className={className ? `dev-ws-hero-face ${className}` : 'dev-ws-hero-face'}
-      style={{ background: swatchFor(person.username) }}
-      title={title ?? `@${person.username}`}
-      aria-hidden={decorative || undefined}
-    >
-      {(person.username || '?').charAt(0).toUpperCase()}
-      {person.avatarUrl ? (
-        <img src={person.avatarUrl} alt="" loading="lazy" decoding="async" className="dev-ws-hero-face-img" />
-      ) : null}
-    </span>
-  );
-}
-
 /** Up to HERO_FACES faces, overlapping; nothing for nobody. */
 function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
   const faces = (members || []).slice(0, HERO_FACES);
   if (!faces.length) return null;
   return (
     <span className="dev-ws-hero-faces" aria-hidden="true">
-      {faces.map((m) => <HubFace key={m.id} person={m} />)}
+      {faces.map((m) => <PersonAvatar key={m.id} name={m.username} src={m.avatarUrl} size={null} className="dev-ws-hero-face" title={`@${m.username}`} />)}
     </span>
   );
 }
@@ -671,7 +645,7 @@ export function HeroActive({ activity }: { activity: CommunityPayload['activity'
     <div className="dev-ws-hero-active" data-ws-members="" data-ws-active-people={String(count)}>
       {people.length ? (
         <span className="dev-ws-hero-faces" aria-hidden="true">
-          {people.map((p) => <HubFace key={p.id} person={p} />)}
+          {people.map((p) => <PersonAvatar key={p.id} name={p.username} src={p.avatarUrl} size={null} className="dev-ws-hero-face" title={`@${p.username}`} />)}
           {rest ? <span className="dev-ws-hero-face dev-ws-hero-face-more">{t('project:hub.people.moreFaces', { count: rest })}</span> : null}
         </span>
       ) : null}
@@ -1756,11 +1730,7 @@ export function ruleSentence(
 function NamesWithFaces({ names, children }: { names: string[] | null; children?: ReactNode }) {
   const faces = names && names.length ? (
     <span className="dev-ws-ov-faces" aria-hidden="true">
-      {names.map((name) => (
-        <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
-          {(name || '?').charAt(0).toUpperCase()}
-        </span>
-      ))}
+      {names.map((name) => <PersonAvatar key={name} name={name || '?'} size={null} className="dev-ws-ov-face" />)}
     </span>
   ) : null;
   const text = typeof children === 'string' ? children

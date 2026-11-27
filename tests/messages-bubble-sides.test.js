@@ -130,7 +130,8 @@ test('the other person keeps the avatar, the name and the time above their bubbl
   assert.match(group, /<span dir="auto" class="messages-message-author ">ada<\/span>/);
   const html = row({ message: message(ADA, 9, { content: 'Thanks!' }), kind: 'direct' });
   assert.doesNotMatch(html, /messages-message-self/);
-  assert.match(html, /<span aria-hidden="true" class="w-9 h-9/, 'the avatar, as before');
+  // A person is the one round person picture (PersonAvatar), at 36px.
+  assert.match(html, /<span class="relative flex shrink-0 items-center justify-center font-bold text-white rounded-full h-9 w-9 /, 'the avatar, as before');
   // Audit D13: the hover bar ends the name line, beside the bubble.
   assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><div class="messages-message-actions\s+msgx-bar[\s\S]*?<\/div><\/div><div class="messages-bubble" dir="auto"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
 });

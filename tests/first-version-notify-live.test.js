@@ -428,7 +428,8 @@ test('a notification from Homeroom bot wears the bot\'s own face, or its project
   assert.match(face, /<img src="\/brand\/homeroom-mark\.png" alt="" class="w-11 h-11 text-sm rounded-xl object-cover shrink-0" data-bot-avatar=""\/>$/,
     'the Homeroom mark, the same tile Messages draws for the bot, at the row\'s 44px');
   const tile = renderToHtml(createElement(sheet.AvatarChip, { view: person }));
-  assert.match(tile, /^<span aria-hidden="true" class="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-sm font-semibold" style="background-color:[^"]+">H<\/span>$/);
+  // A person is the one round person picture (PersonAvatar) at the row's 44px.
+  assert.match(tile, /^<span class="relative flex shrink-0 items-center justify-center font-bold text-white rounded-full h-11 w-11 text-\[1\.0625rem\]" style="background-color:[^"]+" aria-hidden="true">H<\/span>$/);
   assert.doesNotMatch(face, /background-color|>H</, 'not the orange "H"');
 
   // #5877: the bot's news about a project wears that project's tile, so a

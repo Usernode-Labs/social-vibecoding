@@ -21,6 +21,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { Input } from '@/components/ui/input';
 import { useMessages } from '../../lib/i18n/react';
 import { searchUsers } from '../messages/api';
@@ -69,17 +70,6 @@ function useFriendSearch(query: string): { users: ConversationUser[]; loading: b
   return { users, loading, failed };
 }
 
-function Initial({ username }: { username: string }): ReactNode {
-  return (
-    <span
-      aria-hidden="true"
-      className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-sm font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-    >
-      {(username[0] || '?').toUpperCase()}
-    </span>
-  );
-}
-
 /** What the search shows under the box. Pure of fetching, so tests render it directly. */
 export function FriendSearchResults({
   query,
@@ -113,7 +103,7 @@ export function FriendSearchResults({
           data-friend-search-result={user.username}
           className="flex items-center gap-3 px-4 py-2.5"
         >
-          <Initial username={user.username} />
+          <PersonAvatar name={user.username} src={user.avatarUrl} size={36} aria-hidden="true" />
           <a
             href={`#profile/${encodeURIComponent(user.username)}`}
             className="min-w-0 flex-1 truncate text-base font-semibold hover:underline"

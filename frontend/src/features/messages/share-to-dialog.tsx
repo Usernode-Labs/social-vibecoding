@@ -206,7 +206,7 @@ function matches(row: ShareDestination, query: string): boolean {
 function DestinationTile({ row }: { row: ShareDestination }) {
   if (row.kind === 'direct') {
     const peer = row.conversation?.peer || null;
-    return <UserAvatar user={peer} title={row.label.replace(/^@/, '')} size="sm" shape="square" />;
+    return <UserAvatar user={peer} title={row.label.replace(/^@/, '')} size="sm" />;
   }
   if (row.kind === 'group') return <UserAvatar title={row.label} size="sm" shape="square" />;
   // #6112: a discussion is a project, so its tile is the project's own icon

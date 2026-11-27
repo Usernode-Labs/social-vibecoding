@@ -39,7 +39,7 @@ import { enterSends } from '../../../lib/enter-sends';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
-import { swatchFor } from '../../messages/format';
+import { swatchFor } from '../../../lib/community-color';
 import { ClampedComment } from '../comment-clamp';
 import {
   feedThreadStore,

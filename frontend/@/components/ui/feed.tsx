@@ -2,6 +2,7 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
+import { swatchFor } from '../../../src/lib/community-color';
 import { ChevronRightIcon } from './icons';
 
 /**
@@ -25,10 +26,11 @@ import { ChevronRightIcon } from './icons';
  *
  * ── Avatars are two shapes, on purpose ────────────────────────────────
  *
- * `circle` for people acting in a feed, `square` for people speaking in a
- * conversation. That is the deck's own split (Activity uses circles, the chat
- * screens use rounded squares) and it is a useful one: the same person reads
- * as an actor in one context and as a voice in the other.
+ * `circle` for a person, `square` for a group conversation or a project.
+ * A person is drawn with `PersonAvatar` below, which is always round: the old
+ * split (a circle for an actor in a feed, a rounded square for a voice in a
+ * conversation) drew the same person two ways. The chat transcript's message
+ * rows still pass `square` until they move onto `PersonAvatar` too.
  */
 
 const avatar = cva(
@@ -68,6 +70,76 @@ export function Avatar({ className, shape, size, color, badge, children, style, 
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * ── A person is one round picture ──────────────────────────────────────
+ *
+ * Every person the shell draws outside a chat message row is this: their
+ * photo when there is one, over the first letter (or digit) of their name on
+ * their own colour (`swatchFor`, ../../../src/lib/community-color.ts, the
+ * one function that picks it), always round. A group conversation and a
+ * project are not people: they keep their rounded-square tiles. Somebody
+ * nobody knows (no name, no photo) is an empty neutral circle that holds the
+ * frame (#7135).
+ *
+ * It is drawn in a few set sizes, named by their width: 24, 28, 32 (beside
+ * an `IconTile` xs), 36, 44, 56 and 80px (a profile's own). `size={null}`
+ * is for a face in an overlapping stack (the hub's faces, the approvers on a
+ * card), whose size, ring and overlap are the stack's own CSS hook, passed
+ * as `className`. A photo that fails to load falls back to the letter.
+ */
+const PERSON_SIZE = {
+  24: 'h-6 w-6 text-[0.625rem]',
+  28: 'h-7 w-7 text-[0.6875rem]',
+  32: 'h-8 w-8 text-xs',
+  36: 'h-9 w-9 text-[0.8125rem]',
+  44: 'h-11 w-11 text-[1.0625rem]',
+  56: 'h-14 w-14 text-xl',
+  80: 'h-20 w-20 text-2xl',
+} as const;
+
+/** The picture's width in px: one of the set sizes. */
+export type PersonAvatarSize = keyof typeof PERSON_SIZE;
+
+export interface PersonAvatarProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, 'color' | 'children'> {
+  /** Their username (a leading @ is dropped), which picks the letter and the colour. */
+  name: string | null | undefined;
+  /** Their photo's address, when the server sent one. */
+  src?: string | null;
+  size?: PersonAvatarSize | null;
+  /** Small glyph disc on the lower-trailing corner, as `Avatar`'s. */
+  badge?: React.ReactNode;
+}
+
+export function PersonAvatar({ name, src, size = 36, className, badge, ...props }: PersonAvatarProps) {
+  const [broken, setBroken] = React.useState<string | null>(null);
+  const who = (name || '').trim().replace(/^@/, '');
+  const photo = src && broken !== src ? src : null;
+  return (
+    <Avatar
+      shape="circle"
+      size={null}
+      className={cn(size ? PERSON_SIZE[size] : null, !who && 'bg-zinc-100 dark:bg-zinc-800', className)}
+      color={who ? swatchFor(who) : undefined}
+      badge={badge}
+      {...props}
+    >
+      {who ? (who.match(/[\p{L}\p{N}]/u)?.[0] || who.charAt(0)).toUpperCase() : null}
+      {photo ? (
+        <img
+          src={photo}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 h-full w-full rounded-[inherit] object-cover"
+          onError={() => setBroken(photo)}
+        />
+      ) : null}
+    </Avatar>
   );
 }
 

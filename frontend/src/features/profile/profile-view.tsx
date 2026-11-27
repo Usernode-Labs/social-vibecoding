@@ -25,6 +25,7 @@
 import { type ReactNode, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { PLANE_CARD } from '@/components/ui/grouped-list';
 import { CheckIcon, PencilSquareIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -32,7 +33,6 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
-  publicAvatarView,
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
@@ -50,28 +50,6 @@ import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 import { WeekShareSheet } from './week-share-sheet';
-
-/** The round picture. A person with no uploaded photo has a generated one,
- *  so `url` is present for every known account; it is absent only where no
- *  account is known, and then an empty neutral circle holds the frame
- *  (#7135 — the two-character drawing is no longer a stand-in). */
-function IdentityAvatar({ url }: { url: string | null }): ReactNode {
-  if (url) {
-    return (
-      <img
-        className="profile-id-avatar w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-        src={url}
-        alt=""
-      />
-    );
-  }
-  return (
-    <div
-      className="profile-id-avatar w-14 h-14 rounded-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-800"
-      aria-hidden="true"
-    />
-  );
-}
 
 /** Sign out, on Me (26 Nov 2026). The one sign-out is Settings' own
  *  (settings.js `logout`, reached through its facade, which loads the chunk):
@@ -123,7 +101,13 @@ function IdentityCard({ identity, user }: { identity: any; user?: any }): ReactN
       */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex flex-1 min-w-0 items-center gap-3">
-          <IdentityAvatar url={identity.avatarUrl} />
+          {/* The round picture. A person with no uploaded photo has a
+              generated one, so `avatarUrl` is present for every known
+              account; it is absent only where no account is known, and then
+              the empty neutral circle holds the frame (#7135: no letter, and
+              no two-person drawing, stands in). Its sizes are the editorial
+              block's (app.css .profile-id-avatar). */}
+          <PersonAvatar name={null} src={identity.avatarUrl} size={56} aria-hidden="true" className="profile-id-avatar" />
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. A pencil sits
@@ -506,7 +490,7 @@ export function ProfileRoot(): ReactNode {
       {state.sheetOpen ? (
         <ProfileEditSheet
           avatarUrl={view.identity.avatarUrl}
-          initial={view.identity.initial}
+          username={view.identity.username}
           publicControls={view.publicControls}
           publicStatus={state.publicStatus}
           publishing={state.publishing}
@@ -580,4 +564,3 @@ export function ProfileRoot(): ReactNode {
   );
 }
 
-export { publicAvatarView };

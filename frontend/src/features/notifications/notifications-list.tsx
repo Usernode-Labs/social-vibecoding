@@ -72,9 +72,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { BookmarkSolidIcon } from '@/components/ui/icons';
 
-import { swatchFor } from '../messages/format';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -219,13 +219,7 @@ function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): Rea
         data-saved-message={view.messageId}
         className="notifications-row flex items-center gap-3 px-4 py-3"
       >
-        <span
-          aria-hidden="true"
-          className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
-          style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
-        >
-          {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
-        </span>
+        <PersonAvatar name={view.who || '?'} size={36} aria-hidden="true" />
         <button
           className="flex-1 min-w-0 text-start"
           onClick={(e) => {
@@ -397,13 +391,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         className="notifications-row flex items-start gap-3 px-4 py-3"
         data-invite-app={view.appId}
       >
-        <span
-          aria-hidden="true"
-          className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
-          style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
-        >
-          {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
-        </span>
+        <PersonAvatar name={view.who || '?'} size={36} aria-hidden="true" />
         <div className="min-w-0 flex-1">
         {/*
             The spaces ride inside the neighbouring strings rather than as

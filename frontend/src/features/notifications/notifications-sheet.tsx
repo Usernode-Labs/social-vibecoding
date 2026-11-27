@@ -109,6 +109,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
+import { PersonAvatar } from '@/components/ui/feed';
 import { ListRow, ListRowMeta, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton } from '@/components/ui/skeleton';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -116,7 +117,7 @@ import {
   BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, NewspaperIcon, SearchIcon, XIcon,
 } from '@/components/ui/icons';
 
-import { UserAvatar, swatchFor } from '../messages/format';
+import { UserAvatar } from '../messages/format';
 import type { ConversationUser } from '../messages/types';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 
@@ -264,9 +265,10 @@ export function splitToday<T extends { at: number }>(entries: readonly T[], now:
 
 /**
  * The row's leading mark, in the language's two shapes: a conversation is
- * a PERSON speaking, so it gets the square swatch avatar Messages uses
- * (the same colour for the same handle); everything else is an EVENT, so
- * it gets the neutral glyph tile with the kind's icon.
+ * a PERSON speaking, so it gets the one round person picture every surface
+ * draws (@/components/ui/feed.tsx PersonAvatar, the same colour for the
+ * same handle); everything else is an EVENT, so it gets the neutral glyph
+ * tile with the kind's icon.
  *
  * Run six (14 Oct 2026): the Homeroom bot is drawn as Messages draws it,
  * the Homeroom mark (../messages/format.tsx UserAvatar), not an orange
@@ -298,17 +300,7 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
     // Its image has no text (alt=""): the row's words say who it is from.
     return <UserAvatar user={BOT_SENDER} size="lg" shape="square" />;
   }
-  if (view.conversation) {
-    return (
-      <span
-        aria-hidden="true"
-        className="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-sm font-semibold"
-        style={{ backgroundColor: swatchFor(who) }}
-      >
-        {initial}
-      </span>
-    );
-  }
+  if (view.conversation) return <PersonAvatar name={who} size={44} aria-hidden="true" />;
   return (
     <IconTile size="sm" aria-hidden="true" className="text-base">
       {view.lineIcon === 'newspaper'

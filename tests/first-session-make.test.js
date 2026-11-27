@@ -1336,5 +1336,7 @@ test('phone review: "Who can change it?" has no "Now" badge, and its two rows st
   const parts = read('frontend/src/features/who-decides/parts.tsx');
   assert.match(parts, /export const PLAYS_LEAD = 32;/);
   assert.match(parts, /const GROUP_TILE = <IconTile size="xs">/, 'the group\'s tile is xs, 32px');
-  assert.match(parts, /leading=\{<Face name=\{[^}]*\} size=\{PLAYS_LEAD\} \/>\}/);
+  // The face is the one round person picture (PersonAvatar), at the 32px set
+  // size PLAYS_LEAD names, as wide as the group's tile.
+  assert.match(parts, /leading=\{<PersonAvatar name=\{[^}]*\} size=\{PLAYS_LEAD\} aria-hidden="true" \/>\}/);
 });

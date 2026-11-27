@@ -8,6 +8,7 @@
 
 import type { ReactNode } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import {
   BallotIcon, BoltIcon, CheckIcon, HandRaisedIcon, SparklesIcon, UserGroupIcon,
@@ -16,7 +17,6 @@ import { IconTile } from '@/components/ui/icon-tile';
 
 import { useMessages } from '../../lib/i18n/react';
 import { radioGroupKeys } from '../../lib/radio-group';
-import { swatchFor } from '../messages/format';
 import { PRESET_KEYS, playsOut, presetLine, presetName, type PresetKey } from './model';
 
 export interface Viewer {
@@ -35,19 +35,6 @@ const PRESET_ICONS: Record<PresetKey, ReactNode> = {
 
 export function presetIcon(key: PresetKey): ReactNode {
   return PRESET_ICONS[key];
-}
-
-/** A person's first letter on their swatch, as the chat draws them. */
-export function Face({ name, size = 28 }: { name: string; size?: number }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="inline-flex shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-      style={{ width: size, height: size, background: swatchFor(name) }}
-    >
-      {(name || '?').charAt(0).toUpperCase()}
-    </span>
-  );
 }
 
 export function Picked({ on }: { on: boolean }) {
@@ -136,7 +123,7 @@ export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer:
   return (
     <GroupedList tone="plane" className="mx-0" data-who-plays="">
       <ListRow
-        leading={<Face name={viewer.creator && viewer.isCreator ? viewer.creator : 'you'} size={PLAYS_LEAD} />}
+        leading={<PersonAvatar name={viewer.creator && viewer.isCreator ? viewer.creator : 'you'} size={PLAYS_LEAD} aria-hidden="true" />}
         title={t('dialogs:whoDecides.plays.youTitle')}
         subtitle={lines.you}
         chevron={false}

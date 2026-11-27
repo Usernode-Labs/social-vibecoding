@@ -9,16 +9,16 @@
  * round places that overlap a little, your face in the middle (36px), the
  * seats fading out toward the edges by lightening their colours, never by
  * opacity, so the overlap stays clean. A seat is not interactive and shows a
- * soft person silhouette. A face is the hub's (dev-board/workshop/
- * community-card.tsx HeroPeople): the person's initial on their swatch
- * (lib/community-color.ts swatchFor). Both are ringed in the screen's ground
+ * soft person silhouette. A face is the one round picture every surface
+ * draws (@/components/ui/feed.tsx PersonAvatar): the person's initial on
+ * their swatch. Both are ringed in the screen's ground
  * colour so overlapping places stay apart. The row is one image to a screen
  * reader, named in words ("You and 2 others").
  */
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { PersonSilhouetteIcon } from '@/components/ui/icons';
 
-import { swatchFor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 
@@ -90,14 +90,14 @@ export function PeopleRow({ people }: { people: readonly Person[] }) {
         }
         const name = nameOf(person) || '?';
         return (
-          <span
+          <PersonAvatar
             key={`${name}-${i}`}
+            name={name}
+            size={36}
             aria-hidden="true"
-            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[14px] font-bold text-white ${overlap}`}
-            style={{ ...z, background: swatchFor(name), boxShadow: `0 0 0 2px ${GROUND}` }}
-          >
-            {name.charAt(0).toUpperCase()}
-          </span>
+            className={overlap}
+            style={{ ...z, boxShadow: `0 0 0 2px ${GROUND}` }}
+          />
         );
       })}
     </div>

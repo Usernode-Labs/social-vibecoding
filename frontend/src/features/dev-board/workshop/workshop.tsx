@@ -46,6 +46,7 @@ import { Fragment, useCallback, useEffect, useId, useInsertionEffect, useLayoutE
 import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   ArrowRightIcon,
@@ -65,7 +66,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { useVisibility } from '../../../lib/visibility-store';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
-import { swatchFor } from '../../messages/format';
+import { swatchFor } from '../../../lib/community-color';
 import { openBot } from '../../messages/store';
 import { togglePin } from '../../nav/pin-actions';
 import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
@@ -324,9 +325,7 @@ function Faces({ people }: { people: string[] }): ReactNode {
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
       >
         {shown.map((p) => (
-          <span key={p} className="dev-ws-face" style={{ backgroundColor: swatchFor(p) }} title={p}>
-            {p.slice(0, 1).toUpperCase()}
-          </span>
+          <PersonAvatar key={p} name={p} size={null} className="dev-ws-face" title={p} />
         ))}
         {extra > 0 ? <span className="dev-ws-face dev-ws-face-more">{`+${extra}`}</span> : null}
       </button>

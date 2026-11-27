@@ -4596,7 +4596,9 @@ test('the Workshop keeps no swatch of its own — it imports the one the threads
   // Three call sites read it (the faces strip, a theme's letter tile, an
   // item's byline avatar) and all three take a name and get a colour back,
   // so the shared function drops in unchanged.
-  assert.match(WORKSHOP, /^import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';$/m,
+  // The shared swatch is lib/community-color.ts's now: Messages' own copy of
+  // it (messages/format.tsx) was deleted, so there is one function, not two.
+  assert.match(WORKSHOP, /^import \{ swatchFor \} from '\.\.\/\.\.\/\.\.\/lib\/community-color';$/m,
     'the Workshop imports the shared swatch');
   assert.ok(!/(?:function|const)\s+swatchFor\b/.test(WORKSHOP),
     'and defines no local copy — a second palette is the bug this fixes');
@@ -4608,12 +4610,12 @@ test('the Workshop keeps no swatch of its own — it imports the one the threads
   }
 
   // The row and the sheet under it now agree, which is the visible fix.
-  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  const { swatchFor } = loadTsx('frontend/src/lib/community-color.ts');
   assert.equal(swatchFor('ada'), swatchFor('ada'));
   assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
     'and the colour comes from the shared six');
   assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
-    /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
+    /import \{ swatchFor \} from '\.\.\/\.\.\/\.\.\/lib\/community-color';/,
     'the sheet reads the same module — that is what makes the two match');
 });
 

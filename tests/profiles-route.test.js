@@ -532,7 +532,9 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   // is the React spelling of the old `textContent = text` helper.
   assert.match(publicCard, /\{profile\.displayName \|\| profile\.username\}/);
   assert.match(publicCard, /\{profile\.bio\}/);
-  assert.match(publicCard, /referrerPolicy="no-referrer"/);
+  // The picture is the one person picture, which sends no referrer for it.
+  assert.match(publicCard, /<PersonAvatar name=\{profile\.username\} src=\{publicAvatarUrl\(profile\)\}/);
+  assert.match(fs.readFileSync(path.join(root, 'frontend/@/components/ui/feed.tsx'), 'utf8'), /referrerPolicy="no-referrer"/);
   assert.match(publicCard, /verifiedSocialLinksView/);
   assert.match(publicCard, /target="_blank"/);
   assert.match(publicCard, /rel="noopener noreferrer"/);
@@ -543,7 +545,8 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(message('profile:edit.social.note'), /Provider verification and public visibility are managed separately/);
   assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
   assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
-  assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);
+  // The photo covers the letter inside the same circle: PersonAvatar's own.
+  assert.match(fs.readFileSync(path.join(root, 'frontend/@/components/ui/feed.tsx'), 'utf8'), /absolute inset-0 h-full w-full rounded-\[inherit\] object-cover/);
   assert.doesNotMatch(profile, /innerHTML\s*=/);
   assert.doesNotMatch(publicCard, /dangerouslySetInnerHTML/);
   assert.match(app, /publicProfileRoute/);

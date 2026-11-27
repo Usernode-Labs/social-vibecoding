@@ -1,12 +1,13 @@
 import { useCallback, useState } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeading } from '@/components/ui/field';
 import { CameraIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { ProfileDetailsCard } from '../../profile/profile-details-card';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
-import { displayNameOf, initialOf } from '../../profile/profile-store.js';
+import { displayNameOf } from '../../profile/profile-store.js';
 
 /**
  * The Profile part — the head of the Account page.
@@ -38,26 +39,6 @@ function readUser(): ProfileUser | null {
   return user && typeof user === 'object' ? user : null;
 }
 
-function Avatar({ user }: { user: ProfileUser | null }) {
-  if (user?.avatarUrl) {
-    return (
-      <img
-        className="w-11 h-11 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-        src={user.avatarUrl}
-        alt=""
-      />
-    );
-  }
-  return (
-    <span
-      aria-hidden="true"
-      className="w-11 h-11 text-lg rounded-full shrink-0 flex items-center justify-center font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-    >
-      {initialOf(user)}
-    </span>
-  );
-}
-
 export function ProfileSection() {
   const t = useMessages('settings');
   const [user, setUser] = useState<ProfileUser | null>(null);
@@ -82,7 +63,7 @@ export function ProfileSection() {
           href="#profile?edit"
           className="ui-card ui-row flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
         >
-          <Avatar user={user} />
+          <PersonAvatar name={user?.username} src={user?.avatarUrl} size={44} aria-hidden="true" />
           <span className="settings-profile-camera" aria-hidden="true"><CameraIcon /></span>
           <span className="ui-row-tx flex-1 min-w-0">
             <span className="ui-row-t block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
