@@ -159,7 +159,7 @@ const FIELDS = [
 ];
 
 /** The box every one of them renders, from inputVariants' `authWhite`. */
-const BOX = 'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm';
+const BOX = 'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-base md:text-sm';
 
 /** The rendered element with `id`, as `{ tag, attrs, classes }`. */
 function elementById(screen, id) {
@@ -325,4 +325,32 @@ test('the label constant is the survey scale, not the sign-in card caption', () 
   const authLabel = /const LABEL = '([^']+)';/.exec(sheet)[1];
   assert.notEqual(label, authLabel, 'a deliberate difference, not an oversight');
   assert.match(authLabel, /text-\[13px\]/, 'and the sign-in caption is still the smaller one');
+});
+
+// Phone audit (request 7164, point 5): iOS zooms the page when a box under
+// 16px takes the cursor. A field box that names a text size is 16px under
+// 768px and what it always was from there, in the primitive itself, so
+// every screen that draws with it is right at once.
+test('7164: a field box that names a text size is 16px under 768px', () => {
+  const lines = (rel) => read(rel).split('\n')
+    .map((l) => l.trim())
+    // The class strings of the two cva tables: a quoted literal on its own line.
+    .filter((l) => /^'[^']*'[,;]?$/.test(l) && /\b(?:border|bg-|px-)/.test(l));
+  const input = lines('frontend/@/components/ui/input.tsx');
+  const select = lines('frontend/@/components/ui/select.tsx');
+  assert.ok(input.length >= 12 && select.length >= 3, 'both tables were read');
+  const SMALL = /(?<![\w:-])text-(?:xs|sm|\[(?:1[0-5](?:\.\d+)?px|0\.\d+rem)\])/;
+  for (const line of [...input, ...select]) {
+    assert.ok(!SMALL.test(line), `a box is under 16px on a phone: ${line}`);
+  }
+  // The small size is still there from 768px: nothing changed on a desktop.
+  const sized = [...input, ...select].filter((l) => /(?<![\w:-])text-base\b/.test(l));
+  assert.equal(sized.length, 10, 'seven boxes of Input and the three of Select');
+  for (const line of sized) {
+    assert.match(line, /\btext-base (?:leading-5 )?md:text-(?:sm|xs)\b/, line);
+  }
+  // The feed's reply box keeps its 20px line at both sizes: `md:text-xs`
+  // brings a line height of its own, and a variant lands after `leading-5`.
+  const reply = input.find((l) => l.includes('rounded-2xl'));
+  assert.match(reply, /text-base leading-5 md:text-xs md:leading-5/);
 });

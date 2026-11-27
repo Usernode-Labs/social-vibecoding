@@ -88,10 +88,18 @@ const inputVariants = cva('', {
       w20: 'w-20',
       none: '',
     },
+    // TEXT SIZE (request 7164, point 5). A box that sets its own size is
+    // `text-base md:text-sm`: 16px under 768px, because iOS zooms the page
+    // when a field under 16px takes the cursor, and the 14px it always was
+    // from 768px. Both are rem, so Settings' Text size still scales them.
+    // `activityReply` restates `leading-5` at `md:` for the same reason it
+    // has it at all: `md:text-xs` brings its own line height, and a variant
+    // lands after the plain utility. A new box that names a size follows
+    // the pair; `card` and `composerCard` are 17px and need nothing.
     box: {
       // The settings screen's standard field.
       default:
-        'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+        'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-base md:text-sm text-zinc-900 dark:text-zinc-100',
       // The dialogs' field, inheriting its text size from the card rather
       // than setting `text-sm` itself. White on the white card, with its
       // edge (phone review #52, 23 Nov 2026): the settings screen's grey
@@ -100,7 +108,7 @@ const inputVariants = cva('', {
         'rounded-lg bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100',
       // #members-approvals-n — the same box at number-field size.
       tight:
-        'rounded-lg bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+        'rounded-lg bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-base md:text-sm text-zinc-900 dark:text-zinc-100',
       // The auth screens' field. A darker dark-mode fill than the settings
       // one (`zinc-900`, against the auth card's `zinc-800`), and no text
       // size of its own. Kept separate rather than normalised onto
@@ -131,7 +139,7 @@ const inputVariants = cva('', {
       // the win the audit asked for is still taken: this is ONE spelling owned
       // by the primitive instead of sixteen hand-written copies of it.
       authWhite:
-        'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm',
+        'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-base md:text-sm',
       // The App AI permissions row's field: a white fill on the row's card
       // and a small radius, with the tight padding that keeps a number field
       // on one line of a `text-xs` row (features/settings/grants-list.tsx).
@@ -153,7 +161,7 @@ const inputVariants = cva('', {
       // #profile-edit-github, #profile-edit-x and #profile-edit-username, all
       // in features/profile/profile-edit-sheet.tsx.
       groupRow:
-        'bg-transparent border-0 px-0 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+        'bg-transparent border-0 px-0 py-2 text-base md:text-sm text-zinc-900 dark:text-zinc-100',
       // The group chat composer. `auth`'s darker dark-mode fill (the composer
       // sits on the chat pane, not on a card) with the settings box's
       // `text-sm`, and the two shape utilities the field needs BEFORE its
@@ -166,7 +174,7 @@ const inputVariants = cva('', {
       // is the boxed inline thread layout. Both in
       // features/group-chat/composer.tsx.
       composer:
-        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-base md:text-sm text-zinc-900 dark:text-zinc-100',
       // The Discussion and topic-thread composers' field inside the card
       // (features/group-chat/composer.tsx): no box of its own, at reading size.
       // A field that is a ROW of a white card (settings, sign-in): the card
@@ -176,14 +184,14 @@ const inputVariants = cva('', {
       composerCard:
         'resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-[17px] leading-[22px] text-zinc-900 dark:text-zinc-100',
       composerTight:
-        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-base md:text-sm text-zinc-900 dark:text-zinc-100',
       // The Activity feed's inline reply field. It sits directly on the page
       // ground, so it takes the white card surface rather than the zinc-100
       // ground itself. The rounded one-row field opens into a compact
       // multi-line box, capped at four lines before its own scrollbar takes
       // over. Call site: features/dev-board/card/feed-thread.tsx.
       activityReply:
-        'resize-none overflow-y-auto max-h-24 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1 text-xs leading-5 text-zinc-900 dark:text-zinc-100',
+        'resize-none overflow-y-auto max-h-24 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1 text-base leading-5 md:text-xs md:leading-5 text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because
