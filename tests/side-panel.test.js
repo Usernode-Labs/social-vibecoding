@@ -1337,7 +1337,9 @@ test('what the top window owns stands down in the panel\'s document', () => {
   // The service worker (registered by the top window).
   assert.match(read('frontend/src/lib/service-worker.ts'), /if \(isEmbeddedPanel\(\)\) return;\s*container\.register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/);
   // A frame's history entries are the top's: no dismiss records.
-  assert.match(read('frontend/src/lib/back-stack.ts'), /if \(typeof window !== 'undefined' && !isEmbeddedPanel\(\)\) \{\s*shared = createBackStack\(window\);/);
+  // A stand-in `window` with no events (a test's) claims nothing either: the
+  // Sheet and the Menu reach this module from more of the tree now.
+  assert.match(read('frontend/src/lib/back-stack.ts'), /if \(typeof window !== 'undefined' && typeof window\.addEventListener === 'function' && !isEmbeddedPanel\(\)\) \{\s*shared = createBackStack\(window\);/);
   // The first-run gates and the tour (the top window presents them, once).
   assert.match(read('frontend/src/features/auth/username-first-run.js'), /classList\?\.contains\('in-side-panel'\)\) \{\s*UsernameFirstRun\._resolve\(\);/);
   assert.match(read('frontend/src/features/settings/terms-first-run.js'), /classList\?\.contains\('in-side-panel'\)\) \{\s*TermsFirstRun\._resolve\(\);/);
