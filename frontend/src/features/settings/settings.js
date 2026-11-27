@@ -214,6 +214,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
+    _loadQRCode: null,
     state: { usernodePubkey: null, walletLinkEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
@@ -4940,14 +4941,20 @@
 
         const container = document.getElementById('wallet-qr-canvas');
         container.innerHTML = '';
-        if (window.QRCode) {
-          new QRCode(container, {
+        // The QR library is loaded here, not at boot: ./mount.ts plants the
+        // loader (lib/qr-code.ts), as it plants `_store`. A load that fails
+        // draws no code, as a missing global did.
+        const QR = this._loadQRCode
+          ? await this._loadQRCode().catch(() => null)
+          : window.QRCode;
+        if (QR) {
+          new QR(container, {
             text: qrPayload,
             width: 180,
             height: 180,
             colorDark: '#1a1a30',
             colorLight: '#ffffff',
-            correctLevel: QRCode.CorrectLevel.L,
+            correctLevel: QR.CorrectLevel.L,
           });
         }
 
