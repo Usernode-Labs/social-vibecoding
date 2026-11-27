@@ -118,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [platform, worker, capture, wasm-runner, wasm-data]
+        component: [platform, worker, capture]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -332,12 +332,6 @@ jobs:
             '  captureImage:',
             `    repository: ghcr.io/${owner}/social-vibecoding-capture`,
             `    digest: ${digest('capture')}`,
-            '  wasmRunnerImage:',
-            `    repository: ghcr.io/${owner}/social-vibecoding-wasm-runner`,
-            `    digest: ${digest('wasm-runner')}`,
-            '  wasmDataImage:',
-            `    repository: ghcr.io/${owner}/social-vibecoding-wasm-data`,
-            `    digest: ${digest('wasm-data')}`,
             '',
           ].join('\n');
 
