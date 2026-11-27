@@ -392,6 +392,40 @@ test('an app open for a visitor is no longer pinned from the landing\'s bar; Dis
   assert.match(renderToHtml(createElement(wired.GuestDiscover, discoverProps())), /data-guest-pinned-app="todo-list"/);
 });
 
+test('Featured on the signed-in pages stops at six, a full row, and the seventh joins Communities to join (#7229)', () => {
+  const { CommunitiesToJoin, FEATURED_MAX } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  // Three across on a desktop, two on a phone (app.css `.cm-grid`): six ends
+  // on a full row either way (Drea's request, the seventh card alone).
+  assert.equal(FEATURED_MAX, 6);
+  const many = Array.from({ length: 8 }, (_, i) => ({
+    slug: `f${i + 1}`, name: `Featured ${i + 1}`, description: null, category: null,
+    featured: true, featured_order: i + 1, active_users: 10, open_votes: 0, created_at: ago(200),
+    member_count: 1, merged_count: 0, latest_change: null, contributors: [],
+    guest_ready: false, requires_login: true, url: `https://f${i + 1}.example`,
+  }));
+  const draw = (signedIn) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: many, exclude: new Set(), signedIn, query: '',
+  }));
+  const featuredOf = (html) => [...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]);
+  const cardsOf = (html) => [...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]);
+  const signedInHtml = draw(true);
+  assert.deepEqual(featuredOf(signedInHtml), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'], 'the first six, in the order an admin set');
+  assert.doesNotMatch(signedInHtml, /data-home-join-featured-rest/, 'one grid of covers signed in, nothing left over in it');
+  // Nothing is hidden: the seventh and anything after it is in the list
+  // below, as a plain card, in that list's sort (a tie keeps the order).
+  assert.deepEqual(cardsOf(signedInHtml), ['f7', 'f8']);
+  // The visitor's landing is unchanged: it draws every featured community.
+  assert.deepEqual(featuredOf(draw(false)), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
+  // The Communities page draws this same section signed in (the spec's
+  // second surface), so it takes the same cap.
+  assert.match(
+    read('frontend/src/features/communities/index.tsx'),
+    /<CommunitiesToJoin\s+apps=\{directory\}[\s\S]*?\bsignedIn\b/,
+    'the Communities page mounts Communities to join as a signed-in page',
+  );
+});
+
 // Twenty projects, the even ones (a01, a03, …) open for a visitor.
 const MANY = Array.from({ length: 20 }, (_, i) => ({
   slug: `a${String(i + 1).padStart(2, '0')}`, name: `App ${i + 1}`, active_users: 20 - i, member_count: 0,

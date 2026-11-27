@@ -19,11 +19,14 @@
  * (featured_order), its first row LARGER, signed in or out ("first row of
  * featured larger everywhere"): one fewer than a row of the rest holds,
  * three on a laptop, the whole width on a phone (`useLeadCount`), and the
- * rest of Featured in the grid under it. Featured is the first
- * group of the section, of the chosen kind, and left out while a search is
- * typed (its matches are the grid, featured first). Its heading names the
- * chosen kind ("Featured in Games") so the group reads as that kind's. Then
- * the rest under "More communities" whenever Featured is shown, under All or
+ * rest of Featured in the grid under it. The signed-in pages show at most
+ * FEATURED_MAX of them, so the grid ends on a full row; a featured
+ * community past it is not hidden, it joins the list below (#7229).
+ * Featured is the first group of the section, of the chosen kind, and left
+ * out while a search is typed (its matches are the grid, featured first).
+ * Its heading names the chosen kind ("Featured in Games") so the group reads
+ * as that kind's. Then the rest under "More communities" whenever Featured
+ * is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
  * Popular, Most active or A to Z; most active until somebody picks another),
@@ -53,6 +56,14 @@ import { rankCommunities } from './use-home-query';
 
 /** How many cards a page brings. */
 export const JOIN_PAGE = 8;
+
+/**
+ * How many featured communities the signed-in pages draw (#7229): three
+ * across on a desktop, two on a phone (app.css `.cm-grid`, ONE LOOK), so six
+ * always ends on a full row. A seventh, and any after it, joins the list
+ * under Communities to join rather than sitting alone on an empty row.
+ */
+export const FEATURED_MAX = 6;
 
 /** The sorts the "More communities" control offers, in the order it shows them. */
 export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
@@ -100,7 +111,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
 
   const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
   const kinds = useMemo(() => presentCategories(pool), [pool]);
-  const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  const allFeatured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  // The signed-in pages show at most FEATURED_MAX of them (#7229), so the
+  // grid ends on a full row; what is past it is not dropped: it falls into
+  // the list below, which leaves out only the featured ones actually drawn.
+  const featured = useMemo(() => (wip ? allFeatured.slice(0, FEATURED_MAX) : allFeatured), [allFeatured, wip]);
   // Featured's first row is larger, signed in or out: as many as
   // useLeadCount reads off an empty grid of the rest's kind (`probe`).
   const [probe, setProbe] = useState<HTMLDivElement | null>(null);
