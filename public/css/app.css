@@ -25840,11 +25840,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   display: flex; flex-direction: column; gap: 2px;
   min-height: 0; overflow-y: auto; overscroll-behavior: contain;
 }
+/* A switcher row is the shared ListRow (community-switcher.tsx's
+   SWITCHER_ROW, which also sets its inset and gap); this is what a menu's
+   row adds to it: its height and its own rounded ground. */
 .community-switcher-row {
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; min-height: 60px; padding: 8px 12px; box-sizing: border-box;
-  border: 0; border-radius: 14px; background: transparent;
-  color: inherit; font: inherit; text-align: start; cursor: pointer;
+  min-height: 60px; border-radius: 14px;
   -webkit-tap-highlight-color: transparent;
 }
 .community-switcher-menu .community-switcher-row { min-height: 52px; border-radius: 10px; }
@@ -25877,12 +25877,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   background: transparent; color: var(--text-muted);
   box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
 }
-.community-switcher-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.community-switcher-name {
-  font-size: 15px; font-weight: 650; line-height: 20px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.community-switcher-sub { font-size: 13px; line-height: 17px; color: var(--text-muted); }
 .community-switcher-waiting {
   flex: none; height: 22px; padding: 0 8px; border-radius: 999px;
   display: inline-flex; align-items: center;
