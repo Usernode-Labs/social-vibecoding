@@ -1498,8 +1498,8 @@ const Notifications = {
       // open that thread, as a mention or a reply there does. A first
       // message Homeroom bot filed as a request ("Asked for a change") keeps
       // the channel it has always opened.
-      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply',
-        'first_message', 'channel_message']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply',
+        'first_message', 'channel_message', 'change_thread_reply']);
       const askedFirstMessage = item.kind === 'first_message' && item.requestNumber != null;
       const routeChat = chatKinds.has(item.kind) && !askedFirstMessage;
       // #2387: a message in a REPLY thread (thread_type 'message', its ref
