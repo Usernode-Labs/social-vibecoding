@@ -45,6 +45,7 @@
 //   GATE_UPSTREAM_PORT    the apps' Service port (default 3000)
 //   PORT                  this server's port (default 3000)
 
+const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const net = require('net');
@@ -81,7 +82,12 @@ const HOP_BY_HOP = new Set([
 ]);
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
-const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep', 'x-usernode-asset-version'];
+const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep', 'x-usernode-asset-version',
+  // A Wasm twin's pass, its runtime and each write's operation ID
+  // (runtime/wasm/README.md): only the platform and this gate set them.
+  'x-usernode-pass', 'x-usernode-runtime', 'x-usernode-op'];
+// A Wasm twin's request is held whole so it can be sent again: the largest.
+const WASM_MAX_BODY = 10 * 1024 * 1024;
 // What a refusal may carry back to the visitor. `set-cookie` is what makes
 // the sign-in hop work at all: the redirect that starts it sets the state
 // cookie, and the callback's sets the access cookie (every value, when
@@ -416,6 +422,7 @@ function createGate({
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end('502 Bad Gateway');
     }
+    if (decision.headers['x-usernode-runtime'] === 'wasm') return proxyWasm(req, res, decision, upstream);
     const applink = String(decision.headers['x-usernode-applink'] || '');
     const target = upstreamTarget(upstream);
     const endActivity = activity.begin(upstream, req.url, { method: req.method, userAgent: req.headers['user-agent'] });
@@ -474,6 +481,66 @@ function createGate({
     });
     req.on('aborted', () => proxied.destroy());
     req.pipe(proxied);
+    return undefined;
+  }
+
+  // A Wasm twin's request (runtime/wasm/README.md): to the runners with the
+  // platform's pass, every write with an operation ID, and sent once more,
+  // with the same ID, when a runner fails before answering. The data service
+  // keeps each write's result under its ID, so the second send answers what
+  // the first committed instead of writing again.
+  function proxyWasm(req, res, decision, upstream) {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > WASM_MAX_BODY) { req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('error', () => res.destroy());
+    req.on('end', () => {
+      if (size > WASM_MAX_BODY) {
+        res.writeHead(413, { 'content-type': 'text/plain; charset=utf-8' });
+        return res.end('413 Payload Too Large');
+      }
+      const body = Buffer.concat(chunks);
+      const headers = upstreamHeaders(req, decision);
+      headers['x-usernode-pass'] = String(decision.headers['x-usernode-pass'] || '');
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) headers['x-usernode-op'] = crypto.randomUUID();
+      headers['content-length'] = String(body.length);
+      const target = upstreamTarget(upstream);
+      const send = (attempt) => {
+        const endActivity = activity.begin(upstream, req.url, { method: req.method, userAgent: req.headers['user-agent'] });
+        // A fresh connection for the second send: the first one's socket
+        // may be the runner that just went away.
+        const proxied = http.request({
+          hostname: target.host, port: target.port, path: req.url, method: req.method, headers,
+          agent: attempt === 1 ? upstreamAgent : false,
+        }, (upRes) => {
+          upRes.once('end', endActivity);
+          upRes.once('close', endActivity);
+          const out = cleanHeaders(upRes.headers);
+          const robots = searchRobots.appHostRobots({ host: req.headers.host, url: req.url });
+          if (robots) out['x-robots-tag'] = searchRobots.withRobots(out['x-robots-tag'], robots);
+          res.writeHead(upRes.statusCode || 502, out);
+          upRes.pipe(res);
+        });
+        proxied.on('error', (err) => {
+          endActivity();
+          if (res.headersSent) { res.destroy(); return; }
+          if (attempt === 1 && !req.aborted) {
+            log.warn?.('[app-gate] Wasm runner failed before answering; sending once more', upstream, err.code || err.message);
+            send(2);
+            return;
+          }
+          log.warn?.('[app-gate] upstream failed', upstream, err.code || err.message);
+          unavailable(req, res);
+        });
+        proxied.end(body);
+      };
+      send(1);
+      return undefined;
+    });
     return undefined;
   }
 

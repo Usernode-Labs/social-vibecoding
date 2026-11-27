@@ -286,7 +286,14 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // clone there carries the commit's directory listing and its root files,
     // nothing under them and no submodules (the build fetches none either).
     // Docker builds FROM this directory and keeps the whole tree.
-    const rootOnly = !applicationRuntime.buildReadsWholeSource(config);
+    //
+    // A project switched to Wasm previews (services/wasm-previews.js) also
+    // gets a Wasm twin of this preview, built from the whole tree: its
+    // routes, its screen's files and the data files its code reads.
+    const wasmPreviews = require('./wasm-previews');
+    const twinDb = await wasmPreviews.enabledFor(config, getPool(config), app.id).catch(() => false)
+      ? wasmPreviews.twinDb(attempt.dbName) : null;
+    const rootOnly = !applicationRuntime.buildReadsWholeSource(config) && !twinDb;
 
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
@@ -509,6 +516,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         timings.cloneMs = Date.now() - cloneStartedAt;
       }
     };
+    // The twin's database, beside the image and the clone; its module once
+    // the Node preview is up (finishTwin). Never the preview's failure: what
+    // fails is logged and the preview serves without a twin.
+    const twinWork = twinDb ? Promise.allSettled([
+      dbManager.cloneDatabase(prodDbName, twinDb, { viaTemplate: true }),
+    ]) : null;
     let build, cloned;
     try {
       if (parallelPreparation) {
@@ -526,7 +539,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         cloned = await cloneDatabase();
       }
     } finally {
-      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      if (twinWork) await twinWork;
+      // A twin's build reads the checkout after the deploy (finishTwin).
+      if (!twinDb) await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
     // The clone says which server it was made on (the preview server when
     // STAGING_DB_ADMIN_URL names one). The container keeps this URL for its
@@ -617,6 +632,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       });
     }
     const { hostname, url: stagingUrl } = deployed;
+    const twin = twinWork ? await finishTwin(config, {
+      app, session, db: twinDb, work: await twinWork, sourceDir: cloneDir,
+      nodeRef: { runtimeKind: deployed.runtimeKind, runtimeName: deployed.runtimeName },
+    }) : null;
 
     // NOTE: the edge verification intentionally does NOT happen here. The
     // machine records the receipt (its `published` write) when this returns,
@@ -655,6 +674,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       commitSha: resolvedRevision || null,
       stagingUrl,
       hostname,
+      // The Wasm twin, when this project has one and it came up
+      // (services/wasm-runtime.js); the machine keeps it beside the preview.
+      twin,
       timings,
     };
   } catch (err) {
@@ -681,6 +703,36 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       }
     }
     throw err;
+  }
+}
+
+// The Wasm twin's last steps once the Node preview is up: its database's
+// login, the app's setup run and its route (services/wasm-runtime.js). Its
+// record, or null with the reason logged: a twin never fails the preview.
+async function finishTwin(config, { app, session, db, work, sourceDir, nodeRef }) {
+  const wasmRuntime = require('./wasm-runtime');
+  try {
+    const [clonedTwin] = work;
+    if (clonedTwin.status === 'rejected') {
+      log.warn('staging', 'Wasm twin not built', { sessionId: session.id, app: app.slug, err: clonedTwin.reason?.message });
+      return null;
+    }
+    const stylesheet = await wasmRuntime.copyNodeStylesheet(config, nodeRef, sourceDir);
+    const built = await wasmRuntime.buildModule(config, getPool(config), { app, sourceDir });
+    const twin = await wasmRuntime.prepareTwin(config, {
+      app, sessionId: session.id, db, cloned: clonedTwin.value, moduleHash: built.moduleHash,
+      hostname: caddy.stagingHostname(app.slug, `s${session.id}${require('./wasm-previews').HOST_SUFFIX}`),
+    });
+    log.info('staging', 'Wasm twin ready', {
+      sessionId: session.id, app: app.slug, url: twin.url, moduleBytes: built.size, buildMs: built.ms,
+      setupMs: twin.setupMs, stylesheet,
+    });
+    return twin;
+  } catch (err) {
+    log.warn('staging', 'Wasm twin not ready', { sessionId: session.id, app: app.slug, err: err.message });
+    return null;
+  } finally {
+    await docker.execFileAsync('rm', ['-rf', sourceDir]).catch(() => {});
   }
 }
 

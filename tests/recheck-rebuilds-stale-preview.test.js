@@ -161,8 +161,8 @@ test('the machine\'s recheck rebuilds a stale preview at the head, and re-runs a
 
 test('publishing stamps the built head on the row and unpublishing clears it', () => {
   const machineSrc = read('src/workflow/preview/machine.ts');
-  assert.match(machineSrc, /staging_runtime_kind = \$6, staging_runtime_name = \$7, staging_commit_sha = \$8\n\s+WHERE id = \$1`,\n\s+\[w\.sessionId, w\.served\.url, w\.served\.containerId, w\.served\.imageRef, w\.served\.buildRef,\n\s+w\.served\.runtimeKind, w\.served\.runtimeName, w\.served\.head\]/);
-  assert.match(machineSrc, /staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL\n\s+WHERE id = \$1`/);
+  assert.match(machineSrc, /staging_runtime_kind = \$6, staging_runtime_name = \$7, staging_commit_sha = \$8, wasm_twin = \$9\n\s+WHERE id = \$1`,\n\s+\[w\.sessionId, w\.served\.url, w\.served\.containerId, w\.served\.imageRef, w\.served\.buildRef,\n\s+w\.served\.runtimeKind, w\.served\.runtimeName, w\.served\.head,/);
+  assert.match(machineSrc, /staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL,\n\s+wasm_twin = NULL\n\s+WHERE id = \$1`/);
   assert.match(read('src/services/staging.js'), /commitSha: resolvedRevision \|\| null,/, 'the build hands back the commit it cloned');
   assert.match(read('src/db/schema.sql'), /ALTER TABLE chat_sessions\s+ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR\(64\);/);
   // A Preview click judges the preview against the head the row is about.

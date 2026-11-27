@@ -328,6 +328,14 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: STAGING_IDLE_TEARDOWN_MS, value: {{ .Values.config.stagingIdleTeardownMs | int64 | quote }}}
             - {name: KUBERNETES_WORKER_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.workerImage | quote }}}
             - {name: KUBERNETES_CAPTURE_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.captureImage | quote }}}
+            - {name: WASM_PREVIEWS, value: {{ .Values.config.wasmPreviews | default "off" | quote }}}
+            {{- if eq (.Values.config.wasmPreviews | default "off") "on" }}
+            - {name: KUBERNETES_WASM_RUNNER_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.wasmRunnerImage | quote }}}
+            - {name: KUBERNETES_WASM_DATA_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.wasmDataImage | quote }}}
+            - {name: KUBERNETES_WASM_RUNTIME_CLASS, value: {{ .Values.config.wasmRuntimeClass | default "kata" | quote }}}
+            - {name: KUBERNETES_WASM_RUNNER_REPLICAS, value: {{ .Values.config.wasmRunnerReplicas | default 2 | int64 | quote }}}
+            - {name: KUBERNETES_WASM_WARM, value: {{ .Values.config.wasmWarm | default 0 | int64 | quote }}}
+            {{- end }}
           ports:
             - {name: http, containerPort: 3000, protocol: TCP}
             {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}

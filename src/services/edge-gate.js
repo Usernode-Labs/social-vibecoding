@@ -670,6 +670,24 @@ async function upstreamFor(pool, parsed, vis) {
   return name;
 }
 
+// A preview's Wasm twin (services/wasm-previews.js): what its address
+// serves, as the preview machine published it (chat_sessions.wasm_twin), for
+// 10 s like the upstream. null when that preview has no twin.
+const twins = new Map();
+async function twinFor(pool, sessionId, appId) {
+  const key = `${appId}:${sessionId}`;
+  const hit = twins.get(key);
+  if (hit && Date.now() - hit.at < 10_000) return hit.twin;
+  const { rows } = await pool.query(
+    `SELECT cs.wasm_twin, a.name, a.slug FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.id = $1 AND cs.app_id = $2`, [sessionId, appId]);
+  const raw = rows[0]?.wasm_twin || null;
+  const twin = raw && /^[0-9a-f]{64}$/.test(String(raw.mod || '')) && raw.db
+    ? { mod: raw.mod, db: raw.db, env: require('./wasm-previews').twinEnv(rows[0]) } : null;
+  boundedSet(twins, key, { at: Date.now(), twin });
+  return twin;
+}
+
 function cookieOptions(maxAgeSeconds) {
   return {
     httpOnly: true,
@@ -816,6 +834,20 @@ async function handleAccess(pool, req, res) {
           res.set('Retry-After', '5');
           return res.status(503).json({ error: 'app_starting', message: 'This app is starting. Try again shortly.' });
         }
+      }
+      // A Wasm twin's address: the runners, with a pass that names its
+      // module, its database and who is signed in. The gate passes it on
+      // and gives each write an operation ID (scripts/app-gate.js).
+      const wasm = !isProduction ? require('./wasm-previews').twinOfLabel(parsed.label) : null;
+      if (wasm) {
+        const twin = await twinFor(pool, wasm.sessionId, vis.appId);
+        if (!twin) return res.status(404).send('Not found');
+        res.set('X-Usernode-Upstream', require('./wasm-previews').RUNNER_NAME);
+        res.set('X-Usernode-Runtime', 'wasm');
+        res.set('X-Usernode-Pass', require('./wasm-previews').signPass({
+          appId: vis.appId, sessionId: wasm.sessionId, moduleHash: twin.mod, db: twin.db, userId: identityFor, env: twin.env,
+        }));
+        return res.status(200).send('ok');
       }
       const upstream = await upstreamFor(pool, parsed, vis);
       if (!upstream) return res.status(404).send('Not found');

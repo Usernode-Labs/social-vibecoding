@@ -54,6 +54,7 @@ const appStorageCap = require('../services/app-storage-cap');
 const appFiles = require('../services/app-files');
 const appLimit = require('../services/app-limit');
 const previewProjectsSetting = require('../services/preview-projects-setting');
+const wasmPreviews = require('../services/wasm-previews');
 const versionsSetting = require('../services/versions-setting');
 const sessionLimit = require('../services/session-limit');
 const platformLimits = require('../services/platform-limit-alerts');
@@ -1552,6 +1553,39 @@ function adminRoutes(config) {
       res.json(await previewProjectsSetting.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update preview projects setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Wasm previews (a pilot) ─────────────────────────────────
+  //
+  // Which projects get a Wasm twin beside each proposal preview
+  // (services/wasm-previews.js, runtime/wasm/README.md). Read open to
+  // view-only admins; the write is requireAdminWrite. `projects` is the whole
+  // list of project ids (an empty list switches every project off). Only a
+  // deploy with WASM_PREVIEWS=on builds twins; elsewhere the list is kept and
+  // does nothing.
+  router.get('/api/admin/wasm-previews', async (_req, res) => {
+    try {
+      res.json(await wasmPreviews.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read Wasm previews setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/wasm-previews', requireAdminWrite, async (req, res) => {
+    const ids = (req.body || {}).projects;
+    const invalid = wasmPreviews.validate(ids);
+    if (invalid) return res.status(400).json({ error: invalid });
+    try {
+      const { rows } = await pool.query('SELECT id FROM apps WHERE id = ANY($1::int[])', [ids.map(Number)]);
+      if (rows.length !== new Set(ids.map(Number)).size) return res.status(400).json({ error: 'Every id must be a project.' });
+      await wasmPreviews.set(pool, { projects: ids, actorId: req.user.id });
+      log.info('admin', 'Wasm previews setting updated', { by: req.user.username, projects: ids });
+      res.json(await wasmPreviews.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update Wasm previews setting failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

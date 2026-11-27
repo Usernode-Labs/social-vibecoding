@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.7
+# The Wasm runner: builds app modules (esbuild + Javy) and runs them
+# (Wasmtime). Build context: runtime/wasm. See README.md.
+#
+#   docker build -f runtime/wasm/Dockerfile.runner runtime/wasm
+#
+# Tool downloads are pinned by version and SHA-256, for linux/amd64 (CI)
+# and linux/arm64 (local builds on Apple silicon).
+
+ARG RUST_IMAGE=rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c
+ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
+
+FROM ${RUST_IMAGE} AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY common common
+COPY runner runner
+COPY dsvc dsvc
+RUN --mount=type=cache,id=wasm-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=wasm-runner-target,target=/src/target \
+    cargo build --release --locked -p wasm-runner \
+ && cp target/release/wasm-runner /usr/local/bin/wasm-runner
+
+FROM ${DEBIAN_IMAGE} AS tools
+ARG TARGETARCH
+ARG JAVY_VERSION=9.1.0
+ARG ESBUILD_VERSION=0.28.2
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) javy=x86_64-linux; javy_sha=a68b122d48eb3dfc1b801d4e14c39271fde3638243d3272d206e376ac9189e39; \
+             esb=linux-x64;     esb_sha=9573bb2233aab0f9ea7647d5cca9726113cc1768de61d66b17267f4db84488f6 ;; \
+      arm64) javy=arm-linux;    javy_sha=826962f0e82354cf97d6e928ea36777872bbae76c626e326948e0367c4b55cb5; \
+             esb=linux-arm64;   esb_sha=a96dbfa41d3ef5dbd1ef22b1c10d5187be9267e86093a870f06402a7ec931596 ;; \
+      *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/javy.gz "https://github.com/bytecodealliance/javy/releases/download/v${JAVY_VERSION}/javy-${javy}-v${JAVY_VERSION}.gz"; \
+    echo "${javy_sha}  /tmp/javy.gz" | sha256sum -c -; \
+    gunzip /tmp/javy.gz; install -m 0755 /tmp/javy /usr/local/bin/javy; \
+    curl -fsSL -o /tmp/esbuild.tgz "https://registry.npmjs.org/@esbuild/${esb}/-/${esb}-${ESBUILD_VERSION}.tgz"; \
+    echo "${esb_sha}  /tmp/esbuild.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/esbuild.tgz -C /tmp; install -m 0755 /tmp/package/bin/esbuild /usr/local/bin/esbuild; \
+    mkdir -p /opt/wasm; \
+    # The engine every module links against: the plugin of this very Javy,
+    # so what the build compiles against and what the runner runs are one file.
+    javy emit-plugin -o /opt/wasm/plugin.wasm; \
+    esbuild --version; javy --version
+
+FROM ${DEBIAN_IMAGE} AS runner
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 1000 --user-group --home-dir /home/wasm --create-home --shell /usr/sbin/nologin wasm
+COPY --from=tools /usr/local/bin/javy /usr/local/bin/esbuild /usr/local/bin/
+COPY --from=tools /opt/wasm/plugin.wasm /opt/wasm/plugin.wasm
+COPY guest /opt/wasm/guest
+COPY --from=build /usr/local/bin/wasm-runner /usr/local/bin/wasm-runner
+ENV PORT=3000 \
+    WASM_GUEST_DIR=/opt/wasm/guest \
+    WASM_PLUGIN=/opt/wasm/plugin.wasm \
+    WASM_JAVY=/usr/local/bin/javy \
+    WASM_ESBUILD=/usr/local/bin/esbuild \
+    WASM_BUILD_DIR=/tmp
+USER 1000:1000
+WORKDIR /home/wasm
+EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/wasm-runner"]

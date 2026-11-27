@@ -77,7 +77,11 @@ export interface Served extends Attempt {
   buildRef: string | null;
   since?: string;                // when it started serving (absent: before version 8)
   lost?: boolean;                // lost again soon after it started (lostAgain): it serves nothing to check
+  twin?: WasmTwin | null;        // its Wasm twin, for a project switched to Wasm previews (services/wasm-previews.js)
 }
+// A preview's Wasm twin, as services/wasm-runtime.js prepareTwin made it:
+// its database (the attempt's with `_w`), its module, its address and its route.
+export interface WasmTwin { db: string; mod: string; host: string; url: string; name: string; setupMs?: number | null }
 export interface Run { key: string; n: number; head: string }
 // What serves `head` and can be checked: not one that was lost (lostAgain),
 // which stays the serving record only so the rebuild retires it.
@@ -1356,6 +1360,7 @@ export interface PrepareResult {
   // How long the build's steps took (staging.js `timings`), handed to the
   // checks run that follows so its trace records them.
   timings?: Json | null;
+  twin?: WasmTwin | null;       // the Wasm twin built beside it, when there is one
 }
 
 export interface RunResult {
@@ -1416,6 +1421,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
       ...attempt, db: servedDb, dbs: [servedDb], url: String(r.url), runtimeKind: String(r.runtimeKind),
       runtimeName: String(r.runtimeName), containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
       since: ctx.now.toISOString(),
+      ...(r.twin ? { twin: r.twin } : {}),
     };
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
     const gone = previous ? retire(d0, previous, ctx, deps) : null;
@@ -1827,10 +1833,12 @@ const WRITES = {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = $2, staging_container_id = $3, staging_image_ref = $4, staging_build_ref = $5,
               staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
-              staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8
+              staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8, wasm_twin = $9
         WHERE id = $1`,
       [w.sessionId, w.served.url, w.served.containerId, w.served.imageRef, w.served.buildRef,
-        w.served.runtimeKind, w.served.runtimeName, w.served.head]);
+        w.served.runtimeKind, w.served.runtimeName, w.served.head,
+        // The gate reads it to sign each request to the twin (edge-gate.js).
+        w.served.twin ? JSON.stringify({ ...w.served.twin, since: w.served.since ?? null }) : null]);
     if (!w.note) return;
     const row = await proposalOf(tx, w.sessionId);
     if (!row) return;
@@ -1851,7 +1859,8 @@ const WRITES = {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL, staging_image_ref = NULL,
               staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
-              staging_build_ref = NULL, staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL
+              staging_build_ref = NULL, staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL,
+              wasm_twin = NULL
         WHERE id = $1`, [w.sessionId]);
     await dropMedia(tx, w.sessionId);
   },

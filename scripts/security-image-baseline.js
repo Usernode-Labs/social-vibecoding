@@ -11,6 +11,9 @@ const { sbomPackages } = require('./security-findings');
 const COMPONENTS = {
   platform: ['Dockerfile.kubernetes', '.'], standalone: ['Dockerfile', '.'],
   worker: ['worker/Dockerfile', 'worker'], capture: ['capture/Dockerfile', '.'], starter: null,
+  // Wasm previews' images (runtime/wasm/README.md), built by the release.
+  'wasm-runner': ['runtime/wasm/Dockerfile.runner', 'runtime/wasm'],
+  'wasm-data': ['runtime/wasm/Dockerfile.data', 'runtime/wasm'],
 };
 
 function buildBaseline({ component, revision, output, root = path.join(__dirname, '..'),

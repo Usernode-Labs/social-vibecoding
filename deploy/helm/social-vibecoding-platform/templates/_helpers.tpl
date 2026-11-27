@@ -197,6 +197,13 @@ administrative connection and a psql).
         {{- fail (printf "%s.digest must be an immutable sha256 digest when platform is enabled" $name) -}}
       {{- end -}}
     {{- end -}}
+    {{- if eq (.Values.config.wasmPreviews | default "off") "on" -}}
+      {{- range $name, $image := dict "platform.wasmRunnerImage" .Values.platform.wasmRunnerImage "platform.wasmDataImage" .Values.platform.wasmDataImage -}}
+        {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) -}}
+          {{- fail (printf "%s.digest must be an immutable sha256 digest when config.wasmPreviews is on" $name) -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
   {{- end -}}
   {{- /* The two object stores: config.<store> {endpoint, bucket} and secrets.<store>AccessKey / SecretKey. */ -}}
   {{- range $store := list "mediaStorage" "appFileStorage" -}}

@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+# The data service: a Wasm app's only way to its database. Build context:
+# runtime/wasm. See README.md.
+#
+#   docker build -f runtime/wasm/Dockerfile.data runtime/wasm
+
+ARG RUST_IMAGE=rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c
+ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
+
+FROM ${RUST_IMAGE} AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY common common
+COPY runner runner
+COPY dsvc dsvc
+RUN --mount=type=cache,id=wasm-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=wasm-data-target,target=/src/target \
+    cargo build --release --locked -p wasm-data \
+ && cp target/release/wasm-data /usr/local/bin/wasm-data
+
+FROM ${DEBIAN_IMAGE} AS data
+RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin wasm
+COPY --from=build /usr/local/bin/wasm-data /usr/local/bin/wasm-data
+ENV PORT=3000
+USER 1000:1000
+EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/wasm-data"]
