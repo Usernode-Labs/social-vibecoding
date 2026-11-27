@@ -65,6 +65,18 @@ function isStagingCopy(env = process.env) {
   return env.USERNODE_ENV === 'staging';
 }
 
+/**
+ * The origin a page is listed under (its canonical, og:url and record, the
+ * sitemap's addresses): the platform's CONFIGURED one on production, as the
+ * front page and the page about private communities use, so every listed
+ * page names the same site whatever Host a request came with. A staging
+ * copy, or a server with no configured address, is not listed anywhere and
+ * keeps the request's own.
+ */
+function listedOrigin(req) {
+  return (isStagingCopy() ? null : platformOrigin()) || requestOrigin(req);
+}
+
 /** The crawl rules for this origin. */
 function robotsTxt(origin, { staging = isStagingCopy() } = {}) {
   if (staging) return 'User-agent: *\nDisallow: /\n';
@@ -219,6 +231,7 @@ function projectPreviewRoutes(config) {
         cover: entry.cover,
         imageSize: entry.iconSize,
         player: !!embed.embedFor(entry.app, { sign: false }),
+        canonical: listedOrigin(req),
       });
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
       applyShellDocumentHeaders(res, INDEX_PATH);
@@ -291,11 +304,11 @@ function projectPreviewRoutes(config) {
   // would never see that it should drop it.
   router.get('/robots.txt', (req, res) => {
     res.set('Cache-Control', 'public, max-age=3600');
-    return res.type('text/plain').send(robotsTxt(requestOrigin(req)));
+    return res.type('text/plain').send(robotsTxt(listedOrigin(req)));
   });
 
   router.get('/sitemap.xml', publicProjectReadLimiter, async (req, res) => {
-    const origin = requestOrigin(req);
+    const origin = listedOrigin(req);
     if (!origin || isStagingCopy()) return res.status(404).end();
     try {
       if (!sitemap || sitemap.origin !== origin || sitemap.expiresAt <= Date.now()) {

@@ -295,7 +295,11 @@ function coverPath(slug) { return `/api/public/apps/${encodeURIComponent(slug)}/
  * around its embed page, with the picture as the still before it plays and
  * where X runs no players. X shows no player without a picture.
  */
-function previewTags(app, origin, { cover = true, player = false, imageSize = null } = {}) {
+function previewTags(app, origin, { cover = true, player = false, imageSize = null, canonical = null } = {}) {
+  // Where the page is listed: the platform's configured origin when the
+  // caller has one (as landingTags), else the origin the pictures use.
+  const home = ORIGIN_RE.test(String(canonical || '')) ? canonical : origin;
+  const address = pageUrl(home, app.slug);
   const title = app.name || app.slug;
   const description = descriptionOf(app);
   const image = cover ? `${origin}${coverPath(app.slug)}` : (app.icon_url ? `${origin}${app.icon_url}` : null);
@@ -306,10 +310,10 @@ function previewTags(app, origin, { cover = true, player = false, imageSize = nu
     '<meta property="og:site_name" content="Homeroom">',
     `<meta property="og:title" content="${escapeAttr(title)}">`,
     `<meta property="og:description" content="${escapeAttr(description)}">`,
-    `<meta property="og:url" content="${escapeAttr(pageUrl(origin, app.slug))}">`,
+    `<meta property="og:url" content="${escapeAttr(address)}">`,
     // One address per project for a search engine: the page's clean path,
     // whichever way it was reached (Discover's cards, a share, the sitemap).
-    `<link rel="canonical" href="${escapeAttr(pageUrl(origin, app.slug))}">`,
+    `<link rel="canonical" href="${escapeAttr(address)}">`,
     `<meta name="description" content="${escapeAttr(description)}">`,
     `<meta name="twitter:card" content="${card}">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
@@ -334,13 +338,13 @@ function previewTags(app, origin, { cover = true, player = false, imageSize = nu
   // A hidden record for a search engine: what the project is, where it is,
   // and the day it was made on Homeroom. Inline and same-origin: a data
   // block, never an outside script.
-  const root = `${origin}/`;
+  const root = `${home}/`;
   const data = {
     '@context': 'https://schema.org',
     '@type': 'WebApplication',
     name: title,
     description,
-    url: pageUrl(origin, app.slug),
+    url: address,
   };
   const made = createdDay(app);
   if (made) data.dateCreated = made;

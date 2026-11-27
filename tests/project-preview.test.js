@@ -454,6 +454,34 @@ test('the sitemap lists the front page and each public project worth finding, at
   } finally { await srv.close(); }
 });
 
+test('on production a project page, the sitemap and robots.txt name the configured address, whatever Host asked', async (t) => {
+  if (!fs.existsSync(path.join(__dirname, '..', 'public', 'index.html'))) { t.skip('no built shell'); return; }
+  const before = { domain: process.env.USERNODE_DOMAIN, env: process.env.USERNODE_ENV };
+  t.after(() => {
+    for (const [key, value] of [['USERNODE_DOMAIN', before.domain], ['USERNODE_ENV', before.env]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  process.env.USERNODE_DOMAIN = 'app.example';
+  delete process.env.USERNODE_ENV;
+  const srv = await startServer();
+  try {
+    const forged = { accept: 'text/html', 'x-forwarded-host': 'evil.example' };
+    const html = await (await fetch(`${srv.base}/app/game-corner`, { headers: forged })).text();
+    assert.match(html, /<link rel="canonical" href="https:\/\/app\.example\/app\/game-corner">/);
+    assert.match(html, /<meta property="og:url" content="https:\/\/app\.example\/app\/game-corner">/);
+    assert.match(html, /"url":"https:\/\/app\.example\/app\/game-corner"/);
+    assert.doesNotMatch(html, /evil\.example\/app\//);
+    const sitemap = await (await fetch(`${srv.base}/sitemap.xml`, { headers: forged })).text();
+    assert.match(sitemap, /<loc>https:\/\/app\.example\/<\/loc>/);
+    assert.match(sitemap, /<loc>https:\/\/app\.example\/communities<\/loc>/);
+    assert.match(sitemap, /<loc>https:\/\/app\.example\/app\/game-corner<\/loc>/);
+    assert.doesNotMatch(sitemap, /evil\.example|127\.0\.0\.1/);
+    assert.equal(await (await fetch(`${srv.base}/robots.txt`, { headers: forged })).text(),
+      'User-agent: *\nAllow: /\nSitemap: https://app.example/sitemap.xml\n');
+  } finally { await srv.close(); }
+});
+
 test('the sitemap dates the front page by its newest listed project and the communities page by the build, never by now', () => {
   const { sitemapXml } = require('../src/routes/project-preview');
   const communities = require('../src/services/communities-page');
