@@ -102,6 +102,18 @@ export const AI_PREVIEW_COLUMN_WIDTH_KEY = 'usernode_ai_preview_col_w_v1';
 export const AI_PREVIEW_WIDTH_KEY = 'usernode_ai_preview_w_v1';
 
 /**
+ * The same two edges while the column beside a new chat only waits for a
+ * live preview (27 Nov 2026, features/messages/live-start-pane.tsx): the
+ * chat's width and the waiting column's, kept apart from a real preview's.
+ * A real preview is dragged wide and its thread narrow, which is wrong for a
+ * new chat beside an empty column, and tying the waiting widths to those
+ * (by clamping one against the other) made each edge move the other. With
+ * keys of their own they start balanced and each drags as a preview's does.
+ */
+export const AI_LIVE_COLUMN_WIDTH_KEY = 'usernode_ai_live_col_w_v1';
+export const AI_LIVE_PREVIEW_WIDTH_KEY = 'usernode_ai_live_preview_w_v1';
+
+/**
  * Whether the bot page's thread list was left hidden (#6963), beside the
  * width: dragging the divider past the list's floor puts the page in one
  * pane, and that choice holds on this device the way the width does.
@@ -118,6 +130,8 @@ const WIDTH_PROPERTY: Record<string, string> = {
   [AI_MAIN_WIDTH_KEY]: '--ai-main-chosen-w',
   [AI_PREVIEW_COLUMN_WIDTH_KEY]: '--ai-col-chosen-w',
   [AI_PREVIEW_WIDTH_KEY]: '--ai-preview-chosen-w',
+  [AI_LIVE_COLUMN_WIDTH_KEY]: '--ai-live-col-chosen-w',
+  [AI_LIVE_PREVIEW_WIDTH_KEY]: '--ai-live-preview-chosen-w',
 };
 
 function propertyFor(key: string): string {

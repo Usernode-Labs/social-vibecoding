@@ -2074,7 +2074,7 @@ test('the column is held inside the window, and the panel takes its place at its
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeFits \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threadWidthKey\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
     'and the edge is the way the list hides and comes back (#6963)');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
