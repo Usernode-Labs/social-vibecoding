@@ -868,8 +868,9 @@ test('Top contributors on the signed-out page: the hub\'s list and rules, This m
   assert.ok(text(html).includes(message('project:hub.contributors.title')));
   assert.equal([...html.matchAll(/data-guest-contributor="/g)].length, 3);
   assert.ok(text(html).includes(message('project:hub.contributors.count_other', { count: 10 })));
-  assert.match(html, /class="one-seg" role="group"/);
-  assert.match(html, /data-guest-contrib-span="month" aria-pressed="true"/);
+  // The shared strip's radio kind in its segment look (@/components/ui/tabs.tsx).
+  assert.match(html, /<div role="radiogroup" aria-label="[^"]+" class="one-seg" style="--one-seg-n:2;--one-seg-i:0">/);
+  assert.match(html, /aria-checked="true" data-guest-contrib-span="month"/);
   // Nobody this month: it opens on All time.
   assert.match(card({ month: [], all_time: people(4) }), /data-guest-contributors="all"/);
   // A list of one is no list, as on the hub.

@@ -32,9 +32,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { CheckIcon, ChevronLeftIcon, SparklesIcon, StepBackIcon, XIcon } from '@/components/ui/icons';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
-import { radioGroupKeys } from '../../lib/radio-group';
 import { changeHref } from '../../lib/change-href';
 import { capCount } from '../../lib/count-cap';
 import { callAppView } from '../dev-board/card/fold';
@@ -153,7 +153,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   ];
   const choiceText = whyChoices.find((c) => c.key === choice)?.text || '';
   // One tab stop, and the arrow keys move the pick (#6510).
-  const whyKeys = radioGroupKeys(whyChoices.map((c) => c.key), choice, setChoice);
+  const whyValues = whyChoices.map((c) => c.key);
   // The whole reason stays within the server's limit: the line gets what the
   // answer and its ": " leave.
   const lineMax = choice ? Math.max(0, NO_LINE_MAX - choiceText.length - 2) : NO_LINE_MAX;
@@ -327,20 +327,16 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     body = (
       <>
         <h2 className="rf-why-head">{t('communities:review.why.title')}</h2>
-        <div className="rf-chips" role="radiogroup" aria-label={t('communities:review.why.title')} onKeyDown={whyKeys.onKeyDown}>
-          {whyChoices.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              role="radio"
-              aria-checked={choice === c.key}
-              className="rf-chip"
-              data-rf-why-choice={c.key}
-              tabIndex={whyKeys.tabIndex(c.key)}
-              onClick={() => setChoice(c.key)}
-            >{c.text}</button>
-          ))}
-        </div>
+        {/* The shared strip's radio kind in the chip look (@/components/ui/tabs.tsx):
+            one tab stop, and the arrow keys pick. The four answers wrap rather
+            than scroll, so none is ever out of sight. */}
+        <Tabs kind="radio" look="chip" values={whyValues} value={choice || ''} onValueChange={(next) => setChoice(next as NoChoice)}>
+          <TabsList className="flex-wrap overflow-visible" aria-label={t('communities:review.why.title')}>
+            {whyChoices.map((c) => (
+              <TabsTrigger key={c.key} value={c.key} data-rf-why-choice={c.key}>{c.text}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <p className="rf-line">{t('communities:review.why.detailLabel')}</p>
         <form className="rf-ask-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void shareReason(); }}>
           <input

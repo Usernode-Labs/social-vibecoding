@@ -221,9 +221,12 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
 }
 
 /**
- * The composer's store is flushed synchronously: `setQuote` publishes the
- * staged reply and then focuses the box on its next line, so the chip is
- * drawn when the caret arrives, as it was when the chip was `innerHTML`.
+ * The composer's store is flushed synchronously: `setupAttachments` publishes
+ * the strip and then reads the paperclip and the file input back by id on the
+ * next line; `setQuote` publishes the staged reply and then focuses the box on
+ * its next line, so the chip is drawn when the caret arrives. Both were
+ * synchronous when they were `innerHTML`, so the flush keeps the contract
+ * rather than changing it.
  */
 composerStore.setFlush(flushSync);
 

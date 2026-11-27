@@ -35,11 +35,11 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { chatPeople, chatRefMatch, heldChatRefs, loadChatRefs } from '../../group-chat/chat-sources';
 import { chatScopeKey } from '../../group-chat/composer';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
-import { MessageBox, putInComposer, type ComposerPlace } from '../../messages/composer';
 import { UserAvatar } from '../../messages/format';
 import { MessageRowView } from '../../messages/message-row-view';
 import { useMessageControls } from '../../message-actions/controls';
 import { messageActions } from '../../message-actions/rules';
+import { MessageBox, putInComposer, type ComposerPlace } from '../../messages/composer';
 import { ClampedComment } from '../comment-clamp';
 import {
   feedThreadStore,
