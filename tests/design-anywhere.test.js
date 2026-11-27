@@ -315,7 +315,7 @@ test('the preview: its own column beside the thread, three where they fit, halve
   const ai = read('frontend/src/features/ai/index.tsx');
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
-  assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
+  assert.match(ai, /data-ai-preview=\{previewHere \? layout : undefined\}/);
   // Artifacts: the column is named for what any preview is (a design, a page, a plan), not for a design.
   assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.labelOpening'\)\}\n\s+>/);
   // 20 Nov 2026: drawn as cards, with the head card's picker (../detail/detail-card.tsx).

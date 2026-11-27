@@ -1,6 +1,12 @@
 /**
  * NEW CHAT NAMES ITSELF IN THE BAR, ON A PHONE (one look, 25 Nov 2026).
  *
+ * 26 Nov 2026: New chat has a title card of its own on a phone now, as it
+ * has from 768px and as a thread has, so the words it publishes for the bar
+ * are the tab's own name and no second line: "(‹) Homeroom bot". The bar is
+ * still borrowed for the back disc, and everything below about how it is
+ * claimed and given back holds. What follows is how it was first drawn.
+ *
  * The design review drew New chat on a phone as a page of its own under the
  * blue bar: the bar's white back disc, "New chat" over "Only you can see
  * it", and the bell and the Homeroom menu where they always are. The chat
