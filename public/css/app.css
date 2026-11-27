@@ -11430,7 +11430,6 @@ html:root {
   --ed-pad: 1.5rem;
   --ed-pad-phone: 1rem;
   --ed-gap: 1rem;                 /* between two cards */
-  --ed-side-w: 16.5rem;           /* Settings' list of pages: room for a page's name and its count */
   --ed-sky: url('/brand/bg/sky.webp');
   --ed-sky-veil: linear-gradient(180deg, rgb(255 253 244 / 0.08) 0%, rgb(255 253 244 / 0.5) 62%, rgb(255 253 244 / 0.86) 100%);
   --ed-sky-ink: #121a0e;
@@ -11519,7 +11518,6 @@ html:root #settings-root #settings-sidebar-col.settings-side-sheet {
   box-shadow: inset 0 0 0 1px var(--ed-line);
 }
 html:root #settings-nav-desktop .settings-nav-item { font-size: 0.9375rem; }
-@media (min-width: 1024px) { html:root #settings-root #settings-sidebar-col.settings-side-sheet { width: var(--ed-side-w); } }
 /* The open page: no sheet of its own. Each part is a card on the page. */
 html:root #settings-content-col > #settings-section-content.settings-sheet {
   padding: 0;
@@ -11703,7 +11701,14 @@ html:root #profile-root #profile-work { margin-top: 0; }
 html:root #profile-root #profile-account { margin-top: 0; }
 @media (min-width: 1024px) {
   html:root #profile-root > div:has(> div > #profile-identity-card) { grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
-  html:root #settings-root > div:has(> #settings-sidebar-col) { gap: 1rem; }
+  /* Settings stands on Profile's grid (#7235): the list of pages is the
+     left column and the open page the right one, the gap Profile leaves. */
+  html:root #settings-root > div:has(> #settings-sidebar-col) {
+    display: grid;
+    grid-template-columns: minmax(17rem, 22.5rem) minmax(0, 1fr);
+    column-gap: 2.625rem;
+    align-items: start;
+  }
   html:root #settings-root #settings-sidebar-col.settings-side-sheet { min-height: 38rem; }
 }
 html:root #profile-live-projects { margin-bottom: 2rem; }
@@ -11906,8 +11911,15 @@ html:root #settings-root #settings-sidebar-col.settings-side-sheet { background:
 html:root #settings-nav-desktop .settings-nav-group { margin-top: 0.5rem; }
 html:root #settings-nav-desktop .settings-nav-group-label { font-size: 0.6875rem; padding-top: 0.75rem; }
 html:root #settings-section-content > .settings-page-title { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--ed-muted); }
-html:root #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) { padding: 1rem 1.5rem; }
-html:root #settings-section-content h3 { font-size: 1.75rem; letter-spacing: -0.035em; margin-bottom: 0.25rem; }
+html:root #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) { padding: 1.25rem; }
+html:root #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden):has(> :not(.hidden)) { margin-top: 1.5rem; padding-top: 1.25rem; }
+html:root #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section="delete-account"]:not(.hidden):has(> *) { margin-top: 1.5rem; }
+html:root #settings-section-content h3 { font-size: var(--ed-head-size); letter-spacing: -0.035em; margin-bottom: 0.25rem; }
+/* A phone keeps the smaller heading it had, so a card's name does not
+   become a title on the narrow page. */
+@media (max-width: 1023.98px) {
+  html:root #settings-section-content h3 { font-size: var(--ed-head-size-phone); }
+}
 html:root #settings-profile-section .settings-profile-layout { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1.5rem; align-items: center; }
 html:root #settings-profile-section #settings-profile-card { display: flex; flex-direction: column; padding: 0; gap: 0.5rem; background: none; border-radius: 0; box-shadow: none; }
 html:root #settings-profile-card > :is(img, span[aria-hidden="true"]:first-child) { width: 7.5rem; height: 7.5rem; border-radius: 0.875rem; font-size: 2.5rem; }
@@ -11953,7 +11965,18 @@ html:root #settings-section-content .ui-link { box-shadow: none; text-decoration
 html:root #profile-root #profile-work .ui-lrow-tx { display: flex; align-items: center; gap: 1rem; }
 html:root #profile-root #profile-work .ui-lrow-t { flex: 0 0 8rem; font-size: 0.875rem; font-weight: 500; }
 html:root #profile-root #profile-work .ui-lrow-s { flex: 1; min-width: 0; margin-top: 0; font-size: 0.8125rem; }
-html:root #settings-nav-desktop .ui-cap { font-size: 0.625rem; }
+/* The list's group names are the serif, as Profile's own group names are
+   (#7235), rather than the small capitals. A phone's fold button carries
+   Tailwind's uppercase and tracking; the id selector beats them. */
+html:root :is(#settings-nav-desktop, #settings-mobile-menu-host) .ui-cap,
+html:root #settings-mobile-menu-host .ui-cap button {
+  font-family: var(--ed-serif);
+  font-weight: 460;
+  font-size: 1.125rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ed-ink);
+}
 html:root #settings-nav-desktop > div:not(.sticky) { margin-top: 0.5rem; padding-top: 0.5rem; }
 html:root #settings-nav-desktop .ui-search { background: var(--ed-paper); }
 html:root #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-tx { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 1rem; align-items: center; }
@@ -12034,9 +12057,14 @@ html:root #settings-profile-card .settings-profile-camera svg { width: 1.125rem;
   html:root #profile-live-projects .profile-project-grid { gap: 2rem; }
   html:root #profile-live-projects .profile-project-card { min-height: 12.75rem; }
   html:root body :is(#settings-screen, #profile-screen:has(#profile-identity-card)) { padding-inline: var(--platform-rail-w, 0px) 0; }
-  html:root body #settings-screen #settings-root { padding-inline-start: 1.375rem; }
-  html:root #settings-root > .settings-frame-head { min-height: 10rem; padding-inline-start: 0.75rem; }
-  html:root #settings-root #settings-sidebar-col.settings-side-sheet { width: 16rem; }
+  /* The same inset as Profile's root, whose own rule is this specific
+     (`:has(#profile-identity-card)`); the shared padding rule above is
+     matched at the same weight and would otherwise keep 2rem here. */
+  html:root body #settings-screen #settings-root:has(> div > #settings-sidebar-col) { padding-inline-start: 2.25rem; }
+  /* The head lines up with Profile's name (#7235): the same inset, the same
+     room above and below. */
+  html:root #settings-root > .settings-frame-head { min-height: 10rem; padding: 3.5rem 0 2rem 1.5rem; }
+  html:root #settings-root #settings-sidebar-col.settings-side-sheet { width: auto; }
   html:root #settings-section-content > .settings-page-title {
     position: absolute;
     width: 1px;
