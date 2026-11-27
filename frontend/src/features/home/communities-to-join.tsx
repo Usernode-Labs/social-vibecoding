@@ -46,6 +46,7 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useStat
 
 import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { Select } from '@/components/ui/select';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -181,21 +182,28 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   }, [more, shown]);
 
   if (query && !list.length) return emptyLine ?? null;
+  // The sort is a menu drawn as one of the chips beside it (app.css
+  // `.wip-sort`): a pill of a chip's height and type, with our own chevron
+  // at its end in place of the browser's arrow. It is still a <select>, so
+  // the open list is the browser's or the phone's own.
   const sortMenu = (
-    <Select
-      variant="plain"
-      className="w-auto min-h-11"
-      aria-label={t('home:join.sort.label')}
-      data-home-join-sort=""
-      value={sort}
-      onChange={(e) => setSort(e.target.value as JoinSort)}
-    >
-      {JOIN_SORTS.map((s) => (
-        <option key={s} value={s}>
-          {s === 'trending' ? t('home:join.sort.active') : t(`home:join.sort.${s}`)}
-        </option>
-      ))}
-    </Select>
+    <span className="wip-sort" data-home-join-sort-box="">
+      <Select
+        variant="plain"
+        className="w-auto min-h-11"
+        aria-label={t('home:join.sort.label')}
+        data-home-join-sort=""
+        value={sort}
+        onChange={(e) => setSort(e.target.value as JoinSort)}
+      >
+        {JOIN_SORTS.map((s) => (
+          <option key={s} value={s}>
+            {s === 'trending' ? t('home:join.sort.active') : t(`home:join.sort.${s}`)}
+          </option>
+        ))}
+      </Select>
+      <ChevronDownIcon className="wip-sort-mark" aria-hidden="true" />
+    </span>
   );
   // Nothing drawn on a card depends on being signed in (#6609): a member and
   // a visitor get the same card, and Join is the project page's.

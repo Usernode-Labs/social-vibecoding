@@ -695,6 +695,23 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   assert.equal(message('home:join.sort.new'), 'New');
   assert.equal(message('home:join.sort.popular'), 'Popular');
   assert.equal(message('home:join.sort.name'), 'A to Z');
+  // The menu is drawn as one of the chips beside it (27 Nov 2026): the
+  // <select> in a `.wip-sort` box with our own chevron after it, a pill of a
+  // chip's height in the site's outline, and no browser arrow. It was the
+  // form field from Settings, the one thing on the page drawn that way.
+  assert.match(html, /<span class="wip-sort" data-home-join-sort-box=""><select[^>]*data-home-join-sort=""[^>]*>[\s\S]*?<\/select><svg[^>]*class="wip-sort-mark"[^>]*aria-hidden="true"/,
+    'the select, then its chevron, in one box');
+  const appCss = read('public/css/app.css');
+  const sortRule = appCss.match(/html:root \.wip-sort > select \{[^}]*\}/);
+  assert.ok(sortRule, 'app.css draws the menu');
+  assert.match(sortRule[0], /-webkit-appearance: none;\s+appearance: none;/, 'no browser arrow');
+  assert.match(sortRule[0], /height: 2\.75rem;/, 'a chip\'s 44px');
+  assert.match(sortRule[0], /border-radius: 9999px;/, 'a pill');
+  assert.match(sortRule[0], /padding-inline: 1\.25rem 2\.5rem;/, 'room for the chevron, at the end in either reading direction');
+  assert.match(appCss, /\.wip-sort-mark \{[^}]*inset-inline-end: 1rem;[^}]*pointer-events: none;[^}]*\}/, 'a press on the chevron opens the menu');
+  assert.match(appCss, /#auth-landing-screen \[data-guest-discover\] :is\(\[data-guest-search-open\], \[data-home-join-kind\], \[data-home-join-sort\]\) \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\);/,
+    'signed out it wears the chips\' panel, ink and outline');
+  assert.doesNotMatch(appCss, /#home-join-section select \{ border-radius/, 'signed in nothing squares its corners: it is pressed, so it is a pill');
   // One card is nothing to order: the menu is not drawn.
   const one = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.filter((a) => a.slug === 'fresh-one') }));
   assert.doesNotMatch(one, /data-home-join-sort=/, 'one card, no sort');
@@ -1357,7 +1374,7 @@ test('the list wears the website\'s look signed out only: repainted by its own h
   // outlined and the chosen chip is ink; a card is a white face on an ink
   // outline with its name in the serif.
   assert.match(block, /\[data-home-join-section\] > \.home-area-label > span:first-child \{\s+font-family: var\(--site-serif\);/);
-  assert.match(block, /:is\(\[data-guest-search-open\], \[data-home-join-kind\]\) \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\);/);
+  assert.match(block, /:is\(\[data-guest-search-open\], \[data-home-join-kind\], \[data-home-join-sort\]\) \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\);/);
   assert.match(block, /\[data-home-join-kind\]\[aria-pressed="true"\] \{\s+background-color: var\(--site-chosen\);\s+color: var\(--site-chosen-ink\);/);
   // The card is the community card in the site's colours: its tokens, an ink outline, the name in the serif.
   assert.match(block, /#auth-landing-screen \[data-guest-discover\] \{\s+--cm-bg: var\(--site-panel\);\s+--cm-radius: 14px;\s+--cm-edge: 0 2px 0 var\(--site-line\);/);
