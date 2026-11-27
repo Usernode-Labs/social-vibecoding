@@ -92,6 +92,31 @@ test('#6832: on a 390px phone a five-step row fits the card, with no sideways sc
     'a caption wraps rather than pushing its column wider');
 });
 
+test('request 7164: on a phone a steps picture is one column, a step a row across the card', () => {
+  const css = read('public/css/app.css');
+  const m = css.match(/@media \(max-width: 767\.98px\) \{\n  \.dev-ws-diagram-steps-two[\s\S]*?\n\}/);
+  assert.ok(m, 'the phone block exists');
+  const block = m[0];
+  // Before over After, with no hairline or inset left from the two columns.
+  assert.match(block, /\.dev-ws-diagram-steps-two \{ display: flex; flex-direction: column; gap: 12px; \}/);
+  assert.match(block, /\.dev-ws-diagram-steps-row \+ \.dev-ws-diagram-steps-row \{ padding-inline-start: 0; border-inline-start: 0; \}/);
+  // The steps run down, never side by side.
+  assert.match(block, /\.dev-ws-diagram-steps \{ flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; \}/);
+  // A step is as wide as the card: its drawing on the start edge, its words beside it.
+  assert.match(block, /\.dev-ws-diagram-step-pic \{[^}]*width: auto; min-width: 0; max-width: none; min-height: 32px; padding-inline-start: 44px; text-align: start;/);
+  assert.match(block, /\.dev-ws-diagram-step-pic > svg \{ position: absolute; inset-inline-start: 0; top: 0; width: 32px; height: 32px; margin: 0; \}/);
+  assert.doesNotMatch(block, /\b(?:left|right)\b/, 'no physical side');
+  // It comes after the 419px and 420px blocks, so it wins over both.
+  assert.ok(css.indexOf(m[0]) > css.indexOf('@media (min-width: 420px) {\n  .dev-ws-diagram-steps-two'));
+});
+
+test('request 7164: a change\'s More on a request\'s page is a 32px disc with a 44px tap area', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-thread-change-menu \{[^}]*width: 32px; height: 32px;/, 'the disc is drawn as it was');
+  assert.match(css, /\.dev-thread-change-menu \{ position: relative; \}\n\.dev-thread-change-menu::after \{ content: ""; position: absolute; inset: -6px; \}/,
+    '32 + 6 + 6 = 44');
+});
+
 test('from 420px a steps picture sets Before beside After, each step as wide as its words', () => {
   const css = read('public/css/app.css');
   const m = css.match(/@media \(min-width: 420px\) \{\n  \.dev-ws-diagram-steps-two[\s\S]*?\n\}/);
