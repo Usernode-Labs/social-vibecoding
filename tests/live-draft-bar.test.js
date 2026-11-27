@@ -368,7 +368,18 @@ test('from 1500px the preview\'s column waits beside New chat: Start for a picke
   resize.applyWidth(620, root, resize.AI_LIVE_PREVIEW_WIDTH_KEY);
   assert.deepEqual([...set], [['--ai-live-col-chosen-w', '500px'], ['--ai-live-preview-chosen-w', '620px']]);
   const css = read('public/css/app.css');
-  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]\[data-ai-live-wait\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(360px, min\(var\(--ai-live-preview-chosen-w, min\(440px, calc\(var\(--ai-room\) - 920px\)\)\), calc\(var\(--ai-room\) - 800px\)\)\);\s+--ai-col-w: max\(320px, min\(var\(--ai-live-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);\s+\}/);
+  // Never dragged, they use all of the room: the list is held to 42rem, so New chat takes what the list and the
+  // column do not need (at least 440px), and past its 720px measure the column takes the rest.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]\[data-ai-live-wait\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(360px, min\(var\(--ai-live-preview-chosen-w, max\(min\(440px, calc\(var\(--ai-room\) - 920px\)\), calc\(var\(--ai-room\) - var\(--ai-list-max, 42rem\) - 720px\)\)\), calc\(var\(--ai-room\) - 800px\)\)\);\s+--ai-col-w: max\(320px, min\(var\(--ai-live-col-chosen-w, max\(min\(var\(--ai-main-w\), 440px\), calc\(var\(--ai-room\) - var\(--ai-list-max, 42rem\) - var\(--ai-preview-w\)\)\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);\s+\}/);
+  // The same sums in plain numbers, at the widths the rule was written for (rem at 16px).
+  const starts = (room, mainW = 9999) => {
+    const preview = Math.max(360, Math.min(Math.max(Math.min(440, room - 920), room - 672 - 720), room - 800));
+    const chat = Math.max(320, Math.min(Math.max(Math.min(mainW, 440), room - 672 - preview), room - 480 - preview));
+    return { list: room - chat - preview, chat, preview };
+  };
+  assert.deepEqual(starts(1288), { list: 480, chat: 440, preview: 368 }, 'a 1500px window: the list at its floor, New chat its 440px');
+  assert.deepEqual(starts(1671), { list: 672, chat: 559, preview: 440 }, 'a 1900px window: no band beside the list, the room is New chat\'s');
+  assert.deepEqual(starts(2348), { list: 672, chat: 720, preview: 956 }, 'wider still: New chat stops at its measure and the column takes the rest');
   assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-live-wait\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-live-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+\}/);
   // Neither width is read from the other, and neither reads a real preview's.
   const waiting = css.slice(css.indexOf('body:has(#ai-screen[data-ai-preview="three"][data-ai-live-wait]'), css.indexOf("/* From 1500px the preview's column waits beside New chat instead"));
