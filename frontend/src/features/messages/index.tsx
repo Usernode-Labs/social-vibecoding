@@ -51,8 +51,8 @@ import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { InboxToEnd } from './inbox-to-end';
 import { ListDivider } from './list-divider';
-import { dropOnComposer, useComposerDropReady } from './pane-drop';
-import { DropOverlay, useFileDrag } from '../attachments/file-drag';
+import { usePaneDrop } from './pane-drop';
+import { DropOverlay } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -141,17 +141,6 @@ import type { ConversationMessage, ConversationSummary, DiscussionMessage } from
 
 function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare', payload?: unknown) {
   window.UsernodeReact?.dialogs?.[name]?.open(payload);
-}
-
-/**
- * #6254: the whole thread pane takes a dropped file, not only the box at its
- * foot. The composer for this pane's scope owns the upload (./pane-drop), so
- * the pane asks whether one is drawn — an awaiting or cannot-send thread
- * shows no outline and drops nothing — and hands the files over.
- */
-function usePaneDrop(scope: ComposerScope) {
-  const ready = useComposerDropReady(scope);
-  return useFileDrag({ disabled: !ready, onFiles: (files) => { dropOnComposer(scope, files); } });
 }
 
 function conversationPeer(conversation: ConversationSummary) {

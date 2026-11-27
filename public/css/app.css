@@ -634,6 +634,9 @@ html.un-kb:is([data-browser-scroller="settings-screen"], [data-browser-scroller=
    `.messages-layout` around it (project-discussion.tsx). */
 .messages-layout,
 .dev-ws-discussion,
+/* The comments box under a change (one message box, 27 Nov 2026) is
+   Messages' card, drawn wherever the change's card is. */
+.dev-feed-reply,
 /* #6431: the column's heading beside the bot page is the same kind of row as
    a thread's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
    tokens are only declared where they are drawn, so the menu's fill resolved
@@ -662,6 +665,7 @@ html.un-kb:is([data-browser-scroller="settings-screen"], [data-browser-scroller=
 }
 .dark .messages-layout,
 .dark .dev-ws-discussion,
+.dark .dev-feed-reply,
 .dark .side-panel-head,
 .dark #ai-screen .ai-askbar {
   --messages-surface: var(--dc-raised);
@@ -2323,7 +2327,7 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
    laid out on desktop even while empty, a 4px gap and a 15px blank band
    under the row, so every Messages composer (the Homeroom bot's thread, a
    DM, a group, #general, a reply thread) stood about 75px against the app
-   channel's 56px (`.gc-composer-card`: 8 + 40 + 8). It is now laid out at
+   channel's 56px (8 + 40 + 8). It is now laid out at
    every width only once the text nears the limit, where it appears in amber,
    so the card is that same 8 + 40 + 8. The element stays in the DOM (a
    declared check selects it). Two selectors' worth of specificity, so it
@@ -2431,14 +2435,14 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
    its own pane and its own zone. */
 .messages-thread-pane > .messages-drop-overlay,
 .messages-reply-pane > .messages-drop-overlay { inset: 8px; }
-.gc-composer-card,
-#gc-form,
-#gc-thread-form,
 #feedback-form { position: relative; }
 #feedback-form > .attach-drop-overlay { inset: -6px; border-radius: 16px; }
-/* The boxed thread composer inside a board card has no card radius of its own. */
-#gc-form:not(.gc-composer-card) > .attach-drop-overlay,
-#gc-thread-form:not(.gc-composer-card) > .attach-drop-overlay { border-radius: 12px; }
+/* A project chat's pane and a thread's page take a drop as Messages' panes
+   do (group-chat/general-chat.tsx, thread-shell.tsx): the outline frames the
+   pane, and the sheet holds it while a file is over it. */
+.gc-chat-pane > .messages-drop-overlay,
+.dev-request-sheet > .messages-drop-overlay { inset: 8px; }
+.dev-request-sheet:has(> .messages-drop-overlay) { position: relative; }
 
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at
@@ -2955,7 +2959,7 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
      Pinned explicitly to an OPAQUE platform surface — --un-group-bg is a
      translucent violet tint by design, so a popover inheriting it showed
      the app grid straight through (#847). Matches the platform's other
-     floating dropdowns (.attr-popover, .gc-mention-menu). */
+     floating dropdowns (.attr-popover). */
   --un-popover-bg: var(--bg-primary);
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
@@ -11380,7 +11384,6 @@ html:root :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen
   --messages-selected: var(--wip-item-hover);
   --messages-disc-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
-html:root .gc-composer-card,
 html:root #settings-root .ui-card.bg-white {
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
@@ -15051,76 +15054,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .gc-quoted:hover { filter: brightness(1.08); }
 
-/* #2391: the staged-reply strip is the Messages screen's reply draft
-   (.messages-reply-draft): full composer width, the accent tint, an open
-   rounded edge, and text at the composer's reading size. It was the sent
-   quote's 11/12px chip, capped at 560px with 4px corners, under a 22px-radius
-   composer card. */
-.gc-reply-preview-inner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-inline-start: 3px solid var(--accent);
-  border-start-start-radius: 0; border-start-end-radius: 12px; border-end-end-radius: 12px; border-end-start-radius: 0;
-  background: var(--accent-tint);
-  padding-block: 6px 6px; padding-inline: 10px 8px;
-}
-
-.gc-quoted-author,
-.gc-reply-preview-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  white-space: nowrap;
-  flex-shrink: 0;
-  /* Cap + clip so a long author/label can't push the quote block wider
-     than its container (which would force horizontal scroll). */
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.gc-reply-preview-label { font-size: 13px; font-weight: 700; }
-.gc-quoted-snippet,
-.gc-reply-preview-snippet {
-  font-size: 12px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  /* Inside .gc-quoted (a flex column with align-items: flex-start) the
-     snippet otherwise sizes to its full nowrap content width and the
-     ellipsis never engages — capping at 100% bounds it to the container
-     so it truncates instead of overflowing. */
-  max-width: 100%;
-}
-.gc-quoted { flex-direction: column; align-items: flex-start; gap: 0; }
-.gc-reply-preview-snippet { font-size: 15px; }
-
-#gc-reply-preview { margin-bottom: 6px; }
-.gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
-/* #1927: 44px tap target, overhanging the strip's 6px/8px padding so the
-   strip keeps its height. */
-.gc-reply-preview-x {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  margin-block: -6px -6px; margin-inline: 0 -8px;
-  background: none;
-  border: none;
-  border-radius: 9999px;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 20px;
-  line-height: 1;
-  padding: 0;
-  flex-shrink: 0;
-}
-.gc-reply-preview-x:hover { color: var(--text-primary); }
-
-/* Brief highlight when you jump to a quoted message's original. */
 .gc-msg-flash { animation: gcMsgFlash 1.5s ease-out; }
 @keyframes gcMsgFlash {
   0% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
@@ -15378,112 +15311,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-top: 1px solid var(--border);
 }
 .gc-react-bar-grid.hidden { display: none; }
-
-/* ── #87: @mention autocomplete dropdown ───────────────── */
-
-.gc-mention-menu {
-  position: fixed;
-  z-index: 1000;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-  padding: 4px;
-  max-height: 240px;       /* ~8 rows, then scroll */
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.gc-mention-menu.hidden { display: none; }
-/* #2145: the Activity feed's reply box (features/dev-board/card/
-   feed-thread.tsx) opens this same menu from its own `@`. Its composer is a
-   React island with one field per row, so the list is a sibling of the
-   textarea inside the form (position: relative there) rather than the
-   body-level element group-chat.js measures — placed above the field, as
-   the chat composers' are, and stopping short of the 36px send disc and its
-   8px gap on the right. `-below` is the flip for a field with no room above
-   it (a short thread in the Needs-you comments sheet, whose body scrolls). */
-.gc-mention-menu.dev-feed-mention-menu {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-inline-end: 44px;
-  bottom: calc(100% + 4px);
-}
-.gc-mention-menu.dev-feed-mention-menu-below {
-  top: calc(100% + 4px);
-  bottom: auto;
-}
-.gc-mention-option {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 14px;
-  color: var(--text-primary, inherit);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.gc-mention-option:hover,
-.gc-mention-option-active {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-}
-.gc-mention-option-at { color: var(--accent); font-weight: 600; }
-/* B9: Homeroom bot's row: its mark at the line's height, before its name. */
-.gc-mention-option-mark {
-  width: 18px;
-  height: 18px;
-  margin-inline-end: 6px;
-  border-radius: 5px;
-  flex-shrink: 0;
-}
-.gc-mention-option .messages-bot-badge { margin-inline-start: 6px; }
-
-/* #130: reference-autocomplete rows reuse the mention menu/option styling;
-   these only add room for the PR#N / #N badge plus a truncating title. */
-.gc-ref-option { gap: 8px; }
-.gc-ref-option-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  color: var(--text-secondary, inherit);
-}
-.gc-mention-option-you {
-  margin-inline-start: auto;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/* `:th` — the emoji shortcode menu (#gc-emoji-menu). Same box and rows as
-   the mention menu; a heading repeats the query, and each row is the glyph
-   beside its `:code:`. Tall enough for its eight rows without scrolling. */
-.gc-mention-menu.gc-emoji-menu { max-height: min(320px, 50vh); }
-.gc-emoji-menu-heading {
-  padding: 4px 10px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-.gc-emoji-menu-query { color: var(--text-primary, inherit); }
-.gc-emoji-option { gap: 10px; padding: 5px 10px; }
-.gc-emoji-option-glyph {
-  flex: none;
-  width: 24px;
-  font-size: 20px;
-  line-height: 24px;
-  text-align: center;
-}
-.gc-emoji-option-code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 @keyframes dc-spin { to { transform: rotate(360deg); } }
 
@@ -15854,11 +15681,9 @@ html.un-kb #settings-content-col > .settings-sheet {
    The board column is the STRIP and a topic or the Discussion is the SHEET
    (features/dev-board/board-frame.tsx, topic-frame.tsx, chat-frame.tsx,
    group-chat/thread-shell.tsx, general-chat.tsx), through the same three
-   lift classes the session view below wears. What this block adds is the
-   composer card those two sheets end in — the card Messages draws
-   (.messages-composer-card above), restated here for the group-chat
-   composer's own class names because features/group-chat/composer.tsx is
-   the one component serving both. */
+   lift classes the session view below wears. The box those two sheets end
+   in is Messages' own (.messages-composer-card above; one message box,
+   27 Nov 2026). */
 /* The two sheet hosts: a column with the strip's 12px shoulder above the
    sheet that is mounted into them. Padding on the HOST rather than a margin
    on the sheet, so the sheet's `h-full` still fits. */
@@ -15870,81 +15695,6 @@ html.un-kb #settings-content-col > .settings-sheet {
 }
 #dev-topic-thread > .dev-thread,
 #dev-chat-body > .dc-lift { min-height: 0; }
-
-.gc-composer-card {
-  border-radius: 22px;
-  padding-block: 8px 8px; padding-inline: 12px 8px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-.dark .gc-composer-card { background: var(--dc-raised); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
-.gc-composer-card .gc-composer-input {
-  min-height: 40px;
-  max-height: 140px;
-  /* #2882: the card is the one edge; the field draws none — see
-     `.messages-composer-input`, the same field in the conversation composer. */
-  -webkit-appearance: none;
-  appearance: none;
-  box-shadow: none;
-  -webkit-tap-highlight-color: transparent;
-}
-.gc-composer-card .gc-composer-input::placeholder { color: var(--text-faint); }
-.gc-composer-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 9999px;
-  color: var(--text-secondary);
-  transition: background 150ms;
-}
-.gc-composer-glyph svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.gc-composer-glyph:hover { background: var(--bg-secondary); }
-.gc-send {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 9999px;
-  color: var(--accent-ink);
-  background: var(--accent);
-  transition: background 150ms;
-}
-.gc-send svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.gc-send:hover { background: var(--accent-light); }
-.gc-send:disabled { opacity: .35; }
-.gc-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .gc-send { opacity: .35; }
-/* #3735: the same compact line on a phone as the Messages composer (the
-   phone block after `.messages-send` above): a 44px pill, 4px of padding
-   round a 36px row, with the paperclip and the send disc drawn at 36px and
-   each held to a 44px tap target by a 4px overhang. */
-@media (max-width: 767px) {
-  .gc-composer-card { padding-block: 4px 4px; padding-inline: 8px 4px; }
-  .gc-composer-card .gc-composer-input { min-height: 36px; padding-top: 7px; padding-bottom: 7px; }
-  .gc-send { width: 36px; height: 36px; }
-  .gc-composer-glyph,
-  .gc-send { position: relative; }
-  .gc-composer-glyph::after,
-  .gc-send::after { content: ''; position: absolute; inset: -4px; }
-}
 
 /* ── The three-layer lift ─────────────────────────────────
    The move a running app already makes, repeated once per layer. A
@@ -19592,30 +19342,10 @@ body.is-offline [data-offline-disabled] {
 }
 .dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
 .dev-feed-msg-text { color: var(--text-primary); }
-/* The reply box: a 36px white pill field and a send disc
-   (36px, filled accent, up-arrow), the pair every composer on the platform
-   now shares. The field's own utilities (input.tsx `activityReply`) draw a
-   bordered r16 box; this is the widget-language reading of the same field,
-   and the host scope keeps it to the places it is read that way — the two
-   card surfaces, and nowhere else. */
-:is(#dev-workshop, #dev-kanban) .dev-feed-thread textarea {
-  min-height: 36px;
-  padding: 8px 14px;
-  border-radius: 18px;
-  border-color: transparent;
-  font-size: 13px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-.dev-feed-send {
-  width: 36px;
-  height: 36px;
-  border-radius: 9999px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  transition: background 150ms;
-}
-.dev-feed-send svg { width: 18px; height: 18px; stroke-width: 2.4; }
-.dev-feed-send:hover:not(:disabled) { background: var(--accent-light); }
+/* The reply box is Messages' own (one message box, 27 Nov 2026;
+   feed-thread.tsx FeedReplyComposer), drawn inside the card with no chat
+   foot's bar round it: a little air over it, and its menus over the card. */
+.dev-feed-reply { margin-top: 4px; }
 /* Nothing loaded and no box to draw (a viewer who cannot post) — collapse
    rather than leaving a gap under every row. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-thread:empty {
@@ -24883,7 +24613,7 @@ button.dev-ws-recent-card {
 /* The thread fills the tab and its reply box stays at the foot, on the
    sheet's own fill, as a comment box under a reel does. */
 .dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread { flex: 1 0 auto; }
-.dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > form {
+.dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > .dev-feed-reply {
   position: sticky; bottom: 0; margin-top: auto; padding: 8px 0 4px;
   background-color: var(--dc-sheet);
 }
@@ -26793,7 +26523,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-talk-tab { height: 42px; font-size: 14.5px; }
   .dev-ws-talk-tabs > .dev-ws-sheet-x { inset-inline-end: 12px; top: 12px; }
   .dev-ws-talk > .dev-ws-sheet-body { padding: 4px 18px 0; }
-  .dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > form { background-color: var(--dc-sheet-solid); }
+  .dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > .dev-feed-reply { background-color: var(--dc-sheet-solid); }
   .dev-ws-sheet-handle { display: none; }
   /* The vote: a popover on its button, arrow towards it. The button's top in
      the rail is measured (`--ws-vote-top`, workshop.tsx), because the rail's
@@ -33395,7 +33125,7 @@ html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #dev-topic-thread,
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-vote-look="thread"] { --cm-bg: var(--bl-card); --cm-radius: 18px; --cm-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift); --cm-edge-on: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); --cm-edge-lift: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); --cm-ink: var(--text-primary); --cm-muted: var(--text-muted); --cm-body: var(--text-secondary); --cm-link: var(--bl-sky); --cm-small: 13px; --cm-small-line: 18px; --cm-card-min: 212px; --cm-gap: 14px; }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .cm-card [data-home-community-votes] { top: -7px; inset-inline-end: -5px; min-width: 20px; height: 20px; padding: 0 5px; font-size: 11px; }
-html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.messages-composer-card, .gc-composer-card) { background: var(--bl-raise); box-shadow: var(--bl-field-edge); }
+html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card { background: var(--bl-raise); box-shadow: var(--bl-field-edge); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card:focus-within { box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent); }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); opacity: 1; }
 html:root:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]):not(:disabled):hover { background: var(--bl-sun-lit); }
