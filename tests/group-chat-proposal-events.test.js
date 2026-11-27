@@ -181,7 +181,8 @@ test('a channel puts your own message on the right, picture and all; a thread ke
   const { MessageRow } = loadTsx(TRANSCRIPT);
   const theirs = renderToHtml(createElement(MessageRow, { msg: human('hello there') }));
   assert.match(theirs, /^<article data-msg-id="\d+" data-username="alice" class="messages-message group [^"]*\bgc-msg">/);
-  assert.match(theirs, /<span aria-hidden="true" class="w-9 h-9 [^"]*rounded-xl[^"]*"[^>]*>A<\/span>/, 'the avatar');
+  // #7257: a person is the one round picture, here as on every other surface.
+  assert.match(theirs, /<span class="[^"]*rounded-full h-9 w-9[^"]*"[^>]*aria-hidden="true">A<\/span>/, 'the avatar');
   assert.match(theirs, /<span dir="auto" class="messages-message-author ">alice<\/span>/);
   assert.match(theirs, /<div class="messages-markdown gc-msg-content"><p>hello there<\/p><\/div>/, 'the body flat under the name');
   assert.doesNotMatch(theirs, /gc-bubble|messages-message-bubble|messages-message-end|gc-msg-end/);
@@ -190,7 +191,7 @@ test('a channel puts your own message on the right, picture and all; a thread ke
   assert.match(mine, /^<article data-msg-id="\d+" data-username="evan" class="messages-message group [^"]*messages-message-self messages-message-end [^"]*gc-msg gc-msg-self gc-msg-end">/,
     'on the right (app.css .messages-message-end), still gc-msg-self and gc-msg-end for the chat\'s own rules');
   assert.doesNotMatch(mine, /gc-bubble|messages-message-bubble/);
-  assert.match(mine, /<span aria-hidden="true" class="w-9 h-9 [^"]*"[^>]*>E<\/span>/, 'your own face, drawn at the trailing edge beside your words');
+  assert.match(mine, /<span class="[^"]*rounded-full h-9 w-9[^"]*"[^>]*aria-hidden="true">E<\/span>/, 'your own face, drawn at the trailing edge beside your words');
   assert.match(mine, /<span dir="auto" class="messages-message-author ">evan<\/span>/);
 
   const inThread = renderToHtml(createElement(MessageRow, { msg: { ...human('mine'), username: 'evan', mine: true }, surface: 'thread' }));
@@ -301,7 +302,7 @@ test('a message from a person sits among the events in the same grid, and dismis
   // The person is Messages' named row and the events are the chat's own
   // event rows, each with its sender's face, the words flat under the name.
   assert.equal((html.match(/class="messages-message group [^"]*\bgc-msg"/g) || []).length, 1);
-  assert.equal((html.match(/rounded-xl h-11 w-11 text-\[1\.0625rem\]" style="background-color:/g) || []).length, 2, 'the two events');
+  assert.equal((html.match(/rounded-full h-11 w-11 text-\[1\.0625rem\]" style="background-color:/g) || []).length, 2, 'the two events, each a person\'s round picture');
   assert.match(html, /<div class="messages-markdown gc-msg-content"><p>hello there<\/p>/);
   assert.doesNotMatch(html, /gc-quiet/, 'somebody has spoken');
 });

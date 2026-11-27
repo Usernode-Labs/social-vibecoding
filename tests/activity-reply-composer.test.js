@@ -157,7 +157,8 @@ test('the inline reply preview preserves composer line breaks', () => {
   // spelling and HTML attribute names are case-insensitive anyway.
   assert.match(html, /^<article class="messages-message group messages-message-bubble [^"]*messages-message-compact dev-feed-msg">/);
   assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">bob<\/span><time datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
-  assert.match(html, /<span aria-hidden="true" class="[^"]*" style="background-color:#[0-9a-f]{6}">B</);
+  // #7257: a person is the one round picture, on this surface too.
+  assert.match(html, /<span class="[^"]*rounded-full[^"]*" style="background-color:#[0-9a-f]{6}" aria-hidden="true">B</);
   assert.match(html, /<div class="messages-bubble" dir="auto"><div class="dev-feed-msg-text/);
 });
 
