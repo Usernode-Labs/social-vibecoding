@@ -289,7 +289,9 @@ async function deleteLayout(pool, familyId, { replacementFamilyId = null, expect
     if (!live) throw fail('not_found', 'That layout does not exist');
     if (expectedLiveId !== undefined) checkExpected(live, expectedLiveId);
     const { rows: [{ n }] } = await client.query(
-      "SELECT count(*)::int AS n FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [familyId]);
+      // A draft wears its layout too: left behind, it could no longer be saved
+      // or put live until an admin gave it another one.
+      "SELECT count(*)::int AS n FROM email_templates WHERE layout_family_id = $1 AND status IN ('live', 'draft') AND deleted_at IS NULL", [familyId]);
     if (n > 0 && replacementFamilyId == null) throw fail('replacement_required', 'Choose a layout for the templates that use this one');
     if (replacementFamilyId != null) {
       const layout = Number(replacementFamilyId) === Number(familyId) ? null : await liveLayout(client, replacementFamilyId);
@@ -408,9 +410,10 @@ async function saveTranslation(pool, kind, id, locale, fields, origin) {
  * `keepAdmin`: a machine translation does not replace an admin's; null is
  * returned instead. The statements are written out for the SQL inventory.
  */
-// `requireLive`: an admin's correction is to what readers get, so it is
-// refused (conflict) when the version is no longer the live one. The live
-// row is held FOR SHARE, so a save that would archive it waits for this.
+// `requireLive`: an admin's correction is to what readers get, or to the
+// open draft that is being made ready for them, so it is refused (conflict)
+// when the version is neither: an earlier one. The row is held FOR SHARE, so
+// a save that would archive it waits for this.
 async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { check = noCheck, keepAdmin = false, requireLive = false } = {}) {
   if (kind !== 'template' && kind !== 'layout') throw fail('not_found', `Unknown translation kind: ${kind}`);
   if (origin !== 'machine' && origin !== 'admin') throw fail('invalid_origin', 'origin must be machine or admin');
@@ -421,7 +424,7 @@ async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { 
         ? await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [id])
         : await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL', [id]);
       if (!row) throw fail('not_found', 'That version does not exist');
-      if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
+      if (requireLive && row.status !== 'live' && row.status !== 'draft') throw fail('conflict', 'That version is no longer live');
       const layout = row.layout_family_id == null ? null : await liveLayout(client, row.layout_family_id);
       // Its layout was replaced while this waited: the new one has not been read.
       if (row.layout_family_id != null && !layout) throw fail('retry', 'The layout changed while this was saved');

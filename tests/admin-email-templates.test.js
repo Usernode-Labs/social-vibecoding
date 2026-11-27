@@ -160,6 +160,57 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal(sent.length, 0);
   });
 
+  await t.test('a waiting draft is not overwritten unseen, takes a hand correction, and can be discarded', async () => {
+    const current = await live('password_reset');
+    const body = { ...otpBody(current, { action: 'password_reset', subject: 'Reset, a second draft' }) };
+    delete body.expectedLiveId;
+    const saved = await call('POST', '/api/admin/email-templates/draft', body);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const draft = saved.body.template;
+    // A save that did not open this draft (a new template pointed at the email).
+    const blind = await call('POST', '/api/admin/email-templates/draft', { ...body, subject: 'Written over it' });
+    assert.equal(blind.status, 409);
+    assert.equal(blind.body.code, 'conflict');
+    // A language of the draft is corrected by hand, as the live version's is.
+    const french = { subject: 'Réinitialisation', preheader: draft.preheader, why: draft.why, html: draft.html, text: draft.text };
+    const corrected = await call('PUT', `/api/admin/email-templates/${draft.id}/translations/fr`, french);
+    assert.equal(corrected.status, 200, JSON.stringify(corrected.body));
+    const { rows: [fr] } = await pool.query("SELECT subject, origin FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [draft.id]);
+    assert.deepEqual(fr, { subject: 'Réinitialisation', origin: 'admin' });
+    // An earlier version still refuses one: nobody gets it.
+    const { rows: [archived] } = await pool.query("SELECT id FROM email_templates WHERE action = 'password_reset' AND status = 'archived' AND deleted_at IS NULL LIMIT 1");
+    assert.equal((await call('PUT', `/api/admin/email-templates/${archived.id}/translations/fr`, french)).status, 409);
+    // Discarded: gone from the action, the live version untouched, and not offered to restore.
+    const discarded = await call('DELETE', `/api/admin/email-templates/${draft.id}`, { expectedLiveId: current.id });
+    assert.equal(discarded.status, 200, JSON.stringify(discarded.body));
+    assert.equal(discarded.body.liveId, null);
+    const { rows: [gone] } = await pool.query('SELECT status, deleted_at FROM email_templates WHERE id = $1', [draft.id]);
+    assert.equal(gone.status, 'draft');
+    assert.ok(gone.deleted_at);
+    assert.equal((await live('password_reset')).id, current.id);
+    assert.equal((await call('POST', `/api/admin/email-templates/${draft.id}/restore`, { expectedLiveId: current.id })).status, 404);
+    assert.equal((await call('POST', `/api/admin/email-templates/${draft.id}/publish`, { expectedLiveId: current.id })).status, 404);
+    // And the email can be drafted again.
+    const next = await call('POST', '/api/admin/email-templates/draft', body);
+    assert.equal(next.status, 200, JSON.stringify(next.body));
+    assert.notEqual(next.body.template.id, draft.id);
+    await call('DELETE', `/api/admin/email-templates/${next.body.template.id}`, { expectedLiveId: current.id });
+    assert.equal(sent.length, 0);
+  });
+
+  await t.test('a layout only drafts wear is not deleted from under them', async () => {
+    const { rows: [note] } = await pool.query("SELECT family_id, id FROM email_layouts WHERE name = 'Evan, typed note' AND status = 'live' AND deleted_at IS NULL");
+    assert.ok(note, 'the typed-note layout is seeded');
+    assert.equal(await pool.query("SELECT 1 FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [note.family_id]).then((r) => r.rowCount), 0);
+    const layouts = await call('GET', '/api/admin/email-layouts', undefined, 'view');
+    const listed = layouts.body.layouts.find((l) => l.id === note.id);
+    assert.ok(listed.usedBy.length >= 1 && listed.usedBy.every((u) => u.draft === true), 'its drafts are named as using it');
+    const bare = await call('DELETE', `/api/admin/email-layouts/${note.family_id}`, { expectedLiveId: note.id });
+    assert.equal(bare.status, 422, JSON.stringify(bare.body));
+    const { rows: [still] } = await pool.query('SELECT deleted_at FROM email_layouts WHERE id = $1', [note.id]);
+    assert.equal(still.deleted_at, null);
+  });
+
   await t.test('saving otp without {{code}} is 400 naming code', async () => {
     const current = await live('otp');
     const res = await call('POST', '/api/admin/email-templates', otpBody(current, { html: '<p>Your code is below.</p>' }));

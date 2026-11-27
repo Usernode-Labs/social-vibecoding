@@ -10,7 +10,7 @@ import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
 import { PreviewPane, PreviewView } from './email-templates/preview';
 import {
-  FailureNotice, isDirty, keepDraft, unusableOf, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
+  FailureNotice, isDirty, keepDraft, unusableOf, keptDraft, KeptDraftNotice, layoutWearers, liveTemplate, PlaceholderList, readFailure, request, isLive,
   type Failure, type KeptDraft, type LayoutRow, type TemplateRow, type TemplatesPayload,
 } from './email-templates/shared';
 import {
@@ -36,7 +36,9 @@ import {
 // starts from what is live and leaves the kept draft, and its notice, alone.
 type View =
   | { kind: 'list' }
-  | { kind: 'template'; action: string; isNew: boolean; restore?: KeptDraft & { kind: 'template' } }
+  // `version`: 'live' opens the live version of an email that also has a
+  // draft waiting; otherwise an email opens on its draft when it has one.
+  | { kind: 'template'; action: string; isNew: boolean; version?: 'draft' | 'live'; restore?: KeptDraft & { kind: 'template' } }
   | { kind: 'layout'; familyId: number | null; restore?: KeptDraft & { kind: 'layout' } };
 
 type Dialog =
@@ -154,6 +156,21 @@ function EmailTemplatesSection() {
       () => deleteArchivedTemplate(row));
   };
 
+  // A draft was never sent, so discarding it changes nothing anyone gets.
+  const discardDraft = async (row: TemplateRow) => {
+    const live = payload ? liveTemplate(payload, row.action) : null;
+    const sure = await confirm({
+      title: `Discard the draft of ${row.name}?`,
+      message: live
+        ? 'The draft is deleted and cannot be brought back. The live version is not affected and keeps going out.'
+        : 'The draft is deleted and cannot be brought back. This email has no live version.',
+      confirmLabel: 'Discard draft',
+    });
+    if (!sure || !alive.current) return;
+    run(`/api/admin/email-templates/${row.id}`, 'DELETE', { expectedLiveId: live ? live.id : null },
+      `The draft of ${row.name} was discarded.`, () => discardDraft(row));
+  };
+
   const restoreLayout = (row: LayoutRow) => {
     if (!payload) return;
     const live = payload.layouts.find((l) => l.family_id === row.family_id && isLive(l));
@@ -220,10 +237,8 @@ function EmailTemplatesSection() {
           onConfirm={confirmDialog} onCancel={closeDialog} onReload={reloadFromDialog} />
       );
     }
-    const using = payload.actions.filter((a) => {
-      const t = liveTemplate(payload, a.action);
-      return t && t.layout_family_id === dialog.live.family_id;
-    }).length;
+    // Drafts count: they move to the chosen layout with the live versions.
+    const using = layoutWearers(payload, dialog.live.family_id).length;
     return (
       <ReplaceDialog title={`Delete the layout ${dialog.live.name}?`}
         intro={using
@@ -261,7 +276,8 @@ function EmailTemplatesSection() {
 
   if (view.kind === 'template') {
     return (
-      <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
+      <TemplateEditor key={`t-${view.action}-${view.version || 'draft'}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
+        version={view.version || 'draft'}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
         onDraftSaved={(row) => {
           const drip = !!payload.actions.find((a) => a.action === row.action)?.drip;
@@ -316,14 +332,15 @@ function EmailTemplatesSection() {
           // owns it: leaving that editor dirty keeps it again.
           keepDraft(null);
           setKept(null);
-          if (kept.kind === 'template') { setTab('templates'); setView({ kind: 'template', action: kept.action, isNew: kept.isNew, restore: kept }); }
+          if (kept.kind === 'template') { setTab('templates'); setView({ kind: 'template', action: kept.action, isNew: kept.isNew, version: kept.version, restore: kept }); }
           else { setTab('layouts'); setView({ kind: 'layout', familyId: kept.familyId, restore: kept }); }
         }} />
       {tab === 'templates' ? (
         <TemplateList payload={payload} canWrite={write} showArchived={showArchived} now={now}
           onToggleArchived={() => setShowArchived((s) => !s)}
           onNew={() => setView({ kind: 'template', action: payload.actions[0]?.action || 'otp', isNew: true })}
-          onEdit={(action) => setView({ kind: 'template', action, isNew: false })}
+          onEdit={(action, version) => setView({ kind: 'template', action, isNew: false, version })}
+          onDiscardDraft={discardDraft}
           onDelete={(live) => openDialog({ kind: 'template', live })}
           onRestore={restoreTemplate} onDeleteArchived={deleteArchivedTemplate} />
       ) : (

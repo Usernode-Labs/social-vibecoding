@@ -453,9 +453,10 @@ function emailTemplateAdminRoutes(pool, config) {
       const [all, locales] = await Promise.all([store.listAll(pool), localesBy('layouts')]);
       const usedBy = new Map();
       for (const row of all.templates) {
-        if (row.status !== 'live' || row.deleted_at || row.layout_family_id == null) continue;
+        // Drafts too: deleting a layout moves them with the live templates.
+        if ((row.status !== 'live' && row.status !== 'draft') || row.deleted_at || row.layout_family_id == null) continue;
         if (!usedBy.has(row.layout_family_id)) usedBy.set(row.layout_family_id, []);
-        usedBy.get(row.layout_family_id).push({ id: row.id, action: row.action, name: row.name });
+        usedBy.get(row.layout_family_id).push({ id: row.id, action: row.action, name: row.name, draft: row.status === 'draft' });
       }
       res.json({
         placeholders: Object.entries(LAYOUT_PLACEHOLDERS).map(([name, p]) => ({ name, description: p.description })),

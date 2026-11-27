@@ -327,9 +327,10 @@ async function saveChecked(pool, kind, id, locale, fields, origin, { overwrite =
 }
 
 /**
- * An admin's correction of one language, to the version readers get now:
- * a version that is no longer live (someone saved, restored or deleted since
- * the admin opened it) is a conflict, so the screen can say so and reload.
+ * An admin's correction of one language, to the version readers get now or
+ * to a template's open draft: an earlier version (someone saved, restored or
+ * deleted since the admin opened it) is a conflict, so the screen can say so
+ * and reload.
  */
 async function saveCorrection(pool, kind, id, locale, fields, { deps = {} } = {}) {
   const languages = deps.languages || configuredLanguages();

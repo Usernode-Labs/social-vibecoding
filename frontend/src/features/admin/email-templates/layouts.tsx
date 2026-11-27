@@ -6,7 +6,7 @@ import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
   confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft,
-  liveTemplate, PlaceholderList, readFailure, request, unusableOf, useUnloadGuard,
+  layoutWearers, liveTemplate, PlaceholderList, readFailure, request, unusableOf, useUnloadGuard,
   type Failure, type KeptDraft, type LayoutRow, type TemplatesPayload,
 } from './shared';
 import { VisualTab } from './visual-tab';
@@ -20,14 +20,12 @@ import {
 // its family id is what an email points at, what a delete takes and what a
 // replacement names. A version id is what Restore takes.
 
-/** The live emails wearing each layout family. */
+/** The emails wearing each layout family, by their live version or their draft. */
 export function wearersByFamily(payload: TemplatesPayload): Map<number, string[]> {
+  // An email's draft wears its layout as its live version does.
   const by = new Map<number, string[]>();
-  for (const a of payload.actions) {
-    const live = liveTemplate(payload, a.action);
-    if (!live || live.layout_family_id == null) continue;
-    if (!by.has(live.layout_family_id)) by.set(live.layout_family_id, []);
-    by.get(live.layout_family_id)!.push(a.label);
+  for (const l of payload.layouts) {
+    if (!by.has(l.family_id)) by.set(l.family_id, layoutWearers(payload, l.family_id));
   }
   return by;
 }

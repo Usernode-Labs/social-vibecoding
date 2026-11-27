@@ -284,7 +284,16 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     const { rows: [{ id: userId }] } = await pool.query('SELECT id FROM users ORDER BY id LIMIT 1');
     await pool.query("UPDATE email_templates SET created_by = $1, subject = 'Mine' WHERE action = 'account_email'", [userId]);
 
-    await withSeeds({ ...NEW_SUBJECT, password_reset: { subject: 'Seeded' }, account_email: { subject: 'Seeded' } }, reseed);
+    // project_invite has a staged draft beside it (SEEDS.drafts): that draft
+    // never went out, so the live seed is still untouched and follows.
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'project_invite' AND status = 'draft'"), 1);
+    const draftBefore = await pool.query("SELECT subject FROM email_templates WHERE action = 'project_invite' AND status = 'draft'");
+
+    await withSeeds({ ...NEW_SUBJECT, password_reset: { subject: 'Seeded' }, account_email: { subject: 'Seeded' },
+      project_invite: { subject: 'Seeded invite' } }, reseed);
+    assert.equal((await liveRow('project_invite')).subject, 'Seeded invite');
+    assert.deepEqual((await pool.query("SELECT subject FROM email_templates WHERE action = 'project_invite' AND status = 'draft'")).rows, draftBefore.rows,
+      'the draft keeps its own words');
     const after = await liveRow('otp');
     assert.equal(after.id, otp.id, 'in place');
     assert.equal(after.version, 1);
