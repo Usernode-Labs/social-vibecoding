@@ -2991,11 +2991,6 @@ async function seedStagingBotWaitingRows(pool) {
       // set, no build session). Says Ready to build and "will build this
       // next", never "is building this".
       { number: 9106, title: 'Staging demo: a request the bot is ready to build', buildQueued: true },
-      // #7236: a plan Homeroom bot wrote and waits for its requester to OK,
-      // so the request card's chip can show that one wait in amber. Its
-      // subject is its own: a title close to another demo's would be read as
-      // that one's duplicate (_twinOf) and hidden from the board.
-      { number: 9122, title: 'Staging demo: the bake sale poster gets bigger type', planWaiting: true },
       // #6867: a request a build left owed because OpenRouter's credit ran
       // out. Its row on the bot's tab and its own page say it waits for
       // building credit and that the bot picks it up again by itself.
@@ -3066,45 +3061,6 @@ async function seedStagingBotWaitingRows(pool) {
            SELECT $1, $2, 2, 'credit_wait', $3, NOW() - INTERVAL '1 day'
             WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
           [appId, d.number, userId],
-        );
-      }
-      if (d.planWaiting) {
-        // #7236: a plan written and waiting for the requester's OK, with
-        // nothing built from it, so the card's chip reads "Waiting for you
-        // to OK the plan". Nothing here is a signal the bot decides on.
-        // Filed just now, so it heads the board's list (most recently
-        // updated first, and only a page of requests fits) instead of
-        // falling under a page of older ones. A row this seed already
-        // freshened is left alone, so a later boot changes nothing.
-        await pool.query(
-          `UPDATE requests SET created_at = NOW(), updated_at = NOW()
-            WHERE app_id = $1 AND number = $2 AND updated_at < NOW() - INTERVAL '1 hour'`,
-          [appId, d.number],
-        );
-        const plan = {
-          complicated: true,
-          questions: [],
-          bullets: ['Staging demo: the sample screen gets a sample banner.'],
-          card: {
-            summary: 'Staging demo: the sample screen gets a sample banner. Nothing else changes.',
-            lines: [
-              { n: 1, text: 'Staging demo: a sample banner sits at the top of the sample screen.' },
-              { n: null, text: 'Staging demo: nothing else on the screen moves.' },
-            ],
-          },
-        };
-        await pool.query(
-          `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
-           VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
-          [appId, d.number, userId, d.title],
-        );
-        await pool.query(
-          `INSERT INTO homeroom_bot_runs
-             (app_id, issue_number, mode, verdict, plan, awaiting_go_at, created_at)
-           SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
-            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
-                               WHERE app_id = $1 AND issue_number = $2 AND mode = 'live')`,
-          [appId, d.number, JSON.stringify(plan)],
         );
       }
       if (d.buildQueued) {
@@ -5229,25 +5185,48 @@ async function seedStagingBotReplyWaiting(pool) {
 // #6207/#6210 (3 Nov 2026): a plan of Homeroom bot's waiting for Build it is
 // a ▷ row on the Homeroom bot page that opens its request's page, where the
 // plan is drawn for everyone with its Build it. A fresh staging copy has no
-// such plan, so the before & after shots get one, obviously fake, on the
-// self-hosted Homeroom project, for the shots' member fixture
-// (usernode-capture) as its requester. Its card text is the plan's own
-// (#6220). Nothing here is a signal the bot decides on, and a staging copy
-// never acts on its queue. Idempotent by request number; a no-op outside
-// staging.
+// such plan, so the before & after shots get one, obviously fake, for the
+// shots' member fixture (usernode-capture) as its requester. Its card text is
+// the plan's own (#6220). Nothing here is a signal the bot decides on, and a
+// staging copy never acts on its queue. Idempotent by project, request
+// number and run; a no-op outside staging.
+//
+// #7236: the plan is also what draws the amber "waiting for your OK" chip on
+// a request card, and a card is only on a board whose list a seed's row can
+// reach. Homeroom's own project lists GitHub's issues, never a seeded
+// request, so the plan lives in a project of the member's own with no
+// repository: on staging a project without one lists the requests stored for
+// it (#7172), which is the one board a seeded card appears on. Filed just
+// now, so it heads that list.
 async function seedStagingBotPlanWaiting(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
-    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!apps.rows.length || !people.rows.length) return seedSkipped('no self-hosted project or no user usernode-capture');
-    const appId = apps.rows[0].id;
+    if (!people.rows.length) return seedSkipped('no user usernode-capture');
     const userId = people.rows[0].id;
-    const number = 9106;
-    const title = 'Staging demo: a plan waiting for Build it';
+    const slug = 'staging-demo-plan-waiting';
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, icon_emoji)
+       VALUES (900813, 'Staging demo: Bake sale', $1, 'running', 'private', 'private', $2, '🍪')
+       ON CONFLICT DO NOTHING`,
+      [slug, userId],
+    );
+    const app = (await pool.query('SELECT id FROM apps WHERE slug = $1', [slug])).rows[0];
+    if (!app) return seedSkipped('no project staging-demo-plan-waiting');
+    const appId = app.id;
+    // A private project is readable by its members, and a member is a
+    // collaborator row: the creator alone is not one. The row also joins the
+    // member's community by trigger, so the project is one they can open.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`,
+      [appId, userId],
+    );
+    const number = 9122;
+    const title = 'Staging demo: the bake sale poster gets bigger type';
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
-       SELECT $1, $2, $3, 'Staging demo: obviously fake. A plan waits for Build it.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. A plan waits for its OK.', $4, NOW() - INTERVAL '1 hour', NOW()
         WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
       [appId, number, title, userId],
     );
@@ -5259,18 +5238,18 @@ async function seedStagingBotPlanWaiting(pool) {
     const plan = {
       complicated: true,
       questions: [],
-      bullets: ['Staging demo: the sample screen gets a sample banner.'],
+      bullets: ['Staging demo: the poster\'s first line gets the larger type.'],
       card: {
-        summary: 'Staging demo: the sample screen gets a sample banner. Nothing else changes.',
+        summary: 'Staging demo: the poster\'s first line gets the larger type. Nothing else changes.',
         lines: [
-          { n: 1, text: 'Staging demo: a sample banner sits at the top of the sample screen.' },
-          { n: null, text: 'Staging demo: nothing else on the screen moves.' },
+          { n: 1, text: 'Staging demo: "Bake sale" is set in the larger type, as it was last year.' },
+          { n: null, text: 'Staging demo: the prices and the date stay as they are.' },
         ],
       },
     };
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan, awaiting_go_at, created_at)
-       SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
+       SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '50 minutes', NOW() - INTERVAL '55 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live')`,
       [appId, number, JSON.stringify(plan)],
     );

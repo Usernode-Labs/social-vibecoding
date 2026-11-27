@@ -28378,7 +28378,7 @@ const AppView = {
     // #7236: a plan waiting for its OK needs a person to act, so its chip
     // takes the amber tint the app already gives a wait on somebody (the
     // imported-change chip, a Medium priority) rather than the quiet grey.
-    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
+    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',

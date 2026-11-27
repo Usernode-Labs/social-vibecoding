@@ -899,7 +899,7 @@ test('#7236: a plan waiting for its OK is an amber chip; other waits keep their 
   assert.equal(st.spinner, false, 'nothing is running while a plan waits');
   const chip = AppView._inProgressChipSpec(planWait());
   assert.match(chip.cls, /bg-amber-500\/10/, 'the chip wears the amber tint');
-  assert.match(chip.cls, /dark:text-amber-400/, 'and its dark-mode partner');
+  assert.match(chip.cls, /dark:text-amber-300/, 'and its dark-mode partner');
   assert.match(chip.label, /OK the plan/, 'the words do not change');
   // Builders reading somebody else's request get the same amber chip in the
   // wording for everyone but the requester.
