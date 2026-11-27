@@ -133,10 +133,19 @@ function shapeApp(app, contributorRows, includeWallets) {
     // (guestReady). `requires_login` above keeps its own meaning: no
     // credential of any kind.
     guest_ready: guestReady(app),
+    // How many times it was played or opened, one per person per day, and
+    // how many accounts hearted it (services/app-popularity.js).
+    plays: parseInt(app.plays, 10) || 0,
+    hearts: parseInt(app.hearts, 10) || 0,
   };
 }
 
 async function listPublicApps(pool, { includeWallets = true, slug = null } = {}) {
+  // HEARTS AND PLAYS (services/app-popularity.js says what each is): a play
+  // is one person on one day, from app_activity for somebody signed in and
+  // from app_visitor_plays for a visitor; an account that is not a person
+  // (users.is_synthetic) plays and hearts nothing. summaryFor there counts
+  // one app the same way.
   // The active-users join mirrors the authed home list's sticky 10-day rule:
   // a user counts iff they ever spent >= 60s on the app on a single day AND
   // visited within 10 days. One query returns one row per app. `slug`
@@ -160,8 +169,27 @@ async function listPublicApps(pool, { includeWallets = true, slug = null } = {})
               COALESCE(dev.merged_count, 0) AS merged_count,
               COALESCE(dev.merged_week, 0) AS merged_week,
               dev.last_merged_at, lc.title AS latest_change_title,
-              COALESCE(au.cnt, 0) AS active_users
+              COALESCE(au.cnt, 0) AS active_users,
+              (COALESCE(member_plays.cnt, 0) + COALESCE(visitor_plays.cnt, 0)) AS plays,
+              COALESCE(hearts.cnt, 0) AS hearts
          FROM apps a
+         LEFT JOIN (
+           SELECT aa.app_id, COUNT(*) AS cnt
+             FROM app_activity aa
+             JOIN users pu ON pu.id = aa.user_id
+            WHERE pu.is_synthetic IS NOT TRUE
+            GROUP BY aa.app_id
+         ) member_plays ON member_plays.app_id = a.id
+         LEFT JOIN (
+           SELECT app_id, SUM(plays) AS cnt FROM app_visitor_plays GROUP BY app_id
+         ) visitor_plays ON visitor_plays.app_id = a.id
+         LEFT JOIN (
+           SELECT ah.app_id, COUNT(*) AS cnt
+             FROM app_hearts ah
+             JOIN users hu ON hu.id = ah.user_id
+            WHERE hu.is_synthetic IS NOT TRUE
+            GROUP BY ah.app_id
+         ) hearts ON hearts.app_id = a.id
          LEFT JOIN (
            SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
            FROM app_activity a1

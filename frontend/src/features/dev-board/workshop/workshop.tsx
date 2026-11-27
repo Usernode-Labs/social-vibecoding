@@ -83,7 +83,7 @@ import {
   CommunityCard, HubCardClose, canLeave, communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import {
-  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
+  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, PopularityCard, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
 } from './hub-cards';
 import { ContributorsCard } from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
@@ -2323,6 +2323,12 @@ export function DevWorkshop(): ReactNode {
       {slug ? (
         <div className="dev-ws-hub-cols" data-ws-hub-cols={talkHere ? 'two' : 'one'}>
           <div className="dev-ws-hub-side">
+            {/* HEARTS AND PLAYS lead the column, above For you (owner, 27 Nov
+                2026): how many times the app was played or opened and how many
+                accounts gave it a heart, with the heart to give one. On a
+                narrow window too, where the column's parts are placed by
+                `order` (app.css). See ./hub-cards.tsx PopularityCard. */}
+            <PopularityCard slug={slug} name={community?.name || app.name || slug} data={community} />
             <ForYouCard
               slug={slug}
               queue={v.queue}

@@ -76,8 +76,20 @@ test('describe gives an unproposed draft no number of its own', () => {
 });
 
 test('draftSessionSql names the table predicate every list adds, for its own alias', () => {
-  assert.equal(liveDrafts.draftSessionSql(), 'EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = cs.id)');
-  assert.match(liveDrafts.draftSessionSql('c'), /ld\.session_id = c\.id/);
+  assert.equal(liveDrafts.draftSessionSql(),
+    '(EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = cs.id) AND cs.promoted_at IS NULL)');
+  assert.match(liveDrafts.draftSessionSql('c'), /ld\.session_id = c\.id\) AND c\.promoted_at IS NULL\)$/);
+});
+
+test('a working session that went up for a vote is a change: the rule never matches it', () => {
+  // Before 24 Nov 2026, Propose promoted the draft's own working session, so
+  // that session IS the proposal. Lists add `AND NOT <predicate>`, which must
+  // keep such a session; isDraftSession and draftHomeOf read the same rule.
+  assert.match(liveDrafts.draftSessionSql(), /promoted_at IS NULL/);
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/live-drafts.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`async function ${name}(`), src.indexOf('\n}\n', src.indexOf(`async function ${name}(`)));
+  assert.match(fn('isDraftSession'), /JOIN chat_sessions cs ON cs\.id = ld\.session_id[\s\S]*cs\.promoted_at IS NULL/);
+  assert.match(fn('draftHomeOf'), /JOIN chat_sessions cs ON cs\.id = d\.session_id[\s\S]*cs\.promoted_at IS NULL/);
 });
 
 // ── 20 Nov 2026 (live-draft review, C): Propose and Update proposal as a card ──

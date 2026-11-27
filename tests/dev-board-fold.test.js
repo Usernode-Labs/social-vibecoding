@@ -1642,7 +1642,12 @@ test('no declared check asks for the cards open; the board’s checks read its r
   // status and facts rows, action band, fold mark, comment tail and reply
   // box (the blocked proposal's two checks are one on its row). 668 leaves
   // 212 slots.
-  checkCap.assertPinned(DAPP.tests.length, 668);
+  // 668 → 669: +1 (Start editor, 27 Nov 2026). The mark's menu over an app
+  // leads its list with the Start editor card. No check opened that menu on
+  // an app of its own (the three that open it are on Homeroom's, where the
+  // card is an admin's alone), so there was none to fold it into. 669 leaves
+  // 211 slots.
+  checkCap.assertPinned(DAPP.tests.length, 669);
   // Every selector fits the runner's cap (app-manifest.js
   // MAX_TEST_SELECTOR_LEN): a longer one is cut mid-token and fails on every
   // build with "was not found".

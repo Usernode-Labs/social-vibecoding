@@ -1506,6 +1506,12 @@
       "expectText": "Suggest an improvement"
     },
     {
+      "name": "The mark's menu over an app leads its list with Start editor, the app's live draft one press away (27 Nov 2026)",
+      "path": "/?demo=1&shot=improve#app/staging-demo-app/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] > #improve-quick-actions + #switcher-nav > #app-menu-editor-card:first-child > button#app-menu-row-editor",
+      "expectText": "Start editor"
+    },
+    {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
@@ -4528,10 +4534,10 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] [data-ws-discussion-page] > [data-ws-hub-discussion=\"page\"] [data-ws-discussion-thread=\"earlier\"] [data-ws-discussion-earlier-reactions] > button[data-emoji=\"❤️\"]"
     },
     {
-      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026)",
+      "name": "Signed out, a public project's page is two columns from 1024px: its Discussion beside the rest, read only, its posts with their pictures, and Start a post… asking the visitor to sign in (f-so2, 26 Nov 2026); the side column has the hearts and plays card, its plays and its heart button",
       "path": "/app/staging-guest-page-busy?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols] > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-guest-page-busy\"] [data-guest-cols]:has([data-guest-side] [data-guest-popularity] [data-hearts-plays-used]):has([data-guest-popularity] button[data-heart][aria-pressed=\"false\"]) > [data-guest-talk] [data-guest-discussion-full] [data-ws-hub-discussion]:not(:has(.dh-actions, form[data-ws-discussion-compose])):has([data-ws-discussion-files] img.dc-msg-att-img) button[data-ws-discussion-sign-in] .dh-sign-in",
       "expectText": "Sign in to post",
       "allowConsoleErrors": true
     },

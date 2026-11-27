@@ -372,8 +372,11 @@ is no replay plan to write and nothing to verify locally.
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
-  for and who was active this week, the actions, For you: votes owed, your
-  work and the chat's last line, then Recently live; no charts),
+  for and who was active this week, the actions, hearts and plays
+  (`features/popularity/`: how many times the app was played, one per
+  person per day, and how many accounts gave it a heart, with the heart to
+  give one), For you: votes owed, your work and the chat's last line, then
+  Recently live; no charts),
   **Needs you** and **Workshop**, a line, then **Channels** (**#general**)
   under its heading; a topic's channel is reached from the Hub's Topics card
   and its own address. Place keys are

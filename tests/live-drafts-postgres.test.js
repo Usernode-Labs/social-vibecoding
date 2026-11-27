@@ -314,7 +314,17 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     const mine = await pool.query(
       `SELECT COUNT(*)::int AS n FROM chat_sessions cs WHERE ${workshop.MY_SESSIONS_WHERE}`, [person.id]);
     assert.equal(mine.rows[0].n, 0, 'the draft is not one of the viewer\'s changes');
-    await pool.query('UPDATE chat_sessions SET pr_number = NULL WHERE id = $1', [draft.sessionId]);
+    // Before 24 Nov 2026, Propose promoted the working session itself: then
+    // it IS a proposal, with its own page and its place on every list.
+    await pool.query('UPDATE chat_sessions SET promoted_at = NOW() WHERE id = $1', [draft.sessionId]);
+    assert.equal(await liveDrafts.isDraftSession(pool, draft.sessionId), false, 'a proposal is not a draft');
+    assert.equal(await liveDrafts.draftHomeOf(pool, { appId: project.id, sessionId: draft.sessionId, viewerId: person.id }), null,
+      'its address opens its own page, not the thread');
+    const theirs = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM chat_sessions cs WHERE cs.id = $1 AND NOT ${liveDrafts.draftSessionSql('cs')}`,
+      [draft.sessionId]);
+    assert.equal(theirs.rows[0].n, 1, 'and the lists keep it');
+    await pool.query('UPDATE chat_sessions SET pr_number = NULL, promoted_at = NULL WHERE id = $1', [draft.sessionId]);
   });
 
 

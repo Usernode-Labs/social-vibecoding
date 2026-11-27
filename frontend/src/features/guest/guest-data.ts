@@ -41,6 +41,10 @@ export interface GuestApp extends PublicApp {
   last_merged_at?: string | null;
   guest_ready?: boolean;
   contributors?: unknown[];
+  /** How many times it was played or opened, one per person per day (src/services/app-popularity.js). */
+  plays?: number;
+  /** How many accounts gave it a heart. */
+  hearts?: number;
 }
 
 export interface GuestVote {
@@ -128,7 +132,7 @@ export function newAccountsWait(options: { waitlist_enabled?: boolean } | null |
 }
 
 /** The sorts Discover offers, in the order its control shows them. */
-export const SORTS = ['trending', 'new', 'built', 'popular', 'name'] as const;
+export const SORTS = ['trending', 'new', 'built', 'popular', 'played', 'hearts', 'name'] as const;
 export type GuestSort = (typeof SORTS)[number];
 
 /**
@@ -158,7 +162,8 @@ function createdAt(app: GuestApp): number {
 /**
  * The directory in a sort's order, and only that: `'trending'` is the most
  * people active lately first, whether or not a visitor can try it, and
- * `'popular'` is the most members. Putting the tryable first (21 Oct 2026)
+ * `'popular'` is the most members, `'played'` the most plays or opens and
+ * `'hearts'` the most hearts. Putting the tryable first (21 Oct 2026)
  * led the list with test and diagnostic apps nobody uses, above a game 42
  * people play (Evan's review of the live page, 21 Oct 2026); what a visitor
  * can try is Featured's job, and its cards carry Try it wherever they sort.
@@ -175,6 +180,8 @@ export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[]
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);
     if (sort === 'popular') return app.member_count || 0;
+    if (sort === 'played') return app.plays || 0;
+    if (sort === 'hearts') return app.hearts || 0;
     return app.active_users || 0;
   };
   indexed.sort((a, b) => key(b.app) - key(a.app) || a.i - b.i);
