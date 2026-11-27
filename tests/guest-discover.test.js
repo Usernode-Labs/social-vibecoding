@@ -685,8 +685,8 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sort, 'the rest has a sort menu');
   assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
-  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'name'],
-    'New, Popular, Most active and A to Z, in that order');
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'played', 'hearts', 'name'],
+    'New, Popular, Most active, Most played, Most hearts and A to Z, in that order');
   assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
     'most active until another is picked');
   assert.equal(message('home:join.sort.new'), 'New');
@@ -868,8 +868,9 @@ test('Top contributors on the signed-out page: the hub\'s list and rules, This m
   assert.ok(text(html).includes(message('project:hub.contributors.title')));
   assert.equal([...html.matchAll(/data-guest-contributor="/g)].length, 3);
   assert.ok(text(html).includes(message('project:hub.contributors.count_other', { count: 10 })));
-  assert.match(html, /class="one-seg" role="group"/);
-  assert.match(html, /data-guest-contrib-span="month" aria-pressed="true"/);
+  // The shared strip's radio kind in its segment look (@/components/ui/tabs.tsx).
+  assert.match(html, /<div role="radiogroup" aria-label="[^"]+" class="one-seg" style="--one-seg-n:2;--one-seg-i:0">/);
+  assert.match(html, /aria-checked="true" data-guest-contrib-span="month"/);
   // Nobody this month: it opens on All time.
   assert.match(card({ month: [], all_time: people(4) }), /data-guest-contributors="all"/);
   // A list of one is no list, as on the hub.

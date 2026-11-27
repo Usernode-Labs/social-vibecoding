@@ -75,7 +75,8 @@
 // draft that was numbered before this keeps its pull request, but is no
 // longer a change: the predicate takes it off every list, and its old change
 // address opens its thread. When it is proposed it gets a new number, as any
-// draft does.
+// draft does. One whose working session was itself proposed before this is
+// a change: it keeps its page and its place on the lists (draftSessionSql).
 //
 // An admin can switch drafts off for everyone (`live_drafts_enabled` in
 // platform_settings, Admin › Limits): no new draft opens and no edit runs.
@@ -195,18 +196,29 @@ const EDITABLE_SQL = `(d.state = 'open' OR (d.state = 'proposed' AND d.proposal_
 // working session (`live_drafts.session_id`, never the proposal session
 // Propose makes) is kept off every change path: no pull request, no number,
 // no row in a list and no page. These three helpers are that one rule.
+//
+// A working session that was itself put up for a vote is a change all the
+// same. Before 24 Nov, Propose promoted the draft's own working session (the
+// proposal IS that session, so the draft has no `proposal_session_id`); one
+// such proposal was hidden from every list and its page sent to the thread.
+// `promoted_at` tells them apart: set when a session goes up for a vote and
+// never cleared, so it holds through merging and merged. A draft proposed
+// since then gets a proposal session of its own, and its working session is
+// never promoted.
 
 /** Pure: the SQL predicate that keeps a draft's working session off the change path. */
 function draftSessionSql(alias = 'cs') {
-  return `EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = ${alias}.id)`;
+  return `(EXISTS (SELECT 1 FROM live_drafts ld WHERE ld.session_id = ${alias}.id) AND ${alias}.promoted_at IS NULL)`;
 }
 
-/** Whether `sessionId` is a live draft's working session. Never throws: a failed read is false. */
+/** Whether `sessionId` is a live draft's working session, never put up for a vote. Never throws: a failed read is false. */
 async function isDraftSession(db, sessionId) {
   const id = Number(sessionId);
   if (!Number.isSafeInteger(id) || id <= 0) return false;
   try {
-    const { rows } = await db.query('SELECT 1 FROM live_drafts WHERE session_id = $1 LIMIT 1', [id]);
+    const { rows } = await db.query(
+      `SELECT 1 FROM live_drafts ld JOIN chat_sessions cs ON cs.id = ld.session_id
+        WHERE ld.session_id = $1 AND cs.promoted_at IS NULL LIMIT 1`, [id]);
     return rows.length > 0;
   } catch (err) {
     return false;
@@ -221,9 +233,11 @@ async function isDraftSession(db, sessionId) {
 async function draftHomeOf(db, { appId, sessionId, viewerId = null }) {
   const id = Number(sessionId);
   if (!appId || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(Number(viewerId))) return null;
+  // One that went up for a vote keeps its own page (draftSessionSql above).
   const { rows: [row] } = await db.query(
     `SELECT d.root_message_id FROM live_drafts d
-      WHERE d.session_id = $1 AND d.app_id = $2 AND d.user_id = $3`,
+       JOIN chat_sessions cs ON cs.id = d.session_id
+      WHERE d.session_id = $1 AND d.app_id = $2 AND d.user_id = $3 AND cs.promoted_at IS NULL`,
     [id, Number(appId), Number(viewerId)],
   );
   const root = Number(row?.root_message_id);

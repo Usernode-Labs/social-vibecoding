@@ -889,7 +889,8 @@ test('#3887: a board whose every scorer is excluded reads as the filter working,
   // sentence carries the same data-tc-lb-empty contract the noentries hint
   // does — the declared check accepts "table or this hint".
   assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
-  assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
+  // The shared Chip (@/components/ui/chip.tsx) writes aria-pressed from `selected`.
+  assert.match(standingsTsx, /selected=\{toggle\.on\}/, 'and publishes its on-state');
   assert.match(standingsTsx, /\{t\('leaderboard:standings\.allExcluded'\)\}/);
   assert.equal(message('leaderboard:standings.allExcluded'), 'Everyone with a score on this board is excluded from the ranking.');
   assert.match(standingsTsx,
@@ -1499,8 +1500,11 @@ test('the Kudos History filter chips expose their on-state as aria-pressed (#299
   assert.match(chip('given'), /aria-pressed="true"/);
   assert.match(chip('received'), /aria-pressed="false"/);
   for (const key of ['given', 'received']) assert.match(chip(key), /type="button"/);
-  // The colour treatment is unchanged: the attribute is added, not swapped in.
-  assert.match(chip('given'), /bg-violet-600 text-white/);
+  // The chips are the shared filter Chip (@/components/ui/chip.tsx) now: the
+  // one on is its inversion, no longer a violet fill of their own (which the
+  // buttons layer drew as the page's main action).
+  assert.match(chip('given'), /bg-zinc-900 text-white/);
+  assert.doesNotMatch(out, /bg-violet-600/);
 });
 
 // QA 2026-09-24 Q21: the section strip scrolls sideways on a narrow phone

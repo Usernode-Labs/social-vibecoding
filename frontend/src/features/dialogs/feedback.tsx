@@ -34,6 +34,7 @@ import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { CameraIcon, ChatIcon, DescriptionIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 
 import { HostDropOverlay } from '../attachments/file-drag';
@@ -87,6 +88,9 @@ interface OpenOptions {
 }
 
 /** A finger is the main pointer: a phone or a tablet without a mouse. */
+/** The Form | Comment switch's two options, in the order they are drawn. */
+const FEEDBACK_MODES = ['form', 'comment'] as const;
+
 function onTouchScreen(): boolean {
   try {
     return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -262,29 +266,18 @@ export function FeedbackDialog() {
             prerendered shell (the class, as the rest of this card is), since
             `offersComment` starts false until the dialog opens. */}
         <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
-          <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('dialogs:feedback.mode.label')}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked="true"
-              title={t('dialogs:feedback.mode.formTitle')}
-              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
-            >
-              <DescriptionIcon className="h-4 w-4" />
-              {t('dialogs:feedback.mode.form')}
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked="false"
-              title={t('dialogs:feedback.mode.commentTitle')}
-              onClick={toComment}
-              className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-            >
-              <ChatIcon className="h-4 w-4" />
-              {t('dialogs:feedback.mode.comment')}
-            </button>
-          </span>
+          <Tabs kind="radio" look="segment" values={FEEDBACK_MODES} value="form" onValueChange={(next) => { if (next === 'comment') toComment(); }}>
+            <TabsList aria-label={t('dialogs:feedback.mode.label')}>
+              <TabsTrigger value="form" title={t('dialogs:feedback.mode.formTitle')}>
+                <DescriptionIcon />
+                {t('dialogs:feedback.mode.form')}
+              </TabsTrigger>
+              <TabsTrigger value="comment" title={t('dialogs:feedback.mode.commentTitle')}>
+                <ChatIcon />
+                {t('dialogs:feedback.mode.comment')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">{touch ? t('dialogs:feedback.mode.hintTouch') : t('dialogs:feedback.mode.hint')}</span>
         </div>
         {/*

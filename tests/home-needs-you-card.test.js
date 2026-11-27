@@ -222,7 +222,9 @@ test('the heading leads to the tab, and the sheet keeps its own Recent threads l
   // The sheet reads its list itself, as it always did, and still offers the tab.
   const sheet = read('frontend/src/features/notifications/notifications-sheet.tsx');
   assert.match(sheet, /fetch\(`\/api\/me\/recent-threads\?\$\{params\.toString\(\)\}`/);
-  assert.match(sheet, /aria-selected=\{tab === 'threads'\}/);
+  // The tab is a trigger of the shared strip (@/components/ui/tabs.tsx), which
+  // writes its aria-selected from the strip's value.
+  assert.match(sheet, /<TabsTrigger id="notifications-tab-threads" value="threads">/);
   assert.match(sheet, /if \(!open \|\| !wantedTab\) return;\s*setTab\(wantedTab\);\s*notificationsSheetStore\.set\(\{ tab: null \}\);/);
   // A card's address is the one a project's Workshop and Hub link to; the tab reads it.
   const address = loadTsx('frontend/src/features/ai/filter-address.ts');
