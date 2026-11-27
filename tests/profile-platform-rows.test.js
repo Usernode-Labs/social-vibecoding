@@ -60,9 +60,9 @@ const ROWS = [
   ['profile-row-app-slots', '#profile?slots'],
   // Settings (#5557): Profile opens the Edit profile sheet in place; the
   // card shows at every width, so the Settings row is no longer a phone's
-  // entrance only.
+  // entrance only. Notifications is not here: it is the Preferences card's
+  // row (#7226), and this card used to repeat it.
   ['profile-row-profile', '#profile?edit'],
-  ['profile-row-notifications', '#settings/alerts'],
   ['profile-row-settings', '#settings'],
 ];
 
@@ -79,7 +79,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, feedback, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
+test('in order: Your changes, requests, feedback, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
@@ -102,7 +102,7 @@ test('in order: Your changes, requests, feedback, votes; then Challenges & stand
   }
 });
 
-test('the Settings card shows at every width, with its three rows (#5557)', () => {
+test('the Settings card shows at every width, with its two rows (#5557, #7226)', () => {
   // md:hidden once hid it from 768px, where the sidebar's gear is a second
   // entrance — which left a desktop Me page with no settings at all, the
   // report. The card now ends the screen on both sides of the breakpoint.
@@ -113,7 +113,9 @@ test('the Settings card shows at every width, with its three rows (#5557)', () =
   // :not(:last-child), so a row hidden inside Account would leave a hairline.
   const at = CODE.indexOf('id="profile-settings"');
   const group = CODE.slice(at, CODE.indexOf('</GroupedList>', at));
-  assert.equal((group.match(/<ListRow/g) || []).length, 3, 'Profile, Notifications, Settings');
+  assert.equal((group.match(/<ListRow/g) || []).length, 2, 'Profile, Settings');
+  assert.ok(!group.includes('profile-row-notifications'),
+    'Notifications is the Preferences card\'s row alone (#7226)');
 });
 
 test('Profile opens the Edit profile sheet in place on a plain click', () => {

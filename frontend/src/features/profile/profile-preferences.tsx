@@ -10,7 +10,7 @@ export function ProfilePreferences() {
     <h2>{t('profile:preferences.title')}</h2>
     <a href="#settings/theme"><CogIcon aria-hidden="true"/><span>{t('profile:preferences.appearance')}</span><ChevronRightIcon aria-hidden="true"/></a>
     <a href="#settings/alerts"><BellIcon aria-hidden="true"/><span>{t('profile:settings.notifications.title')}</span><ChevronRightIcon aria-hidden="true"/></a>
-    <a href="#settings/privacy"><ShieldCheckIcon aria-hidden="true"/><span>{t('profile:preferences.privacy')}</span><ChevronRightIcon aria-hidden="true"/></a>
+    <a href="#settings/contact-privacy"><ShieldCheckIcon aria-hidden="true"/><span>{t('profile:preferences.privacy')}</span><ChevronRightIcon aria-hidden="true"/></a>
   </section>;
 }
 

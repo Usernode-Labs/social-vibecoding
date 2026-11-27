@@ -49,8 +49,9 @@
  * The card at the foot gets you from your own page to the settings about
  * you, at every width (#5557): Profile opens the Edit profile sheet right
  * here (the same sheet the card at the top opens, by `#profile?edit`), and
- * Notifications opens Settings' Notifications page, where the account-wide
- * defaults and the per-app choices live. Wherever the sidebar shows its
+ * Settings opens Settings at its top. Notifications is not repeated here
+ * (#7226): the Preferences card at the top of the screen is its row, and
+ * opens Settings' Notifications page. Wherever the sidebar shows its
  * gear (from 768px, features/nav/tab-bar.tsx with app.css's media query),
  * both entrances sit side by side; on a phone the card is the only one.
  * Its own card at the foot, because GroupedList's separators are
@@ -98,7 +99,7 @@ import { type ReactNode } from 'react';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, LightBulbIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, LightBulbIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -333,16 +334,6 @@ export function SettingsPanel(): ReactNode {
           title={t('profile:settings.profile.title')}
           titleClassName={TITLE}
           subtitle={t('profile:settings.profile.hint')}
-          subtitleClassName={SUBTITLE}
-        />
-        <ListRow
-          as="a"
-          id="profile-row-notifications"
-          href="#settings/alerts"
-          leading={<IconTile size="sm"><BellIcon /></IconTile>}
-          title={t('profile:settings.notifications.title')}
-          titleClassName={TITLE}
-          subtitle={t('profile:settings.notifications.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
