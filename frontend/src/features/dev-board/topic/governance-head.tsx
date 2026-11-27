@@ -32,7 +32,7 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { PersonAvatar } from '@/components/ui/feed';
 import { EllipsisHorizontalIcon } from '@/components/ui/icons';
-import { IllustrationPreviewRow, StatusPill } from '../card/dev-card';
+import { ChangeTag, IllustrationPreviewRow } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { Roster } from './topic-head';
 import { TopicBack } from './topic-back';
@@ -63,7 +63,7 @@ export function GovernanceBar({ g }: { g: GovernanceView }): ReactNode {
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <div className="messages-thread-kicker min-w-0" data-gov-kicker="">{t(g.kicker.id, g.kicker.values)}</div>
-          {pill ? <span className="shrink-0" data-gov-status={pill.key}><StatusPill s={pill} inline /></span> : null}
+          {pill ? <span className="shrink-0" data-gov-status={pill.key}><ChangeTag s={pill} /></span> : null}
         </div>
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title" data-gov-bar-title={g.id}>{g.title}</div>
       </div>
