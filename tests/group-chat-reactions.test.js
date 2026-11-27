@@ -39,33 +39,47 @@ const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const FEED = 'frontend/@/components/ui/feed.tsx';
 
 const reaction = (emoji, mine, users = ['bob']) => ({ emoji, count: users.length, users, mine });
-const msg = (reactions) => ({ id: 7, reactions });
-
-// ── The pills ─────────────────────────────────────────────────────────
-
-test('one pill per reaction, carrying its emoji, count and who', () => {
-  const html = renderComponent(TRANSCRIPT, 'Reactions', {
-    msg: msg([reaction('👍', false, ['bob', 'carol']), reaction('🎉', true, ['alice'])]),
-  });
-  assert.equal((html.match(/<button/g) || []).length, 2);
-  assert.match(html, /data-emoji="👍"/);
-  assert.match(html, /data-emoji="🎉"/);
-  assert.match(html, /title="bob, carol"/);
-  // The count rides beside the emoji, and the emoji is aria-hidden so a
-  // screen reader gets the title rather than "thumbs up 2".
-  assert.match(html, /<span aria-hidden="true">👍<\/span><span>2<\/span>/);
+const REACTIONS = 'frontend/src/features/message-actions/reactions.tsx';
+// A row of the transcript, carrying what the view model gives it.
+const row = (reactions) => ({
+  id: 7, kind: 'message', username: 'bob', senderId: 2, time: '10:00', timeTitle: 'Nov 1, 2026, 10:00 AM', at: '2026-11-01T10:00:00Z',
+  bodyHtml: '<p>hi</p>', text: 'hi', mine: false, unread: false, bookmarked: false, reactions, quote: null,
+  editedTitle: null, attachments: [], voteRowClass: '', specShare: null,
 });
 
-test('an empty reaction list still renders its container', () => {
-  // `.gc-reactions:empty { margin-top: 0 }` is what makes an unreacted row
-  // sit tight, and a stable container is what live updates patch into.
-  const html = renderComponent(TRANSCRIPT, 'Reactions', { msg: msg([]) });
-  assert.equal(html, '<div class="gc-reactions" id="gc-react-7"></div>');
+// ── The pills ─────────────────────────────────────────────────────────
+//
+// Dedupe step 2: the pills are the one reaction chip every message row
+// draws (../message-actions/reactions.tsx MessageReactions, the feed
+// primitive's ReactionPill), in Messages' own container under a person's
+// message; the old `Reactions` here and its always-present empty container
+// are gone with the transcript's own row.
+
+test('one pill per reaction, carrying its emoji, count and who', () => {
+  const html = renderComponent(TRANSCRIPT, 'MessageRow', {
+    msg: row([reaction('👍', false, ['bob', 'carol']), reaction('🎉', true, ['alice'])]),
+  });
+  const pills = html.slice(html.indexOf('<div class="messages-reactions">'));
+  assert.ok(pills.length > 0, 'the row draws the shared chip in Messages\' container');
+  assert.equal((pills.match(/<button type="button" class="inline-flex[^"]*rounded-full/g) || []).length, 2);
+  assert.match(pills, /data-emoji="👍"/);
+  assert.match(pills, /data-emoji="🎉"/);
+  assert.match(pills, /title="bob, carol"/);
+  // The count rides beside the emoji, the emoji is aria-hidden, and the
+  // chip's name says both in words.
+  assert.match(pills, /aria-label="thumbs up: 2 reactions"/);
+  assert.match(pills, /<span aria-hidden="true">👍<\/span><span>2<\/span>/);
+});
+
+test('a row with no reactions draws no reaction row', () => {
+  const html = renderComponent(TRANSCRIPT, 'MessageRow', { msg: row([]) });
+  assert.doesNotMatch(html, /messages-reactions|gc-reactions/);
 });
 
 test('"yours" is a visible state, in both themes', () => {
-  const html = renderComponent(TRANSCRIPT, 'Reactions', {
-    msg: msg([reaction('👍', false), reaction('🎉', true, ['alice'])]),
+  const html = renderComponent(REACTIONS, 'MessageReactions', {
+    className: 'messages-reactions',
+    reactions: [reaction('👍', false), reaction('🎉', true, ['alice'])],
   });
   const [theirs, mine] = html.split('<button').slice(1);
   assert.ok(theirs.includes('data-emoji="👍"') && mine.includes('data-emoji="🎉"'));
@@ -77,6 +91,7 @@ test('"yours" is a visible state, in both themes', () => {
   assert.match(mine, /text-violet-700/);
   assert.match(mine, /dark:bg-violet-950/);
   assert.match(mine, /dark:text-violet-300/);
+  assert.match(mine, /aria-pressed="true"/);
   assert.ok(!theirs.includes('violet'), 'someone else’s pill stays neutral');
   assert.match(theirs, /bg-zinc-100/);
   assert.match(theirs, /dark:bg-zinc-800/);
@@ -104,27 +119,31 @@ test('the accent tone corrects its own hover ink', () => {
 
 test('clicking a pill calls the method the module actually has', () => {
   // The bug this pins: `toggleReaction` does not exist on GroupChat, so the
-  // handler was a no-op that type-checked and rendered fine. Invoked for
-  // real here rather than grepped.
-  const { Reactions } = loadTsx(TRANSCRIPT);
+  // handler was a no-op that type-checked and rendered fine. A pill's tap is
+  // the row's `toggleReaction`, the shared controls' react act, which the
+  // transcript wires to `sendReact`.
+  const { MessageReactions } = loadTsx(REACTIONS);
   const calls = [];
-  const previous = global.window;
-  global.window = {
-    GroupChat: {
-      sendReact: (id, emoji) => calls.push([id, emoji]),
-      toggleReaction: () => { throw new Error('toggleReaction is not a GroupChat method'); },
-    },
+  // Drawn inside a render (the chip reads its words with a hook), and its
+  // element kept, so its taps can be made for real.
+  let element = null;
+  const Probe = () => {
+    element = MessageReactions({
+      className: 'gc-reactions',
+      reactions: [reaction('👍', false), reaction('🎉', true, ['alice'])],
+      onToggle: (emoji) => calls.push(emoji),
+    });
+    return null;
   };
-  try {
-    const element = Reactions({ msg: msg([reaction('👍', false), reaction('🎉', true, ['alice'])]) });
-    // The room's status chip is gone (5 Nov 2026): the row is the pills alone.
-    const pills = element.props.children;
-    assert.equal(pills.length, 2);
-    for (const pill of pills) pill.props.onClick();
-  } finally {
-    if (previous === undefined) delete global.window; else global.window = previous;
-  }
-  assert.deepEqual(calls, [[7, '👍'], [7, '🎉']]);
+  renderToHtml(createElement(Probe));
+  const pills = element.props.children;
+  assert.equal(pills.length, 2);
+  for (const pill of pills) pill.props.onClick();
+  assert.deepEqual(calls, ['👍', '🎉']);
+
+  const transcript = read(TRANSCRIPT);
+  assert.match(transcript, /react: \(emoji\) => chat\?\.sendReact\?\.\(id, emoji\)/);
+  assert.match(transcript, /<MessageReactions className="messages-reactions" reactions=\{msg\.reactions\} onToggle=\{controls\.toggleReaction\} \/>/);
 
   // …and the method it names is a real one, fire-and-forget over the socket.
   assert.match(read('public/js/group-chat.js'), /\n {2}sendReact\(messageId, emoji\) \{/);
@@ -222,8 +241,7 @@ test('the dot itself is rendered, and the module no longer spells it', () => {
     msg: {
       id: 5, kind: 'message', username: 'bob', time: '10:00', bodyHtml: 'hi',
       mine: false, unread: true, bookmarked: false, reactions: [], quote: null,
-      showEdit: false, showReact: true, showBookmark: true, editedTitle: null,
-      attachments: [], voteRowClass: '', specShare: null, canEdit: false,
+      editedTitle: null, attachments: [], voteRowClass: '', specShare: null,
     },
   });
   assert.match(dotted, /<span class="gc-unread-dot" aria-label="Unread mention"><\/span>/);

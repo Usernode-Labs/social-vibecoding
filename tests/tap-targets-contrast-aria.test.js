@@ -185,10 +185,12 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
   const chips = CSS.slice(CSS.indexOf('  :is(.dev-card-meta, .dev-topic-hero-chips) { isolation: isolate; }'));
   assert.ok(chips.length < CSS.length, 'the chip rows are isolated');
   assert.match(chips, /button\.attr-chip::after \{[\s\S]*?z-index: -1;[\s\S]*?height: max\(100%, 32px\);/);
-  // The Save mark follows a vote row's No button 4px away: it reaches back no
-  // further than that margin, at the row's start edge in either direction.
-  const save = CSS.slice(CSS.indexOf('  .gc-msg-save::after {'));
-  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?inset-inline-start: -4px;[\s\S]*?height: max\(100%, 32px\);/);
+  // Dedupe step 2: the Save mark that followed a vote row's No button is
+  // gone with the module's own row controls; a notice's Save is the shared
+  // hover bar's (message-actions/action-bar.tsx), which a phone does not
+  // draw (a long press opens the sheet instead), so it has no slop to cover
+  // a neighbour with.
+  assert.ok(!CSS.includes('.gc-msg-save'), 'no Save mark of the module\'s own');
 });
 
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
@@ -310,7 +312,11 @@ test('7164: Challenges\' tabs are pressed at 44px and the track is drawn where i
 });
 
 test('7164: a thread\'s reaction chips are pressed at 44px, and a chip never loses a tap to its neighbour', () => {
-  assert.match(CSS, /\n\.messages-reactions button \{[^}]*height: 32px;/, 'drawn 32px tall, as before');
+  // Dedupe step 2: the chip is the one every message row draws
+  // (message-actions/reactions.tsx, the feed primitive's ReactionPill),
+  // still 32px tall.
+  assert.match(read('frontend/@/components/ui/feed.tsx'), /reaction: 'h-8 px-3 /, 'drawn 32px tall, as before');
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /<MessageReactions className="messages-reactions"/);
   assert.match(PHONE_TAPS, /html:root \.messages-reactions button \{ position: relative; \}/);
   assert.match(PHONE_TAPS, /html:root \.messages-reactions button::after \{ content: ""; position: absolute; z-index: -1; inset-inline: 0; top: 50%; height: 44px; transform: translateY\(-50%\); \}/,
     'the box is 44px tall and sits under the chips');

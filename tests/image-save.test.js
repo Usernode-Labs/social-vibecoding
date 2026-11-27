@@ -234,7 +234,7 @@ test('the viewer\'s Download is a button that saves, held still on the picture s
   assert.match(src, /onContextMenu=\{\(event\) => \{ if \(touching\.current\) event\.preventDefault\(\); \}\}/);
 });
 
-// The app channel's ⋯ menu and long-press sheet share `messageMenuItems`.
+// The app channel's ⋯ menu and long-press sheet: the shared controls' items.
 function transcriptMessage(over = {}) {
   return {
     id: 7, kind: 'message', mine: false, senderId: 2, username: 'maya', text: 'here it is',
@@ -244,10 +244,29 @@ function transcriptMessage(over = {}) {
 const image = (id) => ({ id, kind: 'image', name: `shot-${id}.png`, url: `/api/apps/demo/chat-attachments/${id}`, size: '2 KB', badge: null });
 
 test('a channel message with pictures offers Download image to everyone, after Copy text', () => {
-  const { messageMenuItems } = loadTsx('frontend/src/features/group-chat/transcript.tsx');
+  // Dedupe step 2: the menu is the shared controls' (message-actions/
+  // controls.tsx `messageItems`), offered by the one rule, fed the pictures
+  // the transcript's row picks out of its attachments.
+  const { messageActions } = loadTsx('frontend/src/features/message-actions/rules.ts');
+  const { messageItems } = loadTsx('frontend/src/features/message-actions/controls.tsx');
+  assert.match(read('frontend/src/features/group-chat/transcript.tsx'),
+    /pictures: \(msg\.attachments \|\| \[\]\)\.filter\(\(att\) => att\.kind === 'image'\)\.map\(\(att\) => \(\{ src: att\.url, name: att\.name \}\)\),/);
   const { restore } = stage();
   try {
-    const items = (msg) => messageMenuItems(transcriptMessage(msg), 'main', () => {});
+    const items = (over) => {
+      const msg = transcriptMessage(over);
+      const allowed = messageActions({
+        viewer: { signedIn: true, canWrite: true },
+        author: { mine: !!msg.mine, known: !!msg.senderId },
+        place: 'channel',
+        message: { live: true, said: true, hasText: !!msg.text, threadable: false },
+      });
+      return messageItems(allowed, {
+        text: msg.text,
+        pictures: msg.attachments.filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })),
+        failed: () => {},
+      });
+    };
     const theirs = items({ attachments: [image('a')] });
     const keys = theirs.map((i) => i.key);
     assert.equal(keys.indexOf('download'), keys.indexOf('copy') + 1);

@@ -4198,7 +4198,7 @@
     {
       "name": "An app's channel draws a person's message as a Discord-style named row, flat text under their name and stamp with no bubble (#2783)",
       "path": "/app/usernode-2d5619/dev/chat",
-      "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg:not(.gc-msg-self) > .min-w-0 > div > .gc-msg-content"
+      "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg.messages-message:not(.messages-message-bubble):not(.gc-msg-self) > .min-w-0 > .messages-message-head + .gc-msg-content"
     },
     {
       "name": "The same project by its channel's old Messages address is its Discussion, saying nothing was posted, too (#3653): Homeroom's activity is not a post",

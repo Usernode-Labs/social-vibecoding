@@ -11,8 +11,10 @@
 //      "Show more" under it; open, it is whole and the control says
 //      "Show less". The control carries aria-expanded.
 //   3. The first render is the old markup exactly, so a short body and the
-//      declared checks' `.gc-msg > .min-w-0 > div > .gc-msg-content` chain
-//      are untouched.
+//      declared checks' `.gc-msg > .min-w-0 > .messages-message-head +
+//      .gc-msg-content` chain are untouched. (Dedupe step 2: the body is
+//      `messages-markdown gc-msg-content`, at Messages' reading size, since
+//      the row it sits in is Messages' own.)
 //
 // Effects do not run under renderToStaticMarkup, so the decision is a pure
 // function tested here, and each state renders from the presentational half.
@@ -82,13 +84,13 @@ const view = (props) => renderToHtml(createElement(mod().LongBodyView, {
 
 test('a short body renders exactly as before: no clamp, no control', () => {
   const html = view({ long: false, expanded: false });
-  assert.equal(html, '<div class="gc-msg-content"><p>the plan</p></div>');
+  assert.equal(html, '<div class="messages-markdown gc-msg-content"><p>the plan</p></div>');
 });
 
 test('a long body folds, fades, and offers "Show more"', () => {
   const { FOLD_CLASS, FADE_CLASS } = mod();
   const html = view({ long: true, expanded: false });
-  assert.ok(html.startsWith(`<div class="gc-msg-content ${FOLD_CLASS} ${FADE_CLASS}"><p>the plan</p></div>`),
+  assert.ok(html.startsWith(`<div class="messages-markdown gc-msg-content ${FOLD_CLASS} ${FADE_CLASS}"><p>the plan</p></div>`),
     'the clamp goes on .gc-msg-content itself, never a wrapper around it');
   const more = message('chat:group.row.showMore');
   assert.equal(more, 'Show more');
@@ -99,7 +101,7 @@ test('a long body folds, fades, and offers "Show more"', () => {
 
 test('opened, the body is whole and the control says "Show less"', () => {
   const html = view({ long: true, expanded: true });
-  assert.ok(html.startsWith('<div class="gc-msg-content"><p>the plan</p></div>'),
+  assert.ok(html.startsWith('<div class="messages-markdown gc-msg-content"><p>the plan</p></div>'),
     'nothing is clamped or faded once opened');
   const less = message('chat:group.row.showLess');
   assert.equal(less, 'Show less');
@@ -109,7 +111,7 @@ test('opened, the body is whole and the control says "Show less"', () => {
 test('the stateful Body first renders the old markup, unfolded', () => {
   // The decision is a layout effect; before it, the row is what it was.
   const html = renderToHtml(createElement(mod().Body, { html: '<p>hi</p>' }));
-  assert.equal(html, '<div class="gc-msg-content"><p>hi</p></div>');
+  assert.equal(html, '<div class="messages-markdown gc-msg-content"><p>hi</p></div>');
 });
 
 test('the Body watches for growth: a resize and a picture loading', () => {

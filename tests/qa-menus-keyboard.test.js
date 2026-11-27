@@ -252,11 +252,14 @@ test('Q15: Messages and the group chat never call window.confirm()', () => {
     assert.doesNotMatch(code, /window\.confirm\(/, `${file} asks through lib/confirm.ts`);
     assert.match(code, /confirmAction\(\{/, `${file} uses confirmAction`);
   }
+  // Dedupe step 2: both rows wire their menu through the shared controls
+  // (message-actions/controls.tsx), which build it with the one menu.
   for (const file of ['frontend/src/features/messages/message-row.tsx', 'frontend/src/features/group-chat/transcript.tsx']) {
     const code = read(file).replace(/\/\/.*$/gm, '');
     assert.doesNotMatch(code, /window\.confirm\(/, file);
-    assert.match(code, /messageMenu\(\{/, `${file} builds its menu with message-actions/message-menu.ts`);
+    assert.match(code, /useMessageControls\(/, `${file} builds its menu through message-actions/controls.tsx`);
   }
+  assert.match(read('frontend/src/features/message-actions/controls.tsx'), /return messageMenu\(\{/);
   // Audit D09: the new-message picker no longer blocks anyone, so it has
   // nothing to confirm; it still never calls the browser's.
   assert.doesNotMatch(read('frontend/src/features/messages/create-dialog.tsx').replace(/\/\/.*$/gm, ''), /window\.confirm\(/);

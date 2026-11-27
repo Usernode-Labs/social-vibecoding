@@ -4369,9 +4369,12 @@ test('the Workshop keeps no swatch of its own — it imports the one the threads
   assert.equal(swatchFor('ada'), swatchFor('ada'));
   assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
     'and the colour comes from the shared six');
+  // Dedupe step 2: the sheet's replies are Messages' own row, whose face is
+  // format.tsx's UserAvatar, drawn in that same swatch.
   assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
-    /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
+    /import \{ UserAvatar \} from '\.\.\/\.\.\/messages\/format';/,
     'the sheet reads the same module — that is what makes the two match');
+  assert.match(read('frontend/src/features/messages/format.tsx'), /style=\{\{ backgroundColor: swatchFor\(label\) \}\}/);
 });
 
 // ── The theme order holds between sorts ────────────────────────────────

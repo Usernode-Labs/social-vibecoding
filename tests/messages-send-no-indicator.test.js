@@ -197,7 +197,10 @@ test('#2907: no loading row over a visible thread, no "sending…", no busy send
     'the box empties at once, before the round trip');
   assert.match(COMPOSER, /send: \(input\) => send\(\{ \.\.\.input, threadRootId \}\),/);
   assert.match(ROW, /className="messages-retry" onClick=\{\(\) => void retrySend\(/);
-  assert.match(ROW, /messages-message-actions-reserved/, 'an in-flight row keeps its tray\'s place');
+  // Dedupe step 2: the row hands `hidden` to the shared controls
+  // (message-actions/controls.tsx), whose bar marks itself reserved.
+  assert.match(ROW, /hidden: !!message\.pending,/, 'an in-flight row keeps its tray\'s place');
+  assert.match(BAR, /\$\{hidden \? 'messages-message-actions-reserved' : ''\}/);
   assert.match(CSS, /\.messages-message-actions\.messages-message-actions-reserved \{ visibility: hidden; \}/);
   assert.match(CSS, /\.messages-message-pending \{ opacity: \.55; \}/);
 });
@@ -207,10 +210,14 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
     'no longer three text links in the row\'s action slot');
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
-  assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  // Both transcripts build it with the one message menu
-  // (message-actions/message-menu.ts): Report, then Block.
-  assert.match(TRANSCRIPT, /report: theirs \? onReportMessage : null,\s*block: theirs && senderId \? \{\s*who: msg\.usernameMissing \? \{ unknown: 'handle' \} : \{ name: `@\$\{msg\.username\}` \},/);
+  // Dedupe step 2: through the shared controls (message-actions/controls.tsx),
+  // which build the one message menu (message-actions/message-menu.ts):
+  // Report, then Block, where the one rule (message-actions/rules.ts)
+  // allows them.
+  assert.match(TRANSCRIPT, /useMessageControls\(\{[\s\S]*?moreClassName: 'messages-action-more gc-msg-more-action',/);
+  assert.match(TRANSCRIPT, /report: \(\) => \{ if \(id\) openReport\(\{ targetType: 'app_message'[\s\S]*?block: senderId \? \{\s*who: msg\.usernameMissing \? \{ unknown: 'handle' \} : \{ name: `@\$\{msg\.username\}` \},/);
+  const CONTROLS = read('frontend/src/features/message-actions/controls.tsx');
+  assert.match(CONTROLS, /report: allowed\.report \? acts\.report : null,\s*block: allowed\.block \? acts\.block : null,/);
   const MENU = read('frontend/src/features/message-actions/message-menu.ts');
   assert.match(MENU, /if \(spec\.report\) items\.push\(\{ key: 'report', label: t\('messages:row\.menu\.report'\)[\s\S]*?key: 'block', label: blockLabel\(block\.who\)/);
   assert.equal(message('messages:row.menu.report'), 'Report message');
@@ -222,7 +229,8 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   // and it keeps the class and the popup role the declared checks select on.
   assert.match(BAR, /moreClassName = 'messages-action-more'/);
   assert.match(BAR, /className=\{`msgx-bar-icon \$\{moreClassName\}[^`]*`\}[\s\S]{0,160}aria-haspopup="menu"/);
-  assert.match(ROW, /<MessageActionBar[\s\S]*?onToggleMore=/);
+  assert.match(read('frontend/src/features/message-actions/controls.tsx'), /<MessageActionBar[\s\S]*?onToggleMore=/);
+  assert.match(ROW, /useMessageControls\(\{/);
   assert.doesNotMatch(ROW, />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
   assert.match(ROW, /openReport\(\{ targetType: 'conversation_message'/);
   assert.doesNotMatch(ROW, /report-user|targetType: 'user'/,

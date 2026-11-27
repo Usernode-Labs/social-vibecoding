@@ -16,6 +16,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -270,34 +271,33 @@ test('the drawer can be opened by URL, so the section is screenshot-able', () =>
 
 // The three kinds of row all carry a save button, and this used to be counted
 // as three `_renderBookmarkBtn(msg)` calls in the string renderer. That
-// renderer is gone (#1191): the transcript is React, and the button is
-// `<RowActions>` — one component, rendered by each of the three rows.
+// renderer is gone (#1191). Dedupe step 2: every row (a person's message, a
+// notice, a shared plan) carries the shared controls
+// (message-actions/controls.tsx), whose bar's Save is the toggle, offered
+// where the one rule (message-actions/rules.ts) allows it.
 test('every message kind carries the save button', () => {
   const tsx = read('frontend/src/features/group-chat/transcript.tsx');
-  // #2387: a person's row carries the shared hover bar, whose Save is the
-  // same toggle; the system and spec rows keep the module's header controls.
-  const rows = [['MessageRow', /<MessageActions msg=\{msg\}/], ['SystemRow', /<RowActions msg=\{msg\}(?:\s|\/)/], ['SpecShareRow', /<RowActions msg=\{msg\}(?:\s|\/)/]];
-  for (const [row, controls] of rows) {
+  for (const row of ['MessageRow', 'SystemRow', 'SpecShareRow']) {
     const start = tsx.indexOf(`function ${row}(`);
     assert.ok(start > 0, `located ${row}`);
-    // To the next top-level declaration: a typed props block closes with
-    // `\n})` before the body does, so the first `\n}` is not the end.
-    const next = tsx.slice(start + 1).search(/\n(?:export )?function /);
+    const next = tsx.slice(start + 1).search(/\n(?:export )?(?:const \w+ = memo\()?function /);
     const body = tsx.slice(start, next < 0 ? undefined : start + 1 + next);
-    assert.match(body, controls, `${row} renders the row's controls`);
+    assert.match(body, /useChatControls\(msg, /, `${row} renders the row's controls`);
   }
-  // …and the save button is in both, gated on a signed-in viewer.
-  assert.match(tsx, /onToggleSave=\{msg\.showBookmark && msg\.id \? \(\) => chat\?\.toggleBookmark\?\.\(msg\.id\)/);
-  assert.match(tsx, /msg\.showBookmark \? \(/);
-  assert.match(tsx, /className=\{saved \? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'\}/);
+  // …and the save act is the module's toggle, for every row.
+  assert.match(tsx, /save: \{ saved: !!msg\.bookmarked, toggle: \(\) => chat\?\.toggleBookmark\?\.\(id\) \},/);
+  const controls = read('frontend/src/features/message-actions/controls.tsx');
+  assert.match(controls, /const save = allowed\.save && acts\.save \? acts\.save : null;/);
+  assert.match(controls, /onToggleSave=\{save \? save\.toggle : undefined\}/);
 });
 
 test('the message button draws the shell’s own bookmark, not a second one', () => {
   // This used to assert that the COPY of the two Heroicons paths in
   // public/js/group-chat.js still matched the module's — the one duplication
   // in the icon set, kept honest by reading both ends. There is no copy any
-  // more: the button is `<RowActions>` in the React transcript, which imports
-  // the glyphs, so the rule is now simply that neither end draws its own.
+  // more: the button is the shared bar's (message-actions/action-bar.tsx),
+  // which imports the glyphs, so the rule is now simply that neither end
+  // draws its own.
   const outline = ICONS_SRC.match(/BookmarkIcon',\s*\n\s*'([^']+)'/);
   const solid = ICONS_SRC.match(/BookmarkSolidIcon',\s*\n\s*'([^']+)'/);
   assert.ok(outline && solid, 'the module exports the outline/solid bookmark pair');
@@ -306,8 +306,8 @@ test('the message button draws the shell’s own bookmark, not a second one', ()
   const chatCode = CHAT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   assert.doesNotMatch(chatCode, /_bookmarkSvg|_BOOKMARK_PATH/,
     'nor the renderer that drew it');
-  const row = read('frontend/src/features/group-chat/transcript.tsx');
-  assert.match(row, /import \{[^}]*\bBookmarkIcon, BookmarkSolidIcon\b[^}]*\} from '@\/components\/ui\/icons'/,
+  const bar = read('frontend/src/features/message-actions/action-bar.tsx');
+  assert.match(bar, /import \{[^}]*\bBookmarkIcon, BookmarkSolidIcon\b[^}]*\} from '@\/components\/ui\/icons'/,
     'the message button imports the glyph rather than inlining one');
   assert.match(LIST_SRC, /BookmarkSolidIcon/,
     'the drawer row imports the glyph rather than inlining one');
@@ -322,39 +322,41 @@ test('the mark is hollow when unsaved and solid when saved', () => {
   assert.match(ICONS_SRC, /function filled\([\s\S]{0,200}?fill="currentColor"/);
   assert.match(ICONS_SRC, /function stroked\([\s\S]{0,300}?fill="none"\s*\n\s*stroke="currentColor"/);
   // A class toggle alone would leave the previous state's mark on screen, so
-  // the optimistic toggle has to change the SHAPE. It used to do that by
-  // rewriting the button's innerHTML; the transcript is React now
-  // (frontend/src/features/group-chat/transcript.tsx) and that button lives
-  // inside a host the component owns, so the toggle writes the MODEL and the
-  // component picks the glyph. Same contract, one writer.
+  // the optimistic toggle has to change the SHAPE. The toggle writes the
+  // MODEL and the bar picks the glyph. Same contract, one writer.
   const paint = CHAT_SRC.match(/_paintBookmark\(messageId, on\) \{([\s\S]*?)\n  \},/);
   assert.ok(paint, '_paintBookmark() found');
   assert.match(paint[1], /patchTranscriptMessage\(messageId, \{ bookmarked: !!on \}\)/,
     'an optimistic toggle patches the saved flag on the message');
   assert.doesNotMatch(paint[1], /innerHTML|classList|setAttribute/,
     'and does not write the button — the transcript is React-owned');
-  const row = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
-  assert.match(row, /saved \? <BookmarkSolidIcon \/> : <BookmarkIcon/,
+  const bar = read('frontend/src/features/message-actions/action-bar.tsx');
+  assert.match(bar, /\{saved \? <BookmarkSolidIcon aria-hidden="true" \/> : <BookmarkIcon/,
     'the component draws solid when saved and outline when not');
 });
 
 test('the save button is available where react and edit are not', () => {
-  // The gate moved from `_renderBookmarkBtn` to `_messageView`, which is where
-  // every other per-row decision is now decided. The rule is unchanged.
-  const view = CHAT_SRC.match(/\n {6}showEdit:([\s\S]*?)\n {6}quote:/);
-  assert.ok(view, 'the three control gates found in _messageView');
-  const gates = view[1];
-  assert.match(gates, /showBookmark: !!\(window\.App && App\.user\)/,
+  // The gate is the one rule's (message-actions/rules.ts) now, for every
+  // place that draws a message. The rule is unchanged.
+  const { messageActions } = loadTsx('frontend/src/features/message-actions/rules.ts');
+  const ask = (viewer) => messageActions({
+    viewer, author: { mine: true, known: true }, place: 'channel',
+    message: { live: true, said: true, hasText: true },
+  });
+  assert.equal(ask({ signedIn: false, canWrite: false }).save, false,
     'there is no personal list to save into while signed out');
-  assert.doesNotMatch(gates.match(/showBookmark:.*/)[0], /_readOnly/,
+  const readOnly = ask({ signedIn: true, canWrite: false });
+  assert.equal(readOnly.save, true,
     '#621 read-only viewers may save what they can read — it writes nothing to the app');
-  assert.match(gates, /showReact: !GroupChat\._readOnly\(\)/, 'react IS gated');
-  assert.match(gates.slice(0, gates.indexOf('showReact:')), /!GroupChat\._readOnly\(\)/,
-    'and so is edit');
+  assert.equal(readOnly.react, false, 'react IS gated');
+  assert.equal(readOnly.edit, false, 'and so is edit');
+  // The transcript asks it with the module's read-only answer.
+  assert.match(read('frontend/src/features/group-chat/transcript.tsx'),
+    /viewer: \{ signedIn, canWrite: signedIn && !chat\?\._readOnly\?\.\(\) \},/);
+  assert.doesNotMatch(CHAT_SRC, /showBookmark:|showReact:|showEdit:/, 'the view model decides none of it');
 
-  const row = read('frontend/src/features/group-chat/transcript.tsx');
-  assert.match(row, /aria-pressed=\{saved\}/, 'the toggle state is exposed, not just drawn');
+  const bar = read('frontend/src/features/message-actions/action-bar.tsx');
+  assert.match(bar, /aria-pressed=\{!!saved\}/, 'the toggle state is exposed, not just drawn');
 });
 
 test('the toggle is optimistic and reverts when the server refuses', () => {

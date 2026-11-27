@@ -203,13 +203,13 @@ test('the body draws the copy in its own box, folded the same way, with the word
   const body = loadTsx('frontend/src/features/group-chat/long-body.tsx');
   // No page to clean it on (as in this render): the words, in the same box.
   const html = renderToHtml(createElement(body.Body, { html: '<p>Planned, and building now.</p>', rich: LAID_OUT }));
-  assert.equal(html, '<div class="gc-msg-content"><div class="[&amp;&gt;:first-child]:mt-0 [&amp;&gt;:last-child]:mb-0"><p>Planned, and building now.</p></div></div>');
-  assert.equal(renderToHtml(createElement(body.Body, { html: '<p>Hi</p>' })), '<div class="gc-msg-content"><p>Hi</p></div>', 'a plain message as before');
+  assert.equal(html, '<div class="messages-markdown gc-msg-content"><div class="[&amp;&gt;:first-child]:mt-0 [&amp;&gt;:last-child]:mb-0"><p>Planned, and building now.</p></div></div>');
+  assert.equal(renderToHtml(createElement(body.Body, { html: '<p>Hi</p>' })), '<div class="messages-markdown gc-msg-content"><p>Hi</p></div>', 'a plain message as before, at Messages\' reading size');
   // Long, it folds with "Show more" as any body does.
   const folded = renderToHtml(createElement(body.LongBodyView, {
     html: { __html: '' }, content: createElement('span', null, 'drawn'), long: true, expanded: false,
   }));
-  assert.match(folded, /^<div class="gc-msg-content max-h-\[22\.5em\] overflow-hidden \[mask-image:[^"]*\]"><span>drawn<\/span><\/div><button[^>]*class="[^"]*gc-msg-more/);
+  assert.match(folded, /^<div class="messages-markdown gc-msg-content max-h-\[22\.5em\] overflow-hidden \[mask-image:[^"]*\]"><span>drawn<\/span><\/div><button[^>]*class="[^"]*gc-msg-more/);
 
   const src = read('frontend/src/features/group-chat/long-body.tsx');
   assert.match(src, /<BotHtmlReply\n\s+html=\{rich\}\n\s+className="max-w-\[720px\]"\n\s+onSized=\{setDrawn\}/);
