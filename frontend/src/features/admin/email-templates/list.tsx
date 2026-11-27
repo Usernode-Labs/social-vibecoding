@@ -2,7 +2,7 @@
 
 import { AdminUI } from '../admin-console.js';
 import {
-  editedLabel, isLive, liveTemplate, type TemplateRow, type TemplatesPayload,
+  draftTemplate, editedLabel, isLive, liveTemplate, type TemplateRow, type TemplatesPayload,
 } from './shared';
 import { languagesColumn } from './translations';
 
@@ -12,6 +12,9 @@ import { languagesColumn } from './translations';
 // action's earlier versions under its row, with Restore, so a bad edit can be
 // undone from here. A view-only admin sees the same list with View in place
 // of Edit, and no write buttons.
+//
+// A draft (saved, never sent) shows beside the live version, or alone for an
+// email nothing sends yet: the drip's, whose row also says what will send it.
 
 function ArchivedRows({ rows, canWrite, now, onRestore, onDeleteArchived }: {
   rows: TemplateRow[]; canWrite: boolean; now: number;
@@ -97,32 +100,50 @@ export function TemplateList({
           <tbody>
             {payload.actions.map((a) => {
               const live = liveTemplate(payload, a.action);
+              const draft = draftTemplate(payload, a.action);
               const earlier = showArchived
                 ? payload.templates
-                  .filter((t) => t.action === a.action && !isLive(t))
+                  .filter((t) => t.action === a.action && !isLive(t) && t.status !== 'draft')
                   .sort((x, y) => y.version - x.version)
                 : [];
               return [
                 <tr key={a.action} data-email-action={a.action} className={AdminUI.trHover}>
-                  <td className="px-3 sm:px-6 py-3 align-middle font-medium">{a.label}</td>
+                  <td className="px-3 sm:px-6 py-3 align-middle">
+                    <span className="font-medium">{a.label}</span>
+                    {a.drip ? (
+                      <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5" data-email-trigger="">
+                        {`When: ${a.drip.trigger}`}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-3 sm:px-6 py-3 align-middle">
                     {live ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="break-words">{live.name}</span>
                         <span className="text-xs text-zinc-500 dark:text-zinc-400">{`v${live.version}`}</span>
                         <span className={AdminUI.badge.success}>Live</span>
+                        {draft ? <span className={AdminUI.badge.warn} data-email-draft={draft.id}>{`Draft v${draft.version} waiting`}</span> : null}
                         {/* The two columns a phone has no room for, as one line. */}
                         <span className="md:hidden basis-full text-xs text-zinc-500 dark:text-zinc-400">
                           {`Languages: ${languagesColumn(payload, a.englishOnly, live)} · ${editedLabel(live, now)}`}
                         </span>
                       </div>
-                    ) : <span className={AdminUI.badge.warn}>No live version</span>}
+                    ) : draft ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="break-words">{draft.name}</span>
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">{`v${draft.version}`}</span>
+                        <span className={AdminUI.badge.warn} data-email-draft={draft.id}>{a.drip ? 'Draft · Off' : 'Draft'}</span>
+                        <span className="md:hidden basis-full text-xs text-zinc-500 dark:text-zinc-400">
+                          {`Languages: ${languagesColumn(payload, a.englishOnly, draft)} · ${editedLabel(draft, now)}`}
+                        </span>
+                      </div>
+                    ) : <span className={AdminUI.badge.warn}>{a.drip ? 'Off' : 'No live version'}</span>}
                   </td>
                   <td className="hidden md:table-cell px-3 sm:px-6 py-3 align-middle text-zinc-600 dark:text-zinc-300 max-w-[16rem]">
-                    {live ? languagesColumn(payload, a.englishOnly, live) : ''}
+                    {live || draft ? languagesColumn(payload, a.englishOnly, (live || draft) as TemplateRow) : ''}
                   </td>
                   <td className="hidden md:table-cell px-3 sm:px-6 py-3 align-middle text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-                    {live ? editedLabel(live, now) : ''}
+                    {live || draft ? editedLabel((live || draft) as TemplateRow, now) : ''}
                   </td>
                   <td className="px-3 sm:px-6 py-3 align-middle">
                     <div className="flex flex-wrap justify-end gap-2">

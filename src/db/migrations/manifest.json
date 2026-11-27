@@ -625,6 +625,11 @@
       "id": "app-hearts-and-plays",
       "sha256": "1c4d76c186f466afe17c0a4a120ef4cfa16fc16419ea9eb22adb885383e0eb7c",
       "schemaSha256": "96e2790493d724ff4b28f51de3971fef4ca3cc321e4cac293551002efa359872"
+    },
+    {
+      "id": "email-template-drafts",
+      "sha256": "e9c1e7ea48697369085ecd238fbacd85e668bdffe5577ae8479e252df61d84ab",
+      "schemaSha256": "ee9e4333a3ba33a3d87c62fba4e2146f21c5858ef0088a75461b6ea4baf56989"
     }
   ]
 }

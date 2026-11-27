@@ -48,7 +48,7 @@ function testHeadline(outcome: any, to: string): TestResult {
 
 export function PreviewView({
   result, loading, failure, mode, locale, languages, englishOnly, canWrite, testing, testResult, onLocale, onSendTest,
-  extra, stale = false, localeLocked = false,
+  extra, stale = false, localeLocked = false, width = 'desktop', onWidth,
 }: {
   result: PreviewResult | null;
   // The last preview that rendered, kept on screen after a newer draft was
@@ -70,6 +70,9 @@ export function PreviewView({
   onSendTest: () => void;
   // A control the layout editor adds: which email to show inside it.
   extra?: React.ReactNode;
+  // How wide the HTML is drawn: a desktop mail window, or a phone's 375px.
+  width?: 'desktop' | 'phone';
+  onWidth?: (width: 'desktop' | 'phone') => void;
 }) {
   return (
     <div id="email-template-preview" className="space-y-3">
@@ -82,6 +85,16 @@ export function PreviewView({
           </select>
         </label>
         {extra}
+        {onWidth && mode === 'html' ? (
+          <div className="flex gap-1" role="group" aria-label="Preview width">
+            {(['desktop', 'phone'] as const).map((w) => (
+              <button key={w} type="button" id={`email-template-preview-${w}`} aria-pressed={width === w}
+                className={width === w ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} onClick={() => onWidth(w)}>
+                {w === 'desktop' ? 'Desktop' : 'Phone'}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {loading ? <span className={AdminUI.loading}>Loading…</span> : null}
       </div>
       {englishOnly ? <p className="text-xs text-zinc-500 dark:text-zinc-400">This email is sent in English only.</p> : null}
@@ -98,7 +111,7 @@ export function PreviewView({
           </div>
           {mode === 'html' ? (
             <iframe title="Email preview" sandbox="" srcDoc={result.html}
-              className="block w-full h-[32rem] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white" />
+              className={`block h-[32rem] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white ${width === 'phone' ? 'w-[375px] max-w-full mx-auto' : 'w-full'}`} />
           ) : (
             <pre className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 text-xs font-mono max-h-[32rem] overflow-y-auto">{result.text}</pre>
           )}
@@ -154,6 +167,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   fixedLocale?: string;
 }) {
   const [picked, setLocale] = useState('en');
+  const [width, setWidth] = useState<'desktop' | 'phone'>('desktop');
   const locale = fixedLocale || picked;
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -214,6 +228,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   return (
     <PreviewView result={result} stale={!!failure && !!result} loading={loading} failure={failure} mode={mode} locale={locale}
       languages={languages} englishOnly={englishOnly} canWrite={canWrite} testing={testing}
-      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} localeLocked={!!fixedLocale} />
+      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} localeLocked={!!fixedLocale}
+      width={width} onWidth={setWidth} />
   );
 }

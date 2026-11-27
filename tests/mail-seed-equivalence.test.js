@@ -143,8 +143,10 @@ test('each action\'s sample payload renders the snapshot\'s whole message', () =
 // ── The seeds themselves ─────────────────────────────────────────────────
 
 test('every kind has a seed that uses only declared placeholders and carries what is required', () => {
-  assert.deepEqual(Object.keys(SEEDS.templates).sort(), [...KINDS].sort());
-  for (const kind of KINDS) {
+  // The drip emails are seeded too, as drafts nothing sends yet.
+  const { DRIP_KINDS } = require('../src/services/mail/templates');
+  assert.deepEqual(Object.keys(SEEDS.templates).sort(), [...KINDS, ...DRIP_KINDS].sort());
+  for (const kind of [...KINDS, ...DRIP_KINDS]) {
     const action = ACTIONS[kind];
     const template = englishTemplate(kind);
     for (const field of ['subject', 'preheader', 'why', 'html', 'text']) {

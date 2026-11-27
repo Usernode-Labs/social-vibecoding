@@ -204,6 +204,44 @@ function reminderValues(payload) {
   };
 }
 
+// ── The drip (staged as drafts) ────────────────────────────────────────
+//
+// The emails of the new drip: a welcome, nudges through a person's first
+// project and change, and a monthly note. Each is an action so its template
+// can be written, previewed and test-sent in Admin > Email templates, but
+// nothing sends any of them yet: `drip` marks them, they start as drafts
+// (db/email-template-seeds.js), the store refuses to put one live
+// (template-store.js saveTemplate), and the sender does not wait for a live
+// template for them (isComplete). `drip` also says, for the admin's page,
+// who it is from, what sends it, when, and what stops it, so the change that
+// builds the sending can follow it.
+//
+// One set of values serves every one: the reader's display name (never their
+// username), the project it is about, the button's link, the two counts of
+// "Here's what you missed", and the unsubscribe link every one carries.
+const DRIP_PLACEHOLDERS = {
+  first_name: text('Their display name from their profile, never their username; empty when they have none'),
+  app: text('The project\'s name, at most 80 characters'),
+  app_slug: text('The project\'s address name, as in #app/run-club'),
+  url: link('Where the button goes'),
+  changes_shipped: text('How many changes went live in the project in the last 7 days'),
+  changes_waiting: text('How many changes in the project are waiting on votes'),
+  ...ACTIVITY_PLACEHOLDERS,
+};
+const count = (value) => String(Math.max(0, Math.trunc(Number(value) || 0)));
+function dripValues(payload) {
+  return {
+    first_name: clip(str(payload.firstName).trim(), 60),
+    app: clip(payload.appName, 80),
+    app_slug: clip(payload.appSlug, 80),
+    changes_shipped: count(payload.changesShipped),
+    changes_waiting: count(payload.changesWaiting),
+    ...activityValues(payload),
+  };
+}
+const EVAN = 'Evan from Homeroom <evan@onhomeroom.com>, replies to that inbox';
+const TEAM = 'The Homeroom team, the sender Homeroom uses today';
+
 const codeAction = (label, expiry) => ({
   label,
   placeholders: { code: text(`The six-digit code, valid ${expiry}`, SECRET) },
@@ -565,11 +603,205 @@ const ACTIONS = {
     },
     headers: activityHeaders,
   },
+
+  // ── The drip: drafts only until the sending is built ──────────────────
+
+  drip_welcome: {
+    label: 'Drip 1: Welcome (Evan)',
+    drip: {
+      from: EVAN,
+      trigger: 'First sign-in to a new account.',
+      timing: '1 hour after the first sign-in. Does not wait for any waitlist email.',
+      skip: 'Never skipped.',
+      nudge: false,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', url: 'https://app.onhomeroom.com/', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_no_project: {
+    label: 'Drip 2: No project yet',
+    drip: {
+      from: TEAM,
+      trigger: 'Signed in, but has not joined or made a project.',
+      timing: 'Day 2 after the first sign-in, at 11 AM in their time zone.',
+      skip: 'They have joined or made a project.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', url: 'https://app.onhomeroom.com/#communities', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_suggest_change: {
+    label: 'Drip 3: How to suggest a change',
+    drip: {
+      from: TEAM,
+      trigger: 'Joined a project but has not suggested a change, voted or made a request.',
+      timing: 'Day 1 after joining, at 11 AM in their time zone. Once per person, about the joined project with the most recent activity.',
+      skip: 'They have suggested a change, voted or made a request.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_change_vote: {
+    label: 'Drip 4: Your change is up for a vote',
+    drip: {
+      from: TEAM,
+      trigger: 'Their first change is waiting on votes.',
+      timing: '1 day after they suggest it, at 11 AM in their time zone. About the project the change was suggested in.',
+      skip: 'It already shipped, or its vote closed without passing.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_change_failed: {
+    label: 'Drip 5: Didn\'t make it this time',
+    drip: {
+      from: TEAM,
+      trigger: 'The vote on their first change closes without it passing, under that group\'s own voting rules. A single no vote does not trigger it.',
+      timing: 'The next morning, at 11 AM in their time zone.',
+      skip: 'They have already suggested another change.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_change_live: {
+    label: 'Drip 6: Your idea is live (Evan)',
+    drip: {
+      from: EVAN,
+      trigger: 'A change of theirs goes live more than 3 days after they signed up.',
+      timing: 'Right away.',
+      skip: 'Any of their changes shipped in their first 3 days. Once per person.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_alone: {
+    label: 'Drip 7: Not alone in here',
+    drip: {
+      from: TEAM,
+      trigger: 'They made a project that still has no other members.',
+      timing: 'Day 3 after making it, at 11 AM in their time zone. About the newest such project.',
+      skip: 'Someone else has joined.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_invite_waiting: {
+    label: 'Drip 8: Invite still waiting',
+    drip: {
+      from: TEAM,
+      trigger: 'They shared an invite (by text, email, AirDrop or link) and nobody has joined through it.',
+      timing: 'Day 4 after the invite, at 11 AM in their time zone. About the most recent project they shared an invite for.',
+      skip: 'Someone joined through it, or they already got this email for that project.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_missed: {
+    label: 'Drip 9: Here\'s what you missed',
+    drip: {
+      from: TEAM,
+      trigger: 'They were active, then have not visited for 7 days.',
+      timing: 'Day 7 of quiet, at 11 AM in their time zone. About their own project if others joined it, else the one they were most active in; counts over the last 7 days.',
+      skip: 'Both counts are 0.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', appName: 'Run Club', appSlug: 'run-club', url: 'https://app.onhomeroom.com/#app/run-club', changesShipped: 3, changesWaiting: 2, unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_honest_question: {
+    label: 'Drip 10: Honest question (Evan)',
+    drip: {
+      from: EVAN,
+      trigger: 'No visits for 21 days.',
+      timing: 'Day 21 of quiet, at 11 AM in their time zone.',
+      skip: 'They came back. Once per quiet spell.',
+      nudge: true,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', url: 'https://app.onhomeroom.com/', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
+
+  drip_monthly: {
+    label: 'Monthly: How it\'s going (Evan)',
+    drip: {
+      from: EVAN,
+      trigger: 'Once a month, to everyone who has not unsubscribed. Written by hand each month: the parts in {curly braces} are filled in before it goes.',
+      timing: 'Never more than once a month, only after someone writes that month\'s version.',
+      skip: 'They unsubscribed.',
+      nudge: false,
+    },
+    placeholders: DRIP_PLACEHOLDERS,
+    required: BOTH('unsubscribeUrl'),
+    englishOnly: false,
+    sample: { firstName: 'Maya', url: 'https://app.onhomeroom.com/', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
+    values: dripValues,
+    headers: activityHeaders,
+  },
 };
+
+/** True for an action nothing sends yet: its template stays a draft. */
+function isDrip(kind) {
+  return Object.hasOwn(ACTIONS, kind) && !!ACTIONS[kind].drip;
+}
 
 // Own properties only, so a kind named "constructor" is not an action.
 function actionFor(kind) {
   return Object.hasOwn(ACTIONS, kind) ? ACTIONS[kind] : null;
 }
 
-module.exports = { ACTIONS, actionFor, dayMonth, admittedDay, replyAddress };
+module.exports = { ACTIONS, actionFor, isDrip, dayMonth, admittedDay, replyAddress };

@@ -24,7 +24,7 @@
 // check that throws rolls the write back.
 
 const log = require('../logger');
-const { ACTIONS, actionFor } = require('./actions');
+const { ACTIONS, actionFor, isDrip } = require('./actions');
 
 function fail(code, message) {
   const err = new Error(message || code);
@@ -103,6 +103,7 @@ const UNCHANGED = 'Nothing has changed since the live version, so there is nothi
 async function saveTemplate(pool, input, userId, { check = noCheck, afterSave = noCheck } = {}) {
   const { action, name, layoutFamilyId = null, subject, preheader = '', why = '', html, text, expectedLiveId = null } = input;
   if (!actionFor(action)) throw fail('unknown_action', `Unknown email action: ${action}`);
+  if (isDrip(action)) throw fail('not_sending', NOT_SENDING);
   return inTransaction(pool, async (client) => {
     await lock(client, 'email_templates', action);
     const layout = layoutFamilyId == null ? null : await liveLayout(client, layoutFamilyId);
@@ -130,6 +131,58 @@ async function saveTemplate(pool, input, userId, { check = noCheck, afterSave = 
         [liveRow.id, row.id]);
     }
     await afterSave({ row, layout, client, carried: keepsWords });
+    return row;
+  });
+}
+
+// The drip's emails (actions.js `drip`) have nothing that sends them yet, so
+// they can be saved only as drafts: a live one would read as switched on.
+const NOT_SENDING = 'Nothing sends this email yet, so it stays a draft. It can go live once the change that sends it is in';
+
+/**
+ * Saves the draft of the template for `action`: the version an admin is still
+ * working on, which is never sent (the sender reads only the live row). An
+ * action has at most one open draft, kept in place as it is edited; the first
+ * save makes it, as a new version number. `expectedDraftId` is the draft the
+ * caller opened (null for none), so two admins cannot overwrite each other's
+ * draft unseen. A draft whose English words change loses the translations
+ * made of the old words. `check` runs as saveTemplate's does.
+ */
+async function saveDraft(pool, input, userId, { check = noCheck } = {}) {
+  const { action, name, layoutFamilyId = null, subject, preheader = '', why = '', html, text, expectedDraftId = null } = input;
+  if (!actionFor(action)) throw fail('unknown_action', `Unknown email action: ${action}`);
+  return inTransaction(pool, async (client) => {
+    await lock(client, 'email_templates', action);
+    const layout = layoutFamilyId == null ? null : await liveLayout(client, layoutFamilyId);
+    if (layoutFamilyId != null && !layout) throw fail('not_found', 'That layout does not exist');
+    const { rows: [draftRow] } = await client.query(
+      "SELECT * FROM email_templates WHERE action = $1 AND status = 'draft' AND deleted_at IS NULL FOR UPDATE", [action]);
+    if ((expectedDraftId == null ? null : Number(expectedDraftId)) !== (draftRow ? draftRow.id : null)) {
+      throw fail('conflict', 'Another version was saved first');
+    }
+    const words = { subject, preheader, why, html, text };
+    const keepsWords = !!draftRow && sameWords(draftRow, words, TEMPLATE_WORDS);
+    if (keepsWords && draftRow.name === name && (draftRow.layout_family_id ?? null) === layoutFamilyId) {
+      throw fail('unchanged', 'Nothing has changed since the draft was saved, so there is nothing to save');
+    }
+    await check({ layout, client });
+    if (draftRow) {
+      if (!keepsWords) {
+        await client.query('DELETE FROM email_template_translations WHERE template_id = $1', [draftRow.id]);
+        await client.query("DELETE FROM email_translation_jobs WHERE kind = 'template' AND version_id = $1", [draftRow.id]);
+      }
+      const { rows: [row] } = await client.query(
+        `UPDATE email_templates SET name = $2, layout_family_id = $3, subject = $4, preheader = $5, why = $6, html = $7, text = $8,
+           created_by = $9, created_at = NOW()
+         WHERE id = $1 RETURNING *`,
+        [draftRow.id, name, layoutFamilyId, subject, preheader, why, html, text, userId == null ? null : userId]);
+      return row;
+    }
+    const { rows: [{ version }] } = await client.query('SELECT COALESCE(MAX(version), 0) + 1 AS version FROM email_templates WHERE action = $1', [action]);
+    const { rows: [row] } = await client.query(
+      `INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, preheader, why, html, text, created_by)
+       VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [action, name, layoutFamilyId, version, subject, preheader, why, html, text, userId == null ? null : userId]);
     return row;
   });
 }
@@ -216,7 +269,10 @@ async function deleteTemplate(pool, id, { replacementId = null, expectedLiveId }
       await check({ row: found, layout, client });
       replacement = found;
     }
-    await client.query("UPDATE email_templates SET status = 'archived', deleted_at = NOW() WHERE id = $1", [id]);
+    // A deleted draft stays marked a draft, so it is never offered as an
+    // earlier version to put live.
+    await client.query(
+      "UPDATE email_templates SET status = CASE WHEN status = 'draft' THEN 'draft' ELSE 'archived' END, deleted_at = NOW() WHERE id = $1", [id]);
     if (replacement) await client.query("UPDATE email_templates SET status = 'live' WHERE id = $1", [replacement.id]);
     return { deletedId: row.id, liveId: replacement ? replacement.id : null };
   });
@@ -251,12 +307,19 @@ async function deleteLayout(pool, familyId, { replacementFamilyId = null, expect
 // live row is archived, and a deleted version comes back (deleted_at cleared).
 // `expectedLiveId` is the live row the caller saw; a different one is a conflict.
 // A version whose layout was deleted cannot go live.
-async function restoreTemplate(pool, id, { expectedLiveId = null } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
+//
+// `draft`: the chosen version must be the action's open draft (Put live, in
+// the editor). Without it a draft is not offered: restoring is for versions
+// that were live before. An action nothing sends yet (`drip`) cannot go live.
+async function restoreTemplate(pool, id, { expectedLiveId = null, draft = false } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     const { rows: [peek] } = await client.query('SELECT action FROM email_templates WHERE id = $1', [id]);
     if (!peek) throw fail('not_found', 'That template does not exist');
+    if (isDrip(peek.action)) throw fail('not_sending', NOT_SENDING);
     await lock(client, 'email_templates', peek.action);
     const { rows: [row] } = await client.query('SELECT * FROM email_templates WHERE id = $1 FOR UPDATE', [id]);
+    if (draft && (row.status !== 'draft' || row.deleted_at != null)) throw fail('not_found', 'That draft is no longer there');
+    if (!draft && row.status === 'draft') throw fail('not_found', 'That version is a draft; put it live from its editor');
     if (row.status === 'live' && row.deleted_at == null) return row;
     const { rows: [liveRow] } = await client.query(
       "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [row.action]);
@@ -517,7 +580,7 @@ const hasRows = (snap) => !!snap && Object.keys(snap.templates).length > 0;
 
 // Every action has its live template, and every layout one of them names is there.
 function isComplete(snap) {
-  return Object.keys(ACTIONS).every((kind) => Object.hasOwn(snap.templates, kind))
+  return Object.keys(ACTIONS).every((kind) => isDrip(kind) || Object.hasOwn(snap.templates, kind))
     && Object.values(snap.templates).every((row) => row.layout_family_id == null || Object.hasOwn(snap.layouts, row.layout_family_id));
 }
 
@@ -605,6 +668,8 @@ function seededSnapshot() {
       SEEDS.layouts.forEach((layout, i) => { layouts[i + 1] = { family_id: i + 1, name: layout.name, html: layout.html, text: layout.text, translations: {} }; });
       const templates = {};
       for (const kind of Object.keys(ACTIONS)) {
+        // A drip email is never sent, so it has nothing to be worded from.
+        if (isDrip(kind)) continue;
         const { name, layout, ...fields } = englishTemplate(kind);
         templates[kind] = { action: kind, name, layout_family_id: layout ? families.get(layout) : null, translations: {}, ...fields };
       }
@@ -643,4 +708,4 @@ module.exports = {
   SNAPSHOT_FRESH_MS,
   INCOMPLETE_RETRY_MS,
   LOAD_LIMIT_MS,
-  saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, restoreLayout, saveTranslation, saveCheckedTranslation, listAll };
+  saveTemplate, saveDraft, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, restoreLayout, saveTranslation, saveCheckedTranslation, listAll };

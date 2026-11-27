@@ -237,3 +237,18 @@ original files without re-encoding them.
 `editorial/grass-cut.webp` is the unmodified `assets/pictures/grass-cut.webp`
 from the same pack. Profile and Settings show a small grassy section of it
 at the desktop rail’s foot.
+
+## Drip email pictures (27 Nov 2026)
+
+Pictures in the drip emails on Admin › Email templates. Emails load them from
+the production origin, so they show in a test send only once this change is
+live there.
+
+| File | What it is | Size | Weight |
+| --- | --- | --- | --- |
+| `email/sky-banner.jpg` | the product owner's uploaded sky illustration, cropped and re-encoded as a JPEG for email clients | 1040 × 400 | 69 KB |
+| `email/change-card.png` | drawn for this change: a cream card with the three parts of a suggestion (what, where, why) in the brand's yellow and ink | 944 × 424 | 23 KB |
+| `email/evan-photo-placeholder.png` | drawn for this change: a grey circle marking where Evan's photo goes, to be swapped for the real one before the emails are turned on | 112 × 112 | 0.7 KB |
+
+They are decoration beside words that read without them, and nothing in the
+shell loads them.

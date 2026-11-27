@@ -7,7 +7,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
-const { KINDS } = require('../src/services/mail/templates');
+const { KINDS, DRIP_KINDS } = require('../src/services/mail/templates');
+const { SEEDS } = require('../src/db/email-template-seeds');
 const { reset } = require('../src/services/push-language');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -51,7 +52,7 @@ test('on staging the seed runs during the boot, without waiting for the translat
   const config = { databaseUrl: String(url), adminUsername: 'seed-admin', adminPassword: 'only-for-tests', selfAppSlug: 'seed-platform', platformRepoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
   await require('../src/db/migrate').migrate(config);
   const count = async (sql) => (await pool.query(sql)).rows[0].n;
-  assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length, 'seeded during the boot');
+  assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length + DRIP_KINDS.length + Object.keys(SEEDS.drafts).length, 'seeded during the boot');
   assert.equal(await count('SELECT count(*)::int AS n FROM email_template_translations'), 0, 'in English');
   reset();
 });

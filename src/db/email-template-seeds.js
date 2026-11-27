@@ -20,7 +20,7 @@
 const crypto = require('node:crypto');
 const log = require('../services/logger');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
-const { ACTIONS } = require('../services/mail/actions');
+const { ACTIONS, isDrip } = require('../services/mail/actions');
 
 const STANDARD_LAYOUT = 'Homeroom standard';
 // tailwind.config.js `zinc` ramp.
@@ -59,9 +59,45 @@ const REMINDER_BUTTON = '<table role="presentation" width="100%" cellpadding="0"
   + '{{#if hasAccount}}Sign in{{else}}Get started{{/if}}</a></p></td></tr></table>';
 const REMINDER_TEXT_BUTTON = '{{#if hasAccount}}Sign in:{{else}}Get started:{{/if}}\n{{url}}\n\n';
 
+// ── The drip (drafts until the sending is built) ───────────────────────
+//
+// The new drip's emails (actions.js `drip`). They are seeded as DRAFTS:
+// shown, previewed and test-sent in Admin > Email templates, never sent.
+// Copy approved by the product owner on 26 Nov 2026; keep it word for word.
+// Two looks: the team's in the standard layout, and Evan's as a typed note
+// (PLAIN_LAYOUT: no logo, no card, plain text on white, the same footer line).
+// One yellow button at most, table-built so Outlook draws it.
+const PLAIN_LAYOUT = 'Evan, typed note';
+const PLAIN_LAYOUT_HTML = `<!doctype html><html><body style="margin:0;padding:24px 16px;background:#ffffff;font-family:-apple-system,`
+  + `Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:24px;color:${NEUTRAL_INK}">`
+  + `{{#if preheader}}<div style="${PREHEADER_STYLE}">{{preheader}}</div>{{/if}}`
+  + '<div style="max-width:520px;margin:0;text-align:left">'
+  + '{{content}}'
+  + `<div style="margin:32px 0 0;padding-top:12px;border-top:1px solid ${NEUTRAL_HAIRLINE};font-size:12px;line-height:18px;color:${NEUTRAL_SECONDARY_INK}">{{why}}</div>`
+  + '</div></body></html>';
+const DRIP_P = '<p style="margin:0 0 16px;font-size:16px;line-height:24px;color:#1c1c1e">';
+const DRIP_UL = '<ul style="margin:0 0 16px;padding:0 0 0 22px;font-size:16px;line-height:24px;color:#1c1c1e">';
+const DRIP_LI = '<li style="margin:0 0 8px">';
+const DRIP_GREETING = '{{#if first_name}}Hey {{first_name}},{{else}}Hey!{{/if}}';
+const DRIP_TEXT_GREETING = '{{#if first_name}}Hey {{first_name}},{{else}}Hey!{{/if}}';
+const DRIP_BUTTON_OPEN = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:8px 0 24px"><tr>'
+  + '<td style="border-radius:999px;background:#FFEE6F;border:2px solid #000000;box-shadow:3px 3px 0 #000000">'
+  + '<a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;font-size:16px;line-height:20px;font-weight:700;color:#000000;text-decoration:none">';
+const DRIP_BUTTON_CLOSE = '</a></td></tr></table>';
+const DRIP_UNSUBSCRIBE = '{{#if hasUnsubscribeUrl}} <a href="{{unsubscribeUrl}}" style="color:#68686c">Unsubscribe</a>{{/if}}';
+const DRIP_TEXT_UNSUBSCRIBE = '{{#if hasUnsubscribeUrl}}\n\nUnsubscribe: {{unsubscribeUrl}}{{/if}}';
+const SKY_BANNER = `<img src="${PRODUCTION_ORIGIN}/brand/email/sky-banner.jpg" width="472" alt="What if we stopped building for people and built with them instead?" `
+  + 'style="display:block;width:100%;max-width:472px;height:auto;border:0;border-radius:12px">';
+const CHANGE_CARD = `<img src="${PRODUCTION_ORIGIN}/brand/email/change-card.png" width="472" alt="A change card with three parts: what, where, why." `
+  + 'style="display:block;width:100%;max-width:472px;height:auto;border:0;border-radius:12px;margin:0 0 16px">';
+const EVAN_PHOTO = `<p style="margin:0 0 16px"><img src="${PRODUCTION_ORIGIN}/brand/email/evan-photo-placeholder.png" width="56" height="56" alt="Evan" `
+  + 'style="display:block;width:56px;height:56px;border:0;border-radius:28px"></p>';
+const DRIP_TILE = 'border:2px solid #000000;border-radius:16px;padding:16px;text-align:left';
+
 const SEEDS = {
   layouts: [
     { name: STANDARD_LAYOUT, html: STANDARD_LAYOUT_HTML, text: '{{content}}' },
+    { name: PLAIN_LAYOUT, html: PLAIN_LAYOUT_HTML, text: '{{content}}' },
   ],
   templates: {
     otp: {
@@ -461,6 +497,343 @@ const SEEDS = {
         + `{{#if hasUnsubscribeUrl}}\n\n`
         + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
     },
+
+    // ── The drip: seeded as drafts (see "The drip" above) ─────────────
+
+    drip_welcome: {
+      name: ACTIONS.drip_welcome.label,
+      layout: PLAIN_LAYOUT,
+      subject: `hey, evan from homeroom here`,
+      preheader: `anything i can help with?`,
+      why: `You are receiving this because you just made a Homeroom account.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}{{#if first_name}}Hi {{first_name}}!{{else}}Hey!{{/if}} Thanks for joining Homeroom.</p>`
+        + `${DRIP_P}I'm Evan, the co-founder. A few things:</p>`
+        + `${DRIP_UL}${DRIP_LI}Homeroom is built for groups. Anyone can describe a change in plain words, everyone previews it, and the group votes on what ships.</li>`
+        + `${DRIP_LI}The fastest way to see how it all works is to open a project and suggest one tiny change. A color. A button. A joke on the homepage.</li>`
+        + `${DRIP_LI}It's early, and some things will be rough. When something feels weird, tell me. Screenshots help a lot.</li></ul>`
+        + `${DRIP_P}And the why behind all this: we're trying to build a different kind of place on the internet. One that feels like the old one, where you could explore, tinker and make things with people. Except this time, you get to shape the apps you use, not just consume them.</p>`
+        + `${DRIP_P}Hope you like it! If we can make anything better, let me know. I read every reply (me, not the Homeroom bot lol).</p>`
+        + `${DRIP_BUTTON_OPEN}Open Homeroom${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}Evan</p>`
+        + EVAN_PHOTO
+        + `${DRIP_P}P.S. What would you build if your friends could help? Feel free to reply. I'm collecting ideas.</p>`,
+      text: `{{#if first_name}}Hi {{first_name}}!{{else}}Hey!{{/if}} Thanks for joining Homeroom.\n\n`
+        + `I'm Evan, the co-founder. A few things:\n\n`
+        + `- Homeroom is built for groups. Anyone can describe a change in plain words, everyone previews it, and the group votes on what ships.\n`
+        + `- The fastest way to see how it all works is to open a project and suggest one tiny change. A color. A button. A joke on the homepage.\n`
+        + `- It's early, and some things will be rough. When something feels weird, tell me. Screenshots help a lot.\n\n`
+        + `And the why behind all this: we're trying to build a different kind of place on the internet. One that feels like the old one, where you could explore, tinker and make things with people. Except this time, you get to shape the apps you use, not just consume them.\n\n`
+        + `Hope you like it! If we can make anything better, let me know. I read every reply (me, not the Homeroom bot lol).\n\n`
+        + `Open Homeroom: {{url}}\n\n`
+        + `Evan\n\n`
+        + `P.S. What would you build if your friends could help? Feel free to reply. I'm collecting ideas.\n\n`
+        + `You are receiving this because you just made a Homeroom account.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_no_project: {
+      name: ACTIONS.drip_no_project.label,
+      layout: STANDARD_LAYOUT,
+      subject: `Homeroom is more fun together`,
+      preheader: `two easy ways to get started`,
+      why: `You are receiving this because you signed up for Homeroom.${DRIP_UNSUBSCRIBE}`,
+      html: `<p style="margin:0 0 20px">${SKY_BANNER}</p>`
+        + `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}You signed in a couple of days ago and then life happened. Totally fair.</p>`
+        + `${DRIP_P}Here's the thing. Homeroom gets good once you're in a room with other people making something. Two easy ways in:</p>`
+        + `${DRIP_UL}${DRIP_LI}Peek at what people are already building and join one that looks fun.</li>`
+        + `${DRIP_LI}Start your own and bring two friends. A silly idea is fine. Silly ideas are usually the most fun to build.</li></ul>`
+        + `${DRIP_BUTTON_OPEN}Find something to build${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `You signed in a couple of days ago and then life happened. Totally fair.\n\n`
+        + `Here's the thing. Homeroom gets good once you're in a room with other people making something. Two easy ways in:\n\n`
+        + `- Peek at what people are already building and join one that looks fun.\n`
+        + `- Start your own and bring two friends. A silly idea is fine. Silly ideas are usually the most fun to build.\n\n`
+        + `Find something to build: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you signed up for Homeroom.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_suggest_change: {
+      name: ACTIONS.drip_suggest_change.label,
+      layout: STANDARD_LAYOUT,
+      subject: `the trick to a change people say yes to`,
+      preheader: `say what, say where, say why`,
+      why: `You are receiving this because you joined {{app}} on Homeroom.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}You joined {{app}}. Nice. Here's the easiest way to make your mark:</p>`
+        + `${DRIP_UL}${DRIP_LI}<strong>Say what.</strong> "Make the sign-up button bigger."</li>`
+        + `${DRIP_LI}<strong>Say where.</strong> "On the home page, under the photo."</li>`
+        + `${DRIP_LI}<strong>Say why.</strong> "People keep missing it."</li></ul>`
+        + CHANGE_CARD
+        + `${DRIP_P}The why is the part most people skip, and it's what the group reads before they vote.</p>`
+        + `${DRIP_P}No code, just plain words. Then everyone previews it and votes.</p>`
+        + `${DRIP_P}Not ready to suggest anything? Vote on someone else's change. That counts too.</p>`
+        + `${DRIP_BUTTON_OPEN}Suggest a change in {{app}}${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `You joined {{app}}. Nice. Here's the easiest way to make your mark:\n\n`
+        + `- Say what. "Make the sign-up button bigger."\n`
+        + `- Say where. "On the home page, under the photo."\n`
+        + `- Say why. "People keep missing it."\n\n`
+        + `The why is the part most people skip, and it's what the group reads before they vote.\n\n`
+        + `No code, just plain words. Then everyone previews it and votes.\n\n`
+        + `Not ready to suggest anything? Vote on someone else's change. That counts too.\n\n`
+        + `Suggest a change in {{app}}: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you joined {{app}} on Homeroom.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_change_vote: {
+      name: ACTIONS.drip_change_vote.label,
+      layout: STANDARD_LAYOUT,
+      subject: `your change is up for a vote`,
+      preheader: `here's how to get it over the line`,
+      why: `You are receiving this because you suggested a change in {{app}}.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}Your change is in front of {{app}} right now. People are previewing it and voting.</p>`
+        + `${DRIP_P}You're past the hardest part. A few things help it ship:</p>`
+        + `${DRIP_UL}${DRIP_LI}Share it in the project chat and say why you made it.</li>`
+        + `${DRIP_LI}Read what people say about it. A small tweak often turns a no into a yes.</li>`
+        + `${DRIP_LI}While you wait, vote on someone else's change. You'll get a feel for what the group likes.</li></ul>`
+        + `${DRIP_BUTTON_OPEN}See your change${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `Your change is in front of {{app}} right now. People are previewing it and voting.\n\n`
+        + `You're past the hardest part. A few things help it ship:\n\n`
+        + `- Share it in the project chat and say why you made it.\n`
+        + `- Read what people say about it. A small tweak often turns a no into a yes.\n`
+        + `- While you wait, vote on someone else's change. You'll get a feel for what the group likes.\n\n`
+        + `See your change: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you suggested a change in {{app}}.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_change_failed: {
+      name: ACTIONS.drip_change_failed.label,
+      layout: STANDARD_LAYOUT,
+      subject: `didn't make it this time. that's normal.`,
+      preheader: `don't start over. try this.`,
+      why: `You are receiving this because you suggested a change in {{app}}.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}Your change in {{app}} didn't pass this time. It happens, and it's not personal.</p>`
+        + `${DRIP_P}Don't start over. Usually one of these does it:</p>`
+        + `${DRIP_UL}${DRIP_LI}<strong>Make it smaller.</strong> If your change did a few things at once, people may have liked some parts and not others. Split it into smaller changes so the good parts can pass on their own.</li>`
+        + `${DRIP_LI}<strong>Ask the room.</strong> Post in the project chat: "what would make this a yes?"</li>`
+        + `${DRIP_LI}<strong>Lead with the why.</strong> Suggest it again and start with the reason.</li></ul>`
+        + `${DRIP_BUTTON_OPEN}Try again in {{app}}${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `Your change in {{app}} didn't pass this time. It happens, and it's not personal.\n\n`
+        + `Don't start over. Usually one of these does it:\n\n`
+        + `- Make it smaller. If your change did a few things at once, people may have liked some parts and not others. Split it into smaller changes so the good parts can pass on their own.\n`
+        + `- Ask the room. Post in the project chat: "what would make this a yes?"\n`
+        + `- Lead with the why. Suggest it again and start with the reason.\n\n`
+        + `Try again in {{app}}: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you suggested a change in {{app}}.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_change_live: {
+      name: ACTIONS.drip_change_live.label,
+      layout: PLAIN_LAYOUT,
+      subject: `your idea is live`,
+      preheader: `the group said yes`,
+      why: `You are receiving this because a change you suggested went live.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}{{#if first_name}}Hey {{first_name}}, Evan here.{{else}}Hey! Evan here.{{/if}}</p>`
+        + `${DRIP_P}Just saw your change go live in {{app}} -- the group voted it in. People are using something you came up with right now.</p>`
+        + `${DRIP_P}That's pretty much the whole reason we built Homeroom, and tbh it still gets me every time.</p>`
+        + `${DRIP_P}Small ask, only if you feel like it: would you <a href="https://x.com/intent/post?text=%40onhomeroom%20" style="color:#1c1c1e;text-decoration:underline">share a bit about your experience so far on X</a>? What you changed, what's been fun, what's been weird. Honest beats nice.</p>`
+        + `${DRIP_P}Or if you'd rather just tell me, hit reply. I read all of them.</p>`
+        + `${DRIP_P}Evan</p>`,
+      text: `{{#if first_name}}Hey {{first_name}}, Evan here.{{else}}Hey! Evan here.{{/if}}\n\n`
+        + `Just saw your change go live in {{app}} -- the group voted it in. People are using something you came up with right now.\n\n`
+        + `That's pretty much the whole reason we built Homeroom, and tbh it still gets me every time.\n\n`
+        + `Small ask, only if you feel like it: would you share a bit about your experience so far on X? What you changed, what's been fun, what's been weird. Honest beats nice.\n`
+        + `https://x.com/intent/post?text=%40onhomeroom%20\n\n`
+        + `Or if you'd rather just tell me, hit reply. I read all of them.\n\n`
+        + `Evan\n\n`
+        + `You are receiving this because a change you suggested went live.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_alone: {
+      name: ACTIONS.drip_alone.label,
+      layout: STANDARD_LAYOUT,
+      subject: `{{app}} needs some company`,
+      preheader: `building alone is only half the fun`,
+      why: `You are receiving this because you made {{app}} on Homeroom.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}You made {{app}} a few days ago. Love that.</p>`
+        + `${DRIP_P}Right now it's just you in there. Which is fine! But Homeroom was made for the part where other people show up, suggest things you'd never think of, and vote on what ships.</p>`
+        + `${DRIP_P}Think of two people who'd have opinions about {{app}}. Send them the link. Worst case, they say no. Best case, they make it way better than you would alone.</p>`
+        + `${DRIP_BUTTON_OPEN}Invite people to {{app}}${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`
+        + `<p style="margin:8px 0 0">${SKY_BANNER}</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `You made {{app}} a few days ago. Love that.\n\n`
+        + `Right now it's just you in there. Which is fine! But Homeroom was made for the part where other people show up, suggest things you'd never think of, and vote on what ships.\n\n`
+        + `Think of two people who'd have opinions about {{app}}. Send them the link. Worst case, they say no. Best case, they make it way better than you would alone.\n\n`
+        + `Invite people to {{app}}: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you made {{app}} on Homeroom.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_invite_waiting: {
+      name: ACTIONS.drip_invite_waiting.label,
+      layout: STANDARD_LAYOUT,
+      subject: `nobody's joined {{app}} from your invite yet`,
+      preheader: `a quick nudge from you usually does it`,
+      why: `You are receiving this because you invited people to {{app}}.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}You shared an invite to {{app}} a few days ago. Nobody's joined through it yet.</p>`
+        + `${DRIP_P}Totally normal. Links get lost in busy group chats and inboxes, and people mean to click later.</p>`
+        + `${DRIP_P}A quick follow-up from you is what typically gets people in. Something like "hey, did you see this? I'd love your take" goes a long way. Send it however you sent the first one.</p>`
+        + `${DRIP_BUTTON_OPEN}Share your invite again${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `You shared an invite to {{app}} a few days ago. Nobody's joined through it yet.\n\n`
+        + `Totally normal. Links get lost in busy group chats and inboxes, and people mean to click later.\n\n`
+        + `A quick follow-up from you is what typically gets people in. Something like "hey, did you see this? I'd love your take" goes a long way. Send it however you sent the first one.\n\n`
+        + `Share your invite again: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you invited people to {{app}}.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_missed: {
+      name: ACTIONS.drip_missed.label,
+      layout: STANDARD_LAYOUT,
+      subject: `here's what you missed in {{app}}`,
+      preheader: `some of these votes are close`,
+      why: `You are receiving this because you're a member of {{app}}.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}${DRIP_GREETING}</p>`
+        + `${DRIP_P}It's been about a week since you were in {{app}}. While you were away:</p>`
+        + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 16px"><tr>`
+        + `<td width="50%" valign="top" style="padding:0 6px 0 0"><div style="background:#FFFEEA;${DRIP_TILE}">`
+        + `<div style="font-size:32px;line-height:38px;font-weight:800;color:#000000">{{changes_shipped}}</div>`
+        + `<div style="font-size:14px;line-height:20px;color:#1c1c1e">changes shipped</div></div></td>`
+        + `<td width="50%" valign="top" style="padding:0 0 0 6px"><div style="background:#FFEE6F;${DRIP_TILE}">`
+        + `<div style="font-size:32px;line-height:38px;font-weight:800;color:#000000">{{changes_waiting}}</div>`
+        + `<div style="font-size:14px;line-height:20px;color:#1c1c1e">waiting on votes</div></div></td>`
+        + `</tr></table>`
+        + `${DRIP_P}No pressure. But the community is better with you in it.</p>`
+        + `${DRIP_BUTTON_OPEN}Catch up on {{app}}${DRIP_BUTTON_CLOSE}`
+        + `${DRIP_P}The Homeroom team</p>`,
+      text: `${DRIP_TEXT_GREETING}\n\n`
+        + `It's been about a week since you were in {{app}}. While you were away:\n\n`
+        + `- {{changes_shipped}} changes shipped.\n`
+        + `- {{changes_waiting}} are waiting on votes, and yours could tip them.\n\n`
+        + `No pressure. But the community is better with you in it.\n\n`
+        + `Catch up on {{app}}: {{url}}\n\n`
+        + `The Homeroom team\n\n`
+        + `You are receiving this because you're a member of {{app}}.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_honest_question: {
+      name: ACTIONS.drip_honest_question.label,
+      layout: PLAIN_LAYOUT,
+      subject: `honest question`,
+      preheader: `what should we fix?`,
+      why: `You are receiving this because you have a Homeroom account.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}{{#if first_name}}Hey {{first_name}}, Evan here.{{else}}Hey! Evan here.{{/if}}</p>`
+        + `${DRIP_P}You haven't been on <a href="${PRODUCTION_ORIGIN}/" style="color:#1c1c1e;text-decoration:underline">Homeroom</a> in a few weeks, so I'm guessing something didn't work for you.</p>`
+        + `${DRIP_P}I'd really like to know what. We're a small team, and the most useful thing anyone can tell us right now is where we fell short.</p>`
+        + `${DRIP_P}Was something confusing? Missing? Did your group go quiet? Whatever it is, big or small, I want to know. Just hit reply. I read every one.</p>`
+        + `${DRIP_P}And whenever you want to come back, we'll be right here.</p>`
+        + `${DRIP_P}Evan</p>`,
+      text: `{{#if first_name}}Hey {{first_name}}, Evan here.{{else}}Hey! Evan here.{{/if}}\n\n`
+        + `You haven't been on Homeroom in a few weeks, so I'm guessing something didn't work for you.\n`
+        + `${PRODUCTION_ORIGIN}/\n\n`
+        + `I'd really like to know what. We're a small team, and the most useful thing anyone can tell us right now is where we fell short.\n\n`
+        + `Was something confusing? Missing? Did your group go quiet? Whatever it is, big or small, I want to know. Just hit reply. I read every one.\n\n`
+        + `And whenever you want to come back, we'll be right here.\n\n`
+        + `Evan\n\n`
+        + `You are receiving this because you have a Homeroom account.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+
+    drip_monthly: {
+      name: ACTIONS.drip_monthly.label,
+      layout: PLAIN_LAYOUT,
+      subject: `how it's going at homeroom`,
+      preheader: `the good and the bad, no filter`,
+      why: `You are receiving this because you have a Homeroom account.${DRIP_UNSUBSCRIBE}`,
+      html: `${DRIP_P}Hey all, Evan from Homeroom here.</p>`
+        + `${DRIP_P}I want to tell you how it's going. The good and the bad.</p>`
+        + `${DRIP_P}<strong>The good.</strong> {one or two real wins, with real numbers if we're happy to share them}</p>`
+        + `${DRIP_P}<strong>The bad.</strong> {one honest problem, and what we're doing about it}</p>`
+        + `${DRIP_P}<strong>What we shipped this month:</strong></p>`
+        + `${DRIP_UL}${DRIP_LI}{thing}: {one plain sentence on why it matters}</li>`
+        + `${DRIP_LI}{thing}: {one plain sentence}</li>`
+        + `${DRIP_LI}{thing}: {one plain sentence}</li></ul>`
+        + `${DRIP_P}Shoutout to {teammate} for {what they did}.</p>`
+        + `${DRIP_P}Any q's? Just reply. See you in there.</p>`
+        + `${DRIP_P}Evan</p>`
+        + EVAN_PHOTO
+        + `${DRIP_P}P.S. {something human: a teammate's birthday, a project someone built that made us smile, a small ask}</p>`,
+      text: `Hey all, Evan from Homeroom here.\n\n`
+        + `I want to tell you how it's going. The good and the bad.\n\n`
+        + `The good. {one or two real wins, with real numbers if we're happy to share them}\n\n`
+        + `The bad. {one honest problem, and what we're doing about it}\n\n`
+        + `What we shipped this month:\n\n`
+        + `- {thing}: {one plain sentence on why it matters}\n`
+        + `- {thing}: {one plain sentence}\n`
+        + `- {thing}: {one plain sentence}\n\n`
+        + `Shoutout to {teammate} for {what they did}.\n\n`
+        + `Any q's? Just reply. See you in there.\n\n`
+        + `Evan\n\n`
+        + `P.S. {something human: a teammate's birthday, a project someone built that made us smile, a small ask}\n\n`
+        + `You are receiving this because you have a Homeroom account.`
+        + DRIP_TEXT_UNSUBSCRIBE,
+    },
+  },
+
+  // Drafts of new versions of emails that are live today, staged for review:
+  // each is added once as its action's draft (never live), and an admin puts
+  // it live from its editor when it should go out. Keyed by action; `draftName`
+  // marks it, so a draft an admin deleted is not added back.
+  drafts: {
+    // For when the waitlist goes: the invite sends people straight to sign-up.
+    // The button's address comes from the sender, which must pass the sign-up
+    // link (https://app.onhomeroom.com/?signup=1) before this goes live.
+    project_invite: {
+      name: `Project invite (sign-up, no waitlist)`,
+      layout: STANDARD_LAYOUT,
+      subject: `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}} on Homeroom{{else}}`
+        + `@{{inviter}} invited you to a project on Homeroom{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}} on Homeroom{{else}}`
+        + `Someone invited you to a project on Homeroom{{/if}}{{/if}}`,
+      preheader: ``,
+      why: `You are receiving this because someone on Homeroom invited this address to a project. You will not hear from us again unless you join, or somebody invites you again.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're invited</p>`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">`
+        + `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}}.{{else}}`
+        + `@{{inviter}} invited you to a project.{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}}.{{else}}`
+        + `Someone invited you to a project.{{/if}}{{/if}}</p>`
+        + `<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">It's a private community on Homeroom, where communities build the apps they use together. Sign up with this email address.</p>`
+        + `{{#if hasUrl}}<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">{{#if hasProject}}Join {{project}}{{else}}Join the project{{/if}}</a></p>{{/if}}`
+        + `<p style="margin:16px 0 0;font-size:13px;color:#68686c">If you were not expecting this, you can ignore this email.</p></td></tr></table>`,
+      text: `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}}, a private community on Homeroom, where communities build the apps they use together.{{else}}`
+        + `@{{inviter}} invited you to a project, a private community on Homeroom, where communities build the apps they use together.{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}}, a private community on Homeroom, where communities build the apps they use together.{{else}}`
+        + `Someone invited you to a project, a private community on Homeroom, where communities build the apps they use together.{{/if}}{{/if}}\n\n`
+        + `Sign up with this email address.`
+        + `{{#if hasUrl}}\n\n`
+        + `{{#if hasProject}}Join {{project}}{{else}}Join the project{{/if}}: {{url}}{{/if}}\n\n`
+        + `If you were not expecting this, you can ignore this email.`,
+    },
   },
 };
 
@@ -622,9 +995,36 @@ async function kindsWithoutTemplate(pool) {
              SELECT 1 FROM email_layouts l
               WHERE l.family_id = t.layout_family_id AND l.status = 'live' AND l.deleted_at IS NULL)))
       ORDER BY a.action`,
-    [Object.keys(ACTIONS)],
+    // A drip email has no live template on purpose: nothing sends it yet.
+    [Object.keys(ACTIONS).filter((kind) => !isDrip(kind))],
   );
   return rows.map((row) => row.action);
+}
+
+// The staged drafts (SEEDS.drafts): each is added once as its action's draft,
+// beside the live version, which it does not touch. Not when the action has an
+// open draft already (an admin's), nor when a row of that name was ever made,
+// so a draft an admin deleted or put live stays that way.
+async function seedDrafts(client, families) {
+  const out = { added: [], busy: 0 };
+  for (const kind of Object.keys(SEEDS.drafts || {})) {
+    if (!Object.hasOwn(ACTIONS, kind)) continue;
+    const draft = SEEDS.drafts[kind];
+    const family = families[draft.layout];
+    if (!family) continue;
+    if (!(await tryLock(client, 'email_templates', kind))) { out.busy += 1; continue; }
+    const { rows: present } = await client.query(
+      "SELECT 1 FROM email_templates WHERE action = $1 AND ((status = 'draft' AND deleted_at IS NULL) OR name = $2) LIMIT 1", [kind, draft.name]);
+    if (present.length) continue;
+    const { rows: [row] } = await client.query(
+      `INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, preheader, why, html, text)
+       SELECT $1, $2, $3, COALESCE(MAX(version), 0) + 1, 'draft', $4, $5, $6, $7, $8 FROM email_templates WHERE action = $1
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [kind, draft.name, family, draft.subject, draft.preheader, draft.why, draft.html, draft.text],
+    );
+    if (row) out.added.push(kind);
+  }
+  return out;
 }
 
 async function seedInTransaction(client) {
@@ -672,18 +1072,21 @@ async function seedInTransaction(client) {
       continue;
     }
     // ON CONFLICT: an admin's first save for this action got in between.
+    // A drip email nothing sends yet starts as a draft, never live.
     const { rows: [row] } = await client.query(
       `INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, preheader, why, html, text)
-       VALUES ($1, $2, $3, 1, 'live', $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, 1, $9, $4, $5, $6, $7, $8)
        ON CONFLICT DO NOTHING RETURNING id`,
-      [kind, template.name, family, template.subject, template.preheader, template.why, template.html, template.text],
+      [kind, template.name, family, template.subject, template.preheader, template.why, template.html, template.text,
+        isDrip(kind) ? 'draft' : 'live'],
     );
     if (row) seeded.push(kind);
   }
+  const drafts = await seedDrafts(client, families);
   const refreshed = await refreshUntouched(client, families, seeded);
   // Only a run that could look at everything records that it did. A busy action
   // is looked at again next time.
-  if (!refreshed.busy) {
+  if (!refreshed.busy && !drafts.busy) {
     await client.query(
       `INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
@@ -722,5 +1125,5 @@ async function seedEmailTemplates(pool) {
 }
 
 module.exports = {
-  SEEDS, STANDARD_LAYOUT, FINGERPRINT, englishTemplate, seededLayout, seedEmailTemplates, kindsWithoutTemplate,
+  SEEDS, STANDARD_LAYOUT, PLAIN_LAYOUT, FINGERPRINT, englishTemplate, seededLayout, seedEmailTemplates, kindsWithoutTemplate,
 };

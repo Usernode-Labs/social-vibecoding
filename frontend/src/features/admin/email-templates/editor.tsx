@@ -5,8 +5,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
-  confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
-  PlaceholderList, readFailure, request, unusableOf, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
+  confirmDiscard, draftTemplate, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
+  PlaceholderList, readFailure, request, unusableOf, useUnloadGuard,
+  type ActionInfo, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
 } from './shared';
 import { insertAt, UploadImageButton } from './image-panel';
 import { VisualTab } from './visual-tab';
@@ -17,6 +18,13 @@ import {
 // The template editor: what the email is for, its name, the layout it wears,
 // subject, preheader and the "why you got this" line, then the body in tabs,
 // with the placeholders it may use and a live preview beside it.
+//
+// Save draft keeps the edit as the email's draft (POST .../draft), which is
+// previewed and test-sent like any version but never sent to anyone, and
+// "Put draft live" makes it the version that goes out (POST .../:id/publish).
+// An email opens on its draft when it has one. The drip's emails have nothing
+// that sends them yet, so they can only be drafts, and the editor says what
+// will send each one.
 //
 // Saving makes a new version and puts it live (POST /api/admin/email-templates)
 // with `expectedLiveId`, the live version this editor was opened from, so two
@@ -94,10 +102,41 @@ export function wordsChanged(draft: TemplateDraft, opened?: TemplateDraft): bool
   return !opened || WORDS.some((field) => (draft[field] ?? '') !== (opened[field] ?? ''));
 }
 
+/** What sends a drip email, when, and what stops it, beside its editor. */
+export function DripPanel({ action }: { action: ActionInfo }) {
+  if (!action.drip) return null;
+  const rows: Array<[string, string]> = [
+    ['Status', 'Off. Nothing sends this email yet, so it stays a draft.'],
+    ['From', action.drip.from],
+    ['Sent when', action.drip.trigger],
+    ['Timing', action.drip.timing],
+    ['Skipped if', action.drip.skip],
+    ['Sending limits', action.drip.nudge
+      ? 'A nudge: at most one a day and three a week per person.'
+      : 'Not counted as a nudge.'],
+  ];
+  return (
+    <div id="email-template-drip" className={`${AdminUI.card} p-4`}>
+      <h3 className="text-sm font-semibold mb-2">When it is sent</h3>
+      <dl className="space-y-1.5 text-sm">
+        {rows.map(([term, detail]) => (
+          <div key={term}>
+            <dt className="text-xs text-zinc-500 dark:text-zinc-400">{term}</dt>
+            <dd className="text-zinc-800 dark:text-zinc-200">{detail}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export function TemplateForm({
   payload, draft, opened, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
   dirty = false,
   languagesCard = null,
+  openedOn = 'live',
+  onSaveDraft,
+  onPublish,
 }: {
   payload: TemplatesPayload;
   draft: TemplateDraft;
@@ -119,8 +158,14 @@ export function TemplateForm({
   dirty?: boolean;
   // The language switch and Translate, above the form.
   languagesCard?: React.ReactNode;
+  // Which saved version the editor opened on: the live one, the draft, or
+  // none (a new template).
+  openedOn?: 'live' | 'draft' | 'new';
+  onSaveDraft?: () => void;
+  onPublish?: () => void;
 }) {
   const action = payload.actions.find((a) => a.action === draft.action) || null;
+  const drip = !!(action && action.drip);
   const layouts = liveLayouts(payload);
   const err = (...fields: string[]) => errorsFor(failure, ...fields);
   const readOnly = !canWrite;
@@ -153,13 +198,33 @@ export function TemplateForm({
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
             <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={onCancel}>Cancel</button>
-            {/* Nothing to save until something changed: a save makes a new version, and a copy of the live one would only lose its translations. */}
-            <button type="button" id="email-template-save" className={AdminUI.btn.primary} disabled={saving || (!isNew && !dirty)} onClick={onSave}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            {onSaveDraft ? (
+              <button type="button" id="email-template-save-draft" className={drip ? AdminUI.btn.primary : AdminUI.btn.outline}
+                disabled={saving || (openedOn === 'draft' && !dirty)} onClick={onSaveDraft}>
+                {saving ? 'Saving…' : 'Save draft'}
+              </button>
+            ) : null}
+            {drip ? null : openedOn === 'draft' ? (
+              <button type="button" id="email-template-publish" className={AdminUI.btn.primary} disabled={saving || dirty} onClick={onPublish}
+                title={dirty ? 'Save the draft first' : undefined}>
+                Put draft live
+              </button>
+            ) : (
+              /* Nothing to save until something changed: a save makes a new version, and a copy of the live one would only lose its translations. */
+              <button type="button" id="email-template-save" className={AdminUI.btn.primary} disabled={saving || (!isNew && !dirty)} onClick={onSave}>
+                {saving ? 'Saving…' : 'Save and put live'}
+              </button>
+            )}
           </div>
         ) : null}
       </div>
+      {openedOn === 'draft' ? (
+        <p id="email-template-draft-note" className="rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+          {drip
+            ? 'This is a draft. Nothing sends this email yet, and nobody gets it until the sending is built and it is put live.'
+            : `This is a draft. Nobody gets it until you put it live; the live version keeps going out until then.${dirty ? ' Save the draft before putting it live.' : ''}`}
+        </p>
+      ) : null}
       {canWrite ? null : (
         <p className="rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
           Editing needs full admin access. You can read this template and preview it.
@@ -174,7 +239,7 @@ export function TemplateForm({
       <div className="grid gap-4 lg:grid-cols-2">
         <div className={`${AdminUI.card} p-4 space-y-3 min-w-0`}>
           <Field id="email-template-action" label="What this email is for" errors={e.action}
-            hint={isNew ? 'Saving puts this live for that email, in place of its current version.' : undefined}>
+            hint={isNew ? 'Save and put live replaces that email\'s current version. Save draft keeps it as that email\'s draft, sent to nobody.' : undefined}>
             <select id="email-template-action" className={AdminUI.select} value={draft.action}
               disabled={!isNew || readOnly} onChange={(ev) => onChange('action', ev.target.value)} {...described('email-template-action', e.action)}>
               {payload.actions.map((a) => <option key={a.action} value={a.action}>{a.label}</option>)}
@@ -255,6 +320,7 @@ export function TemplateForm({
             <h3 className="text-sm font-semibold mb-2">Preview</h3>
             {preview}
           </div>
+          {action ? <DripPanel action={action} /> : null}
           <div className={`${AdminUI.card} p-4`}>
             {action ? <PlaceholderList action={action} /> : null}
           </div>
@@ -285,7 +351,7 @@ const BLANK = (action: string, layoutFamilyId: number | null): TemplateDraft => 
  * the console left mid-edit. Calls `onSaved` with the saved row, and
  * `onReload` when the admin asks to see someone else's newer version.
  */
-export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onReload, restore = null }: {
+export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onDraftSaved, onReload, restore = null }: {
   payload: TemplatesPayload;
   action: string;
   isNew: boolean;
@@ -294,13 +360,19 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   // The saved row, and any translations the save left unusable.
   // `kept`: the English words did not change, so the translations came along.
   onSaved: (row: TemplateRow, unusable: UnusableItem[], kept: boolean) => void;
+  // The saved draft: nothing went live and nothing was sent.
+  onDraftSaved: (row: TemplateRow) => void;
   onReload: () => void;
   restore?: (KeptDraft & { kind: 'template' }) | null;
 }) {
   // What the editor opened with, and the live version that was: unsaved
   // edits are measured against the first, and Save expects the second.
+  // The draft the editor opened on, when the email has one: an email opens on
+  // its draft, which is where unfinished work is.
+  const [openedDraft] = useState<TemplateRow | null>(() => (isNew ? null : draftTemplate(payload, action)));
   const [opened] = useState<TemplateDraft>(() => {
     if (restore) return restore.opened;
+    if (openedDraft) return draftFrom(openedDraft);
     const live = liveTemplate(payload, action);
     if (live && !isNew) return draftFrom(live);
     const first = liveLayouts(payload)[0];
@@ -314,9 +386,9 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   const [draft, setDraft] = useState<TemplateDraft>(() => (restore ? restore.draft : opened));
   const dirty = isDirty(draft, opened);
   const info = payload.actions.find((a) => a.action === draft.action);
-  // Languages belong to the saved version this editor opened on; a new
-  // template has none until it is saved.
-  const versionId = isNew ? null : openedLive.id;
+  // Languages belong to the saved version this editor opened on (its draft,
+  // else the live one); a new template has none until it is saved.
+  const versionId = isNew ? null : (openedDraft ? openedDraft.id : openedLive.id);
   const english: LanguageDraft = useMemo(() => ({
     subject: opened.subject, preheader: opened.preheader, why: opened.why, html: opened.html, text: opened.text,
   }), [opened]);
@@ -381,6 +453,45 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     }
   };
 
+  // Keeps the edit as the email's draft, which nobody is sent. The draft this
+  // editor opened on is the one it expects, so another admin's newer draft
+  // is a conflict, not overwritten.
+  const saveDraft = async () => {
+    if (saving || !canWrite) return;
+    setSaving(true);
+    setFailure(null);
+    const current = draftTemplate(payload, draft.action);
+    const expectedDraftId = draft.action === action ? (openedDraft ? openedDraft.id : null) : (current ? current.id : null);
+    const res = await request('/api/admin/email-templates/draft', 'POST', { ...draft, expectedDraftId });
+    setSaving(false);
+    if (res.ok && res.data && res.data.template) {
+      settled.current = true;
+      onDraftSaved(res.data.template);
+      return;
+    }
+    const refused = readFailure(res.status, res.data);
+    setFailure(refused);
+    if (refused.kind === 'fields') {
+      const first = refused.errors.find((x) => x.field === 'html' || x.field === 'text');
+      if (first) setTab(first.field as BodyTab);
+    }
+  };
+
+  // Puts the saved draft live in place of the live version.
+  const publish = async () => {
+    if (saving || !canWrite || !openedDraft || dirty) return;
+    setSaving(true);
+    setFailure(null);
+    const res = await request(`/api/admin/email-templates/${openedDraft.id}/publish`, 'POST', { expectedLiveId });
+    setSaving(false);
+    if (res.ok && res.data && res.data.template) {
+      settled.current = true;
+      onSaved(res.data.template, unusableOf(res.data), (res.data.template.locales || []).length > 0);
+      return;
+    }
+    setFailure(readFailure(res.status, res.data));
+  };
+
   const leave = async () => {
     if (anyDirty && !(await confirmDiscard('Your changes to this email are not saved. Leave and lose them?'))) return;
     settled.current = true;
@@ -425,7 +536,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     <TemplateForm payload={payload} draft={draft} opened={opened} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
       languagesCard={isNew ? null : languages.card}
       saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
-      dirty={dirty}
+      dirty={dirty} openedOn={isNew ? 'new' : openedDraft ? 'draft' : 'live'} onSaveDraft={saveDraft} onPublish={publish}
       preview={(
         <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab === 'text' ? 'text' : 'html'}
           languages={payload.languages} englishOnly={!!(info && info.englishOnly)} canWrite={canWrite}

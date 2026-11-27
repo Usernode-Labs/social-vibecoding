@@ -10,10 +10,18 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
-const { KINDS } = require('../src/services/mail/templates');
+const { KINDS, DRIP_KINDS } = require('../src/services/mail/templates');
 const log = require('../src/services/logger');
 const languageCache = require('../src/services/language-cache');
-const { SEEDS, FINGERPRINT, seedEmailTemplates, englishTemplate, kindsWithoutTemplate } = require('../src/db/email-template-seeds');
+const { SEEDS, STANDARD_LAYOUT, FINGERPRINT, seedEmailTemplates, englishTemplate, kindsWithoutTemplate } = require('../src/db/email-template-seeds');
+
+// What a boot writes: a live first version of every kind the sender sends, a
+// draft of each drip email (nothing sends those yet), the staged drafts of
+// existing kinds (SEEDS.drafts), and every layout.
+const SEEDED = KINDS.length + DRIP_KINDS.length;
+const ROWS = SEEDED + Object.keys(SEEDS.drafts).length;
+const LAYOUTS = SEEDS.layouts.length;
+const standard = (layouts) => Object.values(layouts).find((l) => l.name === STANDARD_LAYOUT);
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const ROOT = path.join(__dirname, '..');
@@ -66,25 +74,27 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
   const empty = () => pool.query('TRUNCATE email_template_translations, email_layout_translations, email_templates, email_layouts');
 
   await t.test('booting seeds every kind and the one layout, and booting again adds nothing', async () => {
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), ROWS);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), LAYOUTS);
     await migrate(config);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
-    const { rows } = await pool.query("SELECT e.action, e.version, e.status, e.layout_family_id, l.name AS layout FROM email_templates e JOIN email_layouts l ON l.family_id = e.layout_family_id");
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), ROWS);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), LAYOUTS);
+    const { rows } = await pool.query("SELECT e.action, e.version, e.status, e.layout_family_id, l.name AS layout FROM email_templates e JOIN email_layouts l ON l.family_id = e.layout_family_id WHERE e.status = 'live'");
     assert.equal(rows.length, KINDS.length);
+    const drafts = await pool.query("SELECT action, version FROM email_templates WHERE status = 'draft' ORDER BY action");
+    assert.deepEqual(drafts.rows.map((r) => r.action), [...DRIP_KINDS, ...Object.keys(SEEDS.drafts)].sort());
     assert.ok(rows.every((row) => row.version === 1 && row.status === 'live' && row.layout === 'Homeroom standard'));
   });
 
   await t.test('the snapshot the sender will read holds the seeds as written', async () => {
     const { templates, layouts } = await store.snapshot(pool);
     assert.deepEqual(Object.keys(templates).sort(), [...KINDS].sort());
-    assert.equal(Object.keys(layouts).length, 1);
+    assert.equal(Object.keys(layouts).length, LAYOUTS);
     const expected = englishTemplate('waitlist_released');
     for (const field of ['name', 'subject', 'preheader', 'why', 'html', 'text']) {
       assert.equal(templates.waitlist_released[field], expected[field], field);
     }
-    assert.equal(Object.values(layouts)[0].html, SEEDS.layouts[0].html);
+    assert.equal(standard(layouts).html, SEEDS.layouts[0].html);
   });
 
   await t.test('re-seeding after delete adds nothing', async () => {
@@ -106,7 +116,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await pool.query("UPDATE email_layouts SET status = 'archived', deleted_at = NOW()");
     await seedEmailTemplates(pool);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_layouts WHERE deleted_at IS NULL"), 0);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), LAYOUTS);
 
     // A new kind whose layout an admin deleted waits for an admin, and the rest of
     // the seeding still works.
@@ -119,13 +129,13 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await empty();
     await seedEmailTemplates(pool);
     const { layouts } = await store.snapshot(pool);
-    const [v1] = Object.values(layouts);
+    const v1 = standard(layouts);
     await store.saveLayout(pool, { familyId: v1.family_id, name: 'Our frame', html: v1.html, text: v1.text, expectedLiveId: v1.id }, null);
     await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
     await seedEmailTemplates(pool);
     const { rows } = await pool.query("SELECT layout_family_id FROM email_templates WHERE action = 'password_reset'");
     assert.deepEqual(rows, [{ layout_family_id: v1.family_id }]);
-    assert.equal(await count('SELECT count(DISTINCT family_id)::int AS n FROM email_layouts'), 1);
+    assert.equal(await count('SELECT count(DISTINCT family_id)::int AS n FROM email_layouts'), LAYOUTS);
   });
 
   await t.test('only the missing kind is added, and an edited one is left alone', async () => {
@@ -139,16 +149,17 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await seedEmailTemplates(pool);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset' AND version = 1 AND status = 'live'"), 1);
     assert.equal((await pool.query("SELECT subject FROM email_templates WHERE action = 'otp' AND status = 'live'")).rows[0].subject, 'Edited');
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), LAYOUTS);
   });
 
   await t.test('servers booting together seed once', async () => {
     await empty();
     await Promise.all(Array.from({ length: 6 }, () => seedEmailTemplates(pool)));
     // A server that lost the lock left the work to the winner, which has finished.
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
-    assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE version <> 1"), 0);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), ROWS);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), LAYOUTS);
+    // A staged draft of an existing kind is its version 2; everything else is 1.
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE version <> 1 AND status <> 'draft'"), 0);
   });
 
   await t.test('with nothing to do, a boot costs one query and no connection held', async () => {
@@ -165,10 +176,10 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
       "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'buildReady.lead.ready', 'x', 'Prêt') ON CONFLICT DO NOTHING");
     const reads = readSource.mock.callCount();
     await seedEmailTemplates(pool);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), ROWS);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_template_translations'), 0);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layout_translations'), 0);
-    assert.deepEqual(info.mock.calls.at(-1).arguments[2], { kinds: KINDS.length });
+    assert.deepEqual(info.mock.calls.at(-1).arguments[2], { kinds: SEEDED });
     assert.equal(readSource.mock.callCount(), reads);
     await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
   });
@@ -191,7 +202,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 0);
     await seedEmailTemplates(pool);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), ROWS);
   });
 
   await t.test('a database that cannot be reached is logged, and never fails the boot', async (st) => {
@@ -306,7 +317,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await empty();
     await seedEmailTemplates(pool);
     await pool.query("UPDATE email_templates SET html = 'stale' WHERE action = 'otp'");
-    await pool.query("UPDATE email_layouts SET text = 'stale'");
+    await pool.query("UPDATE email_layouts SET text = 'stale' WHERE name = $1", [STANDARD_LAYOUT]);
     // Nothing in the seeds changed, so a fresh boot does not even look.
     await seedEmailTemplates(pool);
     assert.equal((await liveRow('otp')).html, 'stale');
@@ -321,7 +332,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     };
     await seedEmailTemplates(spy);
     assert.equal((await liveRow('otp')).html, englishTemplate('otp').html);
-    assert.equal((await pool.query('SELECT text FROM email_layouts')).rows[0].text, SEEDS.layouts[0].text);
+    assert.equal((await pool.query('SELECT text FROM email_layouts WHERE name = $1', [STANDARD_LAYOUT])).rows[0].text, SEEDS.layouts[0].text);
     assert.deepEqual(writes.sort(), ['INSERT INTO platform_settings', 'UPDATE email_layouts SET', 'UPDATE email_templates SET']);
   });
 

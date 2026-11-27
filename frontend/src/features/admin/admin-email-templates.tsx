@@ -263,6 +263,12 @@ function EmailTemplatesSection() {
     return (
       <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
+        onDraftSaved={(row) => {
+          const drip = !!payload.actions.find((a) => a.action === row.action)?.drip;
+          saved(drip
+            ? `${row.name} v${row.version} is saved as a draft. Nothing sends this email yet.`
+            : `${row.name} v${row.version} is saved as a draft. Nobody gets it until it is put live.`, [], null)();
+        }}
         onSaved={(row, unusable, kept) => {
           const englishOnly = !!payload.actions.find((a) => a.action === row.action)?.englishOnly;
           if (englishOnly || kept) {
