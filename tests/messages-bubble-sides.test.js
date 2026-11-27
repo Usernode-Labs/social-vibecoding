@@ -172,14 +172,15 @@ test('the demo DM and group declare the new shape, by #5680', () => {
   assert.ok(dm, 'the DM check is rewritten, not dropped');
   assert.match(dm.name, /own message on the right in its tinted bubble/);
   // The wrap is the self row's first child: no avatar before it, then the
-  // head and the bubble. The other person's avatar is an image now, the photo
-  // they uploaded or the one generated from their account (#7135), rather
-  // than the letter in a span it used to be. (The selector engine both
+  // head and the bubble. The other person's avatar is the one round person
+  // picture (PersonAvatar): a span holding their photo (the one they
+  // uploaded or the one generated from their account, #7135) over their
+  // letter, where it was the bare image. (The selector engine both
   // runners use does not evaluate `:not(:has())`, and a selector longer than
   // the runner's cap (`MAX_TEST_SELECTOR_LEN`) is silently truncated — so the
   // shape is spelled this way and no longer.)
   assert.match(dm.expectSelector, /\.messages-message-self>\.messages-bubble-wrap:first-child>\.messages-message-head\+\.messages-bubble$/);
-  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>img\+\.messages-bubble-wrap>\.messages-bubble\)/);
+  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>span\+\.messages-bubble-wrap>\.messages-bubble\)/);
   assert.ok(dm.expectSelector.length <= 256, `the selector fits the manifest's cap (${dm.expectSelector.length})`);
 
   const group = check('910002', '#5680');
