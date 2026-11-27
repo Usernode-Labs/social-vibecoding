@@ -124,8 +124,8 @@ export const rowSeparator = cva('', {
 
 export interface ListRowProps
   // `title` is omitted from the DOM attributes because ours is a ReactNode and
-  // HTMLAttributes' is the tooltip string. Same reason in QuoteCard and
-  // StackedTitle below — an intersection would silently narrow ours to string.
+  // HTMLAttributes' is the tooltip string. Same reason in QuoteCard
+  // (./feed.tsx) — an intersection would silently narrow ours to string.
   //
   // AnchorHTMLAttributes rather than HTMLAttributes so `href`, `target` and
   // `rel` reach the element for `as="a"` (see below). Its own `type` — the

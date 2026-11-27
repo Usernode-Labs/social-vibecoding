@@ -81,6 +81,7 @@ import { KB_OPEN_CLASS, PHONE_QUERY } from '../../lib/keyboard-open';
 import { textFocused } from '../../lib/browser-scroll';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { platformSlug } from '../messages/channel-hub';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
@@ -167,6 +168,8 @@ const TITLE_SOURCE_MAX = 2000;
 
 /** The images the server takes (validateScreenshotUpload). */
 const IMAGE_TYPES = ['image/png', 'image/jpeg'];
+/** The bar's Form | Comment switch, in the order it is drawn. */
+const PIN_BAR_MODES = ['form', 'comment'] as const;
 
 /** The comment cursor: the pin's own shape with a plus, its point at the tip. */
 const CURSOR = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'30\' height=\'30\' viewBox=\'0 0 30 30\'%3E%3Cpath d=\'M3 27V15a12 12 0 1 1 12 12z\' fill=\'%230a6ee0\' stroke=\'white\' stroke-width=\'2\'/%3E%3Cpath d=\'M15 10.5v9M10.5 15h9\' stroke=\'white\' stroke-width=\'2.2\' stroke-linecap=\'round\'/%3E%3C/svg%3E") 3 27, crosshair';
@@ -2688,29 +2691,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               </span>
             ) : null}
             {inset ? <span className="min-w-0 flex-1" /> : null}
-            <span className="inline-flex shrink-0 gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('devchat:commentPin.bar.switchLabel')}>
-              <button
-                type="button"
-                role="radio"
-                aria-checked="false"
-                title={t('devchat:commentPin.bar.formTitle')}
-                onClick={() => { void toForm(); }}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-              >
-                <DescriptionIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
-                {t('devchat:commentPin.bar.form')}
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked="true"
-                title={t('devchat:commentPin.bar.commentTitle')}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
-              >
-                <ChatIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
-                {t('devchat:commentPin.bar.comment')}
-              </button>
-            </span>
+            <Tabs kind="radio" look="segment" values={PIN_BAR_MODES} value="comment" onValueChange={(next) => { if (next === 'form') void toForm(); }}>
+              <TabsList className="shrink-0" aria-label={t('devchat:commentPin.bar.switchLabel')}>
+                <TabsTrigger value="form" title={t('devchat:commentPin.bar.formTitle')}>
+                  <DescriptionIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
+                  {t('devchat:commentPin.bar.form')}
+                </TabsTrigger>
+                <TabsTrigger value="comment" title={t('devchat:commentPin.bar.commentTitle')}>
+                  <ChatIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
+                  {t('devchat:commentPin.bar.comment')}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
             <button
               type="button"
               onClick={requestExit}

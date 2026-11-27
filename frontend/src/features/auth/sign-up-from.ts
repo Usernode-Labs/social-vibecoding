@@ -28,6 +28,7 @@ export const SIGN_UP_FROM = [
   'vote',
   'ask',
   'chat',
+  'heart',
   'use',
   'story',
   'story_sign_in',

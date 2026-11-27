@@ -29,7 +29,8 @@
  * is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
- * Popular, Most active or A to Z; most active until somebody picks another),
+ * Popular, Most active, Most played, Most hearts or A to Z; most active
+ * until somebody picks another),
  * so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
@@ -66,7 +67,7 @@ export const JOIN_PAGE = 8;
 export const FEATURED_MAX = 6;
 
 /** The sorts the "More communities" control offers, in the order it shows them. */
-export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
+export const JOIN_SORTS = ['new', 'popular', 'trending', 'played', 'hearts', 'name'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
 /** The cards' grid (app.css `.cm-grid`), and the larger first row's. */

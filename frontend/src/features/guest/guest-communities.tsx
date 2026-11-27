@@ -72,6 +72,7 @@ import {
   UserGroupIcon,
 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -409,23 +410,25 @@ function HubDemo({ go }: { go: MutableRefObject<((scene: number) => void) | null
           </div>
         </div>
       </div>
-      <div className="hr-tabs" role="tablist" aria-label={t('auth:guest.groups.demo.tabs')}>
-        {tabs.map((label, n) => (
-          <button
-            key={SCENES[n].key}
-            type="button"
-            role="tab"
-            aria-selected={at.scene === n}
-            data-guest-groups-tab={SCENES[n].key}
-            className={`hr-tab${up(n)}${n < at.scene ? ' done' : ''}`}
-            style={{ ['--d' as string]: `${SCENES[n].ms}ms` }}
-            onClick={() => show(n)}
-          >
-            <span className="bar"><i key={at.scene === n ? at.run : -1} /></span>
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* The shared strip (@/components/ui/tabs.tsx) with the landing's own
+          story tabs on it: each tab's bar fills while its scene plays. */}
+      <Tabs kind="tabs" value={SCENES[at.scene].key} onValueChange={(key) => show(SCENES.findIndex((scene) => scene.key === key))}>
+        <TabsList className="hr-tabs" aria-label={t('auth:guest.groups.demo.tabs')}>
+          {tabs.map((label, n) => (
+            <TabsTrigger
+              key={SCENES[n].key}
+              value={SCENES[n].key}
+              data-guest-groups-tab={SCENES[n].key}
+              className={n < at.scene ? 'hr-tab done' : 'hr-tab'}
+              activeClassName="is-on"
+              style={{ ['--d' as string]: `${SCENES[n].ms}ms` }}
+            >
+              <span className="bar"><i key={at.scene === n ? at.run : -1} /></span>
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   );
 }
