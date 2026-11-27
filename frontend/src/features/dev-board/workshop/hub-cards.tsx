@@ -64,12 +64,13 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, HashIcon, SparklesIcon } from '@/components/ui/icons';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
@@ -875,6 +876,8 @@ export function TopicsCard({ data, onOpen }: {
 
 /** Below this many people over all time the hub has no Top contributors card: no list of one. */
 export const HUB_CONTRIBUTORS_MIN = 2;
+/** This month | All time, in the order the strip draws them. */
+const CONTRIB_SPANS = ['month', 'all'] as const;
 
 /**
  * TOP CONTRIBUTORS (request 6837): the people who took part most in this
@@ -902,15 +905,13 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
     <section className="dev-ws-hub-section" data-ws-hub-contributors={span} aria-labelledby={headId}>
       <div className="dev-ws-hub-sechead">
         <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.contributors.title')}</SectionHeader>
-        {/* ONE LOOK (25 Nov 2026): the shared segmented control, its ink pill sliding to the span picked. */}
-        <div className="dev-ws-contrib-span one-seg" role="group" aria-label={t('project:hub.contributors.span')} style={{ '--one-seg-n': 2, '--one-seg-i': span === 'month' ? 0 : 1 } as CSSProperties}>
-          <button type="button" data-ws-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
-            {t('project:hub.contributors.month')}
-          </button>
-          <button type="button" data-ws-contrib-span="all" aria-pressed={span === 'all'} onClick={() => setPicked('all')}>
-            {t('project:hub.contributors.allTime')}
-          </button>
-        </div>
+        {/* ONE LOOK (25 Nov 2026): the shared strip's segment look (@/components/ui/tabs.tsx), its ink pill sliding to the span picked. */}
+        <Tabs kind="radio" look="segment" values={CONTRIB_SPANS} value={span} onValueChange={(next) => setPicked(next === 'all' ? 'all' : 'month')}>
+          <TabsList className="dev-ws-contrib-span" aria-label={t('project:hub.contributors.span')}>
+            <TabsTrigger value="month" data-ws-contrib-span="month">{t('project:hub.contributors.month')}</TabsTrigger>
+            <TabsTrigger value="all" data-ws-contrib-span="all">{t('project:hub.contributors.allTime')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
       <div className="dev-ws-strip dev-ws-foryou">
         {people.length ? people.map((person) => (

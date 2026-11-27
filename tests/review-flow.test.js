@@ -621,16 +621,19 @@ test('a No asks why first: four answers and the optional line, and nothing is ca
   assert.match(asked, /class="rf-sheet"[^>]*data-rf-sheet="reason"/, 'it covers the page like the help sheet');
   assert.match(asked, /class="rf-grab"/, 'with the handle that closes it, counting nothing');
   assert.ok(asked.includes(`<h2 class="rf-why-head">${message('communities:review.why.title')}</h2>`));
-  assert.match(asked, /class="rf-chips" role="radiogroup"/);
+  // The answers are the shared strip's radio kind in its chip look
+  // (@/components/ui/tabs.tsx), which writes the group's role and each
+  // answer's, so the sheet's own .rf-chips / .rf-chip are gone.
+  assert.ok(asked.includes(`<div role="radiogroup" aria-label="${message('communities:review.why.title')}"`));
   for (const key of ['notWorking', 'approach', 'notNeeded', 'other']) {
-    assert.match(asked, new RegExp(`role="radio" aria-checked="false" class="rf-chip" data-rf-why-choice="${key}"`));
+    assert.match(asked, new RegExp(`role="radio" aria-checked="false" data-rf-why-choice="${key}"`));
     assert.ok(asked.includes(message(`communities:review.why.${key}`)), key);
   }
   assert.ok(asked.includes(`<p class="rf-line">${message('communities:review.why.detailLabel')}</p>`), 'the line stays optional');
   assert.match(asked, /<input aria-label="Add more, if you like\."[^>]*maxLength="280"/);
   assert.ok(asked.includes(`<button type="submit" class="rf-go" disabled="">${message('communities:review.no.send')}</button>`),
     'Send is off until an answer is picked');
-  assert.match(src, /onClick=\{\(\) => setChoice\(c\.key\)\}/, 'a chip picks the answer');
+  assert.match(src, /onValueChange=\{\(next\) => setChoice\(next as NoChoice\)\}/, 'a chip picks the answer');
   assert.match(src, /if \(!choice\) return;/, 'nothing is sent without one');
   // The composed reason is the answer, then the line when one is written,
   // within the server's limit.

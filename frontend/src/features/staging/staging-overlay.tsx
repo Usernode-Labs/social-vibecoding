@@ -54,6 +54,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
@@ -65,6 +66,9 @@ import { useStoreState } from '../../lib/use-store-state';
 import { LiveDraftControls, useDraftForSession, useLiveDraftActs } from '../messages/live-draft-bar';
 import { PreviewPinLayer, togglePreviewPins, usePreviewPins } from './preview-pin';
 import { ShotsViewer } from '../review-flow/shots-viewer';
+
+/** The preview's two views, in the order its switch draws them. */
+const PREVIEW_VIEWS = ['preview', 'shots'] as const;
 
 /**
  * The first visit's line. A project that is just yours goes live when you
@@ -316,37 +320,25 @@ export function StagingOverlay(): ReactNode {
           })()}
           {/*
               The two ways to check a change before voting on it: the running
-              preview, or its before-and-after shots. Drawn like the Light / Dark
-              / System control. Only when the change has verified shots.
+              preview, or its before-and-after shots: the shared strip's
+              segment look (@/components/ui/tabs.tsx). Only when the change
+              has verified shots.
           */}
-          <div
-            id="staging-view-switch"
-            ref={switchRef}
-            className="hidden staging-switch"
-            role="tablist"
-            aria-label={t('devchat:staging.switch.label')}
-          >
-            <button
-              type="button"
-              role="tab"
-              id="staging-view-preview"
-              aria-selected={!showingShots}
-              data-on={!showingShots ? '' : undefined}
-              onClick={() => stagingHandlers.onView?.('preview')}
+          <Tabs kind="tabs" look="segment" values={PREVIEW_VIEWS} value={showingShots ? 'shots' : 'preview'} onValueChange={(next) => stagingHandlers.onView?.(next === 'shots' ? 'shots' : 'preview')}>
+            <TabsList
+              id="staging-view-switch"
+              ref={switchRef}
+              className="hidden staging-switch"
+              aria-label={t('devchat:staging.switch.label')}
             >
-              {t('devchat:staging.switch.preview')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id="staging-view-shots"
-              aria-selected={showingShots}
-              data-on={showingShots ? '' : undefined}
-              onClick={() => stagingHandlers.onView?.('shots')}
-            >
-              {t('devchat:staging.switch.shots')}
-            </button>
-          </div>
+              <TabsTrigger value="preview" id="staging-view-preview">
+                {t('devchat:staging.switch.preview')}
+              </TabsTrigger>
+              <TabsTrigger value="shots" id="staging-view-shots">
+                {t('devchat:staging.switch.shots')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <span className="staging-gap" />
           {/*
               The platform's Vote, as on a chat's vote card: it opens the

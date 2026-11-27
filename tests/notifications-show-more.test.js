@@ -244,9 +244,13 @@ test('the Unread footer reveals older notifications on the tab instead of jumpin
     'expands in place and walks the existing loadOlder cursor');
   assert.doesNotMatch(m[0], /setTab\('all'\)/, 'stays on Unread — no jump to All');
   // No footer jumps to All any more: the Messages filter's did, and #5289
-  // took that filter out. The one left is the All tab button itself.
-  assert.equal((block.match(/setTab\('all'\)/g) || []).length, 1,
-    'the only setTab(\'all\') in the list is the All tab button');
+  // took that filter out. The one way left is the All tab itself, which is
+  // a trigger of the shared tab strip now (@/components/ui/tabs.tsx): it
+  // reports its value to the strip's one onValueChange, so no setTab('all')
+  // is spelled in the list at all.
+  assert.equal((block.match(/setTab\('all'\)/g) || []).length, 0,
+    'nothing in the list spells setTab(\'all\')');
+  assert.match(block, /<TabsTrigger id="notifications-tab-all" value="all">/, 'the All tab is the way to All');
 });
 
 test('Hide older notifications collapses the expanded Unread list', () => {

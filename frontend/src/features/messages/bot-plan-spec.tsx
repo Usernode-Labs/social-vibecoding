@@ -1,11 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
 import { firstSpecScreen, renderSpecHtml, useSpecFrames } from '../../lib/spec-html';
 import { DrawnSide, PendingSide } from './bot-track';
 import { MessageMarkdown } from './format';
+
+/** The plan's two halves, in the order the strip draws them. */
+const SPEC_HALVES = ['user', 'tech'] as const;
 
 /*
  * 20 Oct 2026: A COMPLICATED CHANGE'S PLAN, ON ITS CARD.
@@ -85,23 +89,15 @@ export function PlanDocument({ id, read, docKey }: {
   }
   if (!doc.split) return <div id={id} className={DOC} data-bot-plan-doc="html"><HtmlPart html={doc.html} /></div>;
   const half = tab === 'tech' ? doc.techHtml : doc.userHtml;
-  const tabButton = (which: 'user' | 'tech', label: string) => (
-    <button
-      type="button"
-      className={tab === which ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
-      role="tab"
-      aria-selected={tab === which}
-      data-bot-plan-tab={which}
-      onClick={() => setTab(which)}
-    >{label}</button>
-  );
   return (
     <div id={id} className={DOC} data-bot-plan-doc="html">
       {doc.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={doc.preambleHtml} /> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={t('messages:bot.plan.spec.sections')}>
-        {tabButton('user', t('messages:bot.plan.spec.tab.user'))}
-        {tabButton('tech', t('messages:bot.plan.spec.tab.tech'))}
-      </div>
+      <Tabs kind="tabs" look="segment" values={SPEC_HALVES} value={tab} onValueChange={(next) => setTab(next === 'tech' ? 'tech' : 'user')}>
+        <TabsList className="mb-3" aria-label={t('messages:bot.plan.spec.sections')}>
+          <TabsTrigger value="user" data-bot-plan-tab="user">{t('messages:bot.plan.spec.tab.user')}</TabsTrigger>
+          <TabsTrigger value="tech" data-bot-plan-tab="tech">{t('messages:bot.plan.spec.tab.tech')}</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {half
         ? <HtmlPart role="tabpanel" html={half} />
         : <div role="tabpanel"><p className="dc-spec-tab-empty">{t('messages:bot.plan.spec.tabEmpty')}</p></div>}

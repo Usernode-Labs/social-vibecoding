@@ -24,11 +24,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useSpecFrames } from '../../lib/spec-html';
 import { useDetailState, closeDetail, type SpecPanelBody } from '../ai/detail';
 import { DetailActions, useDetailCard, useDetailLabel } from '../detail/detail-card';
+
+/** The plan's two halves, in the order the strip draws them. */
+const SPEC_HALVES = ['user', 'tech'] as const;
 
 function ui(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
@@ -63,21 +67,15 @@ function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> 
   useEffect(() => { setTab('user'); }, [body.userHtml, body.html]);
   if (!body.split) return <HtmlPart className="gc-spec-panel-body" html={body.html} />;
   const half = tab === 'tech' ? body.techHtml : body.userHtml;
-  const tabButton = (which: 'user' | 'tech', label: string) => (
-    <button
-      type="button"
-      className={tab === which ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
-      role="tab" aria-selected={tab === which} data-spec-tab={which}
-      onClick={() => setTab(which)}
-    >{label}</button>
-  );
   return (
     <div className="gc-spec-panel-body">
       {body.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={body.preambleHtml} /> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={t('chat:group.spec.sections')}>
-        {tabButton('user', t('chat:group.spec.tab.user'))}
-        {tabButton('tech', t('chat:group.spec.tab.tech'))}
-      </div>
+      <Tabs kind="tabs" look="segment" values={SPEC_HALVES} value={tab} onValueChange={(next) => setTab(next === 'tech' ? 'tech' : 'user')}>
+        <TabsList className="mb-3" aria-label={t('chat:group.spec.sections')}>
+          <TabsTrigger value="user" data-spec-tab="user">{t('chat:group.spec.tab.user')}</TabsTrigger>
+          <TabsTrigger value="tech" data-spec-tab="tech">{t('chat:group.spec.tab.tech')}</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {half
         ? <HtmlPart role="tabpanel" html={half} />
         : <div role="tabpanel"><p className="dc-spec-tab-empty">{t('chat:group.spec.tabEmpty')}</p></div>}
