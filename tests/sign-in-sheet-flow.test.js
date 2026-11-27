@@ -452,7 +452,11 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 test('the password step is the sheet\'s: the link opens it, and Forgot password opens the reset in the sheet', () => {
   const src = read(SHEET);
   assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'forgot' \| 'phone' \| 'phone-code' \| 'link' \| 'reset' \| 'register';/);
-  assert.match(src, /data-sign-in-sheet-method-password=""[^\n]*toStep\('password'\)/);
+  // The Email code | Password switch is the shared strip's radio kind
+  // (@/components/ui/tabs.tsx): the Password option reports its value, and
+  // the strip's one onValueChange opens the password step.
+  assert.match(src, /<TabsTrigger value="password" data-sign-in-sheet-method-password="">/);
+  assert.match(src, /onValueChange=\{\(next\) => \{ if \(next === 'password'\) \{ if \(step !== 'password'\) toStep\('password'\); \}/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
   assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);

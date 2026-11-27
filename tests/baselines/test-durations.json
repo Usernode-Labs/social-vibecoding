@@ -296,7 +296,6 @@
 "tests/bench-taste.test.js":[3.1,0.5],
 "tests/bench-weekly-allowance.test.js":[5.6,0.2],
 "tests/blue-green.test.js":[0.5,0.4],
-"tests/board-card-conversation.test.js":[1.8,0.5],
 "tests/board-issues-degraded.test.js":[0.6,0.5],
 "tests/board-merged-card.test.js":[0.7,0.5],
 "tests/board-order.test.js":[1.4,0.6],

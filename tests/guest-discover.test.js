@@ -415,6 +415,16 @@ test('Featured on the signed-in pages stops at six, a full row, and the seventh 
   // Nothing is hidden: the seventh and anything after it is in the list
   // below, as a plain card, in that list's sort (a tie keeps the order).
   assert.deepEqual(cardsOf(signedInHtml), ['f7', 'f8']);
+  // While the directory is read, the signed-in pages hold what lands (27 Nov
+  // 2026): as many covers as Featured shows, and the filter line's own box.
+  // It held one row of covers and no line, so the list dropped when they came.
+  const loading = renderToHtml(createElement(CommunitiesToJoin, { apps: null, exclude: new Set(), signedIn: true, query: '' }));
+  const held = loading.slice(loading.indexOf('data-home-join-featured="" data-loading=""'), loading.indexOf('aria-label="Loading apps"'));
+  assert.equal((held.match(/class="cm-card cm-card-skel" data-cm-size="lead"/g) || []).length, FEATURED_MAX);
+  assert.match(loading, /<div class="wip-filterbar animate-pulse" data-loading="" aria-hidden="true">/);
+  assert.ok(loading.indexOf('class="wip-filterbar animate-pulse"') < loading.indexOf('data-home-join-featured=""'), 'where the real line is drawn, before Featured');
+  const guestLoading = renderToHtml(createElement(CommunitiesToJoin, { apps: null, exclude: new Set(), signedIn: false, query: '' }));
+  assert.doesNotMatch(guestLoading, /wip-filterbar|data-home-join-featured/, 'the visitor\'s landing holds neither: it draws neither this way');
   // The visitor's landing is unchanged: it draws every featured community.
   assert.deepEqual(featuredOf(draw(false)), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
   // The Communities page draws this same section signed in (the spec's
@@ -858,8 +868,9 @@ test('Top contributors on the signed-out page: the hub\'s list and rules, This m
   assert.ok(text(html).includes(message('project:hub.contributors.title')));
   assert.equal([...html.matchAll(/data-guest-contributor="/g)].length, 3);
   assert.ok(text(html).includes(message('project:hub.contributors.count_other', { count: 10 })));
-  assert.match(html, /class="one-seg" role="group"/);
-  assert.match(html, /data-guest-contrib-span="month" aria-pressed="true"/);
+  // The shared strip's radio kind in its segment look (@/components/ui/tabs.tsx).
+  assert.match(html, /<div role="radiogroup" aria-label="[^"]+" class="one-seg" style="--one-seg-n:2;--one-seg-i:0">/);
+  assert.match(html, /aria-checked="true" data-guest-contrib-span="month"/);
   // Nobody this month: it opens on All time.
   assert.match(card({ month: [], all_time: people(4) }), /data-guest-contributors="all"/);
   // A list of one is no list, as on the hub.
