@@ -279,8 +279,10 @@ test('files are dropped, pasted or picked in a blank thread, and ride its first 
 test('its box is the conversation composer\'s card, piece for piece', () => {
   const src = read(NEW_THREAD);
   const composer = read('frontend/src/features/messages/composer.tsx');
+  // One message box (27 Nov 2026): the conversation's card also carries
+  // its place's id, so the card's opening is matched up to its class.
   for (const piece of [
-    '<div className="messages-composer-card">',
+    '<div className="messages-composer-card"',
     '<div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? \'\' : undefined}>',
     '<div className="messages-composer-add" ref={addRef}>',
     'className="messages-composer-input"',

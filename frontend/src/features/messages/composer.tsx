@@ -323,7 +323,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   const isChannel = active.kind === 'channel';
   // The viewer's own chat with the bot, and the one the route is on: the
   // conversation drawn can be the last one for a moment after a move.
-  const botChat = active.homeroomBot === true && active.id === conversationId;
+  const botChat = active?.homeroomBot === true && active.id === conversationId;
   const answerable = active.homeroomBot !== true;
   const place: ComposerPlace = {
     scope,
@@ -1192,7 +1192,10 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
-      <div className="messages-composer-card" id={ids.card}>
+      {/* Audit C06: files staged are something to send, so Send is not drawn
+          faded over an empty field while they are (app.css reads the empty
+          field off :placeholder-shown). */}
+      <div className="messages-composer-card" id={ids.card} data-gc-files={staged.length ? '' : undefined}>
       {/* #6254: a file dropped anywhere on the thread reaches this box's
           upload. The pane draws the outline and calls this. */}
       {place.upload ? <ComposerDropTarget scope={scope} onFiles={(files) => { void addFiles(files); }} /> : null}
@@ -1288,7 +1291,7 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
             a shared item in a conversation's own box, the formatting row on
             a phone in a channel. A place that offers none draws no "+". */}
         {addRows ? <div className="messages-composer-add" ref={addRef}>
-          <button type="button" id={ids.attach} className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
+          <button type="button" className="messages-composer-action" id={ids.attach} onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
           {addOpen ? (
             <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
               {/* The attachment cap disables the ROW, not the whole control:

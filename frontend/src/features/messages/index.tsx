@@ -1187,12 +1187,11 @@ function AppDiscussionThread({ slug }: { slug: string }) {
     const view = (window as any).AppView;
     const chat = (window as any).UsernodeReact?.groupChat;
     // OUT OF REACT'S COMMIT (#2783). renderGroupChatTab mounts the chat as a
-    // portal and then, on its next line, looks up `#gc-input` to wire the
-    // composer — send on Enter, drafts, the @ and # menus. The portal is
-    // published inside flushSync, which cannot flush while React is still
-    // committing this effect, so the input did not exist yet and the
-    // composer of a channel opened here was never wired: nothing typed in it
-    // sent. A macrotask later the commit is over and the portal lands at once.
+    // portal published inside flushSync, which cannot flush while React is
+    // still committing this effect: the pane, its box included, did not
+    // exist yet when the lines after the mount ran (they wired the old
+    // composer once). A macrotask later the commit is over and the portal
+    // lands at once.
     let live = true;
     const timer = window.setTimeout(() => {
       if (live) view?.renderGroupChatTab?.({ host: el, slug, name, readOnly, archived });

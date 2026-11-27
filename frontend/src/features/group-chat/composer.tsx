@@ -162,7 +162,7 @@ export function StatusLine({ scope }: { scope: ComposerScope }) {
  * it: a platform message, a message whose author is gone, a stand-in
  * author, or a pull request each have a sentence of their own.
  */
-function replyChip(t: (id: string, values?: Record<string, unknown>) => string, quote: QuoteChipView): ComposerReply {
+export function replyChip(t: (id: string, values?: Record<string, unknown>) => string, quote: QuoteChipView): ComposerReply {
   const title = quote.unnamed === 'event' ? t('chat:group.composer.replyingToPlatform')
     : quote.unnamed === 'message' ? t('chat:group.composer.replyingToMessage')
       : quote.unnamed === 'system' ? t('chat:group.composer.replyingToSystem')
