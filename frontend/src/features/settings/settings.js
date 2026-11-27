@@ -1925,6 +1925,12 @@
     // across renders, so a later render can take back exactly what it added:
     // the fresh list may no longer offer a language this page's older one did.
     _appendLiveLanguages(select) {
+      // Request 7165: a page in English boots without the server's list of
+      // languages, which this pane lists from. Ask for it while Settings is
+      // open; `homeroom:languages-changed` draws this again when it arrives.
+      if (Settings._open) {
+        try { window.PlatformI18n?.ensureLiveLanguages?.(); } catch { /* no runtime: the build's languages stand */ }
+      }
       this._liveLanguageTags ||= new Set();
       for (const { tag, name } of window.PlatformI18n?.getLanguages?.() || []) {
         if ([...select.options].some((o) => o.value === tag)) continue;
