@@ -553,9 +553,14 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
     };
   }, [conversationId, shares]);
 
-  useEffect(() => () => {
-    if (typingStop.current) window.clearTimeout(typingStop.current);
-    placeRef.current.typing?.(false);
+  // The typing line of the place being left stops with it: the place is
+  // taken when its scope is drawn, not read again when it goes.
+  useEffect(() => {
+    const leaving = placeRef.current;
+    return () => {
+      if (typingStop.current) window.clearTimeout(typingStop.current);
+      leaving.typing?.(false);
+    };
   }, [scope]);
 
   // Task 2148: Stop, in the viewer's chat with Homeroom bot (./bot-stop.ts).
@@ -807,6 +812,23 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
     emojiListRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [emojiOpen, emojiActive]);
 
+  // A list opens over the box. Where a box stands at the top of a scrolling
+  // body (the comments under a change, in Needs you), over it is cut off by
+  // the body's edge, so the list opens under the box instead, as the
+  // comments box's own list did. Measured as it opens, before it is painted.
+  const listKey = mentionShown ? 'mention' : channelShown ? 'refs' : emojiOpen ? 'emoji' : '';
+  const listBoxRef = useRef<HTMLDivElement>(null);
+  const [listBelow, setListBelow] = useState(false);
+  useLayoutEffect(() => {
+    const el = listBoxRef.current;
+    if (!listKey || !el) { setListBelow(false); return; }
+    let edge = 0;
+    for (let up = el.parentElement; up; up = up.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(up).overflowY)) edge = Math.max(edge, up.getBoundingClientRect().top);
+    }
+    if (el.getBoundingClientRect().top < edge) setListBelow(true);
+  }, [listKey]);
+
   function insertEmoji(glyph: string) {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
@@ -890,9 +912,10 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(scope, trimmed);
     // The place's typing line (a thread's own, in a thread).
-    place.typing?.(true);
+    const typing = place.typing;
+    typing?.(true);
     if (typingStop.current) window.clearTimeout(typingStop.current);
-    typingStop.current = window.setTimeout(() => placeRef.current.typing?.(false), 2200);
+    typingStop.current = window.setTimeout(() => typing?.(false), 2200);
   }
 
   // Words from outside the box (`putInComposer`), with the caret after them.
@@ -1202,10 +1225,10 @@ export function MessageBox({ place, scroller }: { place: ComposerPlace; scroller
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.title}</span><p className="truncate">{reply.snippet}</p>{(reply.notes || []).map((note) => <p key={note} className="messages-bot-note">{note}</p>)}</div><button type="button" onClick={() => place.cancelReply?.()} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => setObject(null)} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
       {staged.length ? <div className="dc-attach-strip dc-attach-strip-active"><PendingStripRows items={staged} onRemove={removeStaged} />{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
-      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.key} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.channel} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item)}>{item.label}{item.name ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
-      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.key} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.insert || member.username)}>@{member.insert || member.username}</button>)}</div> : null}
+      {channelShown && channelMatches ? <div ref={listBoxRef} className="messages-mention-menu" data-below={listBelow ? '' : undefined} id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.key} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.channel} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item)}>{item.label}{item.name ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
+      {mentionShown && mention ? <div ref={listBoxRef} className="messages-mention-menu" data-below={listBelow ? '' : undefined} id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.key} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.insert || member.username)}>@{member.insert || member.username}</button>)}</div> : null}
       {emojiOpen && emoji ? (
-        <div className="messages-mention-menu messages-emoji-menu">
+        <div ref={listBoxRef} className="messages-mention-menu messages-emoji-menu" data-below={listBelow ? '' : undefined}>
           <div className="messages-emoji-menu-heading"><RichMessage id="messages:composer.emojiMatching" values={{ query: emoji.query }} components={[<span className="messages-emoji-menu-query" />]} /></div>
           <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label={t('messages:composer.emojiMenu')}>
             {emoji.items.map((item, i) => (

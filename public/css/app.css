@@ -2391,6 +2391,9 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
   background: var(--messages-surface);
   box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
 }
+/* Where over the box is cut off (a box at the top of a scrolling body, the
+   comments under a change in Needs you), the box opens it under itself. */
+.messages-mention-menu[data-below] { top: calc(100% - 3px); bottom: auto; box-shadow: 0 7px 20px rgba(0, 0, 0, .12); }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: start; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
 /* QA 2026-09-24 Q13: the row the arrow keys have highlighted, which Enter or
