@@ -620,6 +620,11 @@
       "id": "discussion-earlier-reactions",
       "sha256": "70f7dbccef79279ead502b636451ab4579140be18e478f6622fa7f6200224ef2",
       "schemaSha256": "4184d1750d8519e2c5337b446ffd026f17fe7f4ae8442f666a34cee136b55cbb"
+    },
+    {
+      "id": "app-hearts-and-plays",
+      "sha256": "1c4d76c186f466afe17c0a4a120ef4cfa16fc16419ea9eb22adb885383e0eb7c",
+      "schemaSha256": "96e2790493d724ff4b28f51de3971fef4ca3cc321e4cac293551002efa359872"
     }
   ]
 }

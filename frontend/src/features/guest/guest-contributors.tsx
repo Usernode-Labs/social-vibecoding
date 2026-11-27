@@ -14,7 +14,8 @@
  * What differs is where it is drawn: the hub's card wears the Workshop's
  * styles, which belong to `#dev-workshop`, so this one is drawn as the rest
  * of the signed-out page is, a small-caps label over a white card of rows,
- * with the look's shared segmented control (`one-seg`).
+ * with the shared strip's segment look (@/components/ui/tabs.tsx: the One
+ * look's `one-seg`, its pill sliding to the span picked).
  *
  * Read from GET /api/public/apps/:slug/top-contributors (src/routes/
  * public-api.js), which carries a username and a count and nothing else.
@@ -22,10 +23,11 @@
  * reads for everything else still names nobody.
  */
 
-import { type CSSProperties, useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeader } from '@/components/ui/grouped-list';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -33,6 +35,8 @@ import { CONTRIBUTORS_MIN, fetchTopContributors, type GuestTopContributors } fro
 import { PEOPLE_CARD } from './project-card';
 
 const ROW_LINE = 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]';
+/** This month | All time, in the order the strip draws them. */
+const CONTRIB_SPANS = ['month', 'all'] as const;
 
 /** The card, drawn from a list already read; nothing below CONTRIBUTORS_MIN. */
 export function GuestContributorsCard({ data, className }: { data: GuestTopContributors | null; className?: string }) {
@@ -48,19 +52,12 @@ export function GuestContributorsCard({ data, className }: { data: GuestTopContr
     <section data-guest-contributors={span} aria-labelledby={headId} className={className}>
       <div className="flex items-center justify-between gap-2 px-1 pb-2">
         <SectionHeader id={headId} className="shrink-0 p-0">{t('project:hub.contributors.title')}</SectionHeader>
-        <div
-          className="one-seg"
-          role="group"
-          aria-label={t('project:hub.contributors.span')}
-          style={{ '--one-seg-n': 2, '--one-seg-i': span === 'month' ? 0 : 1 } as CSSProperties}
-        >
-          <button type="button" data-guest-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
-            {t('project:hub.contributors.month')}
-          </button>
-          <button type="button" data-guest-contrib-span="all" aria-pressed={span === 'all'} onClick={() => setPicked('all')}>
-            {t('project:hub.contributors.allTime')}
-          </button>
-        </div>
+        <Tabs kind="radio" look="segment" values={CONTRIB_SPANS} value={span} onValueChange={(next) => setPicked(next === 'all' ? 'all' : 'month')}>
+          <TabsList aria-label={t('project:hub.contributors.span')}>
+            <TabsTrigger value="month" data-guest-contrib-span="month">{t('project:hub.contributors.month')}</TabsTrigger>
+            <TabsTrigger value="all" data-guest-contrib-span="all">{t('project:hub.contributors.allTime')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
       <div className={cn(PEOPLE_CARD, 'overflow-hidden')}>
         {people.length ? people.map((person, i) => (

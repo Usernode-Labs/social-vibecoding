@@ -59,6 +59,7 @@
 
 import { Fragment, useRef, type ReactNode } from 'react';
 
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { PersonAvatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
@@ -679,26 +680,22 @@ function HistoryRows({ rows }: { rows: HistoryRow[] }): ReactNode {
 function HistoryBody({ view }: { view: Extract<BodyView, { kind: 'history' }> }): ReactNode {
   return (
     <>
-      <div className="flex items-center gap-2 mb-3">
+      {/* The shared filter row (@/components/ui/chip.tsx): aria-pressed
+          says which chip is on, not the fill alone (#2991). */}
+      <ChipRail className="mb-3 gap-2 px-0 py-0">
         {view.chips.map((chip) => (
-          <button
+          <Chip
             key={chip.key}
-            type="button"
+            size="bar"
+            className="px-4"
             data-lb-hfilter={chip.key}
-            // The on-state is otherwise only a fill colour (#2991).
-            aria-pressed={chip.on}
-            className={`px-3 py-1 text-xs font-medium rounded-full border ${
-              chip.on
-                ? 'bg-violet-600 text-white border-violet-600'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
-                  + 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
+            selected={chip.on}
             onClick={() => controller()?._toggleHistoryFilter(chip.key)}
           >
             {chip.label}
-          </button>
+          </Chip>
         ))}
-      </div>
+      </ChipRail>
       {view.list.kind === 'loading' ? <Loading /> : null}
       {view.list.kind === 'error' ? <div className={ERROR_HINT}>{view.list.message}</div> : null}
       {view.list.kind === 'empty' ? <div className={HINT}>{view.list.message}</div> : null}

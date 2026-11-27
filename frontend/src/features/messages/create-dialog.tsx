@@ -4,12 +4,16 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import { createDirect, createGroup, setUserBlocked } from './store';
 import type { ConversationUser } from './types';
 import { UserAvatar } from './format';
+
+/** A new message's two kinds, in the order the strip draws them. */
+const MESSAGE_KINDS = ['direct', 'group'] as const;
 
 function useUserSearch(query: string) {
   const [users, setUsers] = useState<ConversationUser[]>([]);
@@ -97,13 +101,12 @@ export function CreateConversationDialog() {
           <h2 className="text-lg font-bold">{t('messages:create.title')}</h2>
           <button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label={t('core:common.close')}><XIcon className="w-5 h-5" /></button>
         </div>
-        <div className="grid grid-cols-2 gap-1 p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800" role="tablist" aria-label={t('messages:create.typeTabs')}>
-          {(['direct', 'group'] as const).map((kind) => (
-            <button key={kind} type="button" role="tab" aria-selected={mode === kind} onClick={() => { setMode(kind); setQuery(''); setNote(''); setSelected([]); setError(''); }} className={`rounded-md px-3 py-1.5 text-sm font-medium ${mode === kind ? 'bg-white dark:bg-zinc-700 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'}`}>
-              {kind === 'direct' ? t('messages:create.tab.direct') : t('messages:create.tab.group')}
-            </button>
-          ))}
-        </div>
+        <Tabs kind="tabs" look="segment" size="md" fill values={MESSAGE_KINDS} value={mode} onValueChange={(next) => { setMode(next === 'group' ? 'group' : 'direct'); setQuery(''); setNote(''); setSelected([]); setError(''); }}>
+          <TabsList className="mb-4" aria-label={t('messages:create.typeTabs')}>
+            <TabsTrigger value="direct">{t('messages:create.tab.direct')}</TabsTrigger>
+            <TabsTrigger value="group">{t('messages:create.tab.group')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
         {mode === 'group' ? (
           <label className="block mb-3">
             <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:create.groupName')}</span>

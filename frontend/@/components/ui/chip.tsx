@@ -48,7 +48,12 @@ import { cn } from '@/lib/utils';
  * LOOK is not a reason to share the SEMANTICS.
  */
 
-const chip = cva(
+/**
+ * The chip's class table, exported so a strip of tabs drawn as chips
+ * (@/components/ui/tabs.tsx's `chip` look) wears exactly these classes: one
+ * look, two semantics.
+ */
+export const chipVariants = cva(
   'inline-flex shrink-0 items-center justify-center rounded-full text-[1.0625rem] font-medium transition-colors',
   {
     variants: {
@@ -77,14 +82,14 @@ const chip = cva(
 
 export interface ChipProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>,
-    VariantProps<typeof chip> {}
+    VariantProps<typeof chipVariants> {}
 
 export function Chip({ className, selected, shape, size, ...props }: ChipProps) {
   return (
     <button
       type="button"
       aria-pressed={selected ?? false}
-      className={cn(chip({ selected, shape, size }), className)}
+      className={cn(chipVariants({ selected, shape, size }), className)}
       {...props}
     />
   );

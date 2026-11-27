@@ -1551,21 +1551,6 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
   font: inherit;
   font-size: 14px;
 }
-.msgx-picker-tabs { display: flex; justify-content: space-between; }
-.msgx-picker-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 30px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-}
-.msgx-picker-tab:hover { color: var(--text-primary); }
-.msgx-picker-tab-active { color: var(--accent-wash-ink); background: var(--accent-wash); }
 .msgx-picker-scroll { height: 264px; overflow-y: auto; overscroll-behavior: contain; }
 .msgx-picker-inline .msgx-picker-scroll { height: min(46vh, 340px); }
 .msgx-picker-head {
@@ -8805,7 +8790,6 @@ html:root #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip
 html:root #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
 html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
 html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
-html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
 html:root #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
 html:root #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
@@ -16605,36 +16589,6 @@ html.un-kb .un-modal {
 }
 .staging-fact[data-kind="ask"] { color: var(--accent); font-weight: 600; }
 
-/* Preview | Before & after: the segmented style of the Light / Dark /
-   System control, a track with the chosen side raised. */
-.staging-switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-.staging-switch button {
-  height: 28px;
-  padding: 0 13px;
-  border: 0;
-  border-radius: 9999px;
-  background: transparent;
-  white-space: nowrap;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
-}
-.staging-switch button[data-on] {
-  background: var(--dc-sheet-solid);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-}
-html.dark .staging-switch button[data-on] {
-  background: color-mix(in srgb, var(--text-primary) 18%, var(--dc-sheet-solid));
-  box-shadow: none;
-}
-
 /* The platform's Vote, as on a chat's vote card; "See the vote" once the
    vote is decided, with no fill: nothing is left to do there. */
 .staging-vote {
@@ -16765,35 +16719,6 @@ html.dark .staging-switch button[data-on] {
    single untabbed body. */
 .dc-spec-viewer-preamble {
   margin-bottom: 12px;
-}
-
-.dc-spec-viewer-tabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
-}
-
-.dc-spec-viewer-tab {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 6px 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary, #a1a1aa);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-
-.dc-spec-viewer-tab:hover {
-  color: var(--text-primary, #e4e4e7);
-}
-
-.dc-spec-viewer-tab-active {
-  color: var(--accent);
-  border-bottom-color: currentColor;
-  font-weight: 600;
 }
 
 .dc-spec-tab-empty {
@@ -23920,8 +23845,6 @@ html:root body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overl
   font-size: 12.5px; font-weight: 600; line-height: 18px; color: var(--text-secondary);
   white-space: nowrap; cursor: pointer;
 }
-.dev-ws-contrib-span > button[aria-pressed="true"] { background: #18181b; color: #fff; }
-.dark .dev-ws-contrib-span > button[aria-pressed="true"] { background: #fafafa; color: #18181b; }
 @media (max-width: 767.98px) {
   .dev-ws-contrib-span > button { min-height: 32px; padding-inline: 12px; }
 }
@@ -31893,9 +31816,6 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-ai small { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--rf-muted); }
 .rf-ai small svg { width: 14px; height: 14px; }
 .rf-ai p { margin: 0; padding: 10px 14px; border-start-start-radius: 18px; border-start-end-radius: 18px; border-end-end-radius: 18px; border-end-start-radius: 4px; background: var(--rf-fill); font-size: 15px; line-height: 20px; white-space: pre-wrap; }
-.rf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.rf-chip { height: 44px; padding: 0 13px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 500; white-space: nowrap; cursor: pointer; }
-.rf-chip[aria-checked="true"] { background: var(--rf-ink); color: var(--rf-page); }
 .rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
 .rf-ask-form input { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
 .rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }
@@ -33861,6 +33781,9 @@ html:root .one-seg > :is(button, a, [role="tab"], [role="radio"]) { position: re
 html:root .one-seg > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: var(--one-seg-thumb); color: var(--one-seg-on-ink); }
 html:root .one-seg[style*="--one-seg-i"]::before { content: ""; position: absolute; z-index: 0; top: 2px; bottom: 2px; inset-inline-start: 2px; width: calc((100% - 4px) / var(--one-seg-n, 2)); border-radius: 9999px; background: var(--one-seg-thumb); transform: translateX(calc(var(--one-seg-i, 0) * 100% * var(--rtl-sign, 1))); transition: transform .38s cubic-bezier(.3, 1.3, .5, 1); }
 html:root .one-seg[style*="--one-seg-i"] > :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"], [aria-current="page"]) { background: transparent; }
+/* A control the kit hides by its `hidden` class (the change preview's Preview | Before & after) stays hidden: the
+   track's own display would otherwise outrank the utility. */
+html:root .one-seg.hidden { display: none; }
 html:root .one-seg > :is(button, a, [role="tab"], [role="radio"]):focus-visible { outline: 2px solid var(--one-link-line); outline-offset: 2px; }
 /* A menu chip opens a choice that sets what you are working on (All projects, About, With): a white pill with the small
    sticker edge, its label's lead word in the quiet ink. */
@@ -35255,7 +35178,7 @@ html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg 
   font-size: 14px;
   font-weight: 600;
 }
-html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button[aria-pressed="true"] { background-color: transparent; color: var(--one-seg-on-ink); }
+html:root #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span.one-seg > button[aria-checked="true"] { background-color: transparent; color: var(--one-seg-on-ink); }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody :is([data-ws-hub-contributors], [data-ws-hub-topics], [data-ws-hub-versions]) .dev-ws-foryou {
   overflow: hidden;
   padding: 0;
@@ -35572,6 +35495,8 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * { order: 1; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols > [data-ws-hub-discussion] { order: 2; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > :not([data-ws-hub-for-you]) { order: 3; }
+/* Hearts and plays lead the hub's parts at every width, above For you (hub-cards.tsx PopularityCard). */
+html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-side > [data-ws-hub-popularity] { order: 0; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody .dev-ws-hub-cols [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: 0; }
 /* The full card, or on a phone the preview of it: both are in the page, one drawn. */
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-discussion="preview"] { display: none; }

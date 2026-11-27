@@ -109,6 +109,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PersonAvatar } from '@/components/ui/feed';
 import { ListRow, ListRowMeta, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -2121,12 +2122,6 @@ export function NotificationsSheetView() {
   // it does not wrap, it just takes the width it needs.
   // The chip rail (see @/components/ui/chip.tsx for the idiom): selection
   // is the language's solid inversion, not an underline or the accent.
-  const tabCls = (active: boolean) =>
-    'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors '
-    + (active
-      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-      : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
-
   return (
     <>
       {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
@@ -2257,43 +2252,27 @@ export function NotificationsSheetView() {
           ) : null}
         </div>
       </div>
-      <div
-        id="notifications-screen-tabs"
-        className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
-          + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
-        role="tablist"
-        aria-label={t('notifications:sheet.filters')}
-      >
-        <button
-          id="notifications-tab-unread"
-          role="tab"
-          aria-selected={tab === 'unread'}
-          className={tabCls(tab === 'unread')}
-          onClick={() => setTab('unread')}
+      {/* The strip is the shared one (@/components/ui/tabs.tsx) in its chip
+          look: the kind chips under it are the same chips, as filters. */}
+      <Tabs kind="tabs" look="chip" value={tab} onValueChange={(next) => setTab(next as Tab)}>
+        <TabsList
+          id="notifications-screen-tabs"
+          className="px-4 pt-1 pb-2 shrink-0"
+          aria-label={t('notifications:sheet.filters')}
         >
-          {unreadCount > COUNT_CAP ? t('notifications:sheet.tab.unreadCountCapped')
-            : unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount })
-              : t('notifications:sheet.tab.unread')}
-        </button>
-        <button
-          id="notifications-tab-threads"
-          role="tab"
-          aria-selected={tab === 'threads'}
-          className={tabCls(tab === 'threads')}
-          onClick={() => setTab('threads')}
-        >
-          {t('notifications:sheet.tab.threads')}
-        </button>
-        <button
-          id="notifications-tab-all"
-          role="tab"
-          aria-selected={tab === 'all'}
-          className={tabCls(tab === 'all')}
-          onClick={() => setTab('all')}
-        >
-          {t('notifications:sheet.tab.all')}
-        </button>
-      </div>
+          <TabsTrigger id="notifications-tab-unread" value="unread">
+            {unreadCount > COUNT_CAP ? t('notifications:sheet.tab.unreadCountCapped')
+              : unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount })
+                : t('notifications:sheet.tab.unread')}
+          </TabsTrigger>
+          <TabsTrigger id="notifications-tab-threads" value="threads">
+            {t('notifications:sheet.tab.threads')}
+          </TabsTrigger>
+          <TabsTrigger id="notifications-tab-all" value="all">
+            {t('notifications:sheet.tab.all')}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
       {/* #3206: All's kind chips, the Discover filter rail's chips at the
           bar's size. A toggle each (aria-pressed), one lit at a time. */}
       {tab === 'all' ? (

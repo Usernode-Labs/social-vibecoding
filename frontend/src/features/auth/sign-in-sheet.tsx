@@ -206,6 +206,7 @@ import { PersonAvatar } from '@/components/ui/feed';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, KeyIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
@@ -833,12 +834,11 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 // adds nothing to them. The steps the full sign-in pages brought here
 // draw their buttons this way (tests/button-primitive-ratchet.test.js).
 const OWN_CLASSES = { variant: 'unstyled', size: 'none', ink: 'none' } as const;
-// The Email code | Password switch (#5258): a grey track, the chosen one a
-// white segment on it, as Settings' Light / Dark / System.
-const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
-const SWITCH_ON = 'h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
+// The Email code | Password switch (#5258): the shared strip's segment look
+// (@/components/ui/tabs.tsx), the One look's ink pill on a light track, at
+// the sheet's 44px. A radio strip: the arrow keys move it.
+const SIGN_IN_METHODS = ['email', 'password'] as const;
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
-const SWITCH_OFF = 'h-11 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 // The offline note: `.offline-only` first (app.css hides it unless the body
 // is offline, and the declared check finds it by it), then the shell's one
 // caution box, the Alert primitive's `notice` (the landing's own offline note
@@ -2058,14 +2058,12 @@ export function SignInSheet({
           </div>
         ) : null}
         {methodSwitch ? (
-          <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
-            <button type="button" role="radio" aria-checked={step !== 'password'} data-sign-in-sheet-method-email="" className={step !== 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step === 'password') toStep('email'); }}>
-              {t('auth:signInSheet.method.emailCode')}
-            </button>
-            <button type="button" role="radio" aria-checked={step === 'password'} data-sign-in-sheet-method-password="" className={step === 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'password') toStep('password'); }}>
-              {t('auth:signInSheet.method.password')}
-            </button>
-          </div>
+          <Tabs kind="radio" look="segment" size="md" fill values={SIGN_IN_METHODS} value={step === 'password' ? 'password' : 'email'} onValueChange={(next) => { if (next === 'password') { if (step !== 'password') toStep('password'); } else if (step === 'password') toStep('email'); }}>
+            <TabsList aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className="mt-4">
+              <TabsTrigger value="email" data-sign-in-sheet-method-email="">{t('auth:signInSheet.method.emailCode')}</TabsTrigger>
+              <TabsTrigger value="password" data-sign-in-sheet-method-password="">{t('auth:signInSheet.method.password')}</TabsTrigger>
+            </TabsList>
+          </Tabs>
         ) : null}
 
         {step === 'choose' ? (

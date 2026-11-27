@@ -260,6 +260,12 @@ export type CommunityPayload = {
       their votes on changes and the requests they filed, one each. The
       hub's Top contributors card (./hub-cards.tsx ContributorsCard). */
   contributors?: { month: HubContributor[]; all_time: HubContributor[] } | null;
+  /** Hearts and plays (src/services/app-popularity.js): how many times the
+      app was played or opened, one per person per day, how many accounts
+      gave it a heart and whether the reader has. `played`: the app is a
+      game. The hub's card (./hub-cards.tsx PopularityCard). Null on the
+      platform's own project, which has no app, and when not read. */
+  popularity?: { plays: number; hearts: number; hearted: boolean; played: boolean } | null;
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;

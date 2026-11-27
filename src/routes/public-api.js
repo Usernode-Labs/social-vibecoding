@@ -45,7 +45,9 @@ const {
   waitlistStatusLimiter,
   waitlistStatusIpLimiter,
   publicProjectReadLimiter,
+  publicPlayLimiter,
 } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const arrivalSource = require('../services/arrival-source');
@@ -62,7 +64,9 @@ const {
   waitlistUrl,
 } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, guestReady, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const popularity = require('../services/app-popularity');
+const { anonymousSource } = require('../services/ui-telemetry');
 const { loadProjectOverview } = require('../services/public-project');
 const { contributorsSummary } = require('../services/communities');
 const { publicStillBytes } = require('../services/shots-public');
@@ -306,6 +310,35 @@ function publicApiRoutes(config) {
       res.json(body);
     } catch (err) {
       log.error('public-api', 'project overview failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/public/apps/:slug/plays — a visitor with no account kept a
+  // public app open in the landing's viewer (features/popularity/
+  // visitor-play.ts): one play, counted once per source per app per day
+  // (services/app-popularity.js recordVisitorPlay). Nothing is read from the
+  // body and nothing is kept about who: a number per app per day, and the
+  // keyed, day-scoped hash that refuses a second count. Only for an app the
+  // directory lists that a visitor can open here; anything else is 404, the
+  // same body as an unknown slug. Somebody signed in is never counted from
+  // here: their plays are their app_activity rows.
+  router.post('/api/public/apps/:slug/plays', publicPlayLimiter, sameOriginBrowserOnly, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) return res.status(404).json({ error: 'App not found' });
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, self_hosted, moderation_suspended_at, view_visibility, status, anon_shell, guest_shell
+           FROM apps WHERE slug = $1`,
+        [slug]
+      );
+      const app = rows[0];
+      if (!isPublicDirectoryApp(app) || !guestReady(app)) return res.status(404).json({ error: 'App not found' });
+      const source = anonymousSource(clientIp(req), { key: config && config.sessionSecret });
+      const result = await popularity.recordVisitorPlay(pool, { appId: app.id, source });
+      res.status(202).json({ ok: true, counted: result.counted });
+    } catch (err) {
+      log.error('public-api', 'visitor play failed', { slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
