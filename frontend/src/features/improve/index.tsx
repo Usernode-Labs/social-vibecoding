@@ -26,8 +26,8 @@ export { improveStore, Improve } from './mount';
 
 export function ImproveIsland() {
   // The Escape handler that was here went with the panel: the mark's menu is
-  // a registered sheet and lib/sheet-controller.js owns the key for it, which
-  // is the seam this hand-rolled listener was working around.
+  // a standing sheet and lib/sheet.ts owns the key for it, which is the seam
+  // this hand-rolled listener was working around.
 
   // #1038's live session store drives the mark's working cue: a turn that
   // starts or finishes in this tab, another tab, or on another device moves

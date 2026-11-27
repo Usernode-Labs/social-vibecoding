@@ -12,8 +12,7 @@ import type { ReactNode } from 'react';
 import { EllipsisHorizontalIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { useMenuKeyboard } from '../../lib/menu-keys';
-import { useDismiss } from '../message-actions/use-dismiss';
+import { useMenu } from '../../lib/menu';
 import { noteThreadName } from './private-thread-bar';
 import type { PrivateThreadState } from './private-thread-bar';
 
@@ -60,12 +59,12 @@ export function ThreadDoneMenu({ rootId, done, name = null, onChanged, onRenamed
 }): ReactNode {
   const t = useMessages('messages');
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const close = () => setOpen(false);
-  useDismiss(open, [wrapRef], close);
-  const menuKeys = useMenuKeyboard(open, menuRef, btnRef, close);
+  // The Menu (lib/menu.ts): a press outside, Escape, Back, the rows' keys,
+  // and focus in and back to the ⋯.
+  const { panelProps } = useMenu(open, { trigger: btnRef, panel: menuRef, onClose: close });
   const act = async () => {
     setOpen(false);
     btnRef.current?.focus({ preventScroll: true });
@@ -100,7 +99,7 @@ export function ThreadDoneMenu({ rootId, done, name = null, onChanged, onRenamed
     }
   };
   return (
-    <div className={`relative ${className}`} ref={wrapRef} data-private-thread-menu="">
+    <div className={`relative ${className}`} data-private-thread-menu="">
       <button
         ref={btnRef}
         type="button"
@@ -114,7 +113,7 @@ export function ThreadDoneMenu({ rootId, done, name = null, onChanged, onRenamed
         <EllipsisHorizontalIcon aria-hidden="true" />
       </button>
       {open ? (
-        <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={t('messages:privateThread.menu')} onKeyDown={menuKeys.onKeyDown}>
+        <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={t('messages:privateThread.menu')} {...panelProps}>
           <button type="button" role="menuitem" data-private-thread-act="rename" onClick={(e) => { e.stopPropagation(); void rename(); }}>
             {t('messages:privateThread.rename')}
           </button>

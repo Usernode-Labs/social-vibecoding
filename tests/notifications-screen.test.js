@@ -34,7 +34,8 @@ test('Notifications is a React-owned SHEET, not a screen root', () => {
   assert.match(html, /id="notifications-sheet-overlay"/);
   assert.match(screen, /notificationsSheetStore/);
   assert.match(screen, /\{\.\.\.\(open \? \{ 'data-open': '' \} : \{\}\)\}/);
-  assert.match(sheetCtl, /createSheetController\(/, 'on the shared sheet chassis');
+  // A standing sheet of the Sheet's (lib/sheet.ts), since lib/sheet-controller.js folded into it.
+  assert.match(sheetCtl, /createStandingSheet\(/, 'on the shared Sheet');
 
   // OUT of both screen registries: an overlay is not a mutually exclusive
   // root, and nothing may hide it through the visibility store.

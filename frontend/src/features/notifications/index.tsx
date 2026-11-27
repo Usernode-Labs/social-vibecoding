@@ -1,14 +1,17 @@
 /**
- * The Notifications island: the sheet plus its document-level Escape binding.
+ * The Notifications island: the sheet, presented by the Sheet.
  *
  * Mirrors ../app-context/index.tsx — importing ./mount here is what installs
  * the two flushes and (via the controller's module scope) publishes
  * `window.NotificationsSheet` before public/js/** looks for it.
+ *
+ * The presentation is lib/sheet.ts's, as every sheet's is: the kit on a
+ * phone, Back, Escape (while it is the top panel, #6981, and on a phone with
+ * a keyboard too) and the overlay's tap. The Escape listener that was here
+ * went with lib/sheet-controller.js.
  */
 
-import { useEffect } from 'react';
-
-import { isTopSurface } from '../../lib/open-surfaces';
+import { useSheet } from '../../lib/sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { NotificationsSheetView } from './notifications-sheet';
 import { notificationsSheetStore, NotificationsSheet } from './mount';
@@ -17,21 +20,6 @@ export { notificationsSheetStore, NotificationsSheet } from './mount';
 
 export function NotificationsIsland() {
   const open = useStoreState(notificationsSheetStore).open;
-
-  // Escape closes the sheet — web presentation only; adopted into a kit
-  // sheet the kit's modal stack owns the key. Same rule as the Improve panel.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      // #6981: only the panel on top answers Escape.
-      if (!isTopSurface('notifications-sheet')) return;
-      if (NotificationsSheet._sheet) return;
-      NotificationsSheet.close();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  return <NotificationsSheetView />;
+  const sheet = useSheet({ open, ...NotificationsSheet.present });
+  return <NotificationsSheetView sheet={sheet} />;
 }

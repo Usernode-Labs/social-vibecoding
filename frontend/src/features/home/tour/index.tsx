@@ -730,10 +730,11 @@ export function OnboardingTour() {
   // it and a row inside a closed sheet has no box for ./spotlight.ts to find.
   // It WAITS for the panel's teardown rather than racing it: on touch the kit
   // cannot present a surface while it is still dismissing another, which is
-  // the ordering lib/sheet-controller.js's dismissForNav exists for and the
-  // reason `Improve.close()` is awaited here rather than fired and forgotten.
-  // (AppContext.open's own `_closeSiblings` dismisses the panel too, but it
-  // does not await it — that is the race, not the fix for it.)
+  // the ordering a standing sheet's dismissForNav (lib/sheet.ts) exists for and
+  // the reason `Improve.close()` is awaited here rather than fired and
+  // forgotten. (AppContext.open's own claim on the one-open-panel slot
+  // dismisses the panel too, but it does not await it — that is the race, not
+  // the fix for it.)
   //
   // THE MENU STEP ARRIVES WITH THE MENU SHUT (#2718 review).
   //

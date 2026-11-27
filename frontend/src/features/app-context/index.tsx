@@ -1,12 +1,17 @@
 /**
- * The app-context island: the sheet plus its document-level bindings —
- * Escape, and on the web presentation the anchor under the Homeroom mark
- * and the outside click that dismisses it (#2784).
+ * The app-context island: the sheet, presented by the Sheet (lib/sheet.ts),
+ * and on the web presentation the anchor under the Homeroom mark and the
+ * arrow keys between its rows.
  *
  * Mirrors ../improve/index.tsx — the sheet body is ./app-context-sheet.tsx,
  * its flag is ./app-context-store.js, and importing ./mount here is what
  * installs the flush and (via the controller's module scope) publishes
  * `window.AppContext` before public/js/** looks for it.
+ *
+ * Escape, the outside press that dismisses the web popover (#2784), a press
+ * on the running app (#4260), the kit on a phone and Back are the Sheet's,
+ * as every sheet's are; this island wrote its own of each until
+ * lib/sheet-controller.js folded into it.
  */
 
 import { useEffect } from 'react';
@@ -15,11 +20,10 @@ import { placeUnderAnchor } from '../../lib/anchor-popover';
 import { currentDirection } from '../../lib/i18n/direction';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { menuItems, roveMenuFocus } from '../../lib/menu-keys';
-import { isTopSurface } from '../../lib/open-surfaces';
+import { useSheet } from '../../lib/sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
-import { kitSheetTakesEscape } from './kit-escape';
 import { appContextStore, AppContext } from './mount';
 import './app-openings';
 
@@ -82,8 +86,63 @@ function anchorUnderMark(sheet: HTMLElement): void {
   sheet.style.setProperty('--menu-anchor-left', `${start}px`);
 }
 
+/** Whether the welcome tour is running: its root carries `hidden` while it is not. */
+function touring(): boolean {
+  const tour = document.getElementById(TOUR_ID);
+  return !!tour && !tour.classList.contains('hidden');
+}
+
+/**
+ * What a press outside the web popover spares. The mark, whose own click
+ * toggles it. THE WELCOME TOUR TOO: its steps 4 and 5 point at rows inside
+ * this menu, and its card (Next included) sits outside it, so a Next that
+ * counted as an outside press shut the menu and the tour fell back to the
+ * step that asks for it again ("Next on step 4 goes back to step 3"). While
+ * the tour is up it decides when the menu closes: its `closesPanel` steps
+ * shut it through AppContext.close(). The first session's tour is spared the
+ * same way (#4390): its Suggest step points at a button in this menu, and it
+ * closes the menu itself when the reader moves on
+ * (../first-session/index.tsx, TourStep.inMenu). A press on the running app
+ * (the frame) closes it unless the welcome tour is up, which keeps its say.
+ */
+function sparedFromOutside(target: Element): boolean {
+  if (target.tagName === 'IFRAME') return touring();
+  const mark = document.getElementById(MARK_ID);
+  const tour = document.getElementById(TOUR_ID);
+  const firstSession = document.querySelector(FIRST_SESSION_TOUR);
+  return !!(mark?.contains(target) || tour?.contains(target) || firstSession?.contains(target));
+}
+
+/**
+ * KEYBOARD (QA 2026-09-24 Q18), web presentation only. Opening it from the
+ * mark moves focus to the menu's first row, and the arrows (and Home, End)
+ * move between its rows; before, focus stayed on the mark and the rows were
+ * a Tab-hunt away. Focus is only moved in when the MARK opened it (or nothing
+ * had focus): the welcome tour opens this menu too, and its card keeps focus.
+ * On a phone the kit holds it and focus stays where it was.
+ */
+function firstRowFromMark(panel: HTMLElement): HTMLElement | null {
+  if (window.PlatformUI?.isTouch?.() || touring()) return null;
+  const was = document.activeElement;
+  if (was && was !== document.body && was.id !== MARK_ID) return null;
+  return menuItems(panel, SHEET_ROWS).find((el) => el.id !== 'apps-switcher-close') || null;
+}
+
 export function AppContextIsland() {
-  const { open, adopted } = useStoreState(appContextStore);
+  const { open } = useStoreState(appContextStore);
+  // AN OUTSIDE PRESS DISMISSES IT, AND STILL LANDS. The popover has no scrim
+  // on desktop, so its backdrop no longer takes the pointer there (app.css)
+  // and the header stays live: pressing the bell closes this and opens the
+  // notifications in one click, the way the vote popover lets the board
+  // keep working. Below `sm` the backdrop still catches the click first and
+  // closes the sheet through the Sheet's scrim rule.
+  const sheet = useSheet({
+    open,
+    ...AppContext.present,
+    outside: { inside: sparedFromOutside },
+    initialFocus: firstRowFromMark,
+  });
+  const { adopted } = sheet;
 
   // PLACED BEFORE THE FIRST OPEN PAINT. A layout effect, so the panel never
   // shows a frame at the rule's fallback position before jumping under the
@@ -93,77 +152,24 @@ export function AppContextIsland() {
   // properties are simply never read.
   useIsomorphicLayoutEffect(() => {
     if (!open || adopted) return undefined;
-    const sheet = document.getElementById('apps-switcher-sheet');
-    if (!sheet) return undefined;
-    const place = () => anchorUnderMark(sheet);
+    const el = document.getElementById('apps-switcher-sheet');
+    if (!el) return undefined;
+    const place = () => anchorUnderMark(el);
     place();
     window.addEventListener('resize', place);
     return () => window.removeEventListener('resize', place);
   }, [open, adopted]);
 
-  // AN OUTSIDE CLICK DISMISSES IT, AND STILL LANDS. The popover has no scrim
-  // on desktop, so its backdrop no longer takes the pointer there (app.css)
-  // and the header stays live: pressing the bell closes this and opens the
-  // notifications in one click, the way the vote popover lets the board
-  // keep working. Capture phase, so the menu is gone before whatever was
-  // clicked reacts. The mark itself is spared — its own click toggles.
-  // Below `sm` the backdrop still catches the click first and closes the
-  // sheet through its onClick; this listener then finds it already shut.
-  //
-  // THE WELCOME TOUR IS SPARED TOO. Its steps 4 and 5 point at rows inside
-  // this menu, and its card — Next included — sits outside it, so a Next
-  // that counted as an outside click shut the menu and the tour fell back
-  // to the step that asks for it again ("Next on step 4 goes back to step
-  // 3"). While the tour is up it decides when the menu closes: its
-  // `closesPanel` steps shut it through AppContext.close(). The first
-  // session's tour is spared the same way (#4390): its Suggest step points
-  // at a button in this menu, and it closes the menu itself when the reader
-  // moves on (../first-session/index.tsx, TourStep.inMenu).
+  // The arrows (and Home, End) between the rows, on the web presentation;
+  // held by the kit, the arrows stay the kit's.
   useEffect(() => {
     if (!open || adopted) return undefined;
-    const onDoc = (event: Event) => {
-      const t = event.target as Node | null;
-      const sheet = document.getElementById('apps-switcher-sheet');
-      const mark = document.getElementById(MARK_ID);
-      const tour = document.getElementById(TOUR_ID);
-      const firstSession = document.querySelector(FIRST_SESSION_TOUR);
-      if (t && (sheet?.contains(t) || mark?.contains(t) || tour?.contains(t) || firstSession?.contains(t))) return;
-      if (AppContext._sheet) return;
-      void AppContext.close();
+    const onKey = (event: KeyboardEvent) => {
+      const el = document.getElementById('apps-switcher-sheet');
+      if (el && el.contains(event.target as Node)) roveMenuFocus(event, el, SHEET_ROWS);
     };
-    document.addEventListener('click', onDoc, true);
-    return () => document.removeEventListener('click', onDoc, true);
-  }, [open, adopted]);
-
-  // A CLICK ON THE RUNNING APP DISMISSES IT TOO (#4260). The app is a
-  // cross-origin frame, so the listener above never hears that click: it
-  // happens in another document. What this one does hear is the focus going
-  // there — the window blurs and the frame becomes the active element. That
-  // is the outside click, read from this side, the same on a mouse and a
-  // finger. Switching tabs or windows also blurs, but leaves the active
-  // element where it was here, so it closes nothing. The tour keeps its
-  // say, as it does above. The web presentations only, like the listener
-  // above: adopted into a kit sheet, the kit's backdrop covers the frame and
-  // takes that tap itself.
-  useEffect(() => {
-    if (!open || adopted) return undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const onBlur = () => {
-      // The active element moves after the blur event, not before it.
-      timer = setTimeout(() => {
-        const active = document.activeElement;
-        if (!active || active.tagName !== 'IFRAME') return;
-        if (document.getElementById('apps-switcher-sheet')?.contains(active)) return;
-        const tour = document.getElementById(TOUR_ID);
-        if (tour && !tour.classList.contains('hidden')) return;
-        void AppContext.close();
-      }, 0);
-    };
-    window.addEventListener('blur', onBlur);
-    return () => {
-      window.removeEventListener('blur', onBlur);
-      if (timer) clearTimeout(timer);
-    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [open, adopted]);
 
   // `?shot=app-about`: the menu open on its About pane, for the declared
@@ -192,55 +198,5 @@ export function AppContextIsland() {
     return () => { if (timer) clearTimeout(timer); };
   }, []);
 
-  // Escape closes the sheet, in every presentation. On the web it is this
-  // listener's alone, the Improve panel's rule. Adopted into a kit sheet (a
-  // phone or a tablet, which can have a keyboard) it is this listener's too:
-  // the kit's sheet answers a swipe and its backdrop but never Escape, since
-  // it does not join the kit's modal stack (#5927 item 10). There it stands
-  // aside for a kit surface above the menu (./kit-escape.ts), and the arrows
-  // stay the kit's.
-  //
-  // KEYBOARD (QA 2026-09-24 Q18), web presentation only as well. Opening it
-  // from the mark moves focus to the menu's first row, the arrows (and Home,
-  // End) move between its rows, and Escape hands focus back to the mark —
-  // before, focus stayed on the mark and the rows were a Tab-hunt away.
-  // Focus is only moved in when the MARK opened it (or nothing had focus):
-  // the welcome tour opens this menu too, and its card keeps focus.
-  useEffect(() => {
-    if (!open) return undefined;
-    const sheet = () => document.getElementById('apps-switcher-sheet');
-    // The tour's root is always in the document and carries `hidden` while
-    // it is not running.
-    const tour = document.getElementById(TOUR_ID);
-    const touring = !!tour && !tour.classList.contains('hidden');
-    if (!adopted && !window.PlatformUI?.isTouch?.() && !touring) {
-      const was = document.activeElement;
-      if (!was || was === document.body || was.id === MARK_ID) {
-        const first = menuItems(sheet(), SHEET_ROWS).find((el) => el.id !== 'apps-switcher-close');
-        first?.focus({ preventScroll: true });
-      }
-    }
-    const onKey = (event: KeyboardEvent) => {
-      // #6981: a panel opened over the menu owns Escape. The welcome tour is
-      // the one that may sit above it with the menu still up, and its own
-      // listener asks whether to skip; one press must not close both.
-      if (event.key === 'Escape' && !isTopSurface('apps-switcher-sheet')) return;
-      if (AppContext._sheet) {
-        if (kitSheetTakesEscape(event, document, 'apps-switcher-sheet')) void AppContext.close();
-        return;
-      }
-      const el = sheet();
-      const inside = !!el && el.contains(event.target as Node);
-      if (event.key === 'Escape') {
-        AppContext.close();
-        if (inside) visibleMark()?.focus({ preventScroll: true });
-        return;
-      }
-      if (inside) roveMenuFocus(event, el, SHEET_ROWS);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, adopted]);
-
-  return <AppsSwitcherSheet />;
+  return <AppsSwitcherSheet sheet={sheet} />;
 }

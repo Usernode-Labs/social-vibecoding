@@ -12,14 +12,11 @@
 import { createStore } from '../../lib/plain-store.js';
 
 export const notificationsSheetStore = createStore({
-  /** Whether the sheet is presented. `data-open` on the root derives from it. */
-  open: false,
   /**
-   * Whether the presentation is a KIT sheet (touch) rather than the CSS
-   * slide-over. The kit brings its own backdrop, so the web overlay only
-   * raises when this is false — see lib/sheet-controller.js.
+   * Whether the sheet is presented. `data-open` on the root derives from it,
+   * and `useSheet` (lib/sheet.ts) presents it while it is up.
    */
-  adopted: false,
+  open: false,
   /**
    * The tab a caller outside the sheet asks it to open on (`#6816`: Home's
    * Recent threads card). The sheet reads it as it opens and clears it, so it

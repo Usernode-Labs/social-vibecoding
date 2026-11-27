@@ -504,8 +504,9 @@ export function useDismissibleOpen(): boolean {
 // a Back press the top window inherits, and the release's history.back() would
 // move the TOP document. The panel is a desktop surface with no device back
 // button to claim; its dialogs close by their own controls, and
-// `pushDismissible` is a no-op there.
-if (typeof window !== 'undefined' && !isEmbeddedPanel()) {
+// `pushDismissible` is a no-op there. Nor where `window` is not a browser's
+// (a test's stand-in with no events): there is no history to claim.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !isEmbeddedPanel()) {
   shared = createBackStack(window);
   (window as unknown as { UsernodeBackStack?: BackStack }).UsernodeBackStack = shared;
   // Capture phase, so this runs before the shell router's own (bubble-phase)

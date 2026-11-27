@@ -134,6 +134,7 @@ import { useResolvedCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { usePageLock } from '../../lib/page-lock';
+import { useSheet } from '../../lib/sheet';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import { PlanChoices } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
@@ -639,9 +640,17 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   const ownNote = useRef(keptNote(made.slug) !== null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
   // Every way out slides it down, then `onClose` takes it off the page
-  // (INVITE_SLIDE_MS).
+  // (INVITE_SLIDE_MS). The ways out are the Sheet's (lib/sheet.ts), drawn in
+  // place: its scrim, Escape (unless it is dismissing the OS share sheet over
+  // it, or has just done so) and Back; focus goes to the sheet as it opens.
+  const { panelRef, scrimProps } = useSheet({
+    kind: 'sheet',
+    gate: 'none',
+    onClose: () => close(),
+    initialFocus: (panel) => panel,
+    mayEscape: () => !sharing.current && Date.now() - shareGoneAt.current >= SHARE_ESCAPE_MS,
+  });
   const leaving = useRef(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(onClose);
   closedRef.current = onClose;
   const close = useCallback(() => {
@@ -674,17 +683,6 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
-  // Escape closes the sheet, unless it is dismissing the OS share sheet
-  // over it (or has just done so).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (sharing.current || Date.now() - shareGoneAt.current < SHARE_ESCAPE_MS) return;
-      close();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [close]);
   useEffect(() => {
     if (!copied) return undefined;
     const t = window.setTimeout(() => setCopied(0), COPIED_MS);
@@ -819,13 +817,14 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div className="fixed inset-0 z-[9001]" data-first-session-invite="">
-      <div aria-hidden="true" onClick={close} className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`} />
+      <div aria-hidden="true" {...scrimProps} className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="first-session-invite-title"
-        className={`absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] bg-zinc-100 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-transform duration-200 ease-out motion-reduce:transition-none dark:bg-zinc-900 md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2'}`}
+        tabIndex={-1}
+        className={`absolute inset-x-0 bottom-0 outline-none max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] bg-zinc-100 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-transform duration-200 ease-out motion-reduce:transition-none dark:bg-zinc-900 md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2'}`}
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">

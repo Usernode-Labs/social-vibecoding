@@ -28,11 +28,12 @@
 // helper `_closeSiblings` uses.
 //
 // THE PANEL THEN RETIRED (#2718 review) and the fix outlived it in the best
-// possible way: `Improve.open()` forwards to the app-context sheet, which is
-// IN the registry, so one sweep with `except` sparing the opener covers
-// every surface. `_closeSiblings` no longer names any sheet by hand — which
-// is what the two assertions below check, one for the sweep and one for the
-// forward.
+// possible way: `Improve.open()` forwards to the app-context sheet, so one
+// sweep sparing the opener covers every surface. The sweep is now the
+// one-open-panel claim (lib/open-surfaces.ts) every standing sheet makes as
+// it opens (lib/sheet.ts, where lib/sheet-controller.js folded in), and no
+// sheet is closed by hand — which is what the two assertions below check,
+// one for the claim and one for the forward.
 //
 // ── The one surface still hanging from the bar ─────────────────────────
 //
@@ -53,7 +54,9 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const CSS = read('public/css/app.css');
-const CONTROLLER = read('frontend/src/lib/sheet-controller.js');
+// The standing sheets' controller: lib/sheet.ts `createStandingSheet`.
+const SHEET_LIB = read('frontend/src/lib/sheet.ts');
+const CONTROLLER = SHEET_LIB.slice(SHEET_LIB.indexOf('export function createStandingSheet('));
 const IMPROVE = read('frontend/src/features/improve/improve-controller.js');
 
 /**
@@ -184,17 +187,17 @@ test('the phone is untouched — it is a sheet over the page there', () => {
 // ── The behaviour ──────────────────────────────────────────────────────
 
 test('one implementation of "close the other sheets", and one sweep', () => {
-  assert.match(CONTROLLER, /export function dismissRegisteredSheets\(except\)/,
-    'the registry sweep is exported');
-  assert.match(CONTROLLER, /_closeSiblings\(\)[\s\S]{0,900}?dismissRegisteredSheets\(controller\)/,
-    'the sheets go through it, sparing themselves');
+  // The claim closes every other open panel, each through its own close,
+  // and replaces this sheet's own earlier claim rather than closing it.
+  assert.match(CONTROLLER, /const claim = claimSurface\(id, 'sheet', \(\) => \{ void sheet\.dismissForNav\(\); \}\);/,
+    'the sheets go through the one-open-panel claim, sparing themselves');
   // It used to call `window.Improve?.dismissForNav?.()` first, by name,
   // because the panel predated the registry. Now that Improve forwards to a
-  // sheet that IS in the registry, that named call would either do nothing
-  // or — when the app-context sheet is the one opening — tell it to close
-  // itself. `except` spares the opener; nothing needs naming.
-  assert.ok(!/_closeSiblings\(\)[\s\S]{0,900}?window\.Improve\?\.dismissForNav\?\.\(\);/.test(CONTROLLER),
-    'and no sheet is closed by name on top of the sweep');
+  // sheet that claims the slot, that named call would either do nothing or
+  // — when the app-context sheet is the one opening — tell it to close
+  // itself. Nothing needs naming.
+  assert.ok(!/window\.Improve\?\.dismissForNav/.test(CONTROLLER),
+    'and no sheet is closed by name on top of the claim');
 });
 
 test('Improve closes the other sheets when it opens, through the surface it forwards to', () => {
@@ -203,9 +206,9 @@ test('Improve closes the other sheets when it opens, through the surface it forw
   //
   // It is not Improve's own line any more and it does not need to be: the
   // panel retired (#2718 review), `Improve.open()` forwards to the
-  // app-context sheet, and that sheet's `open()` runs `_closeSiblings()`
-  // before it presents — which is where the sweep belongs, once, for every
-  // surface built on the chassis.
+  // app-context sheet, and that sheet's `open()` claims the one-open-panel
+  // slot before it presents — which is where the sweep belongs, once, for
+  // every standing sheet.
   assert.match(IMPROVE, /_surface\(\) \{[\s\S]{0,200}window\.AppContext/,
     'the forward names the controller that owns the surface');
   assert.match(IMPROVE, /open\(\) \{\n\s+return Improve\._surface\(\)\?\.open\(\);/,
@@ -226,6 +229,7 @@ test('Improve closes the other sheets when it opens, through the surface it forw
   // fading past each other is the artefact of closing them late.
   const open = CONTROLLER.slice(CONTROLLER.indexOf('\n    open() {'));
   const body = open.slice(0, open.indexOf('\n    },'));
-  assert.ok(body.indexOf('_closeSiblings()') < body.indexOf("store.set({ open: true })"),
+  assert.ok(body.indexOf('claimSurface(') > 0);
+  assert.ok(body.indexOf('claimSurface(') < body.indexOf('store.set({ open: true })'),
     'the siblings go down before this surface publishes open');
 });

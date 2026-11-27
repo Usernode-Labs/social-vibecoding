@@ -59,7 +59,7 @@ declare global {
       [key: string]: unknown;
     };
     /**
-     * The three platform SHEETS, each built by lib/sheet-controller.js and
+     * The standing SHEETS (lib/sheet.ts `createStandingSheet`), each
      * published at its controller's module scope. Classic scripts and the
      * header glyphs reach them here.
      */

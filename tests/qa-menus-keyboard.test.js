@@ -110,10 +110,13 @@ test('Q18: an anchored popover closes on a scroll only when its anchor moved, an
 test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => {
   const src = read('frontend/src/features/messages/index.tsx');
   const plus = src.slice(src.indexOf('function NewMessageButton()'), src.indexOf('/** The heading over each part of the list'));
-  assert.match(plus, /const menuKeys = useMenuKeyboard\(open, popRef, btnRef, shut\);/);
-  assert.match(plus, /id="messages-new-menu"[\s\S]*?onKeyDown=\{menuKeys\.onKeyDown\}/);
+  // Both are the Menu's now (lib/menu.ts): the keys, an outside press,
+  // Escape and Back, and focus in and back to their buttons.
+  assert.match(plus, /const \{ panelProps \} = useMenu\(open, \{ trigger: btnRef, panel: popRef, onClose: shut, move: true \}\);/);
+  assert.match(plus, /id="messages-new-menu"[\s\S]*?\{\.\.\.panelProps\}/);
   const head = src.slice(src.indexOf('function ThreadHeader()'), src.indexOf('/** The day a message was sent'));
-  assert.match(head, /useDismiss\(menu, \[menuWrapRef, menuRef\], closeMenu\);/, 'an outside press and Escape close it');
+  assert.match(head, /useMenu\(menu, \{ trigger: menuBtnRef, panel: menuRef, onClose: closeMenu \}\);/, 'an outside press and Escape close it');
+  assert.match(head, /className="messages-thread-menu"\s+role="menu"[\s\S]{0,120}?\{\.\.\.menuPanelProps\}/);
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
   assert.match(head, /className="messages-thread-menu"\s+role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
@@ -151,10 +154,17 @@ test('Q18: Your communities and the Homeroom menu take focus, rove, and give it 
   assert.match(menu, /back\.focus\(\{ preventScroll: true \}\);/, 'the menu gives focus back');
   const sheet = read('frontend/src/lib/sheet.ts');
   assert.match(sheet, /previousFocus\.focus\?\.\(\{ preventScroll: true \}\);/, 'and so does the sheet');
+  // The Homeroom menu is a standing sheet of the Sheet's (lib/sheet.ts):
+  // the island moves focus to the first row when the mark opened it, and
+  // Escape and the focus going back to the mark that opened it are the
+  // Sheet's, as above.
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /roveMenuFocus\(event, el, SHEET_ROWS\)/);
-  assert.match(ctx, /if \(inside\) visibleMark\(\)\?\.focus\(/, 'to the mark that has a box: the standard header\'s, or the frame bar\'s under a look');
-  assert.match(ctx, /const touring = !!tour && !tour\.classList\.contains\('hidden'\);/,
+  assert.match(ctx, /initialFocus: firstRowFromMark,/);
+  assert.match(ctx, /if \(was && was !== document\.body && was\.id !== MARK_ID\) return null;/,
+    'only when the mark opened it, or nothing had focus');
+  assert.match(ctx, /return !!tour && !tour\.classList\.contains\('hidden'\);/);
+  assert.match(ctx, /if \(window\.PlatformUI\?\.isTouch\?\.\(\) \|\| touring\(\)\) return null;/,
     'the welcome tour drives this menu and keeps its own focus');
 });
 
