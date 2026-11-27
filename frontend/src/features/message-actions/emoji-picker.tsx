@@ -5,6 +5,7 @@ import {
   SunIcon, TrophyOutlineIcon, type IconProps,
 } from '@/components/ui/icons';
 
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMessages } from '../../lib/i18n/react';
 import { ALL_EMOJI, EMOJI_CATEGORIES, emojiName, searchEmoji, type EmojiEntry } from './emoji-data';
 import { useRecentReactions } from './recents';
@@ -128,26 +129,18 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
           }}
         />
       </label>
-      <div className="msgx-picker-tabs" role="tablist" aria-label={t('messages:emoji.picker.categories')}>
-        {sections.map((section) => {
-          const Icon = TAB_ICONS[section.id] || FaceSmileIcon;
-          const selected = !searching && tab === section.id;
-          return (
-            <button
-              key={section.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-label={t(section.label)}
-              title={t(section.label)}
-              className={`msgx-picker-tab ${selected ? 'msgx-picker-tab-active' : ''}`}
-              onClick={() => jump(section.id)}
-            >
-              <Icon className="w-4 h-4" aria-hidden="true" />
-            </button>
-          );
-        })}
-      </div>
+      <Tabs kind="tabs" look="segment" fill shape="icon" values={sections.map((section) => section.id)} value={searching ? '' : tab} onValueChange={jump}>
+        <TabsList aria-label={t('messages:emoji.picker.categories')}>
+          {sections.map((section) => {
+            const Icon = TAB_ICONS[section.id] || FaceSmileIcon;
+            return (
+              <TabsTrigger key={section.id} value={section.id} aria-label={t(section.label)} title={t(section.label)}>
+                <Icon aria-hidden="true" />
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </Tabs>
       <div ref={scroller} className="msgx-picker-scroll" onScroll={onScroll}>
         {searching ? (
           hits.length ? (

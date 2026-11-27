@@ -423,7 +423,9 @@ test('the form offers comment mode with its draft, and only where the switch is 
     stubs: { './feedback-controller': { Feedback: {}, init() {} } },
   });
   const html = renderToHtml(createElement(FeedbackDialog));
-  assert.match(html, /<div class="hidden"><span class="[^"]*" role="radiogroup" aria-label="How to suggest it">/,
+  // The switch is the shared strip's radio kind (@/components/ui/tabs.tsx): its
+  // group is the strip's own <div>, the One look's segmented control.
+  assert.match(html, /<div class="hidden"><div role="radiogroup" aria-label="How to suggest it" class="one-seg" style="--one-seg-n:2;--one-seg-i:0">/,
     'shipped hidden: the switch is off until a person turns it on');
   const src = read('frontend/src/features/dialogs/feedback.tsx');
   assert.match(src, /setOffersComment\(formOffersComment\(\)\);/, 'read on every open');
