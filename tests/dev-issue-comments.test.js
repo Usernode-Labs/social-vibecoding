@@ -48,9 +48,11 @@ const render = (messages, request = { loaded: true, githubMore: null }) => rende
 
 test('a GitHub comment is the stream\'s named row: avatar, author, its stamp, then "· on GitHub"', () => {
   const html = render([github({}), github({ key: '2', username: 'usernode-bot', time: '', timeTitle: '' })]);
+  // Dedupe step 2: Messages' own row (MessageRowView), its stamp a <time>
+  // so it reads as every row's time does.
   assert.equal((html.match(/class="[^"]*gc-msg gc-msg-github"/g) || []).length, 2);
   assert.match(html, /data-github-comment="1" data-username="evan"/);
-  assert.match(html, /<span class="gc-msg-time" title="Mar 4, 2026, 03:30 PM">Mar 4, 03:30 PM<\/span><span class="gc-msg-via"> · on GitHub<\/span>/);
+  assert.match(html, /<time class="gc-msg-time" datetime="2026-03-04T15:30:00Z" title="Mar 4, 2026, 03:30 PM">Mar 4, 03:30 PM<\/time><span class="gc-msg-via"> · on GitHub<\/span>/i);
   // GitHub's bot account is the bot on screen, by its name.
   assert.match(html, />Homeroom bot</);
   // A row with no timestamp omits the stamp rather than drawing an empty span.

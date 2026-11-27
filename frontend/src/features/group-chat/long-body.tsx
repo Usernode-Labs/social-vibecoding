@@ -146,10 +146,12 @@ export function LongBodyView({
   const folded = long && !expanded;
   return (
     <>
-      {/* The same box either way, so the fold, the editor's hook and dapp.json's selectors hold. */}
+      {/* The same box either way, so the fold, the editor's hook and dapp.json's selectors hold.
+          `messages-markdown`: the words at Messages' reading size, as the
+          row they sit in is Messages' own (../messages/message-row.tsx). */}
       <div
         ref={bodyRef}
-        className={folded ? `gc-msg-content ${FOLD_CLASS} ${FADE_CLASS}` : 'gc-msg-content'}
+        className={folded ? `messages-markdown gc-msg-content ${FOLD_CLASS} ${FADE_CLASS}` : 'messages-markdown gc-msg-content'}
         {...(folded && onFocusInside ? { onFocus: (e: { target: EventTarget }) => onFocusInside(e.target) } : {})}
         {...(content ? { children: content } : { dangerouslySetInnerHTML: html })}
       />

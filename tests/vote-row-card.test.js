@@ -181,8 +181,8 @@ test('on a request\'s page a post about one of its changes draws the line, one a
   assert.match(rows, /const seeVotes = useMemo\(\(\) => \{[\s\S]*?changes\.numbers[\s\S]*?changes\.titles\?\.\[id\][\s\S]*?\}, \[changes\]\);/);
   // #7221: the reason post right under its vote note takes no tag (the note
   // names the change); every other post still carries its own.
-  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{afterVoteNote \? null : tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
-  assert.match(rows, /<SystemRow key=\{key\} msg=\{msg\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
+  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" stream tag=\{afterVoteNote \? null : tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
+  assert.match(rows, /<SystemRow key=\{key\} msg=\{msg\} seeVote=\{seeVoteOf\(msg\)\} stream \/>/);
   // With nothing published, the same rows draw the card (a change of another
   // request), never the inline row.
   const post = botPost({ changeOf: { sessionId: 9000401 }, vote: facts() });

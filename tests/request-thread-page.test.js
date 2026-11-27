@@ -1215,13 +1215,15 @@ test('#7216 RequestRows: a vote reason is the voter\'s own post, with the vote l
   assert.doesNotMatch(html, /dev-request-vote-note[\s\S]{0,240}dev-change-event-reason/, 'the reason is not drawn inside the line');
   // The reason is evan's ordinary post, name and all; the change is named on
   // the note above it, so the post shows only its time.
-  assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="11"[^>]*data-username="evan"[\s\S]*?I do not agree with the approach\. Sorting should happen on the server\./);
+  // Dedupe step 2: a post is Messages' own row (an <article>, the chat's
+  // hooks among its attributes).
+  assert.match(html, /<article data-msg-id="11"[^>]*data-username="evan"[^>]*class="[^"]*\bgc-msg\b[\s\S]*?I do not agree with the approach\. Sorting should happen on the server\./);
   assert.doesNotMatch(html.split('data-msg-id="11"')[1].split('data-msg-id="14"')[0], /gc-msg-on-change/, 'evan\'s post is not tagged twice');
   // The vote row itself is not a bubble.
-  assert.doesNotMatch(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id="12"/, 'the vote is a note, not a bubble');
+  assert.doesNotMatch(html, /<article data-msg-id="12"[^>]*class="[^"]*\bgc-msg\b/, 'the vote is a note, not a bubble');
   // A Yes that kept its reason on its row reads the same way.
   assert.match(html, /data-msg-id="14"[^>]*data-change-event="vote"[\s\S]*?<b>ana<\/b> voted yes[\s\S]*?dev-request-vote-note-on[^>]*> · on Change #7213</);
-  assert.match(html, /class="(?:[^"]* )?gc-msg(?: [^"]*)?" data-msg-id=""[^>]*data-username="ana"[\s\S]*?Small and right\./);
+  assert.match(html, /<article data-msg-id=""[^>]*data-username="ana"[^>]*class="[^"]*\bgc-msg\b[\s\S]*?Small and right\./);
   assert.doesNotMatch(html.split('data-msg-id=""')[1].split('data-msg-id="15"')[0], /gc-msg-on-change/, 'ana\'s post is not tagged twice');
   // A plain reply on the change is still a message, with its tag.
   assert.match(html, /data-msg-id="15" data-username="maya"[\s\S]*?gc-msg-on-change[^>]*>on Change #7213<[\s\S]*?Looks fine on my phone\./);

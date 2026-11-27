@@ -48,9 +48,11 @@ test('C04: a desktop conversation with nothing beside it keeps a reading width',
 
 test('D13: the hover bar on somebody else\'s bubble hangs off its name line, beside the message', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /const barBesideHead = sided && !mine && !grouped;/);
-  assert.match(row, /\{status\}\{barBesideHead \? actions : null\}<\/div>\}/);
-  assert.match(row, /\{barBesideHead \? null : actions\}\n\s*<MessageActionSheet/);
+  // Dedupe step 2: `barPlacement` decides it once, for every place that
+  // draws the shared row (MessageRowView), which hangs the bar in its head.
+  assert.match(row, /if \(!sided \|\| mine\) return 'row';\n\s*return grouped \? 'bubble' : 'head';/);
+  assert.match(row, /\{meta\}\n\s*\{barInHead \? bar : null\}\n\s*<\/div>/);
+  assert.match(row, /\{barInHead \? null : bar\}\n\s*\{sheet\}/);
   assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; inset-inline-end: auto; inset-inline-start: calc\(100% \+ 8px\); \}/);
 });
 

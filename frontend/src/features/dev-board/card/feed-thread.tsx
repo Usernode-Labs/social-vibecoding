@@ -39,7 +39,10 @@ import { enterSends } from '../../../lib/enter-sends';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
-import { swatchFor } from '../../messages/format';
+import { UserAvatar } from '../../messages/format';
+import { MessageRowView } from '../../messages/message-row';
+import { useMessageControls } from '../../message-actions/controls';
+import { messageActions } from '../../message-actions/rules';
 import { ClampedComment } from '../comment-clamp';
 import {
   feedThreadStore,
@@ -114,46 +117,68 @@ function isMine(m: FeedThreadMessage): boolean {
 }
 
 /**
- * One reply, as a BUBBLE — the Messages screen's row, at the feed's scale: a
- * 22px swatch avatar outside, a white r16 bubble with the name and the age
- * on its first line and the text under them, and the viewer's own replies in
- * the accent tint. They used to be three runs of 12px text lying directly on
- * the entry, which is where a reply and the card above it blurred together.
+ * One reply: Messages' own row (../../messages/message-row.tsx
+ * MessageRowView) at the board's size (`compact`): the author's face, their
+ * name and how long ago above the words, the words in a bubble, the
+ * viewer's own on the right in the accent tint as their sent messages are.
+ *
+ * What a person can do with it here is the one rule's answer
+ * (../../message-actions/rules.ts, place `comment`): a comment previewed on
+ * the board is read here and answered on its own page, so it offers no bar,
+ * no menu and no sheet.
  */
 export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
   const mine = isMine(m);
   const when = agoStamp(m.createdAt);
+  const signedIn = typeof window !== 'undefined' && !!(window as any).App?.user;
+  const controls = useMessageControls({
+    allowed: messageActions({
+      viewer: { signedIn, canWrite: signedIn },
+      author: { mine, known: m.userId != null },
+      place: 'comment',
+      message: { live: true, said: true, hasText: !!m.content },
+    }),
+    acts: { text: m.content, failed: () => {} },
+    reacted: () => false,
+    preview: { who: m.author, text: m.content },
+  });
   return (
-    <div
+    <MessageRowView
       className={mine ? 'dev-feed-msg dev-feed-msg-mine' : 'dev-feed-msg'}
-      {...(m.postedVia ? { 'data-posted-via': m.postedVia } : {})}
-    >
-      <span className="dev-feed-msg-avatar" aria-hidden="true" style={{ backgroundColor: swatchFor(m.author) }}>
-        {(m.author || '?').slice(0, 1).toUpperCase()}
-      </span>
-      <div className="dev-feed-msg-bubble">
-        <div className="dev-feed-msg-head">
-          <span className="dev-feed-msg-author">{m.author}</span>
-          <PostedViaChip via={m.postedVia} />
-          <time className="dev-feed-msg-time" dateTime={m.createdAt} title={when.title}>{when.text}</time>
-        </div>
-        {/* Plain text, never markdown and never innerHTML. This is the one
-            surface in the feed that renders something a person typed, and it
-            renders it as a text child so React escapes it — the topic page is
-            where the full, formatted thread lives. `whitespace-pre-wrap` keeps
-            the line breaks the multiline composer deliberately accepts.
-
-            #2556: and four lines of them at a time. A reply pasted from
-            somewhere else pushed the card below it off the screen, which is
-            the opposite of what a preview is for. */}
+      attrs={{ 'data-posted-via': m.postedVia || undefined }}
+      sided
+      mine={mine}
+      end={false}
+      grouped={false}
+      compact
+      avatar={<UserAvatar user={{ id: m.userId || 0, username: m.author }} size="sm" shape="square" />}
+      author={m.author}
+      badge={<PostedViaChip via={m.postedVia} />}
+      at={m.createdAt}
+      time={when.text}
+      timeTitle={when.title}
+      gutter={when.text}
+      body={(
+        // Plain text, never markdown and never innerHTML. This is the one
+        // surface in the feed that renders something a person typed, and it
+        // renders it as a text child so React escapes it — the topic page is
+        // where the full, formatted thread lives. `whitespace-pre-wrap` keeps
+        // the line breaks the multiline composer deliberately accepts.
+        //
+        // #2556: and four lines of them at a time. A reply pasted from
+        // somewhere else pushed the card below it off the screen, which is
+        // the opposite of what a preview is for.
         <ClampedComment
           className="dev-feed-msg-text whitespace-pre-wrap break-words"
           contentKey={m.content}
         >
           {m.content}
         </ClampedComment>
-      </div>
-    </div>
+      )}
+      bar={controls.bar}
+      sheet={controls.sheet}
+      longPress={controls.longPress}
+    />
   );
 }
 

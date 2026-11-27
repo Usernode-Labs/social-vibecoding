@@ -124,6 +124,8 @@ test('tapping a row that names nobody keeps that through the row, the quote and 
   assert.equal(labelFor(realSharer).unnamed, null);
   // The transcript writes the attribute the quote reads.
   const transcript = fs.readFileSync(path.join(root, 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
-  assert.equal((transcript.match(/data-username-missing=\{msg\.usernameMissing \? '' : undefined\}/g) || []).length, 2);
+  // Dedupe step 2: a person's row and a GitHub comment hand the attribute to
+  // the shared row (MessageRowView `attrs`).
+  assert.equal((transcript.match(/'data-username-missing': msg\.usernameMissing \? '' : undefined,/g) || []).length, 2);
   assert.match(transcript, /data-shared-by-unknown=\{spec\.sharedByUnknown \? '' : undefined\}/);
 });

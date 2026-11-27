@@ -49,8 +49,6 @@ import {
   type ComposerSlot,
 } from './composer-store';
 import { GENERAL_FOLLOW_PX, GeneralChat, type GeneralChatProps } from './general-chat';
-import { ReactionBar, type ReactionBarProps } from './reaction-bar';
-import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
 import { ThreadShell, type ThreadShellProps } from './thread-shell';
 import { Transcript } from './transcript';
 import {
@@ -246,16 +244,6 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
 autocompleteStore.setFlush(flushSync);
 
 /**
- * And the reaction bar's, for the third instance of the same sentence:
- * `_openReactionBar` publishes `{ gridOpen: false, editable }` and then reads
- * `bar.offsetWidth` / `bar.offsetHeight` to decide whether the bar fits above
- * the row or has to flip below it. Whether the pencil is rendered changes the
- * first of those, so a batched publish would place the bar against the
- * PREVIOUS row's answer.
- */
-reactionBarStore.setFlush(flushSync);
-
-/**
  * The composer's store gets it too. `setupAttachments` publishes the strip and
  * then reads the paperclip and the file input back by id on the next line;
  * `mountThread` publishes the staged reply and then measures the composer to
@@ -375,33 +363,6 @@ export function publishComposer(scope: ComposerScope, patch: Partial<ComposerSlo
   composerStore.set((s) => ({ ...s, [scope]: { ...s[scope], ...patch } }));
 }
 
-// ── The long-press reaction bar ───────────────────────────────────────
-//
-// One floating host for every message row, created and placed by
-// `_ensureReactionBar` / `_openReactionBar`. Its contents are a portal
-// established once, and its two moving parts are a publish.
-
-/**
- * Establish the bar's contents. Idempotent — the host is cached by the module.
- *
- * The emoji sets arrive as props on the portal node rather than through the
- * store: they are constants in public/js/group-chat.js, fixed for the life of
- * the page, and `mountLegacyPortal` commits synchronously — so the mount IS
- * their publish, the same way ThreadShell's layout is.
- */
-export function mountReactionBar(host: Element | null, props: ReactionBarProps): void {
-  if (!host) return;
-  mountLegacyPortal(host, createElement(ReactionBar, props));
-}
-
-/**
- * The grid's open state and whether this row offers Edit, together — the two
- * `classList.toggle` calls that used to reach into the built markup.
- */
-export function publishReactionBar(next: ReactionBarState): void {
-  reactionBarStore.set(next);
-}
-
 /**
  * Open the channel at its "New" line (`GroupChat._openAtUnread`): the line a
  * row or two under the top of `container`, as a conversation in Messages
@@ -447,8 +408,6 @@ if (typeof window !== 'undefined') {
     matchEmojiShortcodes,
     completedEmojiShortcode,
     mountThreadShell,
-    mountReactionBar,
-    publishReactionBar,
     mountGeneralChat,
     unmountGeneralChat,
     publishComposer,

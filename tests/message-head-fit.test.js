@@ -33,9 +33,17 @@ function rule(selector) {
   return CSS.slice(at, CSS.indexOf('\n}', at));
 }
 
+// Dedupe step 2: a comment under a change on the board is Messages' own row
+// at the board's size (feed-thread.tsx MessageLine, MessageRowView
+// `compact`), so the one Messages head below is the board's too; the
+// comment's own head (`.dev-feed-msg-head`) is gone.
+test('the board\'s comments have no head of their own', () => {
+  assert.ok(!CSS.includes('.dev-feed-msg-head'), 'the Messages head draws theirs');
+  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'), /<MessageRowView\b[\s\S]*?\bcompact\b/);
+});
+
 for (const [head, author, time] of [
   ['.messages-message-head', '.messages-message-author', null],
-  ['.dev-feed-msg-head', '.dev-feed-msg-author', '.dev-feed-msg-time'],
 ]) {
   test(`${head} wraps rather than overflowing, and can shrink inside its bubble`, () => {
     const body = rule(head);
@@ -67,5 +75,6 @@ test('the Messages time and its "edited" never wrap inside themselves', () => {
 });
 
 test('the Messages head names its author span, so the rule has something to hold', () => {
-  assert.match(ROW, /<div className="messages-message-head"><span dir="auto" className=\{`messages-message-author \$\{mine && sided \? 'sr-only' : ''\}`\}>/);
+  // Dedupe step 2: drawn by the shared MessageRowView, for every place.
+  assert.match(ROW, /<div className="messages-message-head">\n\s*\{lead\}\n\s*<span dir="auto" className=\{`messages-message-author \$\{mine && sided \? 'sr-only' : ''\}`\}>/);
 });

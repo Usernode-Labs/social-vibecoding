@@ -203,7 +203,9 @@ test('the module\'s wiring, in order', () => {
     'taken before the rows are published');
   assert.match(src, /GroupChat\.scrollToBottom\(\);\s*GroupChat\._didInitialScroll = true;\s*GroupChat\._applyPendingReveal\(\);\s*\/\/[^\n]*\n\s*GroupChat\._openAtUnread\(\);[\s\S]{0,300}void GroupChat\.markRead\(\);/,
     'after the bell\'s reveal, before the read');
-  assert.match(src, /GroupChat\._unreadMark = null;\s*GroupChat\._unreadOpened = false;\s*GroupChat\._longPressed = false;/, 'connect() starts afresh');
+  // Dedupe step 2: the long-press bookkeeping that followed these went with
+  // the module's own reaction bar.
+  assert.match(src, /GroupChat\._unreadMark = null;\s*GroupChat\._unreadOpened = false;\s*GroupChat\.activeThread = keep;/, 'connect() starts afresh');
   assert.match(src, /unread: GroupChat\._unreadMark \|\| null,/);
 });
 
@@ -212,8 +214,7 @@ test('the module\'s wiring, in order', () => {
 const base = {
   kind: 'message', username: 'alice', time: '09:05 AM', timeTitle: 'Sep 16, 2026, 09:05 AM',
   bodyHtml: '<p>hi</p>', systemText: '', mine: false, editedTitle: null, unread: false,
-  bookmarked: false, canEdit: false, flash: false, showEdit: false, showBookmark: false,
-  showReact: false, quote: null, reactions: [], attachments: [], voteRowClass: '',
+  bookmarked: false, flash: false, quote: null, reactions: [], attachments: [], voteRowClass: '',
   voteRef: null, specShare: null, event: null, eventHref: null, senderId: 3,
 };
 const row = (id, over = {}) => ({ ...base, id, bodyHtml: `<p>m${id}</p>`, ...over });

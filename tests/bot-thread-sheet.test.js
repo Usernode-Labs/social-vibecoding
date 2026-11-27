@@ -51,8 +51,8 @@ test('the alone head opens on the bot\'s round face', () => {
 test('a flat row is the named row, never a bubble', () => {
   assert.match(row, /flat = false,/);
   assert.match(row, /\n\s*flat\?: boolean;/);
-  assert.match(row, /const sided = !flat && kind !== 'channel'/,
-    'flat turns the side off, as a channel row never had one');
+  assert.match(row, /return !flat && kind !== 'channel'/,
+    'flat turns the side off, as a channel row never had one (message-row.tsx rowSided)');
   assert.equal((messages.match(/flat=\{sheet\}/g) || []).length, 2,
     'the root message and every reply in the thread are flat');
 });

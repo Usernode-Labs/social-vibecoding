@@ -107,12 +107,24 @@ test('an unedited message has no marker', () => {
 });
 
 test('own ordinary message gets an Edit affordance; others do not', () => {
-  // #2387: Edit lives in the row's ⋯ menu (the shared hover bar), so the gate
-  // is which items that menu builds, and the row carries the ⋯ that opens it.
-  const { messageMenuItems } = loadTsx('frontend/src/features/group-chat/transcript.tsx');
-  const keys = (msg) => messageMenuItems(GroupChat._messageView(msg), 'main', () => {}, () => {}).map((item) => item.key);
-  assert.ok(keys(baseMsg({ userId: 1 })).includes('edit'), 'edit on own message'); // App.user.id
-  assert.ok(!keys(baseMsg({ userId: 2 })).includes('edit'), 'no edit on someone else’s message');
+  // #2387: Edit lives in the row's ⋯ menu (the shared hover bar). Dedupe
+  // step 2: whether the menu offers it is the one rule's answer
+  // (message-actions/rules.ts), asked with the facts the view model carries,
+  // and the row carries the ⋯ that opens it.
+  const { messageActions } = loadTsx('frontend/src/features/message-actions/rules.ts');
+  const canEdit = (msg) => {
+    const view = GroupChat._messageView(msg);
+    return messageActions({
+      viewer: { signedIn: true, canWrite: true },
+      author: { mine: view.mine, known: !!view.senderId },
+      place: 'channel',
+      message: { live: !view.deleted && !!view.id, said: view.kind === 'message', hasText: !!view.text, threadable: !!view.canThread },
+    }).edit;
+  };
+  assert.ok(canEdit(baseMsg({ userId: 1 })), 'edit on own message'); // App.user.id
+  assert.ok(!canEdit(baseMsg({ userId: 2 })), 'no edit on someone else’s message');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8'),
+    /edit: \(\) => chat\?\._startEdit\?\.\(id\),/, 'the menu\'s Edit opens the module\'s inline editor');
   assert.match(row(baseMsg({ userId: 1 })), /aria-label="More actions"/, 'the ⋯ is on the row');
 });
 

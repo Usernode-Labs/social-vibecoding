@@ -407,9 +407,11 @@ test("a phone's thread page uses one scale", () => {
   assert.equal(value('.dev-rail-name'), '0.9375rem');
   assert.equal(value('.dev-thread-foot-head'), '0.9375rem');
   assert.match(block, /\.messages-thread-name \{ font-size: 1\.125rem;/, "the head's title is the one larger line");
-  assert.match(block, /\.flex > \.truncate \{ font-size: 0\.9375rem; \}/, 'the reply name is the words\' size');
-  assert.match(block, /\.flex > \.shrink-0 \{ font-size: 0\.8125rem; \}/, 'the reply time is the times\' size');
-  assert.match(block, /\.gc-msg-content \{ font-size: 0\.9375rem; line-height: 1\.4; \}/, 'the reply words are 15 over 1.4');
+  // Dedupe step 2: the replies are Messages' own rows (MessageRowView), so
+  // Messages' rules size their name, time and words; this block sets none.
+  assert.doesNotMatch(block, /\.gc-msg > \.min-w-0/, 'no second scale for the replies');
+  assert.match(css, /html:root \.messages-message\.messages-message-bubble \.messages-message-head \{ [^}]*font-size: 15px;/, 'the reply name');
+  assert.match(css, /html:root \.messages-message\.messages-message-bubble \.messages-message-head time,\nhtml:root \.messages-message\.messages-message-bubble \.messages-message-head time ~ span \{ [^}]*font-size: 12px;/, 'the reply time');
 
   // No in-between size survives in it.
   for (const m of block.matchAll(/font-size:\s*([^;]+);/g)) {

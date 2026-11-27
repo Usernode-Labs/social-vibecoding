@@ -171,6 +171,14 @@
     "text": "React with {{emoji}}",
     "description": "Accessible name of a quick-reaction button on a message: adds that emoji as your reaction. {{emoji}} is the emoji's English name, for example \"thumbs up\"."
   },
+  "actions.reactionChip_one": {
+    "text": "{{emoji}}: {{count}} reaction",
+    "description": "Accessible name of a reaction chip under a message (the emoji and how many people reacted with it); pressing it adds or takes back your own. {{emoji}} is the emoji's English name, for example \"thumbs up\"."
+  },
+  "actions.reactionChip_other": {
+    "text": "{{emoji}}: {{count}} reactions",
+    "description": "Accessible name of a reaction chip under a message (the emoji and how many people reacted with it); pressing it adds or takes back your own. {{emoji}} is the emoji's English name, for example \"thumbs up\"."
+  },
   "actions.addReaction": {
     "text": "Add reaction",
     "description": "Accessible name and tooltip of the smiley button on a message: opens the emoji picker to choose a reaction."

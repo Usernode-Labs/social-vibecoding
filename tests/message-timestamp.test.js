@@ -339,13 +339,18 @@ test('#1808: the app chat view model carries both forms to the row', () => {
   // The old inline call is the regression: it stamped the time alone.
   assert.doesNotMatch(js, /new Date\(msg\.createdAt \|\| msg\.created_at\)\s*\n?\s*\.toLocaleTimeString/,
     'no second, narrower formatter for the same field');
+  // Dedupe step 2: a person's row is Messages' own (MessageRowView), which
+  // draws the <time> with the title it is handed; a request's GitHub reply
+  // (#4453) and the spec card still spell theirs here.
   const tsx = read('frontend/src/features/group-chat/transcript.tsx');
-  const shown = tsx.match(/<span className="gc-msg-time"[^>]*>/g) || [];
-  assert.equal(shown.length, 3, 'the message row, a request\'s GitHub reply (#4453) and the spec card all stamp a time');
+  assert.match(tsx, /time=\{msg\.time\}\n\s*timeTitle=\{msg\.timeTitle\}\n\s*timeClassName="gc-msg-time"/, 'the message row');
+  const shown = tsx.match(/<(?:span|time) className="gc-msg-time"[^>]*>/g) || [];
+  assert.equal(shown.length, 2, 'a request\'s GitHub reply and the spec card');
   for (const tag of shown) {
     assert.match(tag, /title=\{msg\.timeTitle\}/,
       'every rendered time hangs the full stamp off title');
   }
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /<time className=\{timeClassName\} dateTime=\{at\} title=\{timeTitle\}>\{time\}<\/time>/);
 });
 
 test('#1808: the DM rows use the shared rule rather than a fourth copy', () => {
@@ -395,7 +400,7 @@ test('#1808: a request\'s GitHub replies are stamped a day and a time, in the re
         canEdit: false, flash: false, showEdit: false, showBookmark: false, showReact: false, quote: null,
         reactions: [], attachments: [], voteRowClass: '', voteRef: null, specShare: null }],
     } });
-    const shown = html.match(/<span class="gc-msg-time" title="([^"]+)">([^<]*)<\/span>/);
+    const shown = html.match(/<time class="gc-msg-time" (?:datetime="[^"]*" )?title="([^"]+)">([^<]*)<\/time>/i);
     assert.ok(shown, 'the row renders a .gc-msg-time');
     assert.match(shown[2], /Jun 17/, `east of UTC that instant is the 17th, got ${shown[2]}`);
     assert.match(shown[2], /\d\d?:\d\d/, 'and it carries a time of day');

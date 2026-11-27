@@ -182,7 +182,7 @@ test('a file-only message carries a body and its files', () => {
   assert.equal(view.attachments.length, 1, 'the module resolved the file');
 
   const html = renderComponent(TRANSCRIPT, 'MessageRow', { msg: view });
-  assert.match(html, /class="gc-msg-content"/, 'the body node is there for an empty message');
+  assert.match(html, /class="messages-markdown gc-msg-content"/, 'the body node is there for an empty message');
   assert.match(html, /class="dc-msg-attachments"/);
   assert.match(html, /<img class="dc-msg-att-img" src="\/api\/apps\/demo-app\/chat-attachments\/a{32}"/);
   // The two hooks `_quoteFromRow` reads to caption a reply to a file-only

@@ -64,7 +64,8 @@ test('threads are kept in rooms and in the chat with Homeroom bot, never in a ch
 
 test('the row, the transcript, the thread pane, the composer and the store all ask the one helper', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /const threads = threadsAllowed\(\{ kind, homeroomBot: botChat \}\);/);
+  // Dedupe step 2: the row hands the helper's answer to the one rule.
+  assert.match(row, /threadable: threadsAllowed\(\{ kind, homeroomBot: botChat \}\),/);
   assert.doesNotMatch(row, /kind !== 'direct';/, 'no second reading of who has threads');
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const botChat = kind === 'direct' && threadsAllowed\(active\);/);

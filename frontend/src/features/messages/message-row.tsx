@@ -1,8 +1,7 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { useSearchMark } from '../ai/search-mark';
 import { useMessages } from '../../lib/i18n/react';
-import { listText } from '../../lib/i18n/runtime';
 import { openReport } from '../dialogs/report';
 import {
   deleteMessage, discardFailed, edit, markUnread, messageAddress, openThread, react, retrySend, scopeKey, setReply,
@@ -29,15 +28,12 @@ import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { enterSends } from '../../lib/enter-sends';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
-import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
-import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
-import { messageMenu, messageSheet } from '../message-actions/message-menu';
-import { EmojiPicker } from '../message-actions/emoji-picker';
+import { useMessageControls } from '../message-actions/controls';
+import { MessageReactions } from '../message-actions/reactions';
+import { messageActions } from '../message-actions/rules';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { useCanSaveImage } from '../image-viewer/save-image';
-import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
-import { useDismiss } from '../message-actions/use-dismiss';
 import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from './translate';
 
 /*
@@ -124,6 +120,50 @@ function useSlowSend(pending: boolean, since: string): boolean {
     return () => window.clearTimeout(timer);
   }, [pending, started]);
   return pending && slow;
+}
+
+/*
+ * #5680: which rows have a side. A DM and a group do; a channel does not
+ * (#2783), and neither does a row that is not something a person said: the
+ * bot's cards and plans, its step lines and a platform notice. `head` is
+ * the bot's line naming a request or a change, drawn as that thing's card
+ * (./bot-head-card.tsx); `question`/`actions` is its card with taps on it
+ * (./bot-question.tsx).
+ *
+ * #6863: every row of a private thread with the bot, alone in its tab's
+ * column, is the named row a channel draws: the thread is drawn as a
+ * public thread's one sheet (`flat`).
+ * 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
+ * the flat named row its answers are, a notice as much as a reply with
+ * buttons: the same speaker no longer changes style message by message.
+ * People's own messages keep their bubble.
+ */
+function rowSided({ message, kind, flat, botChat, step }: {
+  message: ConversationMessage; kind: ConversationKind; flat: boolean; botChat: boolean; step: boolean;
+}): boolean {
+  const head = botHead(message.content, botMeta(message));
+  const isCardMessage = isThanksMessage(message) || isActivityMessage(message) || isPlanMessage(message)
+    || isTwoQuestions(message) || isReadyMessage(message) || !!head
+    || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
+      && !isTwoQuestions(message) && !isReadyMessage(message));
+  const botRow = botChat && !!message.sender.bot;
+  return !flat && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
+}
+
+/**
+ * Where a row's bar hangs. Audit D13 (2 Nov 2026): on somebody else's
+ * bubble it hangs at the end of its name line (`head`), beside the message,
+ * not at the transcript's far edge, where on a wide screen it sat 800px from
+ * a short bubble and over the row above. Desktop polish 11 (24 Nov 2026): a
+ * continuation line of theirs has no name line, so its bar sits on the
+ * bubble itself (`bubble`), over its top edge and ending where the bubble
+ * ends; MessageActionBar measures the bubble as the pointer or the keyboard
+ * comes in, and app.css `.msgx-bar-on-bubble` places it. Your own bubble and
+ * a room's rows already end where the bar is (`row`).
+ */
+export function barPlacement({ sided, mine, grouped }: { sided: boolean; mine: boolean; grouped: boolean }): 'head' | 'bubble' | 'row' {
+  if (!sided || mine) return 'row';
+  return grouped ? 'bubble' : 'head';
 }
 
 /*
@@ -214,34 +254,19 @@ export const MessageRow = memo(function MessageRow({
   // The author line, a quote and the sheet's header name them bare in every
   // chat (audit C05/Y06).
   const bare = kind === 'direct';
-  const [picker, setPicker] = useState<'above' | 'below' | null>(null);
-  const [menu, setMenu] = useState<'above' | 'below' | null>(null);
-  const [sheet, setSheet] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const bar = useRef<HTMLDivElement>(null);
-  const moreButton = useRef<HTMLButtonElement>(null);
-  const pickerButton = useRef<HTMLButtonElement>(null);
-  const recents = useRecentReactions();
   // #1408: the edit box grows with the message being edited, same as the
   // composer it visually replaces.
   const editRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(editRef, editValue);
 
-  const live = !message.deleted && !message.pending && !message.failed && message.id > 0;
   const slowSend = useSlowSend(!!message.pending, message.createdAt);
-  // Threads where the chat keeps them (./bot-shared.ts threadsAllowed): a
-  // channel and a group. A direct chat has none but the chat with Homeroom
-  // bot, whose rows are already in a thread (`inThread`).
-  const threads = threadsAllowed({ kind, homeroomBot: botChat });
-  const threadRoot = !live || inThread || !threads ? null : message.threadRootId || message.id;
-  const canThread = threadRoot !== null;
   // A quiet step line in a request's thread ("Reading it.", "Built. Testing it…").
   const step = !!message.sender.bot && message.metadata?.homeroomBot?.kind === 'step';
   const scope = scopeKey(conversationId, inThread ? message.threadRootId : null);
-  useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
   // #4055: the message's pictures. In the app, whether its build can save
   // one is known only once asked; asking re-renders the row so the menu's
   // Download line can appear.
@@ -250,7 +275,6 @@ export const MessageRow = memo(function MessageRow({
   // under it, with its name and size as before.
   const fileAttachments = (message.attachments || []).filter((att) => !att.contentType.startsWith('image/'));
   useCanSaveImage(images[0]?.url || '');
-  const longPress = useLongPress(() => setSheet(true), { disabled: !live || editing });
 
   async function saveEdit() {
     const content = editValue.trim();
@@ -261,20 +285,10 @@ export const MessageRow = memo(function MessageRow({
     finally { setBusy(false); }
   }
 
-  const reacted = (emoji: string) => message.reactions.some((reaction) => reaction.emoji === emoji && reaction.reacted);
-
   async function toggle(emoji: string) {
-    setPicker(null); setNotice('');
+    setNotice('');
     try { await react(message.id, emoji); }
     catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.reaction')); }
-  }
-
-  // A pick from the full picker ADDS the reaction (and makes it recent); it
-  // never takes one away, which is what the pill under the message is for.
-  function pick(emoji: string) {
-    rememberReaction(emoji);
-    setPicker(null);
-    if (!reacted(emoji)) void toggle(emoji);
   }
 
   async function save() {
@@ -285,37 +299,59 @@ export const MessageRow = memo(function MessageRow({
 
   function startEdit() { setEditValue(message.content); setEditing(true); }
 
-  // The ⋯ menu: the one list every chat's rows open
-  // (../message-actions/message-menu.ts), by whose message it is and what
-  // kind of chat it sits in.
+  // What the viewer can do with this message here: the one rule every chat
+  // asks (../message-actions/rules.ts). Threads where the chat keeps them
+  // (./bot-shared.ts threadsAllowed): a channel and a group; the chat with
+  // Homeroom bot is direct, and every row of it is already in a thread.
+  // A send still on its way is asked as delivered, so its bar keeps its
+  // place, invisible and inert, until it lands (#2907).
   const senderId = message.sender.id;
-  const items: MenuItem[] = messageMenu({
-    thread: threadRoot !== null ? { started: !!message.thread || threadRoot !== message.id, open: () => openThread(threadRoot) } : null,
-    edit: mine && message.content && live ? startEdit : null,
-    text: message.content,
-    translation: canTranslate ? translation : null,
-    // #4055: its pictures onto the device, whoever sent them.
-    pictures: images.map((att) => ({ src: att.url, name: att.name })),
-    link: messageAddress(conversationId, message.id),
-    markUnread: !mine && !inThread ? () => { setNotice(''); return markUnread(message.id); } : null,
-    remove: mine ? () => { setNotice(''); return deleteMessage(message.id); } : null,
-    report: mine ? null : () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender, { bare }) }), userId: message.sender.id }),
-    block: !mine && senderId ? {
-      who: message.sender.unnamed ? { unknown: 'handle' } : { name: senderName(message.sender, { bare }) },
-      busy,
-      run: async () => {
-        setBusy(true); setNotice('');
-        try { await setUserBlocked(senderId, true); } finally { setBusy(false); }
-      },
-    } : null,
-    failed: (err, fallback) => setNotice(err instanceof Error ? err.message : fallback),
+  const allowed = messageActions({
+    viewer: { signedIn: true, canWrite: true },
+    author: { mine, known: !!senderId },
+    place: inThread ? 'thread' : kind,
+    message: {
+      live: !message.deleted && !message.failed && !message.queued && (message.id > 0 || !!message.pending),
+      said: true,
+      hasText: !!message.content,
+      threadable: threadsAllowed({ kind, homeroomBot: botChat }),
+    },
   });
-
-  // The phone's sheet: the bar's Reply and Save first, then the same menu.
-  const sheetItems: MenuItem[] = messageSheet({
-    reply: () => setReply(scope, message),
-    save: { saved: !!message.saved, toggle: () => { void save(); } },
-  }, items);
+  const threadRoot = message.threadRootId || message.id;
+  const sided = rowSided({ message, kind, flat, botChat, step });
+  const placement = barPlacement({ sided, mine, grouped });
+  const controls = useMessageControls({
+    allowed,
+    reacted: (emoji) => message.reactions.some((reaction) => reaction.emoji === emoji && reaction.reacted),
+    acts: {
+      react: (emoji) => { void toggle(emoji); },
+      reply: () => setReply(scope, message),
+      save: { saved: !!message.saved, toggle: () => { void save(); } },
+      thread: { started: !!message.thread || threadRoot !== message.id, open: () => openThread(threadRoot) },
+      edit: startEdit,
+      text: message.content,
+      translation: canTranslate ? translation : null,
+      // #4055: its pictures onto the device, whoever sent them.
+      pictures: images.map((att) => ({ src: att.url, name: att.name })),
+      link: messageAddress(conversationId, message.id),
+      markUnread: () => { setNotice(''); return markUnread(message.id); },
+      remove: () => { setNotice(''); return deleteMessage(message.id); },
+      report: () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender, { bare }) }), userId: message.sender.id }),
+      block: senderId ? {
+        who: message.sender.unnamed ? { unknown: 'handle' } : { name: senderName(message.sender, { bare }) },
+        busy,
+        run: async () => {
+          setBusy(true); setNotice('');
+          try { await setUserBlocked(senderId, true); } finally { setBusy(false); }
+        },
+      } : null,
+      failed: (err, fallback) => setNotice(err instanceof Error ? err.message : fallback),
+    },
+    preview: { who: senderName(message.sender, { bare: true }), text: message.content },
+    barClassName: `messages-message-actions ${placement === 'bubble' ? 'msgx-bar-on-bubble' : ''}`,
+    hidden: !!message.pending,
+    disabled: editing,
+  });
 
   // The time of day for today's messages, prefixed with the date once it is
   // not today's (#1808). `fullTime` on the title never elides.
@@ -348,26 +384,6 @@ export const MessageRow = memo(function MessageRow({
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} draft={draft} marks={marks} />
     : richHtml ? <BotHtmlReply html={richHtml} fallback={markdown} /> : markdown;
-
-  // #5680: which rows have a side. A DM and a group do; a channel does not
-  // (#2783), and neither does a row that is not something a person said: the
-  // bot's cards and plans, its step lines and a platform notice. `head` is
-  // the bot's line naming a request or a change, drawn as that thing's card
-  // (./bot-head-card.tsx); `question`/`actions` is its card with taps on it
-  // (./bot-question.tsx).
-  const isCardMessage = isThanksMessage(message) || isActivityMessage(message) || isPlanMessage(message)
-    || isTwoQuestions(message) || isReadyMessage(message) || !!head
-    || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
-      && !isTwoQuestions(message) && !isReadyMessage(message));
-  // #6863: every row of a private thread with the bot, alone in its tab's
-  // column, is the named row a channel draws: the thread is drawn as a
-  // public thread's one sheet (`flat`).
-  // 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
-  // the flat named row its answers are, a notice as much as a reply with
-  // buttons: the same speaker no longer changes style message by message.
-  // People's own messages keep their bubble.
-  const botRow = botChat && !!message.sender.bot;
-  const sided = !flat && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
@@ -461,7 +477,7 @@ export const MessageRow = memo(function MessageRow({
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
-      {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users ? listText(reaction.users) : undefined} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
+      <MessageReactions className="messages-reactions" reactions={message.reactions.map((reaction) => ({ emoji: reaction.emoji, count: reaction.count, mine: reaction.reacted, users: reaction.users }))} onToggle={controls.toggleReaction} />
       {message.thread && !inThread ? (
         <ThreadSummaryChip
           replyCount={message.thread.replyCount}
@@ -480,54 +496,6 @@ export const MessageRow = memo(function MessageRow({
       {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
     </>
   );
-
-  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
-  // end of its name line, beside the message, not at the transcript's far
-  // edge, where on a wide screen it sat 800px from a short bubble and over
-  // the row above. Your own bubble and a channel's rows already end where
-  // the bar is.
-  const barBesideHead = sided && !mine && !grouped;
-  // Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
-  // name line, so its bar sits on the bubble itself, over its top edge and
-  // ending where the bubble ends (starting where it starts when the bubble
-  // is the narrower). MessageActionBar measures the bubble as the pointer
-  // or the keyboard comes in; app.css `.msgx-bar-on-bubble` places it.
-  const barOnBubble = sided && !mine && grouped;
-
-  // The bar. WHILE A SEND IS IN FLIGHT it is still laid out, but invisible
-  // and inert (#2907). A failed row has no bar — its Retry is its control —
-  // and neither has one waiting for a connection, nor a deleted one.
-  const actions = !message.failed && !message.queued && !message.deleted ? (
-    <MessageActionBar
-      className={`messages-message-actions ${barOnBubble ? 'msgx-bar-on-bubble' : ''} ${message.pending ? 'messages-message-actions-reserved' : ''}`}
-      hidden={!!message.pending}
-      // What useDismiss measures "outside" against: without it every press —
-      // on a menu item or an emoji too — closed the popover before its click.
-      barRef={bar}
-      recents={recents}
-      reacted={reacted}
-      onReact={(emoji) => { void toggle(emoji); }}
-      pickerOpen={!!picker}
-      pickerButtonRef={pickerButton}
-      onTogglePicker={() => { setMenu(null); setPicker((open) => (open ? null : placementFor(pickerButton.current, 430))); }}
-      onReply={() => setReply(scope, message)}
-      saved={!!message.saved}
-      onToggleSave={() => { void save(); }}
-      moreOpen={!!menu}
-      moreButtonRef={moreButton}
-      onToggleMore={() => { setPicker(null); setMenu((open) => (open ? null : placementFor(moreButton.current, items.length * 38 + 24))); }}
-    >
-      {picker ? <EmojiPicker placement={picker} onPick={pick} onClose={() => setPicker(null)} /> : null}
-      {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
-    </MessageActionBar>
-  ) : null;
-
-  // #7163: your own message in a channel sits on the right like a chat, its
-  // face at the trailing edge beside its words (app.css), the head against
-  // that edge as it already was. A conversation's bubbles have their own
-  // side (`.messages-message-bubble`), so this is the named row alone.
-  const endRow = mine && !sided;
-  const stateClasses = `${mine ? 'messages-message-self' : ''} ${endRow ? 'messages-message-end' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the
@@ -561,49 +529,176 @@ export const MessageRow = memo(function MessageRow({
   </div> : null;
 
   return (
-    <article ref={article} id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...longPress}>
+    <MessageRowView
+      rowRef={article}
+      id={`messages-message-${message.id}`}
+      attrs={{ 'data-message-id': message.id }}
+      sided={sided}
+      mine={mine}
+      // #7163: your own message in a channel sits on the right like a chat,
+      // its face at the trailing edge beside its words (app.css), the head
+      // against that edge as it already was. A conversation's bubbles have
+      // their own side (`.messages-message-bubble`), so this is the named row
+      // alone.
+      end={mine && !sided}
+      grouped={grouped}
+      state={{ saved: !!message.saved, pending: !!message.pending, failed: !!message.failed, deleted: !!message.deleted, focused, system: !!message.system }}
+      avatar={<UserAvatar user={message.sender} size="md" shape="square" />}
+      author={senderName(message.sender, { bare: true })}
+      bot={!!message.sender.bot}
+      at={message.createdAt}
+      time={time}
+      timeTitle={fullTime(message.createdAt)}
+      gutter={shortTime}
+      meta={status}
+      continuedMeta={message.editedAt && !message.deleted ? status : null}
+      pictures={imageList}
+      body={imagesOnly ? null : translatedBody || body}
+      rich={!!richHtml && !translatedBody && !editing}
+      under={canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
+      extras={extras}
+      notes={<>{failedNote}{sendNote}</>}
+      bar={controls.bar}
+      barInHead={placement === 'head'}
+      sheet={controls.sheet}
+      longPress={controls.longPress}
+    />
+  );
+});
+
+/**
+ * ONE MESSAGE ROW, WHEREVER THE MESSAGE CAME FROM: the picture (or, on a
+ * continuation line, the time in the gutter), the line naming its author
+ * with the time, the words (in a bubble on the sender's side in a
+ * conversation, flat in a room), the pictures above them, and under them
+ * whatever the message carries, its notes and the controls.
+ *
+ * Messages' conversations draw it (MessageRow above), and so do a project's
+ * topic channels, its general chat, its reply threads and a request's or a
+ * change's stream (../group-chat/transcript.tsx), and the comments under a
+ * change on the board, at the feed's size (`compact`,
+ * ../dev-board/card/feed-thread.tsx). It knows nothing about where the
+ * message came from: each place hands it the parts, already drawn, and its
+ * own classes and data-* attributes (`className`, `attrs`), which that
+ * place's code and its declared checks look the row up by. The controls are
+ * ../message-actions/controls.tsx's, gated by ../message-actions/rules.ts.
+ */
+export function MessageRowView({
+  rowRef, id, className = '', attrs, sided, mine, end, grouped, compact = false, state = {},
+  avatar, author, lead, bot = false, badge, at, time, timeTitle, timeClassName, stamp, meta, gutter, continuedMeta,
+  pictures, body, rich = false, under, extras, notes, bar, barInHead = false, sheet, longPress,
+}: {
+  rowRef?: Ref<HTMLElement>;
+  /** The row's own id, where a link to the message lands. */
+  id?: string;
+  /** The place's own classes on the row. */
+  className?: string;
+  /** The place's own attributes on the row (data-msg-id, data-message-id, …). */
+  attrs?: Record<string, string | number | null | undefined>;
+  /** The words in a bubble on their sender's side (a conversation), else the flat named row (a room). */
+  sided: boolean;
+  /** The viewer's own message: no face beside a bubble, the name for a screen reader alone. */
+  mine: boolean;
+  /** A room's own message on the right, its face at the trailing edge (#7163). */
+  end: boolean;
+  /** A continuation of the same person's previous message: no face and no name line. */
+  grouped: boolean;
+  /** At the board's size: a comment under a change. */
+  compact?: boolean;
+  state?: { saved?: boolean; pending?: boolean; failed?: boolean; deleted?: boolean; focused?: boolean; system?: boolean };
+  avatar: ReactNode;
+  author: string;
+  /** Before the name: an unread dot. */
+  lead?: ReactNode;
+  /** Homeroom bot's message: the AI badge after its name. */
+  bot?: boolean;
+  /** After the name: a "via agent" chip. */
+  badge?: ReactNode;
+  /** The instant (ISO), its words for the line, and its unelided form for the title. */
+  at: string;
+  time: string;
+  timeTitle: string;
+  /** The place's own class on the time. */
+  timeClassName?: string;
+  /** In place of the time, a sentence that carries it ("3:04 PM · on GitHub"). */
+  stamp?: ReactNode;
+  /** After the time: what it was written on, edited. */
+  meta?: ReactNode;
+  /** The gutter's clock on a continuation line. */
+  gutter: string;
+  /** A continuation line's own meta line (its edited mark), as it has no name line. */
+  continuedMeta?: ReactNode;
+  /** Pictures, above the words. */
+  pictures?: ReactNode;
+  /** The words; null when the message is nothing but pictures, so no empty bubble is drawn. */
+  body: ReactNode | null;
+  /** Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */
+  rich?: boolean;
+  /** Right under the words: the way back from a translation. */
+  under?: ReactNode;
+  /** Files, cards, reactions, a thread. */
+  extras?: ReactNode;
+  /** A send's state: not sent, sending, waiting for a connection. */
+  notes?: ReactNode;
+  bar?: ReactNode;
+  /** Hang the bar at the end of the name line (somebody else's bubble). */
+  barInHead?: boolean;
+  sheet?: ReactNode;
+  longPress?: object;
+}) {
+  const states = `${mine ? 'messages-message-self' : ''} ${end ? 'messages-message-end' : ''} ${state.saved ? 'messages-message-saved' : ''} ${state.pending ? 'messages-message-pending' : ''} ${state.failed ? 'messages-message-failed' : ''} ${state.deleted ? 'messages-message-deleted' : ''} ${state.focused ? 'messages-message-focus' : ''} ${state.system ? 'messages-message-system' : ''}`;
+  return (
+    <article
+      ref={rowRef}
+      id={id}
+      {...attrs}
+      className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''} ${states}${compact ? ' messages-message-compact' : ''}${className ? ` ${className}` : ''}`}
+      {...longPress}
+    >
       {/* #5680: your own message is already on its side — the tint and the
-          right edge say whose it is — so it needs no face, as ChatMessageRow
-          draws a turn (`from="me"`) in the general chat. A channel row keeps
-          it: there the side says nothing. */}
+          right edge say whose it is — so it needs no face. A room's row
+          keeps it: there the side says nothing. */}
       {grouped
-        ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
-        : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
+        ? <time className="messages-message-gutter" dateTime={at} title={timeTitle}>{gutter}</time>
+        : sided && mine ? null : avatar}
       <div className={sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
         {/* Audit C05/Y06 (2 Nov 2026): the line over a message names its
-            author the one way every chat does, their bare username, as a
-            direct message and #general already did; a handle in a sentence
-            keeps its @. Your own bubble is already on your side and tinted,
-            so its line says only the time, and your name is there for a
-            screen reader alone, not in the accent, which marks an action. */}
-        {grouped ? null : <div className="messages-message-head"><span dir="auto" className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}{barBesideHead ? actions : null}</div>}
+            author the one way every chat does, their bare username; a handle
+            in a sentence keeps its @. Your own bubble is already on your side
+            and tinted, so its line says only the time, and your name is there
+            for a screen reader alone, not in the accent, which marks an action. */}
+        {grouped ? null : (
+          <div className="messages-message-head">
+            {lead}
+            <span dir="auto" className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{author}</span>
+            {bot ? <BotBadge /> : null}
+            {badge}
+            {stamp || <time className={timeClassName} dateTime={at} title={timeTitle}>{time}</time>}
+            {meta}
+            {barInHead ? bar : null}
+          </div>
+        )}
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {/* Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */}
-        {imageList}
-        {imagesOnly ? null : sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
-        {/* #6081: under the words, the way back to them, or why they stayed. */}
-        {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
+        {pictures}
+        {body === null ? null : sided ? <div className={rich ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{body}</div> : body}
+        {under}
         {extras}
-        {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
-        {failedNote}
-        {sendNote}
+        {grouped && continuedMeta ? <div className="messages-message-meta">{continuedMeta}</div> : null}
+        {notes}
       </div>
-      {barBesideHead ? null : actions}
-      <MessageActionSheet
-        open={sheet}
-        onClose={() => setSheet(false)}
-        recents={recents}
-        reacted={reacted}
-        onReact={(emoji) => { void toggle(emoji); }}
-        onPick={pick}
-        items={sheetItems}
-        preview={{ who: senderName(message.sender, { bare: true }), text: message.content }}
-      />
+      {barInHead ? null : bar}
+      {sheet}
     </article>
   );
-});
+}
+
+/** Homeroom bot's AI badge after its name. */
+function BotBadge() {
+  const t = useMessages('messages');
+  return <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span>;
+}
 
 /*
  * #5219: A message from the request's public discussion, shown inside a

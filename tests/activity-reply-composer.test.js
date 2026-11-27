@@ -170,16 +170,16 @@ test('the inline reply preview preserves composer line breaks', () => {
     'the browser must preserve newlines instead of collapsing them to spaces');
   assert.match(html, /dev-feed-msg-text[^>]*>First line\nSecond line<\/div>/,
     'the reply remains plain escaped text with its original newline');
-  // The bubble (round three): the author and the age on the first line,
-  // the text under them, a swatch avatar outside.
-  // #1808 made the age a `<time>` with the full instant on `title`, so the
-  // element changed but the adjacency — author then age, one line — did not.
-  // #1808 made the age a `<time>` carrying the full instant on `title`, so
-  // the element changed but the adjacency — author then age, one line — did
-  // not. The `datetime` match is case-insensitive because React 19 emits the
-  // JSX spelling and HTML attribute names are case-insensitive anyway.
-  assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><time class="dev-feed-msg-time" datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
-  assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
+  // Dedupe step 2: the reply is Messages' own row at the board's size
+  // (messages/message-row.tsx MessageRowView, `compact`): the face outside,
+  // the author and the age on the line over the bubble, the words in it.
+  // #1808 made the age a `<time>` carrying the full instant on `title`. The
+  // `datetime` match is case-insensitive because React 19 emits the JSX
+  // spelling and HTML attribute names are case-insensitive anyway.
+  assert.match(html, /^<article class="messages-message group messages-message-bubble [^"]*messages-message-compact dev-feed-msg">/);
+  assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">bob<\/span><time datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
+  assert.match(html, /<span aria-hidden="true" class="[^"]*" style="background-color:#[0-9a-f]{6}">B</);
+  assert.match(html, /<div class="messages-bubble" dir="auto"><div class="dev-feed-msg-text/);
 });
 
 test('a long reply in the panel shows four lines and a way to see the rest', () => {

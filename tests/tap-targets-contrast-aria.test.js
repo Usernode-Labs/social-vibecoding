@@ -185,10 +185,12 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
   const chips = CSS.slice(CSS.indexOf('  :is(.dev-card-meta, .dev-topic-hero-chips) { isolation: isolate; }'));
   assert.ok(chips.length < CSS.length, 'the chip rows are isolated');
   assert.match(chips, /button\.attr-chip::after \{[\s\S]*?z-index: -1;[\s\S]*?height: max\(100%, 32px\);/);
-  // The Save mark follows a vote row's No button 4px away: it reaches back no
-  // further than that margin, at the row's start edge in either direction.
-  const save = CSS.slice(CSS.indexOf('  .gc-msg-save::after {'));
-  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?inset-inline-start: -4px;[\s\S]*?height: max\(100%, 32px\);/);
+  // Dedupe step 2: the Save mark that followed a vote row's No button is
+  // gone with the module's own row controls; a notice's Save is the shared
+  // hover bar's (message-actions/action-bar.tsx), which a phone does not
+  // draw (a long press opens the sheet instead), so it has no slop to cover
+  // a neighbour with.
+  assert.ok(!CSS.includes('.gc-msg-save'), 'no Save mark of the module\'s own');
 });
 
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
