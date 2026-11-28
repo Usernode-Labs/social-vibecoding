@@ -42,6 +42,7 @@ import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowRightIcon,
   ChatBubbleTailIcon,
@@ -103,6 +104,9 @@ import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, tray
 import { PlanPage } from './plan-page';
 import { DiscussionCard } from './hub-discussion';
 import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
+import { BesideEmpty } from '../list/beside';
+import { BoardList } from '../list/board-list';
+import { setPrefs, usePrefs, type BoardView } from '../list/prefs';
 import { PageBack } from './page-back';
 import { BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
@@ -185,6 +189,14 @@ function hubSkeletonOthers(slug: string): boolean {
  */
 export function pageParent(tab: TabKey): TabKey {
   return tab === 'all' || tab === 'bot' ? 'workshop' : 'status';
+}
+
+/** All items' two views, in drawn order (../list/prefs.ts). */
+const BOARD_VIEWS: readonly BoardView[] = ['board', 'list'];
+
+/** Somebody is signed in: only then is there a "your work" to narrow to. */
+function signedInViewer(): boolean {
+  return typeof window !== 'undefined' && !!(window as unknown as { App?: { user?: unknown } }).App?.user;
 }
 
 /** A page's own title. A channel is its handle (`#general`, `#onboarding`). */
@@ -1726,6 +1738,16 @@ export function DevWorkshop(): ReactNode {
   };
   const closeSide = useCallback(() => setSideItem(null), []);
   const sideKey = sideItem ? `${sideItem.kind}:${sideItem.id}` : null;
+  // 28 Nov 2026: All items read as one list (../list/board-list.tsx), the
+  // viewer's choice beside the board's columns. A row of the list that is
+  // no link (one of the Homeroom bot tab's own) opens its item here too.
+  const boardPrefs = usePrefs();
+  const listView = tab === 'all' && group === 'stage' && boardPrefs.view === 'list';
+  const openRefBeside = (ref: TopicRef): boolean => {
+    if (!sideWide) return false;
+    setSideItem(ref);
+    return true;
+  };
   // The panel goes with a change of tab (it opens from the Workshop tab's
   // lists and, #4486, from All items and the bot's slots page), the project
   // and the wide window; a week's page goes with the tab and the project.
@@ -2158,6 +2180,10 @@ export function DevWorkshop(): ReactNode {
       // list makes room for it (app.css). An attribute, not a class: the
       // host's classes are written by useWorkshopHostState.
       data-ws-side-open={sideOpen ? '' : undefined}
+      // 28 Nov 2026: All items as the list. On a wide window the list keeps
+      // one width whether or not an item is open beside it (app.css).
+      data-ws-view={listView ? 'list' : undefined}
+      data-ws-list-split={listView && sideWide ? '' : undefined}
     >
       {band}
       {tray}
@@ -2486,6 +2512,9 @@ export function DevWorkshop(): ReactNode {
 
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
       {sideOpen && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
+      {/* The list's own place for an item, before one is opened: where its
+          page will stand, so opening one moves nothing. */}
+      {listView && sideWide && !(sideOpen && sideItem) ? <BesideEmpty /> : null}
 
       {tab === 'needs' && slug ? (
         // A project's Needs you drawn by the review flow, the same one the
@@ -2558,6 +2587,35 @@ export function DevWorkshop(): ReactNode {
                 onBack={() => openTab(pageParent(tab))}
                 eyebrow={false}
               />
+              {/* 28 Nov 2026: the two ways to read All items, and, on the
+                  list, the viewer's own work alone (the Homeroom bot tab's
+                  lists for this project). */}
+              {group === 'stage' ? (
+                <div className="dev-ws-viewbar" data-ws-viewbar="">
+                  <Tabs
+                    kind="radio"
+                    look="segment"
+                    values={BOARD_VIEWS}
+                    value={listView ? 'list' : 'board'}
+                    onValueChange={(next) => setPrefs({ view: next === 'list' ? 'list' : 'board' })}
+                  >
+                    <TabsList aria-label={t('project:boardList.view.name')} data-board-view="">
+                      <TabsTrigger value="board" data-board-view-option="board">{t('project:boardList.view.board')}</TabsTrigger>
+                      <TabsTrigger value="list" data-board-view-option="list">{t('project:boardList.view.list')}</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  {listView && signedInViewer() ? (
+                    <label className="dev-ws-yours" data-board-yours="">
+                      <input
+                        type="checkbox"
+                        checked={boardPrefs.yours}
+                        onChange={(e) => setPrefs({ yours: e.target.checked })}
+                      />
+                      {t('project:boardList.yours.label')}
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
               {/* The search and the filters. NOT the ⋯: that is the hub's, in
                   its hero, so the row draws none of its own. */}
               <DevActionsRow
@@ -2574,7 +2632,7 @@ export function DevWorkshop(): ReactNode {
                 column heads, as steps (../card/dev-kanban.tsx StageStrip),
                 so the column names stay on screen down a long column; on a
                 phone they are the tabs. */}
-            {group === 'stage' ? <StageStrip /> : null}
+            {group === 'stage' && !listView ? <StageStrip /> : null}
           </div>
           {/* The pane's face is painted by its two PARTS, not by the pane —
               see app.css. A fill on the pane with a second one on the sticky
@@ -2590,7 +2648,11 @@ export function DevWorkshop(): ReactNode {
                 <EmptyNote filtered={false} loadFailed={v.emptyNote.loadFailed} start={emptyStart} />
               ) : null}
               <div className="dev-ws-board" data-ws-stage="">
-                <DevKanban openKey={sideKey} onOpen={openItem} />
+                {/* 28 Nov 2026: the same items, as the board's columns or as
+                    one list (../list/board-list.tsx): the viewer's choice. */}
+                {listView
+                  ? <BoardList slug={slug || ''} openKey={sideKey} onOpen={openItem} openRef={openRefBeside} />
+                  : <DevKanban openKey={sideKey} onOpen={openItem} />}
               </div>
             </>
           ) : !themes.length ? (

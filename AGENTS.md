@@ -397,7 +397,13 @@ is no replay plan to write and nothing to verify locally.
   community keeps its row and its App row in the sidebar until the frame
   goes (`features/app-frame/live-apps.tsx`). **All
   items** is a page under the Workshop (its "See all"), with a way back, and
-  the Workshop stays lit in the list while it is up. A **topic** is a
+  the Workshop stays lit in the list while it is up. It reads two ways,
+  the viewer's choice and kept in their browser: **Board**, the four
+  columns, or **List** (`features/dev-board/list/`), the same rows as Needs
+  you, Waiting on others, In progress and Done in the Homeroom bot tab's
+  short row, one row a thread. On the list, **Your work** draws that tab's
+  own lists for the project (`features/ai/lines.ts`), so what is yours is
+  decided in one place. A **topic** is a
   channel and a category at once: an entry of dapp.json's `topics`,
   reconciled into `app_category_registry` (origin `'topic'`) when a change
   merges, its channel a `'category'` thread; a new topic, a rename, a merge

@@ -7258,5 +7258,149 @@
   "topic.rail.byBot": {
     "text": "By Homeroom bot.",
     "description": "Line under a step in the \"How it got here\" timeline: Homeroom bot made the update. Used when the update names no person."
+  },
+  "boardList.view.name": {
+    "text": "How to show All items",
+    "description": "Accessible name of the two-option switch at the top of a project's All items page, which shows its requests and changes either as the board's columns or as one list."
+  },
+  "boardList.view.board": {
+    "text": "Board",
+    "description": "One of two options of the switch at the top of a project's All items page: show the requests and changes as the board's four columns (Requests, Underway, Waiting for approval, Done). The other option is List."
+  },
+  "boardList.view.list": {
+    "text": "List",
+    "description": "One of two options of the switch at the top of a project's All items page: show the requests and changes as one list in groups (Needs you, Waiting on others, In progress, Done). The other option is Board."
+  },
+  "boardList.yours.label": {
+    "text": "Your work",
+    "description": "Label of a checkbox at the top of a project's All items page, in its List view. Ticked, the list shows only the person's own work on this project, the same threads the Homeroom bot tab lists for them."
+  },
+  "boardList.group.needs": {
+    "text": "Needs you",
+    "description": "Heading of the first group of the List view of a project's All items page: the things waiting on the person reading (a vote they owe, a plan to review, a question to answer, their own change to fix). Followed by how many there are."
+  },
+  "boardList.group.others": {
+    "text": "Waiting on others",
+    "description": "Heading of a group of the List view of a project's All items page: requests where Homeroom bot is waiting for a person who is not the reader to OK a plan, answer a question or decide. Followed by how many there are. The group can be folded."
+  },
+  "boardList.group.progress": {
+    "text": "In progress",
+    "description": "Heading of a group of the List view of a project's All items page: everything open that does not wait on a person's answer, from work being made to requests nobody has started. Followed by how many there are."
+  },
+  "boardList.group.done": {
+    "text": "Done",
+    "description": "Heading of the last group of the List view of a project's All items page: changes that have gone live. Followed by how many there are."
+  },
+  "boardList.fold.show": {
+    "text": "Show",
+    "description": "Word at the far end of the Waiting on others heading in the List view of a project's All items page while that group is folded: pressing the heading shows its rows."
+  },
+  "boardList.fold.hide": {
+    "text": "Hide",
+    "description": "Word at the far end of the Waiting on others heading in the List view of a project's All items page while that group is open: pressing the heading folds its rows away."
+  },
+  "boardList.run.review_one": {
+    "text": "Waiting for approval · {{number}}",
+    "description": "Small divider inside the In progress group of the List view of a project's All items page, over the changes that are up for the group's approval and need nothing more from the reader. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "boardList.run.review_other": {
+    "text": "Waiting for approval · {{number}}",
+    "description": "Small divider inside the In progress group of the List view of a project's All items page, over the changes that are up for the group's approval and need nothing more from the reader. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "boardList.run.backlog_one": {
+    "text": "Not started · {{number}}",
+    "description": "Small divider inside the In progress group of the List view of a project's All items page, over the requests nobody has started on. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "boardList.run.backlog_other": {
+    "text": "Not started · {{number}}",
+    "description": "Small divider inside the In progress group of the List view of a project's All items page, over the requests nobody has started on. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "boardList.run.backlogAll_one": {
+    "text": "Show the {{number}} not started",
+    "description": "Last line under the not-started requests in the List view of a project's All items page, which shows only the first few: pressing it shows every one. {{number}} is how many requests nobody has started, already formatted with digit separators."
+  },
+  "boardList.run.backlogAll_other": {
+    "text": "Show all {{number}} not started",
+    "description": "Last line under the not-started requests in the List view of a project's All items page, which shows only the first few: pressing it shows every one. {{number}} is how many requests nobody has started, already formatted with digit separators."
+  },
+  "boardList.waits.plan": {
+    "text": "Waiting on @{{who}} to OK the plan",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page: Homeroom bot wrote a plan and waits for the person who asked for the request to approve it. {{who}} is that person's username."
+  },
+  "boardList.waits.question": {
+    "text": "Waiting on @{{who}} to answer",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page: Homeroom bot asked the person who made the request a question and waits for the answer. {{who}} is that person's username."
+  },
+  "boardList.waits.decide": {
+    "text": "Waiting on @{{who}} to decide",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page: Homeroom bot handed a decision back to the person who made the request. {{who}} is that person's username."
+  },
+  "boardList.waits.detail": {
+    "text": "Waiting on @{{who}} for more detail",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page: Homeroom bot needs the person who made the request to say more before it can build it. {{who}} is that person's username."
+  },
+  "boardList.waits.plain": {
+    "text": "Waiting on @{{who}}",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page: nothing moves on the request until the person who made it steps in. {{who}} is that person's username."
+  },
+  "boardList.waits.someone": {
+    "text": "Waiting on someone",
+    "description": "Tag at the end of a request's row under Waiting on others in the List view of a project's All items page, when the request does not say who made it: nothing moves until a person steps in."
+  },
+  "boardList.live": {
+    "text": "Live",
+    "description": "Spoken name of the green tick at the end of a row under Done in the List view of a project's All items page: the change has gone live. Read by screen readers only."
+  },
+  "boardList.done.thisWeek_one": {
+    "text": "{{count}} this week",
+    "description": "Small words beside the Done heading in the List view of a project's All items page, with Your work ticked: how many of the person's own threads went live in the last seven days. {{count}} is that number; English shows it in both forms."
+  },
+  "boardList.done.thisWeek_other": {
+    "text": "{{count}} this week",
+    "description": "Small words beside the Done heading in the List view of a project's All items page, with Your work ticked: how many of the person's own threads went live in the last seven days. {{count}} is that number."
+  },
+  "boardList.empty.needs": {
+    "text": "Nothing needs you right now.",
+    "description": "Note in place of the rows of the Needs you group in the List view of a project's All items page, when nothing waits on the reader."
+  },
+  "boardList.empty.progress": {
+    "text": "Nothing is in progress.",
+    "description": "Note in place of the rows of the In progress group in the List view of a project's All items page, when the project has no open requests or changes."
+  },
+  "boardList.empty.filtered": {
+    "text": "Nothing in progress matches.",
+    "description": "Note in place of the rows of the In progress group in the List view of a project's All items page, when a search or a filter is on and no open request or change matches it."
+  },
+  "boardList.empty.done": {
+    "text": "Nothing is done yet.",
+    "description": "Note in place of the rows of the Done group in the List view of a project's All items page, when no change has gone live."
+  },
+  "boardList.empty.yourProgress": {
+    "text": "Nothing of yours is in progress here.",
+    "description": "Note in place of the rows of the In progress group in the List view of a project's All items page, with Your work ticked, when none of the reader's own threads on this project is being worked on or waiting."
+  },
+  "boardList.empty.yourDone": {
+    "text": "Nothing of yours went live this week.",
+    "description": "Note in place of the rows of the Done group in the List view of a project's All items page, with Your work ticked, when none of the reader's own threads went live in the last seven days."
+  },
+  "boardList.beside.title": {
+    "text": "Click an item to see more",
+    "description": "Heading of an empty outlined box beside the List view of a project's All items page on a wide window, shown until the reader opens an item: an item's page opens in that space."
+  },
+  "boardList.beside.sub": {
+    "text": "Its thread, votes and preview open here.",
+    "description": "Second line of the empty outlined box beside the List view of a project's All items page on a wide window: says what opens in that space when the reader presses a row."
+  },
+  "boardList.vote.open": {
+    "text": "Up for a vote · {{yes}}/{{need}}",
+    "description": "Tag at the end of a change's row under In progress in the List view of a project's All items page: the group is voting on it and nothing more is asked of the reader. {{yes}} is how many yes votes it has and {{need}} how many it needs."
+  },
+  "boardList.vote.saidYes": {
+    "text": "You said yes · {{yes}}/{{need}}",
+    "description": "Tag at the end of a change's row under In progress in the List view of a project's All items page: the reader has voted yes and it waits on other people's votes. {{yes}} is how many yes votes it has and {{need}} how many it needs."
+  },
+  "boardList.vote.saidNo": {
+    "text": "You said no · {{yes}}/{{need}}",
+    "description": "Tag at the end of a change's row under In progress in the List view of a project's All items page: the reader has voted no and it waits on other people's votes. {{yes}} is how many yes votes it has and {{need}} how many it needs."
   }
 }

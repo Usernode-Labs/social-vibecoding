@@ -2239,6 +2239,17 @@
       "expectSelector": "#dev-filter-row:not(:has([data-quick-filter])) #dev-kanban-filters-btn"
     },
     {
+      "id": "board.list-view",
+      "name": "All items as one list: Needs you, In progress and Done in short rows, beside the board's columns",
+      "path": "/?demo=1&ws=all&board=list#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-view=\"list\"]:has([data-board-view-option=\"list\"][aria-checked=\"true\"]) #dev-board-list:has([data-board-list-group=\"needs\"]):has([data-board-list-group=\"done\"]) [data-board-list-group=\"progress\"] [data-board-list-row] [data-board-list-title]",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dev-board/list/**",
+        "frontend/src/features/dev-board/workshop/workshop.tsx"
+      ]
+    },
+    {
       "name": "With room on the line the strip keeps them, and Filters does not offer them",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"yours\"]",
@@ -2320,9 +2331,9 @@
     },
     {
       "id": "workshop.grouping-ear",
-      "name": "All items' head is one row: the way back and its name, then the tools, with no grouping switch and no eyebrow over the page's name; the page is the board by stage (#4486, request 6708)",
+      "name": "All items' head is one row: the way back and its name, the Board and List switch with Board chosen, then the tools, with no grouping switch and no eyebrow over the page's name; the page opens as the board by stage (#4486, request 6708)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes)):has(> .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban) > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes)):has(> .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban) > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + [data-ws-viewbar]:has([data-board-view-option=\"board\"][aria-checked=\"true\"]) + #dev-actions",
       "expectText": "Waiting for approval",
       "visual": true,
       "impact": [

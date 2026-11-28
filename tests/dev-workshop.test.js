@@ -2196,8 +2196,10 @@ test('All items is the board by stage, with no grouping switch, whatever was cho
   // the page's own name says it.
   assert.ok(!html.includes('dev-ws-pane-eyebrow'), 'the eyebrow is gone');
   assert.ok(!/\.dev-ws-pane-eyebrow/.test(CSS), 'and so is the rule that styled it');
-  // #4486: ONE ROW, the page's way back and its name, then the tools.
-  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div id="dev-actions"/);
+  // #4486: ONE ROW, the page's way back and its name, then the tools. 28 Nov
+  // 2026: between them, the switch between the board's columns and the list
+  // (a different thing from the grouping switch above: both read by stage).
+  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div class="dev-ws-viewbar" data-ws-viewbar="">[\s\S]*?data-board-view-option="board"[\s\S]*?data-board-view-option="list"[\s\S]*?<\/div><\/div><div id="dev-actions"/);
   assert.ok(!html.includes('dev-ws-pagehead-over'), 'and no "Workshop" eyebrow over the name');
   assert.ok(
     !dapp.tests.some((t) => /data-ws-ear/.test(t.expectSelector || '')),
@@ -2210,8 +2212,10 @@ test('All items is the board by stage, with no grouping switch, whatever was cho
   assert.ok(html.includes('Waiting for approval'), 'a step of the pipeline, which only the board draws');
   assert.ok(head.expectSelector.includes('[data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes))'), 'it holds that no switch and no category list is drawn');
   assert.ok(head.expectSelector.includes('.dev-ws-board[data-ws-stage] > #dev-kanban'), 'that the page is the board');
-  assert.ok(head.expectSelector.endsWith('> .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions'),
-    'and that the tools come straight after the page\'s way back, with no title line');
+  // 28 Nov 2026: between the two, the switch between the board and the list
+  // (../list/), on Board: the page opens as the board.
+  assert.ok(head.expectSelector.endsWith('> .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + [data-ws-viewbar]:has([data-board-view-option="board"][aria-checked="true"]) + #dev-actions'),
+    'and that the view switch and then the tools come straight after the page\'s way back, with no title line');
   for (const t of dapp.tests) {
     assert.ok(!/data-ws-group|\.dev-ws-group|\.dev-ws-themes \[|data-ws-theme=|shot=themes/.test(`${t.path || ''} ${t.expectSelector || ''}`.replace(head.expectSelector, '')),
       `no other declared check walks the switch or the category cards: ${t.name}`);

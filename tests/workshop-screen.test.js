@@ -1064,7 +1064,9 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   const head = workshopTsx.slice(workshopTsx.indexOf('<div className="dev-ws-pane-head">'), workshopTsx.indexOf('<div className="dev-ws-pane-body">'));
   assert.match(head, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack[\s\S]*?eyebrow=\{false\}[\s\S]*?<DevActionsRow/);
   assert.doesNotMatch(head, /GroupStrip/, 'no grouping switch between them (request 6708)');
-  assert.match(head, /\{group === 'stage' \? <StageStrip \/> : null\}/);
+  // 28 Nov 2026: the strip names the board's columns, so it goes with them
+  // when the page is read as the list (../list/board-list.tsx).
+  assert.match(head, /\{group === 'stage' && !listView \? <StageStrip \/> : null\}/);
   assert.match(appCss, /\.dev-ws-pane-head \{\s*position: sticky; top: 0; z-index: 20;/);
   assert.match(appCss, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);
   // Pinned, on By stage, the row and the steps take the sheet's colour.
