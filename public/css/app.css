@@ -33136,6 +33136,20 @@ html:root :is(.home-edit-start, #communities-edit, .wip-fold-pill, #profile-rece
   text-decoration: none;
 }
 html:root .wip-fold-pill > .wip-head-chevron-glyph { display: none; }
+/* THE NOTIFICATIONS LIST'S FOOT ON A PHONE (phone audit, request 7164). "See older notifications" and the
+   buttons that load more or hide them were underlined words 20px tall: a web page's link at the end of a list.
+   Under 768px each is the secondary action's flat button across the list, 44px tall. From 768px they stay the
+   text action (the BUTTONS block's level 4). */
+@media (max-width: 767.98px) {
+  html:root #notifications-sheet :is(#notifications-load-unread, #notifications-see-older, #notifications-load-older, #notifications-hide-older, #notifications-load-more-threads) {
+    display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px;
+    border-radius: 9999px; background: var(--one-sky-tint); color: var(--one-sky-ink);
+    font-size: 15px; font-weight: 600; text-decoration: none;
+  }
+  html:root #notifications-sheet :is(#notifications-load-unread, #notifications-see-older, #notifications-load-older, #notifications-hide-older, #notifications-load-more-threads):active:not(:disabled) {
+    filter: var(--one-flat-dim); transform: var(--one-flat-press);
+  }
+}
 /* ── END ONE LOOK · SHARED PARTS ── */
 
 /* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
@@ -33185,6 +33199,25 @@ html:root #ai-screen [data-ai-hero-sub] > button {
   text-decoration: underline; text-decoration-color: #3090e1; text-decoration-thickness: 1.5px; text-underline-offset: 4px;
 }
 html:root #ai-screen [data-ai-hero-sub] > button:hover { color: var(--one-ink); text-decoration-thickness: 2px; }
+/* ON A PHONE the two counts are chips, not underlined words (phone audit, request 7164): the secondary action's
+   flat fill and ink, 30px drawn and 44px to press. The line may wrap, so two long counts never clip; its dot is
+   put away, since the chips already stand apart. From 768px the counts stay the text action above. */
+@media (max-width: 767.98px) {
+  html:root #ai-screen [data-ai-hero-sub]:has(> button) {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; overflow: visible; white-space: normal; font-size: 0;
+  }
+  html:root #ai-screen [data-ai-hero-sub]:has(> button) > span { font-size: 14px; line-height: 20px; }
+  html:root #ai-screen [data-ai-hero-sub] > button {
+    position: relative; display: inline-flex; flex: none; align-items: center; height: 30px; padding: 0 11px;
+    border-radius: 9999px; background: var(--one-sky-tint); color: var(--one-sky-ink);
+    font-size: 13px; font-weight: 600; line-height: 1; white-space: nowrap; text-decoration: none;
+  }
+  html:root #ai-screen [data-ai-hero-sub] > button::after {
+    content: ""; position: absolute; inset-inline: 0; top: 50%; height: 44px; transform: translateY(-50%);
+  }
+  html:root #ai-screen [data-ai-hero-sub] > button:hover { color: var(--one-sky-ink); }
+  html:root #ai-screen [data-ai-hero-sub] > button:active { filter: var(--one-flat-dim); transform: var(--one-flat-press); }
+}
 /* The + is the page's main action: the shared fab, at its size whatever the button's own variant says. */
 html:root #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab { min-width: 40px; color: #121a0e; }
 html:root #ai-screen [data-ai-hero] [data-ai-new-chat].one-fab:hover { background: var(--one-sun); filter: brightness(.97); }
@@ -35313,6 +35346,20 @@ html:root :is(#profile-root, #settings-root) .profile-details-card .profile-deta
   text-decoration-color: var(--wip-btn-link-line);
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
+}
+/* ON A PHONE "Change your handle in Settings" is a small flat button under the handle's box, not an 11px
+   underlined line 17px tall (phone audit, request 7164): 30px drawn, 44px to press. From 768px it stays the line above. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note {
+    position: relative; display: flex; align-items: center; justify-self: start; width: fit-content; max-width: 100%;
+    min-height: 30px; margin-top: 0.5rem; padding: 4px 12px; border-radius: 15px;
+    background: var(--one-sky-tint); color: var(--one-sky-ink);
+    font-size: 0.875rem; font-weight: 600; line-height: 1.25; text-decoration: none;
+  }
+  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note::after {
+    content: ""; position: absolute; inset-inline: 0; top: 50%; height: max(100%, 44px); transform: translateY(-50%);
+  }
+  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note:active { filter: var(--one-flat-dim); transform: var(--one-flat-press); }
 }
 /* One field style: white, one hairline, radius 10, 40px. A field that cannot
    be changed is the quiet fill. */

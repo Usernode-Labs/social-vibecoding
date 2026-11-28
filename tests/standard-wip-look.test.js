@@ -802,3 +802,40 @@ test('its pieces come from the kit, not from classes spelled in place', () => {
   assert.match(island, /<WipCta id="home-new-project-top"/);
   assert.doesNotMatch(island, /bg-gradient-to-br/, 'the filled action\'s gradient is the kit\'s, from tokens');
 });
+
+// Phone audit (request 7164, "Actions drawn as underlined text links"). The
+// section actions (Edit, Show all, See all) lost their underline on 25 Nov
+// 2026; these three were still underlined words under 44px on a phone. Each
+// is the secondary action's flat fill there, and stays as it was from 768px.
+test('on a phone the bot head\'s counts, the notifications foot and the handle note are buttons, not underlined words', () => {
+  const css = read('public', 'css', 'app.css');
+  /** The body of the phone-only block that opens with `selector`. */
+  const phone = (selector) => {
+    const at = css.indexOf(`@media (max-width: 767.98px) {\n  ${selector} {`);
+    assert.ok(at > 0, `a phone-only rule for ${selector}`);
+    return css.slice(at, css.indexOf('\n}\n', at));
+  };
+  const flat = /background: var\(--one-sky-tint\); color: var\(--one-sky-ink\);/;
+
+  const bot = phone('html:not([data-skin]) #ai-screen [data-ai-hero-sub]:has(> button)');
+  assert.match(bot, /\[data-ai-hero-sub\] > button \{[^}]*height: 30px;[^}]*border-radius: 9999px;[^}]*text-decoration: none;/);
+  assert.match(bot, flat);
+  assert.match(bot, /\[data-ai-hero-sub\] > button::after \{[^}]*height: 44px;/, 'pressed at 44px');
+  assert.match(bot, /flex-wrap: wrap;[^}]*overflow: visible;/, 'two long counts wrap, never clip');
+
+  const foot = phone('html:not([data-skin]) #notifications-sheet :is(#notifications-load-unread, #notifications-see-older, #notifications-load-older, #notifications-hide-older, #notifications-load-more-threads)');
+  assert.match(foot, /min-height: 44px;[^}]*text-decoration: none;/);
+  assert.match(foot, flat);
+  const sheet = read('frontend', 'src', 'features', 'notifications', 'notifications-sheet.tsx');
+  const ids = [...sheet.matchAll(/id="(notifications-(?:load|see|hide)-[a-z-]+)"/g)].map((m) => m[1]);
+  for (const id of ids) assert.ok(foot.includes(`#${id}`), `${id} is one of the foot's buttons`);
+
+  const note = phone('html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note');
+  assert.match(note, /min-height: 30px;[^}]*text-decoration: none;/);
+  assert.match(note, /font-size: 0\.875rem;/, '14px, in rem so Text size scales it');
+  assert.match(note, flat);
+  assert.match(note, /\.profile-details-handle-note::after \{[^}]*height: max\(100%, 44px\);/, 'pressed at 44px');
+
+  // From 768px nothing moved: the text actions keep their rules.
+  assert.match(css, /\n(html:not\(\[data-skin\]\) #ai-screen \[data-ai-hero-sub\] > button) \{\n  text-decoration: underline;/);
+});
