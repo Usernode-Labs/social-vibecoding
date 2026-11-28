@@ -533,7 +533,6 @@ const Leaderboard = {
       return {
         kind: 'profile',
         who,
-        initial: (who[0] || '?').toUpperCase(),
         avatarUrl: (data && data.user && data.user.avatar_url) || null,
         canMessage: Leaderboard._canMessage(who),
         // The way back is to Top users, which is gone while kudos is parked;
@@ -932,7 +931,6 @@ const Leaderboard = {
         key: `${who}|${i}`,
         rank: i + 1,
         who,
-        initial: (who[0] || '?').toUpperCase(),
         avatarUrl: row.avatar_url || null,
         meta,
         // Footnote on the kudos badge: how many additional kudos sit on

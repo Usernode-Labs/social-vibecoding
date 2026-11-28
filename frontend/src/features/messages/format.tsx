@@ -4,6 +4,8 @@ import { matchRanges } from '../ai/search';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { messageStamp } from '../../lib/timestamp';
+import { swatchFor } from '../../lib/community-color';
+import { PersonAvatar } from '@/components/ui/feed';
 import { requestHue } from './bot-request';
 import { dotText } from './bot-shared';
 import { decorateRefs } from './channels';
@@ -158,34 +160,6 @@ export function MessageMarkdown({ content, channels, appSlug, requestColors = fa
 }
 
 /**
- * A stable colour per name, so the same person or group is the same swatch
- * in every row without the server storing one. The same six swatches as the
- * app chat's `swatchFor` (../group-chat/transcript.tsx), kept in step by
- * hand, so a person reads as one voice across the two surfaces.
- *
- * FNV-1a with a final mix, not the app chat's `h * 31`. That one has two
- * faults this surface would show on every screen: past about eleven
- * characters the float product exceeds 2^53 and its low bits — the only
- * ones ToUint32 keeps — are all zero, and 31 ≡ 1 (mod 6), so before that
- * the pick is just the sum of the character codes mod 6. Both put "ada",
- * "Launch crew" and "Design review" in the same green.
- */
-const SWATCHES = ['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'];
-export function swatchFor(name: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < name.length; i += 1) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193);
-  h ^= h >>> 16; h = Math.imul(h, 0x45d9f3b); h ^= h >>> 16;
-  return SWATCHES[(h >>> 0) % SWATCHES.length];
-}
-
-/**
- * Two shapes, the language's own split (see @/components/ui/feed.tsx):
- * `square` for a person speaking in a conversation — the list, the thread's
- * title row and the named rows of a group — and `circle` for a person in a
- * roster, which is what the dialogs show. A square wears the person's swatch
- * with white initials; so does a circle (phone review #119).
- */
-/**
  * B5: how a sender or a peer is named. The Homeroom bot by its name ("Homeroom
  * bot"), never its handle; a person by their @handle — except in a direct
  * message, where they are named by their bare username (#4655); nobody (a
@@ -200,34 +174,30 @@ export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bo
 /** B5: the bot's face, the Homeroom mark tile the header's menu button wears. */
 export const BOT_AVATAR = '/brand/homeroom-mark.png';
 
+const PERSON_PX = { sm: 28, md: 36, lg: 44 } as const;
+
+/**
+ * A conversation's face, from what Messages knows of it. A person is the one
+ * round picture every surface draws (@/components/ui/feed.tsx PersonAvatar),
+ * whatever `shape` asks for: a person is round everywhere. The bot is its
+ * mark, and a group conversation (a title, no person) its rounded-square
+ * tile in the group's own colour, both in `shape`.
+ */
 export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   user?: ConversationUser | null;
   title?: string;
   size?: 'sm' | 'md' | 'lg';
   shape?: 'circle' | 'square';
 }) {
-  const label = title || user?.username || 'Conversation';
+  if (user && !user.bot) return <PersonAvatar name={title || user.username} src={user.avatarUrl} size={PERSON_PX[size]} aria-hidden="true" />;
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
-  const square = shape === 'square';
-  const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
+  const radius = shape === 'square' ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
   if (user?.bot) {
     return <img src={BOT_AVATAR} alt="" className={`${sizeClass} ${radius} object-cover shrink-0`} data-bot-avatar="" />;
   }
-  if (user?.avatarUrl) {
-    return <img src={user.avatarUrl} alt="" loading="lazy" decoding="async" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
-  }
-  if (square) {
-    return (
-      <span aria-hidden="true" className={`${sizeClass} ${radius} text-white font-bold flex items-center justify-center shrink-0`} style={{ backgroundColor: swatchFor(label) }}>
-        {initials(label)}
-      </span>
-    );
-  }
-  // Phone review #119 (23 Nov 2026): a circle is the person's own colour
-  // with white initials too, as the hub's faces and the About pane's are; it
-  // was the accent's pale tint, a third drawing of the same person.
+  const label = title || 'Conversation';
   return (
-    <span aria-hidden="true" className={`${sizeClass} rounded-full text-white font-semibold flex items-center justify-center shrink-0`} style={{ backgroundColor: swatchFor(label) }}>
+    <span aria-hidden="true" className={`${sizeClass} ${radius} text-white font-bold flex items-center justify-center shrink-0`} style={{ backgroundColor: swatchFor(label) }}>
       {initials(label)}
     </span>
   );

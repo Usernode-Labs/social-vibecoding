@@ -37,10 +37,9 @@ import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { Button } from '@/components/ui/button';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { ChevronDownIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
-import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ChangeTag, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
@@ -861,9 +860,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
       {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={openNow} />, rail) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-thread-card" data-ref-issue={r.number} data-request-root={r.number} data-thread-card="request">
-        <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
-          {(r.asker || '?').charAt(0).toUpperCase()}
-        </Avatar>
+        <PersonAvatar name={r.asker} size={36} aria-hidden="true" />
         <div className="min-w-0 flex-1" {...images.scope}>
           <ThreadKicker kind="request" number={r.number} category={r.category} />
           <div className="messages-message-head">

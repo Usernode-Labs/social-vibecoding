@@ -842,7 +842,9 @@ html:is(.un-kb, .platform-kb-open) .messages-list-scroll.platform-safe-scroll {
    ring is the plane colour, so the pair reads as two faces and not one
    melted one. */
 .messages-group-faces { position: relative; flex: 0 0 44px; width: 44px; height: 44px; }
-.messages-group-faces > * { position: absolute; }
+/* A face is a person's round picture, which positions itself (`relative`, for its photo and
+   badge): `:is(span, img)` outranks that utility so the two faces still stack. */
+.messages-group-faces > :is(span, img) { position: absolute; }
 .messages-group-faces > :first-child { inset-inline-start: 0; top: 0; }
 .messages-group-faces > :last-child { inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--app-bg)); }
 /* The empty and loading states, at the language's type scale. The list's
@@ -2554,7 +2556,7 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .msgx-thread-chip:focus-visible { border-color: var(--border-light); background: var(--dc-sheet-raise); outline: none; }
 .msgx-thread-chip-active { border-color: var(--accent-wash); background: var(--accent-wash); }
 .msgx-thread-faces { display: inline-flex; }
-.msgx-thread-faces > * { width: 22px !important; height: 22px !important; border-radius: 6px !important; box-shadow: 0 0 0 2px var(--dc-sheet-raise); font-size: 10px !important; }
+.msgx-thread-faces > * { width: 22px !important; height: 22px !important; border-radius: 9999px !important; box-shadow: 0 0 0 2px var(--dc-sheet-raise); font-size: 10px !important; }
 .msgx-thread-faces > * + * { margin-inline-start: -6px; }
 .msgx-thread-count { color: var(--accent); font-weight: 700; white-space: nowrap; }
 .msgx-thread-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2623,9 +2625,9 @@ html:root .messages-message.messages-message-end .messages-message-author { flex
 .msgx-thread-activity-root-deleted { color: var(--text-muted); font-style: italic; font-weight: 400; }
 .msgx-thread-activity-time { flex: 0 0 auto; }
 .msgx-thread-activity-head .msgx-thread-card-chevron { margin-inline-start: auto; }
-/* A reply line's face, whichever surface drew it, at the card's 22px. */
+/* A reply line's face, whichever surface drew it, at the card's 22px: a person, so round. */
 .msgx-thread-face { display: inline-flex; flex: 0 0 auto; }
-.msgx-thread-face > * { width: 22px !important; height: 22px !important; border-radius: 6px !important; font-size: 10px !important; }
+.msgx-thread-face > * { width: 22px !important; height: 22px !important; border-radius: 9999px !important; font-size: 10px !important; }
 
 /* A deleted message keeps its place and says so (#2387). */
 .messages-deleted { color: var(--text-muted); font-size: 15px; font-style: italic; }
@@ -11554,7 +11556,6 @@ html:root #profile-root #profile-identity-card {
 html:root #profile-identity-card .profile-id-avatar {
   width: var(--ed-face-phone);
   height: var(--ed-face-phone);
-  border-radius: 1.25rem;
   box-shadow: var(--ed-face-ring);
   font-size: 1.75rem;
 }
@@ -11720,7 +11721,6 @@ html:root #profile-root #profile-identity-card {
 }
 html:root #profile-identity-card > div:first-child { align-items: flex-start; }
 html:root #profile-identity-card > div:first-child > div:first-child { align-items: flex-start; gap: 1.75rem; }
-html:root #profile-identity-card .profile-id-avatar { border-radius: 1rem; }
 html:root #profile-identity-card .profile-id-handle { margin-top: 0.2rem; font-size: 1.125rem; font-weight: 600; }
 html:root #profile-identity-card .profile-id-bio { max-width: 33rem; margin-top: 0.5rem; line-height: 1.5; }
 html:root #profile-identity-card .profile-id-about { margin-top: 0.625rem; color: var(--ed-muted); font-size: 0.8125rem; }
@@ -23228,7 +23228,6 @@ html:root body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overl
    words. The head's switch (This month, All time) is the shell's selection
    inversion, small: the picked one filled, the other plain. */
 .dev-ws-foryou .dev-ws-contrib-row { padding-block: 9px; }
-.dev-ws-contrib-face { width: 32px; height: 32px; margin: 0; flex: none; font-size: 12.5px; box-shadow: none; }
 .dev-ws-contrib-span {
   margin-inline-start: auto; margin-top: 6px; display: inline-flex; gap: 2px;
   padding: 2px; border-radius: 999px; background: var(--bg-tertiary);
@@ -24076,10 +24075,6 @@ button.dev-ws-recent-card {
   /* #7230: the person's picture covers the initial inside the same circle.
      The ring is a box-shadow, so overflow does not clip it. */
   position: relative; overflow: hidden;
-}
-.dev-ws-hero-face-img {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  border-radius: inherit; object-fit: cover;
 }
 .dev-ws-hero-face:last-child { margin-inline-end: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
@@ -33718,7 +33713,7 @@ html:root #messages-screen .messages-thread-header > .messages-group-faces {
 html:root #messages-screen .messages-thread-header > .messages-group-faces { border-radius: 0; }
 html:root #messages-screen .messages-thread-header > .messages-group-faces > :first-child { inset: 0; width: 40px; height: 40px; border-radius: 9999px; font-size: 16px; }
 html:root #messages-screen .messages-thread-header > .messages-group-faces > :last-child:not(:first-child) {
-  inset: auto -3px -3px auto; width: 18px; height: 18px; border-radius: 5px; font-size: 9px; box-shadow: 0 0 0 2px var(--one-surface);
+  inset: auto -3px -3px auto; width: 18px; height: 18px; border-radius: 9999px; font-size: 9px; box-shadow: 0 0 0 2px var(--one-surface);
 }
 /* The name block: the line over the name (the markup keeps the name first, the declared checks read it so). */
 html:root #messages-screen .messages-thread-header > button.flex-1 { display: flex; flex-direction: column; gap: 2px; }
@@ -34357,7 +34352,6 @@ html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws
   height: 1px;
   background: var(--one-line);
 }
-html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-face { width: 32px; height: 32px; font-size: 14px; font-weight: 650; }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-t { font: var(--one-row-title); color: var(--one-ink); }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-contrib-row .ui-lrow-s { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
 html:root #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody [data-ws-hub-contributors] .dev-ws-foryou-count { font: inherit; color: inherit; }

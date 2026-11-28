@@ -170,8 +170,8 @@ function directPerson(conversation: ConversationSummary) {
  * 44px box the `lg` square takes, so the row's own geometry (the 74px
  * separator inset) holds. The viewer is never one of the faces. One other
  * member is their face at full size; nobody known keeps the title's
- * initials, as today. A member with no photo falls back to their initials
- * tile, the way avatars look everywhere else.
+ * initials in the group's rounded-square tile. A face is a person's round
+ * picture (@/components/ui/feed.tsx PersonAvatar), as everywhere else.
  */
 function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 'members' | 'title'> }) {
   const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) : 0;
@@ -181,12 +181,12 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   if (others.length === 2) {
     return (
       <span className="messages-group-faces" aria-hidden="true">
-        <UserAvatar user={others[0]} size="sm" shape="square" />
-        <UserAvatar user={others[1]} size="sm" shape="square" />
+        <UserAvatar user={others[0]} size="sm" />
+        <UserAvatar user={others[1]} size="sm" />
       </span>
     );
   }
-  if (others.length === 1) return <UserAvatar user={others[0]} size="lg" shape="square" />;
+  if (others.length === 1) return <UserAvatar user={others[0]} size="lg" />;
   return <UserAvatar user={null} title={conversation.title} size="lg" shape="square" />;
 }
 
@@ -532,8 +532,8 @@ function ConversationRowSkeleton() {
           <ListRow
             key={i}
             chevron={false}
-            // The `lg` square UserAvatar's 44px box.
-            leading={<Skeleton shape="block" className="w-11 h-11 shrink-0 rounded-xl" />}
+            // The `lg` UserAvatar's 44px box: a person's round picture.
+            leading={<Skeleton shape="block" className="w-11 h-11 shrink-0 rounded-full" />}
             title={<Skeleton className={i % 2 ? 'w-28' : 'w-36'} />}
             subtitle={<Skeleton shape="muted" className={i % 3 ? 'w-3/5' : 'w-2/5'} />}
             // The trailing time's short bar.
@@ -1724,7 +1724,7 @@ function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
       timeTitle={fullTime(last.createdAt)}
       replies={replies.map((reply) => ({
         key: reply.clientKey || reply.id,
-        face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" shape="square" /></span>,
+        face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" /></span>,
         // N14: a bot by its name ("Homeroom bot"), a person by @username.
         name: reply.sender.bot ? senderName(reply.sender, { bare: true }) : reply.sender.username,
         bot: !!reply.sender.bot,
@@ -1766,8 +1766,8 @@ function ReplyRowSkeleton() {
     <SkeletonGroup label={t('messages:replies.loading')}>
       {Array.from({ length: 4 }, (_, i) => (
         <div key={i} className="messages-message" aria-hidden="true">
-          {/* The md square UserAvatar's 36px box. */}
-          <Skeleton shape="block" className="h-9 w-9 rounded-xl" />
+          {/* The md UserAvatar's 36px box: a person's round picture. */}
+          <Skeleton shape="block" className="h-9 w-9 rounded-full" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Skeleton className="w-24" />

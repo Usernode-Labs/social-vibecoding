@@ -30,9 +30,8 @@ import { createPortal } from 'react-dom';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { EllipsisHorizontalIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../group-chat/swatch';
 import { ChangeTag, IllustrationPreviewRow } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { Roster } from './topic-head';
@@ -190,9 +189,7 @@ export function GovernanceHead({ row, view = null }: { row: any; view?: Governan
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<GovernanceBar g={g} />, bar) : null}
       <article className="messages-message dev-request-root" data-gov-root={g.id}>
-        <Avatar shape="square" size="sm" color={swatchFor(who)} aria-hidden="true">
-          {(who || '?').charAt(0).toUpperCase()}
-        </Avatar>
+        <PersonAvatar name={who} size={36} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="messages-message-head">
             <span className="messages-message-author">{who}</span>

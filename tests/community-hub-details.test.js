@@ -55,7 +55,9 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
     createElement('span', { className: 'dev-ws-hero-actions' }, 'Invite')));
   assert.equal(HERO_FACES, 5);
-  assert.equal([...people.matchAll(/class="dev-ws-hero-face"/g)].length, 5, 'five faces, then the count says the rest');
+  // A face is the one round person picture (PersonAvatar), its hook class
+  // last in its class list, after the primitive's own.
+  assert.equal([...people.matchAll(/class="[^"]* dev-ws-hero-face"/g)].length, 5, 'five faces, then the count says the rest');
   assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Invite<\/span>/,
     'the invite preview\'s people row: the count, then what it holds');
 
@@ -66,7 +68,7 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u, display_name: null }));
   const html = active({ active_week: 40, shipped_month: 0, daily: [], active_people: five });
   assert.match(html, /^<div class="dev-ws-hero-active" data-ws-members="" data-ws-active-people="40"><span class="dev-ws-hero-faces" aria-hidden="true">/, 'the faces lead the row');
-  assert.deepEqual([...html.matchAll(/class="dev-ws-hero-face"[^>]*title="@([^"]+)">([A-Z])</g)].map((m) => [m[1], m[2]]),
+  assert.deepEqual([...html.matchAll(/class="[^"]* dev-ws-hero-face"[^>]*title="@([^"]+)">([A-Z])</g)].map((m) => [m[1], m[2]]),
     [['evan', 'E'], ['talha', 'T'], ['zura', 'Z'], ['scraido2', 'S'], ['kempis', 'K']], 'a face each, in the order the server gave');
   assert.match(html, /<span class="dev-ws-hero-face dev-ws-hero-face-more">\+35<\/span><\/span>/, 'then the rest, counted');
   assert.match(html, /<span class="dev-ws-hero-active-n" data-ws-members-cell="active">40 active this week<\/span><span class="dev-ws-hero-active-names" data-ws-active-names="">evan, talha, zura, scraido2, kempis and 35 more<\/span>/);
@@ -79,9 +81,11 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
     { id: 9, username: 'drea', avatarUrl: '/avatars/0123456789abcdef0123456789abcdef' },
     { id: 10, username: 'snait', avatarUrl: null },
   ] });
-  assert.match(pictured, /<span class="dev-ws-hero-face"[^>]*>D<img src="\/avatars\/0123456789abcdef0123456789abcdef" alt="" loading="lazy" decoding="async" class="dev-ws-hero-face-img"\/><\/span>/,
+  // The face is PersonAvatar, whose photo covers the letter inside the
+  // same circle (its own classes, where .dev-ws-hero-face-img was).
+  assert.match(pictured, /<span class="[^"]* dev-ws-hero-face"[^>]*>D<img src="\/avatars\/0123456789abcdef0123456789abcdef" alt="" loading="lazy" decoding="async" draggable="false" referrerPolicy="no-referrer" class="absolute inset-0 h-full w-full rounded-\[inherit\] object-cover"\/><\/span>/,
     'the picture covers the initial');
-  assert.match(pictured, /<span class="dev-ws-hero-face"[^>]*title="@snait">S<\/span>/, 'no picture, the letter');
+  assert.match(pictured, /<span class="[^"]* dev-ws-hero-face"[^>]*title="@snait">S<\/span>/, 'no picture, the letter');
   assert.equal(active({ active_week: 0, active_people: [] }), '', 'a quiet week says nothing');
   assert.match(active({ active_week: 3 }), /^<div class="dev-ws-hero-active"[^>]*><span class="dev-ws-hero-active-words"><span[^>]*>3 active this week<\/span><\/span><\/div>$/,
     'an older server without the names: the count alone');
@@ -437,7 +441,7 @@ test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, a
   const words = renderToHtml(createElement(RuleWords, { line: ruleSentence({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']) }));
   // Phone review #64: the faces and the first name are one run that does
   // not break, so a narrow card never ends a line on the faces.
-  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span>evan<\/span> or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces"/);
+  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces" aria-hidden="true"><span class="[^"]* dev-ws-ov-face" style="background-color:[^"]+">E<\/span><span class="[^"]* dev-ws-ov-face" style="background-color:[^"]+">S<\/span><\/span>evan<\/span> or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces"/);
   assert.match(CSS, /\.dev-ws-ov-glued \{ white-space: nowrap; \}/);
   // Polish board #13: the names come with the community record, so the line
   // is drawn once; only an older server's record, without them, asks their

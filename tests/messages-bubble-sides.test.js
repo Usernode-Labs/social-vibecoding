@@ -130,7 +130,8 @@ test('the other person keeps the avatar, the name and the time above their bubbl
   assert.match(group, /<span dir="auto" class="messages-message-author ">ada<\/span>/);
   const html = row({ message: message(ADA, 9, { content: 'Thanks!' }), kind: 'direct' });
   assert.doesNotMatch(html, /messages-message-self/);
-  assert.match(html, /<span aria-hidden="true" class="w-9 h-9/, 'the avatar, as before');
+  // A person is the one round person picture (PersonAvatar), at 36px.
+  assert.match(html, /<span class="relative flex shrink-0 items-center justify-center font-bold text-white rounded-full h-9 w-9 /, 'the avatar, as before');
   // Audit D13: the hover bar ends the name line, beside the bubble.
   assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><div class="messages-message-actions\s+msgx-bar[\s\S]*?<\/div><\/div><div class="messages-bubble" dir="auto"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
 });
@@ -171,14 +172,15 @@ test('the demo DM and group declare the new shape, by #5680', () => {
   assert.ok(dm, 'the DM check is rewritten, not dropped');
   assert.match(dm.name, /own message on the right in its tinted bubble/);
   // The wrap is the self row's first child: no avatar before it, then the
-  // head and the bubble. The other person's avatar is an image now, the photo
-  // they uploaded or the one generated from their account (#7135), rather
-  // than the letter in a span it used to be. (The selector engine both
+  // head and the bubble. The other person's avatar is the one round person
+  // picture (PersonAvatar): a span holding their photo (the one they
+  // uploaded or the one generated from their account, #7135) over their
+  // letter, where it was the bare image. (The selector engine both
   // runners use does not evaluate `:not(:has())`, and a selector longer than
   // the runner's cap (`MAX_TEST_SELECTOR_LEN`) is silently truncated — so the
   // shape is spelled this way and no longer.)
   assert.match(dm.expectSelector, /\.messages-message-self>\.messages-bubble-wrap:first-child>\.messages-message-head\+\.messages-bubble$/);
-  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>img\+\.messages-bubble-wrap>\.messages-bubble\)/);
+  assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>span\+\.messages-bubble-wrap>\.messages-bubble\)/);
   assert.ok(dm.expectSelector.length <= 256, `the selector fits the manifest's cap (${dm.expectSelector.length})`);
 
   const group = check('910002', '#5680');

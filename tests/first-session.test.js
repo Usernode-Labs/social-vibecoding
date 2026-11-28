@@ -589,7 +589,7 @@ test('neither way in hands over a picture or a description: the app is what they
 
 test('the people row: up to five faces, then +N, each in the colour the shell gives that name', () => {
   const { PeopleRow, peopleOf, moreThan, PEOPLE_FACES } = loadTsx(`${DIR}/people-faces.tsx`);
-  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  const { swatchFor } = loadTsx('frontend/src/lib/community-color.ts');
   assert.equal(PEOPLE_FACES, 5);
   const names = ['maya', 'priya', 'sam', 'jordan', 'ada', 'lee', 'kim'];
   assert.deepEqual(peopleOf(names.map((username) => ({ username, id: 1 }))).map((p) => p.username), names.slice(0, 5));
@@ -599,10 +599,12 @@ test('the people row: up to five faces, then +N, each in the colour the shell gi
   assert.equal(moreThan(2, 2), 0);
   assert.equal(moreThan(2, null), 0);
   const many = renderToHtml(createElement(PeopleRow, { people: peopleOf(names.map((username) => ({ username }))), count: 8, size: 'lg' }));
-  assert.equal((many.match(/h-10 w-10/g) || []).length, 6, 'five faces and the +N');
+  // The faces are the one round person picture (PersonAvatar) at its 44px
+  // set size; the row's 40px faces were a size of their own.
+  assert.equal((many.match(/h-11 w-11/g) || []).length, 6, 'five faces and the +N');
   assert.match(many, /data-people-more=""[^>]*>\+3</);
   assert.match(many, /class="sr-only">8 people</);
-  assert.match(many, new RegExp(`background:${swatchFor('maya')}">M<`));
+  assert.match(many, new RegExp(`background-color:${swatchFor('maya')}" aria-hidden="true">M<`));
   const two = renderToHtml(createElement(PeopleRow, { people: [{ username: 'maya' }, { username: 'priya' }], count: 2, size: 'lg' }));
   assert.doesNotMatch(two, /data-people-more/);
   assert.match(two, /class="sr-only">2 people</);

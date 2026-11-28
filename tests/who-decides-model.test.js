@@ -114,7 +114,8 @@ test('#4894: a rule that treats every change alike says how it plays out once, f
   const { PlaysOut } = loadTsx('frontend/src/features/who-decides/parts.tsx');
   const draw = (preset, viewer = creator) => renderToHtml(createElement(PlaysOut, { preset, viewer }));
   const svgs = (html) => html.match(/<svg[\s\S]*?<\/svg>/g) || [];
-  const faces = (html) => (html.match(/rounded-full text-\[11px\] font-bold/g) || []).length;
+  // A face is the one round person picture (PersonAvatar), here at PLAYS_LEAD's 32px.
+  const faces = (html) => (html.match(/font-bold text-white rounded-full h-8 w-8/g) || []).length;
   const [groupTile] = svgs(draw('group_vote'));
   assert.ok(groupTile, 'the Anyone makes a change row has a tile');
   for (const [key, line] of once) {

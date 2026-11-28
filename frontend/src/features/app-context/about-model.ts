@@ -94,7 +94,7 @@ export function statCards(stats: { apps?: number; members?: number; merged?: num
   ];
 }
 
-export interface ContributorView { who: string; initial: string; merged: number; creator: boolean }
+export interface ContributorView { who: string; merged: number; creator: boolean }
 
 /**
  * One contributor row, from GET /api/apps/:slug/contributors' shape — the
@@ -103,7 +103,7 @@ export interface ContributorView { who: string; initial: string; merged: number;
 export function contributorView(c: AppRow | null | undefined): ContributorView {
   const who = (c && typeof c.username === 'string' && c.username) || t('agent:appContext.about.contributor.unknown');
   const merged = parseInt(String(c ? c.merged_count : 0), 10) || 0;
-  return { who, initial: (who[0] || '?').toUpperCase(), merged, creator: !!(c && c.is_creator) };
+  return { who, merged, creator: !!(c && c.is_creator) };
 }
 
 /**

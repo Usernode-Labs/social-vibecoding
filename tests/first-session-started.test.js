@@ -289,10 +289,11 @@ test('the people row: your face in the middle, waiting seats on both sides, face
   assert.equal(people.peopleLabel([{ username: 'maya' }, { username: 'sam' }]), 'You and sam');
   assert.equal(people.peopleLabel([{ username: 'maya' }, {}]), 'You and 1 other');
   assert.equal(people.PLACES, 5);
-  // The hub's faces: the initial on the person's swatch.
+  // The hub's faces: the one round person picture (PersonAvatar), the
+  // initial on the person's swatch, which it picks itself now.
   const src = read(`${DIR}/people-row.tsx`);
-  assert.match(src, /import \{ swatchFor \} from '\.\.\/\.\.\/lib\/community-color';/);
-  assert.match(src, /background: swatchFor\(name\)/);
+  assert.match(src, /import \{ PersonAvatar \} from '@\/components\/ui\/feed';/);
+  assert.match(src, /<PersonAvatar\s+key=\{`\$\{name\}-\$\{i\}`\}\s+name=\{name\}\s+size=\{36\}/);
   // The made screen draws the community's members, else you.
   assert.match(CODE, /<PeopleRow people=\{peopleOf\(community, me\)\} \/>/);
 });

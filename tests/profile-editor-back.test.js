@@ -33,7 +33,7 @@ function renderSheet(draft) {
   const mod = loadTsx('frontend/src/features/profile/profile-edit-sheet.tsx', {
     stubs: { './profile.js': { Profile } },
   });
-  return renderToHtml(createElement(mod.ProfileEditSheet, { avatarUrl: null, initial: 'E' }));
+  return renderToHtml(createElement(mod.ProfileEditSheet, { avatarUrl: null, username: 'evan' }));
 }
 
 test('the editor claims Back when it opens, the way the dialogs do', () => {

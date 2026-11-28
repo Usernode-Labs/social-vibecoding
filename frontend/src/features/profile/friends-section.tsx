@@ -19,6 +19,7 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { GroupedList, ListRow, PLANE_FILL, SectionHeader } from '@/components/ui/grouped-list';
 import { useMessages } from '../../lib/i18n/react';
 import { FriendSearch } from '../friends/friend-search';
@@ -30,7 +31,6 @@ type FriendRowView = {
   username: string;
   href: string;
   avatarUrl: string | null;
-  initial: string;
   meta: string | null;
 };
 
@@ -40,31 +40,6 @@ export type FriendsSectionView = {
   friends: FriendRowView[];
   outgoing?: FriendRowView[];
 };
-
-/** The person's round picture, or their initial — the Me card's idiom, a size down. */
-function FriendAvatar({ row }: { row: FriendRowView }): ReactNode {
-  if (row.avatarUrl) {
-    return (
-      <img
-        className="w-10 h-10 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-        src={row.avatarUrl}
-        alt=""
-        loading="lazy"
-      />
-    );
-  }
-  return (
-    <span
-      aria-hidden="true"
-      className={
-        'w-10 h-10 rounded-full shrink-0 flex items-center justify-center font-bold '
-        + 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-      }
-    >
-      {row.initial}
-    </span>
-  );
-}
 
 export function FriendsSection({
   view,
@@ -90,7 +65,7 @@ export function FriendsSection({
             <ListRow
               key={row.key}
               data-friend-request={row.username}
-              leading={<FriendAvatar row={row} />}
+              leading={<PersonAvatar name={row.username} src={row.avatarUrl} size={44} aria-hidden="true" />}
               // The name is the way to their page; the row itself holds two
               // buttons, and an anchor may not wrap them.
               title={<a href={row.href} className="hover:underline">{`@${row.username}`}</a>}
@@ -136,7 +111,7 @@ export function FriendsSection({
               as="a"
               href={row.href}
               data-friend={row.username}
-              leading={<FriendAvatar row={row} />}
+              leading={<PersonAvatar name={row.username} src={row.avatarUrl} size={44} aria-hidden="true" />}
               title={`@${row.username}`}
               titleClassName="text-base font-semibold"
               subtitle={row.meta}
@@ -162,7 +137,7 @@ export function FriendsSection({
               <ListRow
                 key={row.key}
                 data-friend-sent={row.username}
-                leading={<FriendAvatar row={row} />}
+                leading={<PersonAvatar name={row.username} src={row.avatarUrl} size={44} aria-hidden="true" />}
                 title={<a href={row.href} className="hover:underline">{`@${row.username}`}</a>}
                 titleClassName="text-base font-semibold"
                 subtitle={row.meta}

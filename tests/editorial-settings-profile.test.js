@@ -156,13 +156,14 @@ test('Profile opens on who you are, across the page', () => {
     assert.ok(b.includes(`.${hook}`), `and the block reads ${hook}`);
   }
   assert.ok(!view.includes('profile-id-sub'), 'no sub-line under the name');
-  // #7135: the picture is the uploaded photo or the account's generated one,
-  // clipped to the editorial square by the same avatar class and its own
-  // overflow, so it never spills past the radius.
-  assert.match(view, /profile-id-avatar[^"`]*rounded-full[^"`]*object-cover/,
-    'a real picture keeps the round frame and its crop');
-  assert.match(view, /profile-id-avatar[^"`]*overflow-hidden/,
-    'the empty frame still clips itself to the radius');
+  // #7135: the picture is the uploaded photo or the account's generated one.
+  // It is the one round person picture (PersonAvatar, whose photo is cut to
+  // its circle), sized by this block through .profile-id-avatar. It was the
+  // editorial rounded square; a person is round everywhere now, so the block
+  // sets no radius of its own on it.
+  assert.match(view, /<PersonAvatar name=\{null\} src=\{identity\.avatarUrl\} size=\{56\} aria-hidden="true" className="profile-id-avatar" \/>/,
+    'the picture, or the empty frame for an unknown account');
+  assert.doesNotMatch(b, /\.profile-id-avatar \{[^}]*border-radius/, 'round: no editorial radius');
   assert.doesNotMatch(view, /\/brand\/groups\/avatar-/, 'the two-person drawing no longer stands in for a photo');
   assert.match(b, /#profile-identity-card #profile-edit-btn \{[^}]*background: var\(--wip-btn-1-bg\);/, 'Edit profile is the main action');
 });

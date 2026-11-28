@@ -264,7 +264,6 @@ export function identityView(state) {
   if (apps > 0) facts.push(t('profile:identity.apps', { count: apps }));
   return {
     avatarUrl: avatarUrlOf(state),
-    initial: initialOf(u),
     name: displayNameOf(u),
     handle,
     // The handle whether or not a display name is set, and the facts
@@ -648,15 +647,12 @@ export function publicControlsView(state) {
   };
 }
 
-/** The avatar block on a PUBLIC profile card, which is a different shape: the
- *  initial sits behind an absolutely-positioned image so a failed load can drop
- *  the image and reveal the fallback without shifting layout. */
-export function publicAvatarView(profile) {
-  const source = String(profile.displayName || profile.username || '?');
-  const match = source.match(/[\p{L}\p{N}]/u);
-  const url = (typeof profile.avatarUrl === 'string' && AVATAR_URL_RE.test(profile.avatarUrl))
+/** A PUBLIC profile card's photo address, when it is one we serve; the card
+ *  draws it with the shell's one person picture (PersonAvatar), which falls
+ *  back to the letter if it fails to load. */
+export function publicAvatarUrl(profile) {
+  return (typeof profile.avatarUrl === 'string' && AVATAR_URL_RE.test(profile.avatarUrl))
     ? profile.avatarUrl : null;
-  return { initial: match ? match[0].toUpperCase() : '?', url };
 }
 
 /** "March 2026" — how long two people have been friends. */
@@ -690,7 +686,6 @@ export function friendsView(lists, now = Date.now()) {
   if (!valid) return { loaded: false, incoming: [], friends: [], outgoing: [] };
   const row = (p, meta) => {
     const username = String(p.username || '');
-    const match = username.match(/[\p{L}\p{N}]/u);
     return {
       key: String(p.id),
       id: Number(p.id),
@@ -698,7 +693,6 @@ export function friendsView(lists, now = Date.now()) {
       href: `#profile/${encodeURIComponent(username)}`,
       avatarUrl: typeof p.avatarUrl === 'string' && AVATAR_URL_RE.test(p.avatarUrl)
         ? p.avatarUrl : null,
-      initial: match ? match[0].toUpperCase() : '?',
       meta,
     };
   };

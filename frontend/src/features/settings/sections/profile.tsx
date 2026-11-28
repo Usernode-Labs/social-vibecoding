@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeading } from '@/components/ui/field';
 import { ListRow } from '@/components/ui/grouped-list';
 import { CameraIcon } from '@/components/ui/icons';
@@ -7,7 +8,7 @@ import { CameraIcon } from '@/components/ui/icons';
 import { ProfileDetailsCard } from '../../profile/profile-details-card';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
-import { displayNameOf, initialOf } from '../../profile/profile-store.js';
+import { displayNameOf } from '../../profile/profile-store.js';
 
 /**
  * The Profile part — the head of the Account page.
@@ -37,26 +38,6 @@ interface ProfileUser {
 function readUser(): ProfileUser | null {
   const user = (window as { App?: { user?: ProfileUser | null } }).App?.user;
   return user && typeof user === 'object' ? user : null;
-}
-
-function Avatar({ user }: { user: ProfileUser | null }) {
-  if (user?.avatarUrl) {
-    return (
-      <img
-        className="w-11 h-11 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-        src={user.avatarUrl}
-        alt=""
-      />
-    );
-  }
-  return (
-    <span
-      aria-hidden="true"
-      className="w-11 h-11 text-lg rounded-full shrink-0 flex items-center justify-center font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-    >
-      {initialOf(user)}
-    </span>
-  );
 }
 
 export function ProfileSection() {
@@ -90,7 +71,7 @@ export function ProfileSection() {
           className="ui-card rounded-2xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
           leading={(
             <>
-              <Avatar user={user} />
+              <PersonAvatar name={user?.username} src={user?.avatarUrl} size={44} aria-hidden="true" />
               <span className="settings-profile-camera" aria-hidden="true"><CameraIcon /></span>
             </>
           )}

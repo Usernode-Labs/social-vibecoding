@@ -30,38 +30,13 @@ import { useState, type ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
 
-import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
+import { publicAvatarUrl, verifiedSocialLinksView } from './profile-store.js';
 import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
+import { PersonAvatar } from '@/components/ui/feed';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { CheckIcon } from '@/components/ui/icons';
-
-function PublicAvatar({ profile }: { profile: any }): ReactNode {
-  const { initial, url } = publicAvatarView(profile);
-  const [failed, setFailed] = useState(false);
-  return (
-    <div
-      className={
-        'w-20 h-20 relative rounded-full overflow-hidden bg-violet-100 '
-        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700  dark:text-violet-400'
-        + 'dark:text-violet-300 text-2xl font-bold shrink-0'
-      }
-    >
-      {initial}
-      {url && !failed ? (
-        <img
-          className="absolute inset-0 w-full h-full object-cover"
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={url}
-          onError={() => setFailed(true)}
-        />
-      ) : null}
-    </div>
-  );
-}
 
 function ReportForm({ username }: { username: string }): ReactNode {
   const t = useMessages('profile');
@@ -89,7 +64,7 @@ export function PublicProfileCard({
         className={`rounded-2xl ${PLANE_FILL} p-5`}
       >
         <div className="flex items-start gap-4">
-          <PublicAvatar profile={profile} />
+          <PersonAvatar name={profile.username} src={publicAvatarUrl(profile)} size={80} aria-hidden="true" />
           <div className="min-w-0 flex-1">
             {/*
                 The name row carries Message at its right end, as the

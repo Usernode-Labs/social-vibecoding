@@ -60,6 +60,7 @@
 import { Fragment, useRef, type ReactNode } from 'react';
 
 import { Chip, ChipRail } from '@/components/ui/chip';
+import { PersonAvatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   SECTION_TAB_ACTIVE,
@@ -86,7 +87,6 @@ type ChromeView =
   | {
       kind: 'profile';
       who: string;
-      initial: string;
       /** The person's picture, or null when they have none. */
       avatarUrl?: string | null;
       canMessage?: boolean;
@@ -117,7 +117,6 @@ type UserRow = {
   key: string;
   rank: number;
   who: string;
-  initial: string;
   /** The person's picture, or null when they have none. */
   avatarUrl?: string | null;
   meta: { text: string; title?: string }[];
@@ -332,17 +331,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         {t('leaderboard:kudos.person.back')}
       </a>}
       <div className="flex items-center gap-3">
-        {view.avatarUrl ? (
-          <img
-            src={view.avatarUrl}
-            alt=""
-            className="w-12 h-12 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-          />
-        ) : (
-          <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
-            {view.initial}
-          </div>
-        )}
+        <PersonAvatar name={view.who} src={view.avatarUrl} size={44} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
@@ -481,18 +470,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           onClick={() => controller()?._openUser(row.who)}
         >
           <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
-          {row.avatarUrl ? (
-            <img
-              src={row.avatarUrl}
-              alt=""
-              loading="lazy"
-              className="w-9 h-9 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-            />
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
-              {row.initial}
-            </div>
-          )}
+          <PersonAvatar name={row.who} src={row.avatarUrl} size={36} aria-hidden="true" />
           <div className="flex-1 min-w-0">
             <div className={ROW_TITLE}>{`@${row.who}`}</div>
             <div className={ROW_META}>

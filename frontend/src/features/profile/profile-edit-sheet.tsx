@@ -102,6 +102,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { Input } from '@/components/ui/input';
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
@@ -141,29 +142,6 @@ const ROW_ACTION_CLASS = 'un-group-row flex items-center w-full px-4 min-h-[44px
 const ROW_LABEL_CLASS = 'text-sm font-normal text-zinc-900 dark:text-zinc-100';
 const FOOTNOTE_CLASS = 'px-4 mt-1.5 text-xs text-zinc-500 dark:text-zinc-400';
 const COUNTER_CLASS = 'text-xs text-zinc-500 tabular-nums dark:text-zinc-400';
-
-function Avatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
-  if (url) {
-    return (
-      <img
-        className="w-12 h-12 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
-        src={url}
-        alt=""
-      />
-    );
-  }
-  return (
-    <div
-      className={
-        'w-12 h-12 text-lg rounded-full shrink-0 flex items-center justify-center '
-        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-      }
-      aria-hidden="true"
-    >
-      {initial}
-    </div>
-  );
-}
 
 /**
  * The Photo row's second line: what choosing does, and then where a change
@@ -308,7 +286,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
 
 export function ProfileEditSheet({
   avatarUrl,
-  initial,
+  username,
   publicControls = null,
   publicStatus = '',
   publishing = false,
@@ -317,7 +295,8 @@ export function ProfileEditSheet({
   pendingPhoto = null,
 }: {
   avatarUrl: string | null;
-  initial: string;
+  /** Whose picture: their username, which picks its letter and colour. */
+  username: string | null;
   publicControls?: any;
   publicStatus?: string;
   publishing?: boolean;
@@ -469,7 +448,7 @@ export function ProfileEditSheet({
           <Group title={t('profile:edit.photo.group')}>
             <div className="un-group-row flex items-center gap-3 px-4 py-2.5">
               <div id="profile-edit-preview" className="shrink-0">
-                <Avatar url={avatarUrl} initial={initial} />
+                <PersonAvatar name={username} src={avatarUrl} size={44} aria-hidden="true" />
               </div>
               <div className="min-w-0">
                 <div className={ROW_LABEL_CLASS}>{t('profile:edit.photo.label')}</div>

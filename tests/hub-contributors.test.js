@@ -48,7 +48,8 @@ test('it opens on This month: a face, a name and a count in words for each perso
   assert.deepEqual(rows(html), ['snait', 'evan'], "the server's order, this month's people only");
   assert.ok(html.includes('>14 contributions<'));
   assert.ok(html.includes('>1 contribution<'), 'one is said in the singular');
-  assert.match(html, /class="dev-ws-hero-face dev-ws-contrib-face"[^>]*aria-hidden="true"[^>]*>S</);
+  // The face is the one round person picture (PersonAvatar) at 32px.
+  assert.match(html, /class="[^"]*rounded-full h-8 w-8[^"]*"[^>]*aria-hidden="true"[^>]*>S</);
   // Rows are read, not pressed: no button, no link, no chevron.
   const body = html.slice(html.indexOf('dev-ws-strip'));
   assert.doesNotMatch(body, /<button|<a |ui-lrow-go/);
@@ -62,10 +63,12 @@ test('a contributor with a picture shows it in their face; without one, the lett
     all_time: [{ ...person(1, 'drea', 9), avatarUrl: '/avatars/aaaa' }, person(2, 'snait', 3)],
   });
   const drea = html.slice(html.indexOf('data-ws-contributor="drea"'), html.indexOf('data-ws-contributor="snait"'));
-  assert.match(drea, /class="dev-ws-hero-face dev-ws-contrib-face"[^>]*>D<img src="\/avatars\/aaaa"[^>]*class="dev-ws-hero-face-img"/);
+  // The face is the one round person picture (PersonAvatar) at its 32px
+  // set size, its photo over its letter.
+  assert.match(drea, /class="[^"]*rounded-full h-8 w-8[^"]*"[^>]*title="@drea"[^>]*>D<img src="\/avatars\/aaaa"[^>]*class="absolute inset-0 h-full w-full rounded-\[inherit\] object-cover"/);
   const snait = html.slice(html.indexOf('data-ws-contributor="snait"'));
   assert.match(snait, />S</);
-  assert.doesNotMatch(snait, /dev-ws-hero-face-img/, 'no picture, no img: the coloured initial stays');
+  assert.doesNotMatch(snait, /<img/, 'no picture, no img: the coloured initial stays');
 });
 
 test('with nobody yet this month it opens on All time', () => {

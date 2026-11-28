@@ -54,7 +54,8 @@ import {
   ruleSignature, ruleToday, sameValue, undeclaredAppGroups, valueProblem, type AppGroup, type Group, type Kind,
   type PresetKey, type Rule, type RulesValue,
 } from '../who-decides/model';
-import { Face, PlaysOut, PresetTiles, Picked, type Viewer } from '../who-decides/parts';
+import { PlaysOut, PresetTiles, Picked, type Viewer } from '../who-decides/parts';
+import { PersonAvatar } from '@/components/ui/feed';
 import { proposeWhoDecides } from '../who-decides/propose';
 import { useDialog } from './use-dialog';
 
@@ -463,7 +464,7 @@ export function WhoDecidesDialog() {
             onClick={() => { close(); window.AppView?.openMembersModal?.(); }}
             leading={(
               <span className="flex -space-x-1.5 rtl:space-x-reverse">
-                {(community?.members || []).slice(0, 3).map((m) => <Face key={m.username} name={m.username} size={26} />)}
+                {(community?.members || []).slice(0, 3).map((m) => <PersonAvatar key={m.username} name={m.username} size={28} aria-hidden="true" />)}
               </span>
             )}
             title={t('dialogs:whoDecides.people.members')}
@@ -733,7 +734,7 @@ export function WhoDecidesDialog() {
             <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.people.length })}</SectionHeader>
             <GroupedList className="mx-0" data-who-group-people="">
               {groupDraft.people.map((p) => (
-                <ListRow key={p} leading={<Face name={p} />} title={p} chevron={false}
+                <ListRow key={p} leading={<PersonAvatar name={p} size={28} aria-hidden="true" />} title={p} chevron={false}
                   trailing={(
                     <button type="button" aria-label={t('dialogs:whoDecides.group.removePerson', { name: p })} onClick={() => setPeople(groupDraft.people.filter((x) => x !== p))}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400">

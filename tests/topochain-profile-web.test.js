@@ -368,21 +368,17 @@ test('the identity card renders picture, name and the way in to editing', () => 
     profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
-  assert.match(fn, /IdentityAvatar/, 'the picture, or the brand pair fallback');
+  assert.match(fn, /<PersonAvatar name=\{null\} src=\{identity\.avatarUrl\}/, 'the picture: the one round person picture');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
   assert.match(fn, /identity\.username && identity\.username !== identity\.name \? <div className="profile-id-handle">/, 'the handle under the name, when it is not the name');
   // #7135: the two-person drawing is no longer a stand-in picture. A person
   // with no photo has a generated picture of their own, sent as avatarUrl;
-  // the component only names no picture for an unknown account.
-  const avatar = profileViewTsx.slice(
-    profileViewTsx.indexOf('function IdentityAvatar('),
-    profileViewTsx.indexOf('function IdentityCard(')
-  );
-  assert.ok(avatar.length, 'IdentityAvatar must exist');
-  assert.doesNotMatch(avatar, /\/brand\/groups\/avatar-/, 'the brand pair is retired as the fallback');
-  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is not drawn either');
-  assert.match(avatar, /profile-id-avatar[^"`]*rounded-full[^"`]*overflow-hidden/,
+  // for an unknown account the picture is given no name (`name={null}`), so
+  // PersonAvatar draws its empty neutral circle and no first letter.
+  assert.doesNotMatch(fn, /\/brand\/groups\/avatar-/, 'the brand pair is retired as the fallback');
+  assert.doesNotMatch(fn, /IdentityAvatar/, 'the card\'s own picture component is gone');
+  assert.match(fn, /<PersonAvatar name=\{null\}[^>]*className="profile-id-avatar"/,
     'an unknown account still holds the round frame, empty');
   // The builder-profile chip left the card: the viewer's proposed PRs are
   // Your changes now (UI overhaul; they were "See all" over Your

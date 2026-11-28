@@ -29,10 +29,9 @@ import type { ReactNode } from 'react';
 import { useMessages } from '../../../lib/i18n/react';
 import { FRESH, watch } from '../../../lib/live-reads';
 import { Button } from '@/components/ui/button';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { BellIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../group-chat/swatch';
 import {
   followButton,
   threadRows,
@@ -481,9 +480,7 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
                   {row.folded.map((reply) => (
                     <span key={reply.id} className="msgx-thread-line">
                       <span className="msgx-thread-face">
-                        <Avatar shape="square" size="sm" color={swatchFor(reply.username)} aria-hidden="true">
-                          {reply.username.charAt(0).toUpperCase()}
-                        </Avatar>
+                        <PersonAvatar name={reply.username} size={36} aria-hidden="true" />
                       </span>
                       <strong className="msgx-thread-line-name">{reply.bot ? reply.username : `@${reply.username}`}</strong>
                       <span className="msgx-thread-line-text">{reply.text}</span>

@@ -92,8 +92,10 @@ test('a submission is a message from its proposer: their avatar, name and stamp 
   const { swatchFor } = loadTsx(SWATCH);
   // The transcript's own named row, with the row's hooks on it.
   assert.match(html, new RegExp(`^<div class="flex gap-3 px-4 py-2 gc-event" data-msg-id="${msg.id}" data-event="submitted" data-session-id="5" data-pr-number="12" data-open="1">`));
-  // The avatar is the swatch evan's own messages wear.
-  assert.match(html, new RegExp(`<span class="relative flex shrink-0 items-center justify-center font-bold text-white rounded-xl h-11 w-11 text-\\[1\\.0625rem\\]" style="background-color:${swatchFor('evan')}" aria-hidden="true">E</span>`));
+  // The avatar is evan's round person picture (@/components/ui/feed.tsx
+  // PersonAvatar), in the swatch evan wears everywhere. It was a rounded
+  // square here, the chat's voice shape; a person is round everywhere now.
+  assert.match(html, new RegExp(`<span class="relative flex shrink-0 items-center justify-center font-bold text-white rounded-full h-11 w-11 text-\\[1\\.0625rem\\]" style="background-color:${swatchFor('evan')}" aria-hidden="true">E</span>`));
   // Name and stamp on the header line, where a person's message puts them.
   assert.match(html, /<span class="max-w-full truncate text-\[1\.0625rem\] font-bold text-zinc-900 dark:text-zinc-100"><span data-event-sender="">evan<\/span><\/span><span class="max-w-full shrink-0 text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500"><span class="gc-msg-time" title="Sep 16, 2026, 09:05 AM">09:05 AM<\/span><\/span>/);
   // One box: the bare glyph, one line of text, the door's chevron.
@@ -126,16 +128,18 @@ test('the swatch is the transcript\'s own hash, so a proposer\'s event avatar ma
   const transcript = read(TRANSCRIPT);
   assert.match(transcript, /import \{ swatchFor \} from '\.\/swatch';/);
   assert.doesNotMatch(transcript, /const SWATCHES/, 'one copy, not two');
-  assert.match(read(EVENT), /import \{ swatchFor \} from '\.\/swatch';/);
+  // The event row draws its sender with the one person picture, which picks
+  // the colour with lib/community-color.ts's swatchFor, the same function.
+  assert.match(read(EVENT), /<PersonAvatar name=\{ev\.sender\} size=\{44\} aria-hidden="true" \/>/);
   // Audit Y06: the one pick every surface uses for a person, so a face on a
-  // request's page is the colour it is in Messages and on the hub.
+  // request's page is the colour it is in Messages and on the hub. Messages'
+  // own copy of it (messages/format.tsx) is gone: one function, not two.
   assert.equal(swatchFor('alice'), swatchFor('alice'));
   const people = loadTsx('frontend/src/lib/community-color.ts');
-  const messages = loadTsx('frontend/src/features/messages/format.tsx');
   for (const name of ['cyrcle_0', 'audit_ada', 'pat_parrot', 'Launch crew']) {
     assert.equal(swatchFor(name), people.swatchFor(name), name);
-    assert.equal(swatchFor(name), messages.swatchFor(name), name);
   }
+  assert.doesNotMatch(read('frontend/src/features/messages/format.tsx'), /function swatchFor|const SWATCHES/);
   assert.match(read(SWATCH), /export \{ swatchFor \} from '\.\.\/\.\.\/lib\/community-color';/);
 });
 
@@ -161,10 +165,11 @@ test('the viewer\'s own event is the same left-hand named row as anybody\'s, mar
   const html = renderComponent(EVENT, 'EventRow', { msg });
   assert.match(html, new RegExp(`^<div class="flex gap-3 px-4 py-2 gc-event gc-event-self" data-msg-id="${msg.id}"`));
   assert.doesNotMatch(html, /flex-row-reverse|justify-end|items-end/, 'no side of its own any more');
-  assert.match(html, /rounded-xl h-11 w-11/, 'and the avatar, like every row');
+  // The avatar is the person's round picture (PersonAvatar) at the row's 44px.
+  assert.match(html, /rounded-full h-11 w-11/, 'and the avatar, like every row');
   const theirs = renderComponent(EVENT, 'EventRow', { msg: submitted('open') });
   assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-event" /, 'somebody else\'s is the same row, unmarked');
-  assert.match(theirs, /rounded-xl h-11 w-11/);
+  assert.match(theirs, /rounded-full h-11 w-11/);
 });
 
 // Dedupe step 2: a person's message in a project's chat is Messages' own
@@ -176,7 +181,8 @@ test('a channel puts your own message on the right, picture and all; a thread ke
   const { MessageRow } = loadTsx(TRANSCRIPT);
   const theirs = renderToHtml(createElement(MessageRow, { msg: human('hello there') }));
   assert.match(theirs, /^<article data-msg-id="\d+" data-username="alice" class="messages-message group [^"]*\bgc-msg">/);
-  assert.match(theirs, /<span aria-hidden="true" class="w-9 h-9 [^"]*rounded-xl[^"]*"[^>]*>A<\/span>/, 'the avatar');
+  // #7257: a person is the one round picture, here as on every other surface.
+  assert.match(theirs, /<span class="[^"]*rounded-full h-9 w-9[^"]*"[^>]*aria-hidden="true">A<\/span>/, 'the avatar');
   assert.match(theirs, /<span dir="auto" class="messages-message-author ">alice<\/span>/);
   assert.match(theirs, /<div class="messages-markdown gc-msg-content"><p>hello there<\/p><\/div>/, 'the body flat under the name');
   assert.doesNotMatch(theirs, /gc-bubble|messages-message-bubble|messages-message-end|gc-msg-end/);
@@ -185,7 +191,7 @@ test('a channel puts your own message on the right, picture and all; a thread ke
   assert.match(mine, /^<article data-msg-id="\d+" data-username="evan" class="messages-message group [^"]*messages-message-self messages-message-end [^"]*gc-msg gc-msg-self gc-msg-end">/,
     'on the right (app.css .messages-message-end), still gc-msg-self and gc-msg-end for the chat\'s own rules');
   assert.doesNotMatch(mine, /gc-bubble|messages-message-bubble/);
-  assert.match(mine, /<span aria-hidden="true" class="w-9 h-9 [^"]*"[^>]*>E<\/span>/, 'your own face, drawn at the trailing edge beside your words');
+  assert.match(mine, /<span class="[^"]*rounded-full h-9 w-9[^"]*"[^>]*aria-hidden="true">E<\/span>/, 'your own face, drawn at the trailing edge beside your words');
   assert.match(mine, /<span dir="auto" class="messages-message-author ">evan<\/span>/);
 
   const inThread = renderToHtml(createElement(MessageRow, { msg: { ...human('mine'), username: 'evan', mine: true }, surface: 'thread' }));
@@ -296,7 +302,7 @@ test('a message from a person sits among the events in the same grid, and dismis
   // The person is Messages' named row and the events are the chat's own
   // event rows, each with its sender's face, the words flat under the name.
   assert.equal((html.match(/class="messages-message group [^"]*\bgc-msg"/g) || []).length, 1);
-  assert.equal((html.match(/rounded-xl h-11 w-11 text-\[1\.0625rem\]" style="background-color:/g) || []).length, 2, 'the two events');
+  assert.equal((html.match(/rounded-full h-11 w-11 text-\[1\.0625rem\]" style="background-color:/g) || []).length, 2, 'the two events, each a person\'s round picture');
   assert.match(html, /<div class="messages-markdown gc-msg-content"><p>hello there<\/p>/);
   assert.doesNotMatch(html, /gc-quiet/, 'somebody has spoken');
 });

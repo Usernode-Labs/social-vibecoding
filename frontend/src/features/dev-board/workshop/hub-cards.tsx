@@ -69,6 +69,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, HashIcon, SparklesIcon } from '@/components/ui/icons';
@@ -91,8 +92,7 @@ import { openBotTab } from '../../ai/door';
 import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
-import { HubFace, reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
-import { swatchFor } from '../../messages/format';
+import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
 import {
@@ -926,7 +926,7 @@ export function ContributorsCard({ data }: { data: CommunityPayload | null }): R
             chevron={false}
             className="dev-ws-foryou-row dev-ws-contrib-row"
             data-ws-contributor={person.username}
-            leading={<HubFace person={person} className="dev-ws-contrib-face" decorative />}
+            leading={<PersonAvatar name={person.username} src={person.avatarUrl} size={32} title={`@${person.username}`} aria-hidden="true" />}
             title={person.username}
             // ONE LOOK (25 Nov 2026): the count is the row's second line, as every row's is.
             subtitle={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}

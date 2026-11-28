@@ -669,7 +669,10 @@ test('the other lists of icons and pictures are lazy and decode off the main thr
   assert.equal(read('frontend/src/features/communities/card.tsx').split("loading={eager ? 'eager' : 'lazy'} decoding={eager ? undefined : 'async'}").length
     + read('frontend/src/features/communities/card.tsx').split(/loading=\{eager \? 'eager' : 'lazy'\}\n\s*decoding=\{eager \? undefined : 'async'\}/).length, 4, 'the picture and its dark twin');
   const format = read('frontend/src/features/messages/format.tsx');
-  assert.match(format, /<img src=\{user\.avatarUrl\} alt="" loading="lazy" decoding="async" className=/, 'a person\'s picture on a Messages row');
+  // A person's picture on a Messages row is the one person picture
+  // (@/components/ui/feed.tsx PersonAvatar), whose photo is lazy and async.
+  assert.match(format, /<PersonAvatar name=\{title \|\| user\.username\} src=\{user\.avatarUrl\}/, 'a person\'s picture on a Messages row');
+  assert.match(read('frontend/@/components/ui/feed.tsx'), /src=\{photo\}\s*alt=""\s*loading="lazy"\s*decoding="async"/, 'drawn lazily');
   assert.match(format, /className="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" \/>/, 'a shared project\'s icon in a message');
   const tile = renderComponent('frontend/src/features/apps/app-card-view.tsx', 'AppIconContent', { app: { name: 'Demo', icon_url: '/app-icons/' + 'a'.repeat(32) } });
   assert.match(tile, /<img src="\/app-icons\/a{32}\?w=192" alt="" loading="lazy" decoding="async" draggable="false"/);

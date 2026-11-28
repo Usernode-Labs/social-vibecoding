@@ -25,12 +25,12 @@
 
 import { useEffect, useId, useState } from 'react';
 
+import { PersonAvatar } from '@/components/ui/feed';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
-import { swatchFor } from '../messages/format';
 import { CONTRIBUTORS_MIN, fetchTopContributors, type GuestTopContributors } from './guest-data';
 import { PEOPLE_CARD } from './project-card';
 
@@ -66,13 +66,7 @@ export function GuestContributorsCard({ data, className }: { data: GuestTopContr
             data-guest-contributor={person.username}
             className={cn('flex min-h-[60px] items-center gap-3 px-3.5 py-2.5', i < people.length - 1 ? ROW_LINE : '')}
           >
-            <span
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-white"
-              style={{ background: swatchFor(person.username) }}
-              aria-hidden="true"
-            >
-              {(person.username || '?').charAt(0).toUpperCase()}
-            </span>
+            <PersonAvatar name={person.username || '?'} size={36} aria-hidden="true" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{person.username}</span>
               <span className="block text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">

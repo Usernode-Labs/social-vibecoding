@@ -8,13 +8,14 @@
  * circle the same size says how many ("+3"), and the row's accessible name
  * is the count in words. No names: the faces are company, not a roster.
  *
- * The colour is the one every other face in the shell wears for that name
- * (../messages/format.tsx swatchFor), so a person is the same colour on the
- * hub, in Messages and here.
+ * Each face is the one round picture every surface draws for that name
+ * (@/components/ui/feed.tsx PersonAvatar), so a person is the same colour on
+ * the hub, in Messages and here.
  */
 
+import { PersonAvatar } from '@/components/ui/feed';
+
 import { useMessages } from '../../lib/i18n/react';
-import { swatchFor } from '../messages/format';
 
 /** How many faces the row shows before "+N" says the rest. */
 export const PEOPLE_FACES = 5;
@@ -37,10 +38,12 @@ export function moreThan(shown: number, count: number | null | undefined): numbe
   return Number.isFinite(n) && n > shown ? Math.floor(n - shown) : 0;
 }
 
-// Whole literals, for Tailwind's extractor.
-const FACE = {
+/** The faces' set sizes (@/components/ui/feed.tsx PersonAvatar). */
+const FACE = { sm: 28, lg: 44 } as const;
+// The "+N" circle, the faces' size. Whole literals, for Tailwind's extractor.
+const MORE = {
   sm: 'h-7 w-7 text-[12px]',
-  lg: 'h-10 w-10 text-[16px]',
+  lg: 'h-11 w-11 text-[16px]',
 } as const;
 const OVERLAP = { sm: '-ms-2', lg: '-ms-2.5' } as const;
 
@@ -60,20 +63,19 @@ export function PeopleRow({ people, count = null, size = 'lg', className = '' }:
   return (
     <span data-people-row={size} className={className ? `inline-flex items-center ${className}` : 'inline-flex items-center'}>
       {faces.map((p, i) => (
-        <span
+        <PersonAvatar
           key={p.username}
+          name={p.username}
+          size={FACE[size]}
           aria-hidden="true"
-          className={`${FACE[size]}${i ? ` ${OVERLAP[size]}` : ''} inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white shadow-[0_0_0_2px_var(--home-ground)]`}
-          style={{ background: swatchFor(p.username) }}
-        >
-          {p.username.charAt(0).toUpperCase()}
-        </span>
+          className={`${i ? `${OVERLAP[size]} ` : ''}shadow-[0_0_0_2px_var(--home-ground)]`}
+        />
       ))}
       {more ? (
         <span
           aria-hidden="true"
           data-people-more=""
-          className={`${FACE[size]} ${OVERLAP[size]} inline-flex shrink-0 items-center justify-center rounded-full bg-zinc-200 font-bold text-zinc-700 shadow-[0_0_0_2px_var(--home-ground)] dark:bg-zinc-700 dark:text-zinc-200`}
+          className={`${MORE[size]} ${OVERLAP[size]} inline-flex shrink-0 items-center justify-center rounded-full bg-zinc-200 font-bold text-zinc-700 shadow-[0_0_0_2px_var(--home-ground)] dark:bg-zinc-700 dark:text-zinc-200`}
         >
           {`+${more}`}
         </span>

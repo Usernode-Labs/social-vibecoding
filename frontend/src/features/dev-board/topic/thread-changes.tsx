@@ -67,7 +67,7 @@ import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
-import { Avatar } from '@/components/ui/feed';
+import { PersonAvatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, ChangeTag, VoteButton } from '../card/dev-card';
 import type { Standing } from '../../../lib/work-state';
@@ -87,7 +87,6 @@ import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view'
 import { openShotsDetail } from './shots-detail';
 import { pageSlug } from './thread-items';
 import { useThreadMenu } from './thread-menu';
-import { swatchFor } from '../../group-chat/swatch';
 import { WorkWithBotButton } from './work-with-bot';
 import {
   alsoCloses,
@@ -1657,9 +1656,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
           {replies.map((reply) => (
             <span key={reply.id} className="msgx-thread-line">
               <span className="msgx-thread-face">
-                <Avatar shape="square" size="sm" color={swatchFor(reply.username)} aria-hidden="true">
-                  {reply.username.charAt(0).toUpperCase()}
-                </Avatar>
+                <PersonAvatar name={reply.username} size={36} aria-hidden="true" />
               </span>
               <strong className="msgx-thread-line-name">{reply.bot ? reply.username : `@${reply.username}`}</strong>
               <span className="msgx-thread-line-text">{reply.text}</span>
