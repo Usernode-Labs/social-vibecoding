@@ -2212,8 +2212,10 @@ test('All items is the board by stage, with no grouping switch, whatever was cho
   assert.ok(html.includes('Waiting for approval'), 'a step of the pipeline, which only the board draws');
   assert.ok(head.expectSelector.includes('[data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes))'), 'it holds that no switch and no category list is drawn');
   assert.ok(head.expectSelector.includes('.dev-ws-board[data-ws-stage] > #dev-kanban'), 'that the page is the board');
-  assert.ok(head.expectSelector.endsWith('> .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions'),
-    'and that the tools come straight after the page\'s way back, with no title line');
+  // 28 Nov 2026: between the two, the switch between the board and the list
+  // (../list/), on Board: the page opens as the board.
+  assert.ok(head.expectSelector.endsWith('> .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + [data-ws-viewbar]:has([data-board-view-option="board"][aria-checked="true"]) + #dev-actions'),
+    'and that the view switch and then the tools come straight after the page\'s way back, with no title line');
   for (const t of dapp.tests) {
     assert.ok(!/data-ws-group|\.dev-ws-group|\.dev-ws-themes \[|data-ws-theme=|shot=themes/.test(`${t.path || ''} ${t.expectSelector || ''}`.replace(head.expectSelector, '')),
       `no other declared check walks the switch or the category cards: ${t.name}`);

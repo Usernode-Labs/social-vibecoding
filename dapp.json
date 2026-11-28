@@ -2331,9 +2331,9 @@
     },
     {
       "id": "workshop.grouping-ear",
-      "name": "All items' head is one row: the way back and its name, then the tools, with no grouping switch and no eyebrow over the page's name; the page is the board by stage (#4486, request 6708)",
+      "name": "All items' head is one row: the way back and its name, the Board and List switch with Board chosen, then the tools, with no grouping switch and no eyebrow over the page's name; the page opens as the board by stage (#4486, request 6708)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes)):has(> .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban) > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes)):has(> .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban) > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + [data-ws-viewbar]:has([data-board-view-option=\"board\"][aria-checked=\"true\"]) + #dev-actions",
       "expectText": "Waiting for approval",
       "visual": true,
       "impact": [
