@@ -114,6 +114,7 @@ import { returnKeyHandler } from '../../lib/return-to-next';
 import { useSheet } from '../../lib/sheet';
 import type { CropRect } from './avatar-crop';
 import { AvatarCropDialog, type CropSource } from './avatar-crop-dialog';
+import { cleanDisplayName, displayNameProblem } from './display-name';
 import { Profile } from './profile.js';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -367,6 +368,12 @@ export function ProfileEditSheet({
   // A generated picture is not a photo to remove; only a real upload is (#7135).
   const [showRemove, setShowRemove] = useState(!!user.hasPhoto);
 
+  // A name the tidying would change counts as a change (#7281), as does a
+  // trimmed bio, so a stored "iqiyi." can be saved as "iqiyi" straight away.
+  const dirty = cleanDisplayName(name) !== String(user.displayName || '')
+    || bio.trim() !== String(user.bio || '')
+    || pendingPhoto === 'new' || pendingPhoto === 'removed';
+
   // The staged photo's object URL is revoked by Profile._clearPendingAvatar;
   // closing the card any other way (route change, a second showEditSheet) goes
   // through _dismissSheet, which calls it. So there is nothing for this
@@ -412,11 +419,24 @@ export function ProfileEditSheet({
   };
 
   const onSave = async (): Promise<void> => {
+    if (saving || !dirty) return;
+    const cleaned = cleanDisplayName(name);
+    const problem = displayNameProblem(cleaned, Profile.MAX_DISPLAY_NAME);
+    if (problem) {
+      setFormError(null);
+      setFieldErrors({
+        displayName: problem === 'lineBreaks'
+          ? t('profile:edit.name.lineBreaks')
+          : t('profile:edit.name.tooLong', { count: Profile.MAX_DISPLAY_NAME }),
+      });
+      return;
+    }
     setSaving(true);
     setFormError(null);
     setFieldErrors({});
+    setName(cleaned);
     const result = await Profile._save({
-      displayName: name, bio,
+      displayName: cleaned, bio,
     });
     if (result.ok) return;
     if (result.fieldErrors) setFieldErrors(result.fieldErrors);
@@ -508,11 +528,12 @@ export function ProfileEditSheet({
                 value={name}
                 maxLength={Profile.MAX_DISPLAY_NAME}
                 onChange={(e) => setName(e.target.value)}
+                onBlur={() => setName(cleanDisplayName(name))}
               />
             </div>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            {t('profile:edit.name.note')}
+            {t('profile:edit.name.note')} {t('profile:edit.name.tidyNote')}
           </p>
           <FieldError message={fieldErrors.displayName} />
         </section>
@@ -539,6 +560,7 @@ export function ProfileEditSheet({
                 className="resize-none scroll-mt-8"
                 value={bio}
                 maxLength={Profile.MAX_BIO}
+                placeholder={t('profile:edit.about.placeholder')}
                 onChange={(e) => setBio(e.target.value)}
               />
             </div>
@@ -661,7 +683,7 @@ export function ProfileEditSheet({
           size="none"
           ink="solidText"
           className="disabled:opacity-60"
-          disabled={saving}
+          disabled={saving || !dirty}
           onClick={() => { void onSave(); }}
         >
           {t('core:common.save')}

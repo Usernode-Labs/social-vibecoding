@@ -576,8 +576,8 @@
     "description": "Error shown in the Edit profile sheet when saving failed and the server gave no reason."
   },
   "edit.saved": {
-    "text": "Profile saved",
-    "description": "Brief message shown after the Edit profile sheet saved the viewer's changes."
+    "text": "Profile updated",
+    "description": "Brief message shown after a profile is saved, from Settings › Profile or the Edit profile sheet."
   },
   "edit.photo.group": {
     "text": "Photo",
@@ -588,8 +588,8 @@
     "description": "Label beside the current photo in the Edit profile sheet."
   },
   "edit.photo.note": {
-    "text": "PNG, JPEG or WebP. You choose the part that shows before it is used.",
-    "description": "Note under \"Profile photo\" in the Edit profile sheet: the accepted image formats. Keep the format names."
+    "text": "PNG, JPEG or WebP. Any size: big photos are made smaller, and you choose the part that shows.",
+    "description": "Note under \"Profile photo\" in the Edit profile sheet: the accepted image formats, and that any file size is accepted because it is made smaller before it is used. Keep the format names."
   },
   "edit.photo.noteNew": {
     "text": "New photo, not saved yet. Press Save to use it.",
@@ -643,6 +643,22 @@
     "text": "The name other people see. Leave it empty to show your @handle.",
     "description": "Note under the Display name field in the Edit profile sheet. \"@handle\" is the username with its @ sign."
   },
+  "edit.name.tidyNote": {
+    "text": "Spaces and a full stop at the end are removed when you save.",
+    "description": "Small note under the Display name field in Settings › Profile and the Edit profile sheet: the form tidies the name (spaces at either end, and a full stop at the end) before saving it."
+  },
+  "edit.name.lineBreaks": {
+    "text": "Your name can’t have line breaks.",
+    "description": "Error under the Display name field when the name contains a line break."
+  },
+  "edit.name.tooLong_one": {
+    "text": "Use {{count}} characters or fewer.",
+    "description": "Error under the Display name field when the name is longer than the limit. {{count}} is the limit, 40."
+  },
+  "edit.name.tooLong_other": {
+    "text": "Use {{count}} characters or fewer.",
+    "description": "Error under the Display name field when the name is longer than the limit. {{count}} is the limit, 40."
+  },
   "edit.about.group": {
     "text": "About",
     "description": "Heading of the section of the Edit profile sheet that holds the bio."
@@ -650,6 +666,10 @@
   "edit.about.bio": {
     "text": "Bio",
     "description": "Label of the field in the Edit profile sheet for a few lines about oneself."
+  },
+  "edit.about.placeholder": {
+    "text": "Tell people what you’re working on",
+    "description": "Grey hint inside the empty Bio field in Settings › Profile and the Edit profile sheet, saying what to write there."
   },
   "edit.public.group": {
     "text": "Public page",

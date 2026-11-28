@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PencilSquareIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
+import { cleanDisplayName, displayNameProblem } from './display-name';
 import { Profile } from './profile.js';
 
 type IdentityUser = { displayName?: string | null; bio?: string | null };
@@ -61,11 +62,23 @@ export function InlineNameEdit({ user, open, onOpen, onClose }: InlineEditProps)
       onSubmit={async (event) => {
         event.preventDefault();
         if (saving) return;
+        const cleaned = cleanDisplayName(value);
+        const problem = displayNameProblem(cleaned, 40);
+        if (problem) {
+          setError('');
+          setErrors({
+            displayName: problem === 'lineBreaks'
+              ? t('profile:edit.name.lineBreaks')
+              : t('profile:edit.name.tooLong', { count: 40 }),
+          });
+          return;
+        }
         setSaving(true);
         setError('');
         setErrors({});
+        setValue(cleaned);
         // The bio as the account holds it: this form edits the name alone.
-        const result = await Profile._save({ displayName: value, bio: user?.bio || '', detailsOnly: true });
+        const result = await Profile._save({ displayName: cleaned, bio: user?.bio || '', detailsOnly: true });
         setSaving(false);
         if (result.ok) { onClose(); return; }
         setError(result.error || '');

@@ -220,6 +220,20 @@ test('Settings keeps the one profile form, and the profile screen edits in its h
   assert.match(html, /maxLength="280"/);
   assert.equal((html.match(/<form/g) || []).length, 1);
   assert.equal((html.match(/<h2/g) || []).length, 0, 'the retired heading is gone');
+  // #7281: the empty bio has a hint, the name has its tidy note, and the
+  // actions row is on screen with Save waiting for a change.
+  assert.match(html, /placeholder="profile:edit\.about\.placeholder"/);
+  assert.match(html, /profile-details-note[^>]*>profile:edit\.name\.tidyNote/);
+  assert.match(html, /class="profile-details-actions"/);
+  const submitTag = (markup) => (markup.match(/<button type="submit"[^>]*>/) || [])[0] || '';
+  assert.match(submitTag(html), /disabled=""/, 'an unchanged profile cannot be saved');
+  // A stored "iqiyi." is already a change once tidied, so Save is live.
+  const trailing = renderToHtml(createElement(ProfileDetailsCard, {
+    user: { username: 'iqiyi', displayName: 'iqiyi.', bio: '' },
+    id: 'settings-profile-details',
+    embedded: true,
+  }));
+  assert.doesNotMatch(submitTag(trailing), /disabled=""/, 'a name the tidying would change can be saved');
   const view = read('frontend', 'src', 'features', 'profile', 'profile-view.tsx');
   assert.doesNotMatch(view, /ProfileDetailsCard/, 'the profile screen no longer mounts the card');
   assert.match(view, /<InlineNameEdit/, 'the hero keeps the pencil');

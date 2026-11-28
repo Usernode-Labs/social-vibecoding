@@ -386,7 +386,7 @@ test('the Photo row says where a photo change stands until Save', () => {
     const html = renderToHtml(createElement(mod.ProfileEditSheet, { avatarUrl: null, initial: 'E', pendingPhoto }));
     return html.match(/id="profile-edit-photo-note"[^>]*>([^<]*)</)[1];
   };
-  assert.match(note(null), /You choose the part that shows before it is used\./);
+  assert.match(note(null), /Any size: big photos are made smaller, and you choose the part that shows\./);
   assert.match(note('new'), /not saved yet\. Press Save/);
   assert.match(note('removed'), /removed when you press Save/);
   assert.match(VIEW, /pendingPhoto=\{state\.pendingAvatarUrl \? 'new' : state\.pendingRemove \? 'removed' : null\}/);
