@@ -532,6 +532,14 @@ export interface RowBrief {
   stage: 'request' | 'worked' | 'vote' | 'live';
   /** A request nobody has taken (AppView._issueUnclaimed). */
   unclaimed?: boolean;
+  /**
+   * A request Homeroom bot has handed to a person, or stopped on: nothing
+   * moves until somebody answers (its standing, AppView._issueStanding).
+   * `why` is what it waits for ('plan', 'question', 'decide', 'needs_detail',
+   * 'already_works', or 'stopped'); `who` is who asked for it. The All items
+   * list (../list/model.ts) reads it; the columns do not.
+   */
+  waits?: { why: string | null; who: string } | null;
   /** When it was made (epoch ms; 0 when unknown). */
   at: number;
   /**

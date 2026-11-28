@@ -1647,7 +1647,11 @@ test('no declared check asks for the cards open; the board’s checks read its r
   // an app of its own (the three that open it are on Homeroom's, where the
   // card is an admin's alone), so there was none to fold it into. 669 leaves
   // 211 slots.
-  checkCap.assertPinned(DAPP.tests.length, 669);
+  // 669 → 670: +1 (All items as one list, 28 Nov 2026). The list is a view
+  // of its own, asked for in the address (`?board=list`); every other check
+  // of All items draws the board's columns, so there was none to fold it
+  // into. 670 leaves 210 slots.
+  checkCap.assertPinned(DAPP.tests.length, 670);
   // Every selector fits the runner's cap (app-manifest.js
   // MAX_TEST_SELECTOR_LEN): a longer one is cut mid-token and fails on every
   // build with "was not found".

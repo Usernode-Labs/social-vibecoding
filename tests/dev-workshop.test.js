@@ -2196,8 +2196,10 @@ test('All items is the board by stage, with no grouping switch, whatever was cho
   // the page's own name says it.
   assert.ok(!html.includes('dev-ws-pane-eyebrow'), 'the eyebrow is gone');
   assert.ok(!/\.dev-ws-pane-eyebrow/.test(CSS), 'and so is the rule that styled it');
-  // #4486: ONE ROW, the page's way back and its name, then the tools.
-  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div id="dev-actions"/);
+  // #4486: ONE ROW, the page's way back and its name, then the tools. 28 Nov
+  // 2026: between them, the switch between the board's columns and the list
+  // (a different thing from the grouping switch above: both read by stage).
+  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div class="dev-ws-viewbar" data-ws-viewbar="">[\s\S]*?data-board-view-option="board"[\s\S]*?data-board-view-option="list"[\s\S]*?<\/div><\/div><div id="dev-actions"/);
   assert.ok(!html.includes('dev-ws-pagehead-over'), 'and no "Workshop" eyebrow over the name');
   assert.ok(
     !dapp.tests.some((t) => /data-ws-ear/.test(t.expectSelector || '')),

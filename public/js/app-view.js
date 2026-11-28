@@ -13367,8 +13367,15 @@ const AppView = {
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
+      // 28 Nov 2026: Homeroom bot handed it to a person, or stopped on it.
+      // The All items list files it under Needs you or Waiting on others.
+      const st = it.state !== 'closed' ? AppView._issueStanding(it) : null;
+      const waits = st && (st.stage === 'waiting_for_you' || st.stage === 'stopped')
+        ? { why: st.stage === 'stopped' ? 'stopped' : (st.why || null), who: String(it.created_by_username || it.user || '') }
+        : null;
       return {
         ...base, kind: 'request', noun: 'request', n: Number(it.number) || null, twin: AppView._twinOf(it),
+        ...(waits ? { waits } : {}),
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         // Nobody has taken it (the Workshop's "Nobody is on these"), so a
