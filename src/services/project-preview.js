@@ -23,6 +23,10 @@
 //                             thing in its <body>.
 //   pictureSize(bytes)        a picture's width and height, read from its
 //                             first bytes (PNG, JPEG, GIF, WebP).
+//   sharePicture(app, stored) the project's own card picture (the one its
+//                             group chose, which Discover and Communities
+//                             show) when it is wide enough for a link's
+//                             large frame, with its real size and kind.
 //   coverPng(app, icon)       the cover, 1200 x 630: the project's colour
 //                             with its icon in the middle, the picture its
 //                             Discover card shows. No words in it; the chat
@@ -271,6 +275,29 @@ function pictureSize(bytes) {
   return null;
 }
 
+// A card picture is the link's picture only when it is wide: a square or a
+// tall one is cropped by a large frame, which is the fault this replaces
+// (request 7166: a square icon in a wide frame). 1.3 lets a 4:3 picture in;
+// 600 is the least width a large card is drawn sharp at.
+const WIDE_RATIO = 1.3;
+const WIDE_MIN_WIDTH = 600;
+const SHARE_PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+/**
+ * The project's own card picture as its link's picture: where it is served,
+ * its width and height as read off `stored.data` (its first bytes are
+ * enough), and its kind. Null when the project has none, its size cannot be
+ * read, its kind is not one a chat app draws, or it is not wide.
+ */
+function sharePicture(app, stored) {
+  const path = app && typeof app.illustration_url === 'string' && /^\/app-illustrations\/[a-f0-9]{32}$/.test(app.illustration_url)
+    ? app.illustration_url : null;
+  const type = stored && SHARE_PICTURE_TYPES.includes(stored.contentType) ? stored.contentType : null;
+  const size = path && type ? pictureSize(stored.data) : null;
+  if (!size || size.width < WIDE_MIN_WIDTH || size.width < size.height * WIDE_RATIO) return null;
+  return { path, width: size.width, height: size.height, type };
+}
+
 /** What the link says the project is: its own words, and its members once there are enough to say. */
 function descriptionOf(app) {
   const own = app.description ? String(app.description).trim() : '';
@@ -290,21 +317,30 @@ function coverPath(slug) { return `/api/public/apps/${encodeURIComponent(slug)}/
  * be drawn (canDrawCover); without it the picture is the project's icon, and
  * the card a small one. `imageSize`: that icon's width and height when the
  * server could read them (pictureSize), said beside it as the cover's are.
+ * `picture`: the project's own wide card picture (sharePicture), which is
+ * the link's picture in place of the cover whenever there is one, on a large
+ * card, with its own size and kind said beside it.
  * `player`: whether the project can be used in a post
  * on X (services/project-embed.js embedFor), which makes X's card a frame
  * around its embed page, with the picture as the still before it plays and
  * where X runs no players. X shows no player without a picture.
  */
-function previewTags(app, origin, { cover = true, player = false, imageSize = null, canonical = null } = {}) {
+function previewTags(app, origin, { cover = true, player = false, imageSize = null, picture = null, canonical = null } = {}) {
   // Where the page is listed: the platform's configured origin when the
   // caller has one (as landingTags), else the origin the pictures use.
   const home = ORIGIN_RE.test(String(canonical || '')) ? canonical : origin;
   const address = pageUrl(home, app.slug);
   const title = app.name || app.slug;
   const description = descriptionOf(app);
-  const image = cover ? `${origin}${coverPath(app.slug)}` : (app.icon_url ? `${origin}${app.icon_url}` : null);
+  const own = picture && picture.path ? picture : null;
+  const wide = Boolean(own || cover);
+  const image = own ? `${origin}${own.path}`
+    : cover ? `${origin}${coverPath(app.slug)}` : (app.icon_url ? `${origin}${app.icon_url}` : null);
   const playable = Boolean(player && image);
-  const card = playable ? 'player' : (cover ? 'summary_large_image' : 'summary');
+  // A wide picture gets the large card and a square icon the small one, so
+  // no frame crops what it is given. `player` is X's frame around the embed
+  // page (request 6274) and stays wherever that page will answer.
+  const card = playable ? 'player' : (wide ? 'summary_large_image' : 'summary');
   const tags = [
     '<meta property="og:type" content="website">',
     '<meta property="og:site_name" content="Homeroom">',
@@ -329,7 +365,9 @@ function previewTags(app, origin, { cover = true, player = false, imageSize = nu
   }
   if (image) {
     tags.push(`<meta property="og:image" content="${escapeAttr(image)}">`);
-    const size = cover ? { width: WIDTH, height: HEIGHT } : imageSize;
+    const kind = own ? own.type : (cover ? 'image/png' : null);
+    if (kind) tags.push(`<meta property="og:image:type" content="${escapeAttr(kind)}">`);
+    const size = own ? { width: own.width, height: own.height } : (cover ? { width: WIDTH, height: HEIGHT } : imageSize);
     if (size && Number.isInteger(size.width) && Number.isInteger(size.height) && size.width > 0 && size.height > 0) {
       tags.push(`<meta property="og:image:width" content="${size.width}">`, `<meta property="og:image:height" content="${size.height}">`);
     }
@@ -530,6 +568,7 @@ module.exports = {
   withBody,
   LANDING_LINKS_MAX,
   pictureSize,
+  sharePicture,
   LANDING_TITLE,
   LANDING_DESCRIPTION,
   LANDING_PICTURE,
